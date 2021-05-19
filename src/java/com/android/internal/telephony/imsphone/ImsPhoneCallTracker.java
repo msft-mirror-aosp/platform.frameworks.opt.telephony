@@ -88,7 +88,6 @@ import android.util.SparseIntArray;
 import com.android.ims.FeatureConnector;
 import com.android.ims.ImsCall;
 import com.android.ims.ImsConfig;
-import com.android.ims.ImsConfigListener;
 import com.android.ims.ImsEcbm;
 import com.android.ims.ImsException;
 import com.android.ims.ImsManager;
@@ -379,6 +378,11 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
      * The Telephony config.xml values pertinent to ImsPhoneCallTracker.
      */
     private Config mConfig = null;
+
+    /**
+     * Whether D2D has been force enabled via the d2d telephony command.
+     */
+    private boolean mDeviceToDeviceForceEnabled = false;
 
     /**
      * Network callback used to schedule the handover check when a wireless network connects.
@@ -1008,7 +1012,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         mImsManager.addRegistrationCallback(mPhone.getImsMmTelRegistrationCallback(), this::post);
         mImsManager.addCapabilitiesCallback(mImsCapabilityCallback, this::post);
 
-        mImsManager.setConfigListener(mImsConfigListener);
+        ImsManager.setImsStatsCallback(mPhone.getPhoneId(), mImsStatsCallback);
 
         mImsManager.getConfigInterface().addConfigCallback(mConfigCallback);
 
@@ -1046,7 +1050,9 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         // Where device to device communication is available, ensure that the
         // supported RTP header extension types defined in {@link RtpTransport} are
         // set as the offered RTP header extensions for this device.
-        if (mConfig != null && mConfig.isD2DCommunicationSupported && mSupportD2DUsingRtp) {
+        if (mDeviceToDeviceForceEnabled
+                || (mConfig != null && mConfig.isD2DCommunicationSupported
+                && mSupportD2DUsingRtp)) {
             ArraySet<RtpHeaderExtensionType> types = new ArraySet<>();
             if (mSupportSdpForRtpHeaderExtensions) {
                 types.add(RtpTransport.CALL_STATE_RTP_HEADER_EXTENSION_TYPE);
@@ -1065,6 +1071,15 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         }
     }
 
+    /**
+     * Used via the telephony shell command to force D2D to be enabled.
+     * @param isEnabled {@code true} if D2D is force enabled.
+     */
+    public void setDeviceToDeviceForceEnabled(boolean isEnabled) {
+        mDeviceToDeviceForceEnabled = isEnabled;
+        maybeConfigureRtpHeaderExtensions();
+    }
+
     private void stopListeningForCalls() {
         log("stopListeningForCalls");
         mOperationLocalLog.log("stopListeningForCalls - Disconnecting from ImsService");
@@ -1073,7 +1088,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             mImsManager.removeRegistrationListener(mPhone.getImsMmTelRegistrationCallback());
             mImsManager.removeCapabilitiesCallback(mImsCapabilityCallback);
             try {
-                mImsManager.setConfigListener(null);
+                ImsManager.setImsStatsCallback(mPhone.getPhoneId(), null);
                 mImsManager.getConfigInterface().removeConfigCallback(mConfigCallback.getBinder());
             } catch (ImsException e) {
                 Log.w(LOG_TAG, "stopListeningForCalls: unable to remove config callback.");
@@ -3922,22 +3937,16 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 }
             };
 
-    private ImsConfigListener.Stub mImsConfigListener = new ImsConfigListener.Stub() {
+    private final ImsManager.ImsStatsCallback mImsStatsCallback =
+            new ImsManager.ImsStatsCallback() {
         @Override
-        public void onGetFeatureResponse(int feature, int network, int value, int status) {}
-
-        @Override
-        public void onSetFeatureResponse(int feature, int network, int value, int status) {
-            mMetrics.writeImsSetFeatureValue(mPhone.getPhoneId(), feature, network, value);
-            mPhone.getImsStats().onSetFeatureResponse(feature, network, value);
+        public void onEnabledMmTelCapabilitiesChanged(int capability, int regTech,
+                boolean isEnabled) {
+            int enabledVal = isEnabled ? ProvisioningManager.PROVISIONING_VALUE_ENABLED
+                    : ProvisioningManager.PROVISIONING_VALUE_DISABLED;
+            mMetrics.writeImsSetFeatureValue(mPhone.getPhoneId(), capability, regTech, enabledVal);
+            mPhone.getImsStats().onSetFeatureResponse(capability, regTech, enabledVal);
         }
-
-        @Override
-        public void onGetVideoQuality(int status, int quality) {}
-
-        @Override
-        public void onSetVideoQuality(int status) {}
-
     };
 
     private final ProvisioningManager.Callback mConfigCallback =
@@ -4440,7 +4449,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         pw.println(" mIsConferenceEventPackageHandlingEnabled=" + mIsConferenceEventPackageEnabled);
         pw.println(" mSupportCepOnPeer=" + mSupportCepOnPeer);
         if (mConfig != null) {
-            pw.println(" isDeviceToDeviceCommsSupported= " + mConfig.isD2DCommunicationSupported);
+            pw.print(" isDeviceToDeviceCommsSupported= " + mConfig.isD2DCommunicationSupported);
+            pw.println("(forceEnabled=" + mDeviceToDeviceForceEnabled + ")");
             if (mConfig.isD2DCommunicationSupported) {
                 pw.println(" mSupportD2DUsingRtp= " + mSupportD2DUsingRtp);
                 pw.println(" mSupportSdpForRtpHeaderExtensions= "
