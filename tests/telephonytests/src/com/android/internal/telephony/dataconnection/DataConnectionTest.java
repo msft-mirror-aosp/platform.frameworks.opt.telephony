@@ -30,6 +30,7 @@ import static com.android.internal.telephony.dataconnection.DcTrackerTest.FAKE_P
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Matchers.argThat;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyBoolean;
@@ -38,6 +39,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -46,6 +48,7 @@ import android.net.KeepalivePacketData;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.NattKeepalivePacketData;
+import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.os.AsyncResult;
 import android.os.Handler;
@@ -55,6 +58,8 @@ import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
 import android.telephony.CarrierConfigManager;
 import android.telephony.ServiceState;
+import android.telephony.ServiceState.RegState;
+import android.telephony.ServiceState.RilRadioTechnology;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataProfile;
@@ -63,6 +68,7 @@ import android.telephony.data.DataServiceCallback;
 import android.telephony.data.TrafficDescriptor;
 import android.test.suitebuilder.annotation.MediumTest;
 import android.test.suitebuilder.annotation.SmallTest;
+import android.util.Pair;
 
 import com.android.internal.R;
 import com.android.internal.telephony.PhoneConstants;
@@ -84,6 +90,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.function.Consumer;
 
 public class DataConnectionTest extends TelephonyTest {
     private static final int DEFAULT_DC_CID = 10;
@@ -429,9 +436,9 @@ public class DataConnectionTest extends TelephonyTest {
     }
 
     private boolean isSuspended() throws Exception {
-        Method method = DataConnection.class.getDeclaredMethod("isSuspended");
-        method.setAccessible(true);
-        return (boolean) method.invoke(mDc);
+        Field field = DataConnection.class.getDeclaredField("mIsSuspended");
+        field.setAccessible(true);
+        return field.getBoolean(mDc);
     }
 
     private SetupResult setLinkProperties(DataCallResponse response, LinkProperties linkProperties)
@@ -926,6 +933,12 @@ public class DataConnectionTest extends TelephonyTest {
         assertTrue(mDc.isInactive());
     }
 
+    private void serviceStateChangedEvent(@RegState int dataRegState, @RilRadioTechnology int rat) {
+        mDc.obtainMessage(DataConnection.EVENT_DATA_CONNECTION_DRS_OR_RAT_CHANGED,
+                new AsyncResult(null, new Pair<>(dataRegState, rat), null)).sendToTarget();
+        waitForMs(100);
+    }
+
     @Test
     @SmallTest
     public void testIsIpAddress() {
@@ -1281,24 +1294,56 @@ public class DataConnectionTest extends TelephonyTest {
         assertTrue(mDc.isInactive());
         doReturn(mApn1).when(mApnContext).getApnSetting();
         doReturn(ApnSetting.TYPE_DEFAULT).when(mApnContext).getApnTypeBitmask();
+        doReturn(true).when(mSST).isConcurrentVoiceAndDataAllowed();
         connectEvent(true);
 
+        // Before getting any service state event, the connection should not be suspended.
+        assertFalse(isSuspended());
+
         // Return true if combined reg state is not in service
-        doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getDataRegistrationState();
+        serviceStateChangedEvent(ServiceState.STATE_OUT_OF_SERVICE,
+                ServiceState.RIL_RADIO_TECHNOLOGY_UNKNOWN);
         assertTrue(isSuspended());
 
         // Return false if in service and concurrent voice and data is allowed
-        doReturn(ServiceState.STATE_IN_SERVICE).when(mServiceState).getDataRegistrationState();
-        doReturn(true).when(mSST).isConcurrentVoiceAndDataAllowed();
+        serviceStateChangedEvent(ServiceState.STATE_IN_SERVICE,
+                ServiceState.RIL_RADIO_TECHNOLOGY_LTE);
         assertFalse(isSuspended());
 
         // Return false if in service and concurrent voice/data not allowed but call state is idle
         doReturn(false).when(mSST).isConcurrentVoiceAndDataAllowed();
         doReturn(PhoneConstants.State.IDLE).when(mCT).getState();
+        mDc.sendMessage(DataConnection.EVENT_DATA_CONNECTION_VOICE_CALL_STARTED);
+        waitForMs(100);
         assertFalse(isSuspended());
 
         // Return true if in service, concurrent voice/data not allowed, and call state not idle
         doReturn(PhoneConstants.State.RINGING).when(mCT).getState();
+        mDc.sendMessage(DataConnection.EVENT_DATA_CONNECTION_VOICE_CALL_STARTED);
+        waitForMs(100);
+        assertTrue(isSuspended());
+    }
+
+    @Test
+    public void testDataCreatedWhenOutOfService() throws Exception {
+        serviceStateChangedEvent(ServiceState.STATE_OUT_OF_SERVICE,
+                ServiceState.RIL_RADIO_TECHNOLOGY_UNKNOWN);
+        ArgumentCaptor<NetworkCapabilities> ncCaptor =
+                ArgumentCaptor.forClass(NetworkCapabilities.class);
+        doReturn(mock(Network.class)).when(mConnectivityManager).registerNetworkAgent(
+                any(), any(), any(), ncCaptor.capture(), any(), any(), anyInt());
+
+        doReturn(mApn1).when(mApnContext).getApnSetting();
+        doReturn(ApnSetting.TYPE_DEFAULT).when(mApnContext).getApnTypeBitmask();
+        doReturn(true).when(mSST).isConcurrentVoiceAndDataAllowed();
+        connectEvent(true);
+        waitForMs(100);
+
+        NetworkCapabilities nc = ncCaptor.getValue();
+        // The network must be created with NOT_SUSPENDED capability.
+        assertTrue(nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED));
+
+        // But it's final state must be suspended.
         assertTrue(isSuspended());
     }
 
@@ -1315,5 +1360,24 @@ public class DataConnectionTest extends TelephonyTest {
         // retry timer).
         verify(mDataThrottler).setRetryTime(eq(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_SUPL),
                 eq(RetryManager.NO_SUGGESTED_RETRY_DELAY), eq(DcTracker.REQUEST_TYPE_NORMAL));
+    }
+
+    @Test
+    public void testDataHandoverFailed() throws Exception {
+        doReturn(mDefaultDc).when(mDcTracker).getDataConnectionByApnType(anyString());
+
+        doAnswer(invocation -> {
+            final Consumer<Integer> consumer = (Consumer<Integer>) invocation.getArguments()[0];
+            consumer.accept(DataServiceCallback.RESULT_SUCCESS);
+            return null;
+        }).when(mDefaultDc).startHandover(any(Consumer.class));
+
+        replaceInstance(ConnectionParams.class, "mRequestType", mCp,
+                DcTracker.REQUEST_TYPE_HANDOVER);
+        assertTrue(mDc.isInactive());
+        connectEvent(false);
+
+        // Make sure the data connection is still in inactive state
+        assertTrue(mDc.isInactive());
     }
 }

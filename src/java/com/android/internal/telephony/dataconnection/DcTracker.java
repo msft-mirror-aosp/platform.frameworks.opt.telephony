@@ -352,6 +352,9 @@ public class DcTracker extends Handler {
     private boolean mNrSaSub6Unmetered = false;
     private boolean mNrNsaRoamingUnmetered = false;
 
+    // it effect the PhysicalLinkStateChanged
+    private boolean mLteEndcUsingUserDataForRrcDetection = false;
+
     // stats per data call recovery event
     private DataStallRecoveryStats mDataStallRecoveryStats;
 
@@ -1647,7 +1650,12 @@ public class DcTracker extends Handler {
             if (DBG) log(str.toString());
             apnContext.requestLog(str.toString());
             if (requestType == REQUEST_TYPE_HANDOVER) {
-                sendHandoverCompleteMessages(apnContext.getApnTypeBitmask(), false, false);
+                // If fails due to latest preference already changed back to source transport, then
+                // just fallback (will not attempt handover anymore, and will not tear down the
+                // data connection on source transport.
+                boolean fallback = dataConnectionReasons.contains(
+                        DataDisallowedReasonType.ON_OTHER_TRANSPORT);
+                sendHandoverCompleteMessages(apnContext.getApnTypeBitmask(), false, fallback);
             }
             return;
         }
@@ -2311,6 +2319,7 @@ public class DcTracker extends Handler {
         // TODO: It'd be nice to only do this if the changed entrie(s)
         // match the current operator.
         if (DBG) log("onApnChanged: createAllApnList and cleanUpAllConnections");
+        mDataThrottler.reset();
         setDefaultPreferredApnIfNeeded();
         createAllApnList();
         setDataProfilesAsNeeded();
@@ -3676,7 +3685,15 @@ public class DcTracker extends Handler {
             if (mPreferredApn.getOperatorNumeric().equals(operator)) {
                 if (mPreferredApn.canSupportNetworkType(
                         ServiceState.rilRadioTechnologyToNetworkType(radioTech))) {
-                    apnList.add(mPreferredApn);
+                    // Create a new instance of ApnSetting for ENTERPRISE because each
+                    // DataConnection should have its own ApnSetting. ENTERPRISE uses the same
+                    // APN as DEFAULT but is a separate DataConnection
+                    if (ApnSetting.getApnTypesBitmaskFromString(requestedApnType)
+                            == ApnSetting.TYPE_ENTERPRISE) {
+                        apnList.add(ApnSetting.makeApnSetting(mPreferredApn));
+                    } else {
+                        apnList.add(mPreferredApn);
+                    }
                     if (DBG) log("buildWaitingApns: X added preferred apnList=" + apnList);
                     return apnList;
                 }
@@ -3695,7 +3712,15 @@ public class DcTracker extends Handler {
                     if (apn.getApnSetId() == Telephony.Carriers.MATCH_ALL_APN_SET_ID
                             || preferredApnSetId == apn.getApnSetId()) {
                         if (VDBG) log("buildWaitingApns: adding apn=" + apn);
-                        apnList.add(apn);
+                        // Create a new instance of ApnSetting for ENTERPRISE because each
+                        // DataConnection should have its own ApnSetting. ENTERPRISE uses the same
+                        // APN as DEFAULT but is a separate DataConnection
+                        if (ApnSetting.getApnTypesBitmaskFromString(requestedApnType)
+                                == ApnSetting.TYPE_ENTERPRISE) {
+                            apnList.add(ApnSetting.makeApnSetting(apn));
+                        } else {
+                            apnList.add(apn);
+                        }
                     } else {
                         log("buildWaitingApns: APN set id " + apn.getApnSetId()
                                 + " does not match the preferred set id " + preferredApnSetId);
@@ -5575,13 +5600,21 @@ public class DcTracker extends Handler {
                         CarrierConfigManager.KEY_UNMETERED_NR_SA_SUB6_BOOL);
                 mNrNsaRoamingUnmetered = b.getBoolean(
                         CarrierConfigManager.KEY_UNMETERED_NR_NSA_WHEN_ROAMING_BOOL);
+                mLteEndcUsingUserDataForRrcDetection = b.getBoolean(
+                        CarrierConfigManager.KEY_LTE_ENDC_USING_USER_DATA_FOR_RRC_DETECTION_BOOL);
             }
         }
         updateLinkBandwidths(bandwidths, useLte);
     }
 
+    public boolean getLteEndcUsingUserDataForIdleDetection() {
+        return mLteEndcUsingUserDataForRrcDetection;
+    }
+
     /**
      * Register for physical link state (i.e. RRC state) changed event.
+     * if {@link CarrierConfigManager.KEY_LTE_ENDC_USING_USER_DATA_FOR_RRC_DETECTION_BOOL} is true,
+     * then physical link state is focusing on "internet data connection" instead of RRC state.
      *
      * @param h The handler
      * @param what The event

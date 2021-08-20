@@ -126,6 +126,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -257,6 +258,7 @@ public class GsmCdmaPhone extends Phone {
     private IccSmsInterfaceManager mIccSmsInterfaceManager;
 
     private boolean mResetModemOnRadioTechnologyChange = false;
+    private boolean mSsOverCdmaSupported = false;
 
     private int mRilVersion;
     private boolean mBroadcastEmergencyCallStateChanges = false;
@@ -1325,8 +1327,8 @@ public class GsmCdmaPhone extends Phone {
     }
 
     @Override
-    public Connection dial(String dialString, @NonNull DialArgs dialArgs)
-            throws CallStateException {
+    public Connection dial(String dialString, @NonNull DialArgs dialArgs,
+            Consumer<Phone> chosenPhoneConsumer) throws CallStateException {
         if (!isPhoneTypeGsm() && dialArgs.uusInfo != null) {
             throw new CallStateException("Sending UUS information NOT supported in CDMA!");
         }
@@ -1409,6 +1411,7 @@ public class GsmCdmaPhone extends Phone {
                 || useImsForEmergency) {
             try {
                 if (DBG) logd("Trying IMS PS call");
+                chosenPhoneConsumer.accept(imsPhone);
                 return imsPhone.dial(dialString, dialArgs);
             } catch (CallStateException e) {
                 if (DBG) logd("IMS PS call exception " + e +
@@ -1465,6 +1468,7 @@ public class GsmCdmaPhone extends Phone {
             mCi.testingEmergencyCall();
         }
 
+        chosenPhoneConsumer.accept(this);
         return dialInternal(dialString, dialArgs);
     }
 
@@ -2200,6 +2204,11 @@ public class GsmCdmaPhone extends Phone {
         return false;
     }
 
+    private void updateSsOverCdmaSupported(PersistableBundle b) {
+        if (b == null) return;
+        mSsOverCdmaSupported = b.getBoolean(CarrierConfigManager.KEY_SUPPORT_SS_OVER_CDMA_BOOL);
+    }
+
     @Override
     public boolean useSsOverIms(Message onComplete) {
         boolean isUtEnabled = isUtEnabled();
@@ -2240,8 +2249,16 @@ public class GsmCdmaPhone extends Phone {
                 mCi.queryCallForwardStatus(commandInterfaceCFReason, serviceClass, null, resp);
             }
         } else {
-            loge("getCallForwardingOption: not possible in CDMA, just return empty result");
-            AsyncResult.forMessage(onComplete, makeEmptyCallForward(), null);
+            if (!mSsOverCdmaSupported) {
+                // If SS over CDMA is not supported and UT is not at the time, notify the user of
+                // the error and disable the option.
+                AsyncResult.forMessage(onComplete, null,
+                        new CommandException(CommandException.Error.INVALID_STATE,
+                                "Call Forwarding over CDMA unavailable"));
+            } else {
+                loge("getCallForwardingOption: not possible in CDMA, just return empty result");
+                AsyncResult.forMessage(onComplete, makeEmptyCallForward(), null);
+            }
             onComplete.sendToTarget();
         }
     }
@@ -2289,7 +2306,7 @@ public class GsmCdmaPhone extends Phone {
                         timerSeconds,
                         resp);
             }
-        } else {
+        } else if (mSsOverCdmaSupported) {
             String formatNumber = GsmCdmaConnection.formatDialString(dialingNumber);
             String cfNumber = CdmaMmiCode.getCallForwardingPrefixAndNumber(
                     commandInterfaceCFAction, commandInterfaceCFReason, formatNumber);
@@ -2304,6 +2321,10 @@ public class GsmCdmaPhone extends Phone {
             telecomManager.placeCall(
                     Uri.fromParts(PhoneAccount.SCHEME_TEL, cfNumber, null), extras);
 
+            AsyncResult.forMessage(onComplete, CommandsInterface.SS_STATUS_UNKNOWN, null);
+            onComplete.sendToTarget();
+        } else {
+            loge("setCallForwardingOption: SS over CDMA not supported, can not complete");
             AsyncResult.forMessage(onComplete, CommandsInterface.SS_STATUS_UNKNOWN, null);
             onComplete.sendToTarget();
         }
@@ -2429,8 +2450,17 @@ public class GsmCdmaPhone extends Phone {
             //class parameter in call waiting interrogation  to network
             mCi.queryCallWaiting(CommandsInterface.SERVICE_CLASS_NONE, onComplete);
         } else {
-            int arr[] = {CommandsInterface.SS_STATUS_UNKNOWN, CommandsInterface.SERVICE_CLASS_NONE};
-            AsyncResult.forMessage(onComplete, arr, null);
+            if (!mSsOverCdmaSupported) {
+                // If SS over CDMA is not supported and UT is not at the time, notify the user of
+                // the error and disable the option.
+                AsyncResult.forMessage(onComplete, null,
+                        new CommandException(CommandException.Error.INVALID_STATE,
+                                "Call Waiting over CDMA unavailable"));
+            } else {
+                int[] arr =
+                        {CommandsInterface.SS_STATUS_UNKNOWN, CommandsInterface.SERVICE_CLASS_NONE};
+                AsyncResult.forMessage(onComplete, arr, null);
+            }
             onComplete.sendToTarget();
         }
     }
@@ -2458,7 +2488,7 @@ public class GsmCdmaPhone extends Phone {
 
         if (isPhoneTypeGsm()) {
             mCi.setCallWaiting(enable, serviceClass, onComplete);
-        } else {
+        } else if (mSsOverCdmaSupported) {
             String cwPrefix = CdmaMmiCode.getCallWaitingPrefix(enable);
             Rlog.i(LOG_TAG, "setCallWaiting in CDMA : dial for set call waiting" + " prefix= " + cwPrefix);
 
@@ -2470,6 +2500,10 @@ public class GsmCdmaPhone extends Phone {
             telecomManager.placeCall(
                     Uri.fromParts(PhoneAccount.SCHEME_TEL, cwPrefix, null), extras);
 
+            AsyncResult.forMessage(onComplete, CommandsInterface.SS_STATUS_UNKNOWN, null);
+            onComplete.sendToTarget();
+        } else {
+            loge("setCallWaiting: SS over CDMA not supported, can not complete");
             AsyncResult.forMessage(onComplete, CommandsInterface.SS_STATUS_UNKNOWN, null);
             onComplete.sendToTarget();
         }
@@ -2907,8 +2941,6 @@ public class GsmCdmaPhone extends Phone {
                 break;
 
             case EVENT_CARRIER_CONFIG_CHANGED:
-                // Obtain new radio capabilities from the modem, since some are SIM-dependent
-                mCi.getRadioCapability(obtainMessage(EVENT_GET_RADIO_CAPABILITY));
                 // Only check for the voice radio tech if it not going to be updated by the voice
                 // registration changes.
                 if (!mContext.getResources().getBoolean(
@@ -2926,8 +2958,10 @@ public class GsmCdmaPhone extends Phone {
                 updateCdmaRoamingSettingsAfterCarrierConfigChanged(b);
 
                 updateNrSettingsAfterCarrierConfigChanged(b);
+                updateSsOverCdmaSupported(b);
                 loadAllowedNetworksFromSubscriptionDatabase();
-                updateAllowedNetworkTypes(null);
+                // Obtain new radio capabilities from the modem, since some are SIM-dependent
+                mCi.getRadioCapability(obtainMessage(EVENT_GET_RADIO_CAPABILITY));
                 break;
 
             case EVENT_SET_ROAMING_PREFERENCE_DONE:

@@ -452,7 +452,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     private static final String ALLOWED_NETWORK_TYPES_TEXT_ENABLE_2G = "enable_2g";
     private static final int INVALID_ALLOWED_NETWORK_TYPES = -1;
     protected boolean mIsCarrierNrSupported = false;
-
+    protected boolean mIsAllowedNetworkTypesLoadedFromDb = false;
     private boolean mUnitTestMode;
     private CarrierPrivilegesTracker mCarrierPrivilegesTracker = null;
 
@@ -737,6 +737,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
                 break;
 
             case EVENT_INITIATE_SILENT_REDIAL:
+                // This is an ImsPhone -> GsmCdmaPhone redial
+                // See ImsPhone#initiateSilentRedial
                 Rlog.d(LOG_TAG, "Event EVENT_INITIATE_SILENT_REDIAL Received");
                 ar = (AsyncResult) msg.obj;
                 if ((ar.exception == null) && (ar.result != null)) {
@@ -747,6 +749,10 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
                     if (TextUtils.isEmpty(dialString)) return;
                     try {
                         Connection cn = dialInternal(dialString, dialArgs);
+                        // The ImsPhoneConnection that is owned by the ImsPhone is currently the
+                        // one with a callback registered to TelephonyConnection. Notify the
+                        // redial happened over that Phone so that it can be replaced with the
+                        // new GSM/CDMA Connection.
                         Rlog.d(LOG_TAG, "Notify redial connection changed cn: " + cn);
                         if (mImsPhone != null) {
                             // Don't care it is null or not.
@@ -2317,6 +2323,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         String result = SubscriptionController.getInstance().getSubscriptionProperty(
                 getSubId(),
                 SubscriptionManager.ALLOWED_NETWORK_TYPES);
+        // After fw load network type from DB, do unlock if subId is valid.
+        mIsAllowedNetworkTypesLoadedFromDb = SubscriptionManager.isValidSubscriptionId(getSubId());
         if (result == null) {
             return;
         }
@@ -2418,10 +2426,18 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         int subId = getSubId();
         if (!TelephonyManager.isValidAllowedNetworkTypesReason(reason)) {
             loge("setAllowedNetworkTypes: Invalid allowed network type reason: " + reason);
+            AsyncResult.forMessage(response, null,
+                    new CommandException(CommandException.Error.INVALID_ARGUMENTS));
+            response.sendToTarget();
             return;
         }
-        if (!SubscriptionManager.isUsableSubscriptionId(subId)) {
-            loge("setAllowedNetworkTypes: Invalid subscriptionId: " + subId);
+        if (!SubscriptionManager.isUsableSubscriptionId(subId)
+                || !mIsAllowedNetworkTypesLoadedFromDb) {
+            loge("setAllowedNetworkTypes: no sim or network type is not loaded. SubscriptionId: "
+                    + subId + ", isNetworkTypeLoaded" + mIsAllowedNetworkTypesLoadedFromDb);
+            AsyncResult.forMessage(response, null,
+                    new CommandException(CommandException.Error.MISSING_RESOURCE));
+            response.sendToTarget();
             return;
         }
         String mapAsString = "";
@@ -4247,8 +4263,9 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         Phone imsPhone = mImsPhone;
         if (imsPhone != null) {
             imsPhone.getImsRegistrationState(callback);
+        } else {
+            callback.accept(RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED);
         }
-        callback.accept(RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED);
     }
 
 
@@ -4371,7 +4388,9 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
     public void sendSubscriptionSettings(boolean restoreNetworkSelection) {
         // Send settings down
-        updateAllowedNetworkTypes(null);
+        if (mIsAllowedNetworkTypesLoadedFromDb) {
+            updateAllowedNetworkTypes(null);
+        }
 
         if (restoreNetworkSelection) {
             restoreSavedNetworkSelection(null);
@@ -5023,5 +5042,17 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
     private static String pii(String s) {
         return Rlog.pii(LOG_TAG, s);
+    }
+
+    /**
+     * Used in unit tests to set whether the AllowedNetworkTypes is loaded from Db.  Should not
+     * be used otherwise.
+     *
+     * @return {@code true} if the AllowedNetworkTypes is loaded from Db,
+     * {@code false} otherwise.
+     */
+    @VisibleForTesting
+    public boolean isAllowedNetworkTypesLoadedFromDb() {
+        return mIsAllowedNetworkTypesLoadedFromDb;
     }
 }
