@@ -343,10 +343,10 @@ public class EuiccController extends IEuiccController.Stub {
                     "Must have WRITE_EMBEDDED_SUBSCRIPTIONS to check if the country is supported");
         }
         if (mSupportedCountries == null || mSupportedCountries.isEmpty()) {
-            Log.i(TAG, "Using blacklist unsupportedCountries=" + mUnsupportedCountries);
+            Log.i(TAG, "Using deny list unsupportedCountries=" + mUnsupportedCountries);
             return !isEsimUnsupportedCountry(countryIso);
         } else {
-            Log.i(TAG, "Using whitelist supportedCountries=" + mSupportedCountries);
+            Log.i(TAG, "Using allow list supportedCountries=" + mSupportedCountries);
             return isEsimSupportedCountry(countryIso);
         }
     }
@@ -1293,7 +1293,10 @@ public class EuiccController extends IEuiccController.Stub {
                 confirmationCodeRetried);
         intent.putExtra(EXTRA_OPERATION, op);
         PendingIntent resolutionIntent = PendingIntent.getActivity(
-                mContext, 0 /* requestCode */, intent, PendingIntent.FLAG_ONE_SHOT);
+                mContext,
+                0 /* requestCode */,
+                intent,
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_MUTABLE);
         extrasIntent.putExtra(
                 EuiccManager.EXTRA_EMBEDDED_SUBSCRIPTION_RESOLUTION_INTENT, resolutionIntent);
     }
@@ -1535,8 +1538,13 @@ public class EuiccController extends IEuiccController.Stub {
 
             // There is no active subscription on the target SIM, checks whether the caller can
             // manage any active subscription on any other SIM.
-            return mTelephonyManager.checkCarrierPrivilegesForPackageAnyPhone(callingPackage)
+            final long token = Binder.clearCallingIdentity();
+            try {
+                return mTelephonyManager.checkCarrierPrivilegesForPackageAnyPhone(callingPackage)
                     == TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS;
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
         } else {
             for (SubscriptionInfo subInfo : subInfoList) {
                 if (subInfo.isEmbedded()

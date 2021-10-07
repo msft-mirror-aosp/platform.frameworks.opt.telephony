@@ -18,6 +18,7 @@ package com.android.internal.telephony.uicc;
 import static junit.framework.Assert.fail;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -60,6 +61,7 @@ public class UiccControllerTest extends TelephonyTest {
     private static final int ICC_CHANGED_EVENT = 0;
     private static final int EVENT_GET_ICC_STATUS_DONE = 3;
     private static final int EVENT_GET_SLOT_STATUS_DONE = 4;
+    private static final int EVENT_SIM_REFRESH = 8;
     private static final int EVENT_EID_READY = 9;
     @Mock
     private Handler mMockedHandler;
@@ -73,6 +75,8 @@ public class UiccControllerTest extends TelephonyTest {
     private UiccCard mMockCard;
     @Mock
     private EuiccCard mMockEuiccCard;
+    @Mock
+    private UiccProfile mMockProfile;
 
     private IccCardApplicationStatus composeUiccApplicationStatus(
             IccCardApplicationStatus.AppType appType,
@@ -630,5 +634,33 @@ public class UiccControllerTest extends TelephonyTest {
         // since EID is known and we've gotten card status, the default eUICC card ID should be set
         assertEquals(mUiccControllerUT.convertToPublicCardId(knownEidFromApdu),
                 mUiccControllerUT.getCardIdForDefaultEuicc());
+    }
+
+    @Test
+    public void testSlotStatusChanged() {
+        // simulate slot status loaded so that the UiccController sets the last slot status
+        IccSlotStatus iss1 = new IccSlotStatus();
+        iss1.setSlotState(1 /* active */);
+        iss1.eid = "eid1";
+        IccSlotStatus iss2 = new IccSlotStatus();
+        iss2.setSlotState(1 /* active */);
+        iss2.eid = "eid2";
+        ArrayList<IccSlotStatus> status = new ArrayList<IccSlotStatus>();
+        status.add(iss1);
+        status.add(iss2);
+        AsyncResult ar = new AsyncResult(null, status, null);
+        Message msg = Message.obtain(mUiccControllerUT, EVENT_GET_SLOT_STATUS_DONE, ar);
+        mUiccControllerUT.handleMessage(msg);
+        processAllMessages();
+
+        assertFalse(mUiccControllerUT.slotStatusChanged(status));
+
+        // change the order of the IccSlotStatus in the list
+        status = new ArrayList<>();
+        status.add(iss2);
+        status.add(iss1);
+
+        // status should be treated different from last status
+        assertTrue(mUiccControllerUT.slotStatusChanged(status));
     }
 }
