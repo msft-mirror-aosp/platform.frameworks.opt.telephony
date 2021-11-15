@@ -2897,6 +2897,33 @@ public class DcTrackerTest extends TelephonyTest {
     }
 
     @Test
+    public void testDataUnthrottledAfterAPNChanged() throws Exception {
+        initApns(ApnSetting.TYPE_IMS_STRING, new String[]{ApnSetting.TYPE_IMS_STRING});
+        replaceInstance(DcTracker.class, "mDataThrottler", mDct, mDataThrottler);
+
+        mDct.enableApn(ApnSetting.TYPE_IMS, DcTracker.REQUEST_TYPE_NORMAL, null);
+        sendInitializationEvents();
+        mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_APN_CHANGED, null));
+        waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
+
+        // Verify unthrottling
+        verify(mDataThrottler, times(2)).reset();
+    }
+
+    @Test
+    public void testDataUnthrottledOnSimStateChanged() throws Exception {
+        initApns(ApnSetting.TYPE_IMS_STRING, new String[]{ApnSetting.TYPE_IMS_STRING});
+        replaceInstance(DcTracker.class, "mDataThrottler", mDct, mDataThrottler);
+
+        mDct.enableApn(ApnSetting.TYPE_IMS, DcTracker.REQUEST_TYPE_NORMAL, null);
+        sendInitializationEvents();
+        sendSimStateUpdated("testDataUnthrottledOnSimStateChanged");
+
+        // Verify unthrottling
+        verify(mDataThrottler, times(2)).reset();
+    }
+
+    @Test
     public void testHandlingSecondHandoverRequest() throws Exception {
         initApns(ApnSetting.TYPE_IMS_STRING, new String[]{ApnSetting.TYPE_IMS_STRING});
         setUpDataConnection();
