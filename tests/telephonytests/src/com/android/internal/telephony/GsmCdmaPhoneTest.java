@@ -34,7 +34,6 @@ import static org.mockito.Matchers.anyLong;
 import static org.mockito.Matchers.nullable;
 import static org.mockito.Mockito.anyBoolean;
 import static org.mockito.Mockito.anyInt;
-import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
@@ -53,7 +52,6 @@ import android.content.SharedPreferences;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Message;
-import android.os.PersistableBundle;
 import android.os.Process;
 import android.os.WorkSource;
 import android.preference.PreferenceManager;
@@ -75,7 +73,6 @@ import android.testing.TestableLooper;
 
 import androidx.test.filters.FlakyTest;
 
-import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.test.SimulatedCommands;
 import com.android.internal.telephony.test.SimulatedCommandsVerifier;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus;
@@ -83,7 +80,6 @@ import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.IccRecords;
 import com.android.internal.telephony.uicc.IccVmNotSupportedException;
 import com.android.internal.telephony.uicc.UiccController;
-import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccProfile;
 import com.android.internal.telephony.uicc.UiccSlot;
 
@@ -103,13 +99,10 @@ import java.util.List;
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class GsmCdmaPhoneTest extends TelephonyTest {
-    private static final String TEST_EMERGENCY_NUMBER = "555";
     @Mock
     private Handler mTestHandler;
     @Mock
     private UiccSlot mUiccSlot;
-    @Mock
-    private UiccPort mUiccPort;
     @Mock
     private CommandsInterface mMockCi;
 
@@ -175,7 +168,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     public void testGetServiceState() {
         ServiceState serviceState = new ServiceState();
         mSST.mSS = serviceState;
-        doReturn(serviceState).when(mSST).getServiceState();
         assertEquals(serviceState, mPhoneUT.getServiceState());
     }
 
@@ -246,7 +238,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         serviceState.setIwlanPreferred(true);
 
         mSST.mSS = serviceState;
-        doReturn(serviceState).when(mSST).getServiceState();
         mPhoneUT.mSST = mSST;
 
         ServiceState mergedServiceState = mPhoneUT.getServiceState();
@@ -329,7 +320,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         serviceState.setIwlanPreferred(true);
 
         mSST.mSS = serviceState;
-        doReturn(serviceState).when(mSST).getServiceState();
         mPhoneUT.mSST = mSST;
 
         ServiceState mergedServiceState = mPhoneUT.getServiceState();
@@ -1398,8 +1388,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         // Have IccId defined. But expected value and current value are the same. So no RIL command
         // should be sent.
         String iccId = "Fake iccId";
-        doReturn(mUiccPort).when(mUiccController).getUiccPort(anyInt());
-        doReturn(iccId).when(mUiccPort).getIccId();
+        doReturn(iccId).when(mUiccSlot).getIccId();
         Message.obtain(mPhoneUT, EVENT_ICC_CHANGED, null).sendToTarget();
         processAllMessages();
         verify(mSubscriptionController).getSubInfoForIccId(iccId);
@@ -1413,9 +1402,8 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         // Set SIM to be present, with a fake iccId, and notify enablement being false.
         doReturn(mUiccSlot).when(mUiccController).getUiccSlotForPhone(anyInt());
         doReturn(IccCardStatus.CardState.CARDSTATE_PRESENT).when(mUiccSlot).getCardState();
-        doReturn(mUiccPort).when(mUiccController).getUiccPort(anyInt());
         String iccId = "Fake iccId";
-        doReturn(iccId).when(mUiccPort).getIccId();
+        doReturn(iccId).when(mUiccSlot).getIccId();
         Message.obtain(mPhoneUT, EVENT_UICC_APPS_ENABLEMENT_STATUS_CHANGED,
                 new AsyncResult(null, false, null)).sendToTarget();
         processAllMessages();
@@ -1466,9 +1454,8 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         // Set SIM to be present, with a fake iccId, and notify enablement being false.
         doReturn(mUiccSlot).when(mUiccController).getUiccSlotForPhone(anyInt());
         doReturn(IccCardStatus.CardState.CARDSTATE_PRESENT).when(mUiccSlot).getCardState();
-        doReturn(mUiccPort).when(mUiccController).getUiccPort(anyInt());
         String iccId = "Fake iccId";
-        doReturn(iccId).when(mUiccPort).getIccId();
+        doReturn(iccId).when(mUiccSlot).getIccId();
         Message.obtain(mPhoneUT, EVENT_UICC_APPS_ENABLEMENT_STATUS_CHANGED,
                 new AsyncResult(null, false, null)).sendToTarget();
         processAllMessages();
@@ -1573,9 +1560,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testEventCarrierConfigChanged() {
-        doReturn(null).when(mSubscriptionController).getSubscriptionProperty(anyInt(),
-                eq(SubscriptionManager.NR_ADVANCED_CALLING_ENABLED));
-
         mPhoneUT.mCi = mMockCi;
         mPhoneUT.sendMessage(mPhoneUT.obtainMessage(Phone.EVENT_CARRIER_CONFIG_CHANGED));
         processAllMessages();
@@ -1666,123 +1650,5 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         mPhoneUT.loadAllowedNetworksFromSubscriptionDatabase();
 
         assertEquals(false, mPhoneUT.isAllowedNetworkTypesLoadedFromDb());
-    }
-
-    /**
-     * Verifies that an emergency call placed on a SIM which does NOT explicitly define a number as
-     * an emergency call will still be placed as an emergency call.
-     * @throws CallStateException
-     */
-    @Test
-    public void testEmergencyCallAnySim() throws CallStateException {
-        setupEmergencyCallScenario(false /* USE_ONLY_DIALED_SIM_ECC_LIST */,
-                false /* isEmergencyOnDialedSim */);
-
-        ArgumentCaptor<PhoneInternalInterface.DialArgs> dialArgsArgumentCaptor =
-                ArgumentCaptor.forClass(PhoneInternalInterface.DialArgs.class);
-        mPhoneUT.dial(TEST_EMERGENCY_NUMBER, new ImsPhone.ImsDialArgs.Builder().build());
-
-        // Should have dialed out over IMS and should have specified that it is an emergency call
-        verify(mImsPhone).dial(anyString(), dialArgsArgumentCaptor.capture());
-        PhoneInternalInterface.DialArgs args = dialArgsArgumentCaptor.getValue();
-        assertTrue(args.isEmergency);
-    }
-
-    /**
-     * Tests the scenario where a number is dialed on a sim where it is NOT an emergency number,
-     * but it IS an emergency number based on {@link TelephonyManager#isEmergencyNumber(String)},
-     * and the carrier wants to ONLY use the dialed SIM's ECC list.
-     * @throws CallStateException
-     */
-    @Test
-    public void testNotEmergencyNumberOnDialedSim1() throws CallStateException {
-        setupEmergencyCallScenario(true /* USE_ONLY_DIALED_SIM_ECC_LIST */,
-                false /* isEmergencyOnDialedSim */);
-
-        ArgumentCaptor<PhoneInternalInterface.DialArgs> dialArgsArgumentCaptor =
-                ArgumentCaptor.forClass(PhoneInternalInterface.DialArgs.class);
-        mPhoneUT.dial(TEST_EMERGENCY_NUMBER, new ImsPhone.ImsDialArgs.Builder().build());
-
-        // Should have dialed out over IMS and should have specified that it is NOT an emergency
-        // call
-        verify(mImsPhone).dial(anyString(), dialArgsArgumentCaptor.capture());
-        PhoneInternalInterface.DialArgs args = dialArgsArgumentCaptor.getValue();
-        assertFalse(args.isEmergency);
-    }
-
-    /**
-     * Tests the scenario where a number is dialed on a sim where it is NOT an emergency number,
-     * but it IS an emergency number based on {@link TelephonyManager#isEmergencyNumber(String)},
-     * and the carrier wants to use the global ECC list.
-     * @throws CallStateException
-     */
-    @Test
-    public void testNotEmergencyNumberOnDialedSim2() throws CallStateException {
-        setupEmergencyCallScenario(false /* USE_ONLY_DIALED_SIM_ECC_LIST */,
-                false /* isEmergencyOnDialedSim */);
-
-        ArgumentCaptor<PhoneInternalInterface.DialArgs> dialArgsArgumentCaptor =
-                ArgumentCaptor.forClass(PhoneInternalInterface.DialArgs.class);
-        mPhoneUT.dial(TEST_EMERGENCY_NUMBER, new ImsPhone.ImsDialArgs.Builder().build());
-
-        // Should have dialed out over IMS and should have specified that it is an emergency call
-        verify(mImsPhone).dial(anyString(), dialArgsArgumentCaptor.capture());
-        PhoneInternalInterface.DialArgs args = dialArgsArgumentCaptor.getValue();
-        assertTrue(args.isEmergency);
-    }
-
-    private void setupEmergencyCallScenario(boolean isUsingOnlyDialedSim,
-            boolean isEmergencyPerDialedSim) {
-        PersistableBundle bundle = mContextFixture.getCarrierConfigBundle();
-        bundle.putBoolean(CarrierConfigManager.KEY_USE_ONLY_DIALED_SIM_ECC_LIST_BOOL,
-                isUsingOnlyDialedSim);
-        bundle.putBoolean(CarrierConfigManager.KEY_CARRIER_USE_IMS_FIRST_FOR_EMERGENCY_BOOL, true);
-        doReturn(true).when(mImsPhone).isImsAvailable();
-        doReturn(true).when(mImsManager).isVolteEnabledByPlatform();
-        doReturn(true).when(mImsManager).isEnhanced4gLteModeSettingEnabledByUser();
-        doReturn(true).when(mImsManager).isNonTtyOrTtyOnVolteEnabled();
-        doReturn(true).when(mImsPhone).isVoiceOverCellularImsEnabled();
-        ServiceState ss = mock(ServiceState.class);
-        doReturn(ServiceState.STATE_IN_SERVICE).when(ss).getState();
-        doReturn(ss).when(mImsPhone).getServiceState();
-
-        doReturn(true).when(mTelephonyManager).isEmergencyNumber(anyString());
-        doReturn(isEmergencyPerDialedSim).when(mEmergencyNumberTracker).isEmergencyNumber(
-                anyString(), anyBoolean());
-
-        mPhoneUT.setImsPhone(mImsPhone);
-    }
-
-    @Test
-    public void testSetVoiceServiceStateOverride() throws Exception {
-        // Start with CS voice and IMS both OOS, no override
-        ServiceState csServiceState = new ServiceState();
-        csServiceState.setStateOutOfService();
-        csServiceState.setDataRegState(ServiceState.STATE_IN_SERVICE);
-        doReturn(csServiceState).when(mSST).getServiceState();
-        ServiceState imsServiceState = new ServiceState();
-        imsServiceState.setStateOutOfService();
-        doReturn(imsServiceState).when(mImsPhone).getServiceState();
-        replaceInstance(Phone.class, "mImsPhone", mPhoneUT, mImsPhone);
-
-        assertEquals(ServiceState.STATE_OUT_OF_SERVICE, mPhoneUT.getServiceState().getState());
-
-        // Now set the telecom override
-        mPhoneUT.setVoiceServiceStateOverride(true);
-        verify(mSST).onTelecomVoiceServiceStateOverrideChanged();
-        assertEquals(ServiceState.STATE_IN_SERVICE, mPhoneUT.getServiceState().getState());
-
-        // IMS and telecom voice are treated as equivalent for merging purposes
-        imsServiceState.setVoiceRegState(ServiceState.STATE_IN_SERVICE);
-        assertEquals(ServiceState.STATE_IN_SERVICE, mPhoneUT.getServiceState().getState());
-
-        // Clearing the telecom override still lets IMS override separately
-        mPhoneUT.setVoiceServiceStateOverride(false);
-        verify(mSST, times(2)).onTelecomVoiceServiceStateOverrideChanged();
-        assertEquals(ServiceState.STATE_IN_SERVICE, mPhoneUT.getServiceState().getState());
-
-        // And now removing the IMS IN_SERVICE results in the base OOS showing through
-        imsServiceState.setStateOutOfService();
-        assertEquals(ServiceState.STATE_OUT_OF_SERVICE, mPhoneUT.getServiceState().getState());
     }
 }

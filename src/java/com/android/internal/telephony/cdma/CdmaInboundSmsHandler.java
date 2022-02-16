@@ -141,15 +141,13 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
                 sTestBroadcastReceiver = new CdmaCbTestBroadcastReceiver();
                 IntentFilter filter = new IntentFilter();
                 filter.addAction(TEST_ACTION);
-                context.registerReceiver(sTestBroadcastReceiver, filter,
-                        Context.RECEIVER_EXPORTED);
+                context.registerReceiver(sTestBroadcastReceiver, filter);
             }
             if (sTestScpBroadcastReceiver == null) {
                 sTestScpBroadcastReceiver = new CdmaScpTestBroadcastReceiver();
                 IntentFilter filter = new IntentFilter();
                 filter.addAction(SCP_TEST_ACTION);
-                context.registerReceiver(sTestScpBroadcastReceiver, filter,
-                        Context.RECEIVER_EXPORTED);
+                context.registerReceiver(sTestScpBroadcastReceiver, filter);
             }
         }
     }
