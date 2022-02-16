@@ -24,8 +24,7 @@ import static android.app.timezonedetector.TelephonyTimeZoneSuggestion.QUALITY_M
 import static android.app.timezonedetector.TelephonyTimeZoneSuggestion.QUALITY_MULTIPLE_ZONES_WITH_SAME_OFFSET;
 import static android.app.timezonedetector.TelephonyTimeZoneSuggestion.QUALITY_SINGLE_ZONE;
 
-import static com.android.internal.telephony.nitz.NitzStateMachineTestSupport.ARBITRARY_AGE;
-import static com.android.internal.telephony.nitz.NitzStateMachineTestSupport.ARBITRARY_ELAPSED_REALTIME;
+import static com.android.internal.telephony.nitz.NitzStateMachineTestSupport.ARBITRARY_REALTIME_MILLIS;
 import static com.android.internal.telephony.nitz.NitzStateMachineTestSupport.CZECHIA_SCENARIO;
 import static com.android.internal.telephony.nitz.NitzStateMachineTestSupport.NEW_ZEALAND_COUNTRY_DEFAULT_ZONE_ID;
 import static com.android.internal.telephony.nitz.NitzStateMachineTestSupport.NEW_ZEALAND_DEFAULT_SCENARIO;
@@ -41,9 +40,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import android.app.timezonedetector.TelephonyTimeZoneSuggestion;
+import android.os.TimestampedValue;
 
 import com.android.internal.telephony.NitzData;
-import com.android.internal.telephony.NitzSignal;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.nitz.NitzStateMachineImpl.TimeZoneSuggester;
 import com.android.internal.telephony.nitz.NitzStateMachineTestSupport.FakeDeviceState;
@@ -96,8 +95,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
     @Test
     public void test_emptySuggestionForNullCountryWithNitz() throws Exception {
         Scenario scenario = UNIQUE_US_ZONE_SCENARIO1;
-        NitzSignal nitzSignal =
-                scenario.createNitzSignal(ARBITRARY_ELAPSED_REALTIME, ARBITRARY_AGE);
+        TimestampedValue<NitzData> nitzSignal =
+                scenario.createNitzSignal(ARBITRARY_REALTIME_MILLIS);
         assertEquals(EMPTY_TIME_ZONE_SUGGESTION,
                 mTimeZoneSuggester.getTimeZoneSuggestion(
                         SLOT_INDEX, null /* countryIsoCode */, nitzSignal));
@@ -138,10 +137,9 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // NITZ with a "" country code is interpreted as a test network so only offset is used
         // to get a match.
         {
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, "" /* countryIsoCode */, nitzSignal);
+                    SLOT_INDEX, "" /* countryIsoCode */,
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(SLOT_INDEX, actualSuggestion.getSlotIndex());
             assertEquals(MATCH_TYPE_TEST_NETWORK_OFFSET_ONLY, actualSuggestion.getMatchType());
             assertEquals(QUALITY_MULTIPLE_ZONES_WITH_SAME_OFFSET, actualSuggestion.getQuality());
@@ -149,10 +147,9 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
 
         // NITZ alone is not enough to get a result when the country is not available.
         {
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, null /* countryIsoCode */, nitzSignal);
+                    SLOT_INDEX, null /* countryIsoCode */,
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(EMPTY_TIME_ZONE_SUGGESTION, actualSuggestion);
         }
 
@@ -164,10 +161,9 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
                             .setMatchType(MATCH_TYPE_NETWORK_COUNTRY_AND_OFFSET)
                             .setQuality(QUALITY_SINGLE_ZONE)
                             .build();
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(), nitzSignal);
+                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(),
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(expectedTimeZoneSuggestion, actualSuggestion);
         }
 
@@ -175,11 +171,12 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // since there are multiple zones to choose from.
         {
             // We use an NITZ from CZ to generate an NITZ signal with a bad offset.
-            NitzSignal badNitzSignal = CZECHIA_SCENARIO.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> badNitzSignal =
+                    CZECHIA_SCENARIO.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedTimeZoneSuggestion = EMPTY_TIME_ZONE_SUGGESTION;
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(), badNitzSignal);
+                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(),
+                    badNitzSignal);
             assertEquals(expectedTimeZoneSuggestion, actualSuggestion);
         }
     }
@@ -212,10 +209,9 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // NITZ with a "" country code is interpreted as a test network so only offset is used
         // to get a match.
         {
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, "" /* countryIsoCode */, nitzSignal);
+                    SLOT_INDEX, "" /* countryIsoCode */,
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(SLOT_INDEX, actualSuggestion.getSlotIndex());
             assertEquals(MATCH_TYPE_TEST_NETWORK_OFFSET_ONLY, actualSuggestion.getMatchType());
             assertEquals(QUALITY_MULTIPLE_ZONES_WITH_SAME_OFFSET, actualSuggestion.getQuality());
@@ -223,19 +219,17 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
 
         // NITZ alone is not enough to get a result when the country is not available.
         {
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, null /* countryIsoCode */, nitzSignal);
+                    SLOT_INDEX, null /* countryIsoCode */,
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(EMPTY_TIME_ZONE_SUGGESTION, actualSuggestion);
         }
 
         // Country + NITZ is not enough for a unique time zone detection result for this scenario.
         {
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(), nitzSignal);
+                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(),
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(SLOT_INDEX, actualSuggestion.getSlotIndex());
             assertEquals(MATCH_TYPE_NETWORK_COUNTRY_AND_OFFSET, actualSuggestion.getMatchType());
             assertEquals(QUALITY_MULTIPLE_ZONES_WITH_SAME_OFFSET, actualSuggestion.getQuality());
@@ -247,11 +241,12 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // since there are multiple zones to choose from.
         {
             // We use an NITZ from CZ to generate an NITZ signal with a bad offset.
-            NitzSignal badNitzSignal = CZECHIA_SCENARIO.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> badNitzSignal =
+                    CZECHIA_SCENARIO.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedTimeZoneSuggestion = EMPTY_TIME_ZONE_SUGGESTION;
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(), badNitzSignal);
+                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(),
+                    badNitzSignal);
             assertEquals(expectedTimeZoneSuggestion, actualSuggestion);
         }
     }
@@ -283,10 +278,9 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // NITZ with a "" country code is interpreted as a test network so only offset is used
         // to get a match.
         {
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, "" /* countryIsoCode */, nitzSignal);
+                    SLOT_INDEX, "" /* countryIsoCode */,
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(SLOT_INDEX, actualSuggestion.getSlotIndex());
             assertEquals(MATCH_TYPE_TEST_NETWORK_OFFSET_ONLY, actualSuggestion.getMatchType());
             assertEquals(QUALITY_MULTIPLE_ZONES_WITH_SAME_OFFSET, actualSuggestion.getQuality());
@@ -295,10 +289,9 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
 
         // NITZ alone is not enough to get a result when the country is not available.
         {
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, null /* countryIsoCode */, nitzSignal);
+                    SLOT_INDEX, null /* countryIsoCode */,
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(EMPTY_TIME_ZONE_SUGGESTION, actualSuggestion);
         }
 
@@ -311,10 +304,9 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
                             .setQuality(QUALITY_SINGLE_ZONE)
                             .build();
 
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(), nitzSignal);
+                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(),
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(expectedTimeZoneSuggestion, actualSuggestion);
         }
 
@@ -322,8 +314,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // there's only one zone.
         {
             // We use an NITZ from Czechia to generate an NITZ signal with a bad offset.
-            NitzSignal badNitzSignal = CZECHIA_SCENARIO.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> badNitzSignal =
+                    CZECHIA_SCENARIO.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedTimeZoneSuggestion =
                     new TelephonyTimeZoneSuggestion.Builder(SLOT_INDEX)
                             .setZoneId(scenario.getTimeZoneId())
@@ -332,7 +324,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
                             .build();
 
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(), badNitzSignal);
+                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(),
+                    badNitzSignal);
             assertEquals(expectedTimeZoneSuggestion, actualSuggestion);
         }
     }
@@ -363,22 +356,21 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // NITZ with a "" country code is interpreted as a test network so only offset is used
         // to get a match.
         {
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion =
                     mTimeZoneSuggester.getTimeZoneSuggestion(
-                            SLOT_INDEX, "" /* countryIsoCode */, nitzSignal);
+                            SLOT_INDEX, "" /* countryIsoCode */,
+                            scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(SLOT_INDEX, actualSuggestion.getSlotIndex());
             assertEquals(MATCH_TYPE_TEST_NETWORK_OFFSET_ONLY, actualSuggestion.getMatchType());
             assertEquals(QUALITY_MULTIPLE_ZONES_WITH_SAME_OFFSET, actualSuggestion.getQuality());
+
         }
 
         // NITZ alone is not enough to get a result when the country is not available.
         {
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, null /* countryIsoCode */, nitzSignal);
+                    SLOT_INDEX, null /* countryIsoCode */,
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(EMPTY_TIME_ZONE_SUGGESTION, actualSuggestion);
         }
 
@@ -391,10 +383,9 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
                             .setQuality(QUALITY_SINGLE_ZONE)
                             .build();
 
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(), nitzSignal);
+                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(),
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime()));
             assertEquals(expectedTimeZoneSuggestion, actualSuggestion);
         }
 
@@ -402,8 +393,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // there's only one zone.
         {
             // We use an NITZ from the US to generate an NITZ signal with a bad offset.
-            NitzSignal badNitzSignal = UNIQUE_US_ZONE_SCENARIO1.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> badNitzSignal =
+                    UNIQUE_US_ZONE_SCENARIO1.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedTimeZoneSuggestion =
                     new TelephonyTimeZoneSuggestion.Builder(SLOT_INDEX)
                             .setZoneId(scenario.getTimeZoneId())
@@ -412,7 +403,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
                             .build();
 
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
-                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(), badNitzSignal);
+                    SLOT_INDEX, scenario.getNetworkCountryIsoCode(),
+                    badNitzSignal);
             assertEquals(expectedTimeZoneSuggestion, actualSuggestion);
         }
     }
@@ -438,15 +430,14 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // NITZ + bogus NITZ is not enough to get a result.
         {
             // Create a corrupted NITZ signal, where the offset information has been lost.
-            NitzSignal goodNitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> goodNitzSignal =
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             NitzData bogusNitzData = NitzData.createForTests(
                     0 /* UTC! */, null /* dstOffsetMillis */,
-                    goodNitzSignal.getNitzData().getCurrentTimeInMillis(),
+                    goodNitzSignal.getValue().getCurrentTimeInMillis(),
                     null /* emulatorHostTimeZone */);
-            NitzSignal badNitzSignal = new NitzSignal(
-                    goodNitzSignal.getReceiptElapsedRealtimeMillis(), bogusNitzData,
-                    goodNitzSignal.getAgeMillis());
+            TimestampedValue<NitzData> badNitzSignal = new TimestampedValue<>(
+                    goodNitzSignal.getReferenceTimeMillis(), bogusNitzData);
 
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
                     SLOT_INDEX, scenario.getNetworkCountryIsoCode(), badNitzSignal);
@@ -475,15 +466,14 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // NITZ + bogus NITZ is not enough to get a result.
         {
             // Create a corrupted NITZ signal, where the offset information has been lost.
-            NitzSignal goodNitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> goodNitzSignal =
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             NitzData bogusNitzData = NitzData.createForTests(
                     0 /* UTC! */, null /* dstOffsetMillis */,
-                    goodNitzSignal.getNitzData().getCurrentTimeInMillis(),
+                    goodNitzSignal.getValue().getCurrentTimeInMillis(),
                     null /* emulatorHostTimeZone */);
-            NitzSignal badNitzSignal = new NitzSignal(
-                    goodNitzSignal.getReceiptElapsedRealtimeMillis(), bogusNitzData,
-                    goodNitzSignal.getAgeMillis());
+            TimestampedValue<NitzData> badNitzSignal = new TimestampedValue<>(
+                    goodNitzSignal.getReferenceTimeMillis(), bogusNitzData);
 
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
                     SLOT_INDEX, scenario.getNetworkCountryIsoCode(), badNitzSignal);
@@ -495,11 +485,11 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
     public void test_emulatorNitzExtensionUsedForTimeZone() throws Exception {
         Scenario scenario = UNIQUE_US_ZONE_SCENARIO1;
 
-        NitzSignal originalNitzSignal = scenario.createNitzSignal(
-                mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+        TimestampedValue<NitzData> originalNitzSignal =
+                scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime());
 
         // Create an NITZ signal with an explicit time zone (as can happen on emulators).
-        NitzData originalNitzData = originalNitzSignal.getNitzData();
+        NitzData originalNitzData = originalNitzSignal.getValue();
 
         // A time zone that is obviously not in the US, but because the explicit value is present it
         // should not be questioned.
@@ -509,9 +499,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
                 originalNitzData.getDstAdjustmentMillis(),
                 originalNitzData.getCurrentTimeInMillis(),
                 java.util.TimeZone.getTimeZone(emulatorTimeZoneId) /* emulatorHostTimeZone */);
-        NitzSignal emulatorNitzSignal = new NitzSignal(
-                originalNitzSignal.getReceiptElapsedRealtimeMillis(), emulatorNitzData,
-                originalNitzSignal.getAgeMillis());
+        TimestampedValue<NitzData> emulatorNitzSignal = new TimestampedValue<>(
+                originalNitzSignal.getReferenceTimeMillis(), emulatorNitzData);
 
         TelephonyTimeZoneSuggestion expectedTimeZoneSuggestion =
                 new TelephonyTimeZoneSuggestion.Builder(SLOT_INDEX)
@@ -546,8 +535,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // Confirm what happens when NITZ is correct for the country default.
         {
             Scenario scenario = NEW_ZEALAND_DEFAULT_SCENARIO;
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> nitzSignal =
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedSuggestion =
                     new TelephonyTimeZoneSuggestion.Builder(SLOT_INDEX)
                             .setZoneId(scenario.getTimeZoneId())
@@ -563,8 +552,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // A valid NITZ signal for the non-default zone should still be correctly detected.
         {
             Scenario scenario = NEW_ZEALAND_OTHER_SCENARIO;
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> nitzSignal =
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedSuggestion =
                     new TelephonyTimeZoneSuggestion.Builder(SLOT_INDEX)
                             .setZoneId(scenario.getTimeZoneId())
@@ -582,8 +571,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         {
             Scenario scenario = NEW_ZEALAND_DEFAULT_SCENARIO;
             // Use a scenario that has a different offset than NZ to generate the NITZ signal.
-            NitzSignal nitzSignal = CZECHIA_SCENARIO.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> nitzSignal =
+                    CZECHIA_SCENARIO.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedSuggestion =
                     new TelephonyTimeZoneSuggestion.Builder(SLOT_INDEX)
                             .setZoneId(NEW_ZEALAND_COUNTRY_DEFAULT_ZONE_ID)
@@ -618,8 +607,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // Confirm what happens when NITZ is correct for the country default.
         {
             Scenario scenario = UNIQUE_US_ZONE_SCENARIO1;
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> nitzSignal =
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedSuggestion =
                     new TelephonyTimeZoneSuggestion.Builder(SLOT_INDEX)
                             .setZoneId(scenario.getTimeZoneId())
@@ -635,8 +624,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
         // A valid NITZ signal for the non-default zone should still be correctly detected.
         {
             Scenario scenario = UNIQUE_US_ZONE_SCENARIO2;
-            NitzSignal nitzSignal = scenario.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> nitzSignal =
+                    scenario.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedSuggestion =
                     new TelephonyTimeZoneSuggestion.Builder(SLOT_INDEX)
                             .setZoneId(scenario.getTimeZoneId())
@@ -655,8 +644,8 @@ public class TimeZoneSuggesterImplTest extends TelephonyTest {
             // A scenario that has a different offset than US.
             Scenario scenario = UNIQUE_US_ZONE_SCENARIO1;
             // Use a scenario that has a different offset than the US to generate the NITZ signal.
-            NitzSignal nitzSignal = CZECHIA_SCENARIO.createNitzSignal(
-                    mFakeDeviceState.elapsedRealtimeMillis(), ARBITRARY_AGE);
+            TimestampedValue<NitzData> nitzSignal =
+                    CZECHIA_SCENARIO.createNitzSignal(mFakeDeviceState.elapsedRealtime());
             TelephonyTimeZoneSuggestion expectedSuggestion = EMPTY_TIME_ZONE_SUGGESTION;
             TelephonyTimeZoneSuggestion actualSuggestion = mTimeZoneSuggester.getTimeZoneSuggestion(
                     SLOT_INDEX, scenario.getNetworkCountryIsoCode(), nitzSignal);

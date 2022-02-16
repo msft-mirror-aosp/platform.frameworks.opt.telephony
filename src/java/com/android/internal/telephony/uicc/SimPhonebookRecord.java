@@ -17,13 +17,14 @@
 package com.android.internal.telephony.uicc;
 
 import android.hardware.radio.V1_6.PhonebookRecordInfo;
-import android.telephony.PhoneNumberUtils;
 import android.text.TextUtils;
+import android.telephony.PhoneNumberUtils;
+import android.telephony.Rlog;
 
 import com.android.internal.telephony.util.ArrayUtils;
 
 import java.util.Arrays;
-import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Represents a Phonebook entry from the SIM.
@@ -32,49 +33,50 @@ import java.util.ArrayList;
  */
 public class SimPhonebookRecord {
     // Instance variables
-    private int mRecordId = 0;
+    private int mRecordIndex = 0;
     private String mAlphaTag;
     private String mNumber;
     private String[] mEmails;
     private String[] mAdditionalNumbers;
 
     // Instance methods
-    public SimPhonebookRecord (int recordId, String alphaTag, String number,
+    public SimPhonebookRecord (int recordIndex, String alphaTag, String number,
                String[] emails, String[] adNumbers) {
-        mRecordId = recordId;
+        mRecordIndex = recordIndex;
         mAlphaTag = alphaTag;
         mNumber = convertRecordFormatToNumber(number);
         mEmails = emails;
         if (adNumbers != null) {
             mAdditionalNumbers = new String[adNumbers.length];
             for (int i = 0 ; i < adNumbers.length; i++) {
-                mAdditionalNumbers[i] = convertRecordFormatToNumber(adNumbers[i]);
+                mAdditionalNumbers[i] =
+                        convertRecordFormatToNumber(adNumbers[i]);
             }
         }
     }
 
     public SimPhonebookRecord(PhonebookRecordInfo recInfo) {
-        if (recInfo != null) {
-            mRecordId = recInfo.recordId;
-            mAlphaTag = recInfo.name;
-            mNumber = recInfo.number;
-            mEmails = recInfo.emails == null ? null
-                    : recInfo.emails.toArray(new String[recInfo.emails.size()]);
-            mAdditionalNumbers = recInfo.additionalNumbers == null ? null
-                    : recInfo.additionalNumbers.toArray(
-                            new String[recInfo.additionalNumbers.size()]);
-        }
+        mRecordIndex = recInfo.recordId;
+        mAlphaTag = recInfo.name;
+        mNumber = recInfo.number;
+        mEmails = recInfo.emails == null ? null
+                : recInfo.emails.toArray(new String[recInfo.emails.size()]);
+        mAdditionalNumbers = recInfo.additionalNumbers == null ? null
+                : recInfo.additionalNumbers.toArray(
+                        new String[recInfo.additionalNumbers.size()]);
     }
 
     public SimPhonebookRecord() {}
 
     public PhonebookRecordInfo toPhonebookRecordInfo() {
         PhonebookRecordInfo pbRecordInfo = new PhonebookRecordInfo();
-        pbRecordInfo.recordId = mRecordId;
+        pbRecordInfo.recordId = mRecordIndex;
         pbRecordInfo.name = convertNullToEmptyString(mAlphaTag);
         pbRecordInfo.number = convertNullToEmptyString(convertNumberToRecordFormat(mNumber));
         if (mEmails != null) {
-            pbRecordInfo.emails = new ArrayList<>(Arrays.asList(mEmails));
+            for (String email : mEmails) {
+                pbRecordInfo.emails.add(email);
+            }
         }
         if (mAdditionalNumbers != null) {
             for (String addNum : mAdditionalNumbers) {
@@ -83,28 +85,8 @@ public class SimPhonebookRecord {
         }
         return pbRecordInfo;
     }
-
-    public android.hardware.radio.sim.PhonebookRecordInfo toPhonebookRecordInfoAidl() {
-        android.hardware.radio.sim.PhonebookRecordInfo pbRecordInfo =
-                new android.hardware.radio.sim.PhonebookRecordInfo();
-        pbRecordInfo.recordId = mRecordId;
-        pbRecordInfo.name = convertNullToEmptyString(mAlphaTag);
-        pbRecordInfo.number = convertNullToEmptyString(convertNumberToRecordFormat(mNumber));
-        if (mEmails != null) {
-            pbRecordInfo.emails = mEmails;
-        }
-        if (mAdditionalNumbers != null) {
-            String[] additionalNumbers = new String[mAdditionalNumbers.length];
-            for (int i = 0; i < additionalNumbers.length; i++) {
-                additionalNumbers[i] = convertNumberToRecordFormat(mAdditionalNumbers[i]);
-            }
-            pbRecordInfo.additionalNumbers = additionalNumbers;
-        }
-        return pbRecordInfo;
-    }
-
-    public int getRecordId() {
-        return mRecordId;
+    public int getRecordIndex() {
+        return mRecordIndex;
     }
 
     public String getAlphaTag() {
@@ -123,34 +105,27 @@ public class SimPhonebookRecord {
         return mAdditionalNumbers;
     }
 
-    /** Convert null to an empty String */
-    private String convertNullToEmptyString(String str) {
-        return str != null ? str : "";
+    /**
+     * convert phone number in the SIM phonebook record format to GSM pause/wild/wait character
+     */
+    private static String convertRecordFormatToNumber(String input) {
+        return input == null ? null : input.replace( 'e', PhoneNumberUtils.WAIT )
+                .replace( 'T', PhoneNumberUtils.PAUSE )
+                .replace( '?', PhoneNumberUtils.WILD );
     }
 
     /**
-     * Convert the SIM PhonebookRecordInfo number to the GSM pause/wild/wait number
-     * @param input the SIM PhonebookRecordInfo number
-     * @return The converted GSM pause/wild/wait number
+     * convert the GSM pause/wild/wait character to the phone number in the SIM pb record format
      */
-    private String convertRecordFormatToNumber(String input) {
-        return input == null ? null : input.replace('e', PhoneNumberUtils.WAIT)
-                .replace('T', PhoneNumberUtils.PAUSE)
-                .replace('?', PhoneNumberUtils.WILD);
-    }
-
-    /**
-     * Convert the GSM pause/wild/wait characters to the phone number in the SIM PhonebookRecordInfo
-     * number format
-     * @param input GSM pause/wild/wait character
-     * @return The converted PhonebookRecordInfo number
-     */
-    private String convertNumberToRecordFormat(String input) {
+    private static String convertNumberToRecordFormat(String input) {
         return input == null ? null : input.replace(PhoneNumberUtils.WAIT, 'e')
                 .replace(PhoneNumberUtils.PAUSE, 'T')
                 .replace(PhoneNumberUtils.WILD, '?');
     }
 
+    private static String convertNullToEmptyString(String string) {
+        return string != null ? string : "";
+    }
 
     public boolean isEmpty() {
         return TextUtils.isEmpty(mAlphaTag)
@@ -162,8 +137,8 @@ public class SimPhonebookRecord {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append("SimPhoneBookRecord{").append("ID =")
-                .append(mRecordId).append(", name = ")
+        sb.append("SimPhoneBookRecord{").append("index =")
+                .append(mRecordIndex).append(", name = ")
                 .append(mAlphaTag == null ? "null" : mAlphaTag)
                 .append(", number = ").append(mNumber == null ? "null" : mNumber)
                 .append(", email count = ").append(mEmails == null ? 0 : mEmails.length)
@@ -176,7 +151,7 @@ public class SimPhonebookRecord {
     }
 
     public final static class Builder {
-        private int mRecordId = 0;
+        private int mRecordIndex = 0;
         private String mAlphaTag = null;
         private String mNumber = null;
         private String[] mEmails;
@@ -185,7 +160,7 @@ public class SimPhonebookRecord {
         public SimPhonebookRecord build() {
             SimPhonebookRecord record = new SimPhonebookRecord();
             record.mAlphaTag = mAlphaTag;
-            record.mRecordId = mRecordId;
+            record.mRecordIndex = mRecordIndex;
             record.mNumber = mNumber;
             if (mEmails != null) {
                 record.mEmails = mEmails;
@@ -196,8 +171,8 @@ public class SimPhonebookRecord {
             return record;
         }
 
-        public Builder setRecordId(int recordId) {
-            mRecordId = recordId;
+        public Builder setRecordIndex(int index) {
+            mRecordIndex = index;
             return this;
         }
 
