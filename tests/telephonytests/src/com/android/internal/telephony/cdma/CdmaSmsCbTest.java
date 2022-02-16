@@ -26,7 +26,6 @@ import android.test.suitebuilder.annotation.SmallTest;
 import androidx.test.filters.FlakyTest;
 
 import com.android.internal.telephony.GsmAlphabet;
-import com.android.internal.telephony.RILUtils;
 import com.android.internal.telephony.cdma.sms.BearerData;
 import com.android.internal.telephony.cdma.sms.CdmaSmsAddress;
 import com.android.internal.telephony.cdma.sms.SmsEnvelope;
@@ -121,7 +120,7 @@ public class CdmaSmsCbTest extends AndroidTestCase {
         for (byte b : bearerData) {
             msg.bearerData.add(b);
         }
-        SmsMessage message = RILUtils.convertHalCdmaSmsMessage(msg);
+        SmsMessage message = SmsMessageConverter.newCdmaSmsMessageFromRil(msg);
         return message;
     }
 

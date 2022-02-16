@@ -35,6 +35,7 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -101,7 +102,6 @@ import com.android.internal.telephony.ISub;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.RetryManager;
 import com.android.internal.telephony.TelephonyTest;
-import com.android.internal.telephony.data.CellularDataService;
 import com.android.internal.telephony.dataconnection.DataConnectionReasons.DataDisallowedReasonType;
 
 import org.junit.After;
@@ -234,16 +234,12 @@ public class DcTrackerTest extends TelephonyTest {
                 Telephony.Carriers.WAIT_TIME_RETRY,
                 Telephony.Carriers.TIME_LIMIT_FOR_MAX_CONNECTIONS,
                 Telephony.Carriers.MTU,
-                Telephony.Carriers.MTU_V4,
-                Telephony.Carriers.MTU_V6,
                 Telephony.Carriers.MVNO_TYPE,
                 Telephony.Carriers.MVNO_MATCH_DATA,
                 Telephony.Carriers.NETWORK_TYPE_BITMASK,
-                Telephony.Carriers.LINGERING_NETWORK_TYPE_BITMASK,
                 Telephony.Carriers.APN_SET_ID,
                 Telephony.Carriers.CARRIER_ID,
-                Telephony.Carriers.SKIP_464XLAT,
-                Telephony.Carriers.ALWAYS_ON
+                Telephony.Carriers.SKIP_464XLAT
         };
 
         private int mPreferredApnSet = 0;
@@ -304,16 +300,12 @@ public class DcTrackerTest extends TelephonyTest {
                     0,                      // wait_time
                     0,                      // max_conns_time
                     0,                      // mtu
-                    0,                      // mtu_v4
-                    0,                      // mtu_v6
                     "",                     // mvno_type
                     "",                     // mnvo_match_data
                     mFakeApn1Bitmask,       // network_type_bitmask
-                    0,                      // lingering_network_type_bitmask
                     0,                      // apn_set_id
                     -1,                     // carrier_id
-                    -1,                     // skip_464xlat
-                    0                       // always_on
+                    -1                      // skip_464xlat
             };
         }
 
@@ -343,16 +335,12 @@ public class DcTrackerTest extends TelephonyTest {
                     0,                      // wait_time
                     0,                      // max_conns_time
                     0,                      // mtu
-                    0,                      // mtu_v4
-                    0,                      // mtu_v6
                     "",                     // mvno_type
                     "",                     // mnvo_match_data
                     NETWORK_TYPE_LTE_BITMASK, // network_type_bitmask
-                    0,                      // lingering_network_type_bitmask
                     0,                      // apn_set_id
                     -1,                     // carrier_id
-                    -1,                     // skip_464xlat
-                    0                       // always_on
+                    -1                      // skip_464xlat
             };
         }
 
@@ -376,22 +364,18 @@ public class DcTrackerTest extends TelephonyTest {
                     1,                      // carrier_enabled
                     0,                      // bearer
                     0,                      // bearer_bitmask
-                    2,                      // profile_id
+                    0,                      // profile_id
                     1,                      // modem_cognitive
                     0,                      // max_conns
                     0,                      // wait_time
                     0,                      // max_conns_time
                     0,                      // mtu
-                    0,                      // mtu_v4
-                    0,                      // mtu_v6
                     "",                     // mvno_type
                     "",                     // mnvo_match_data
                     0,                      // network_type_bitmask
-                    0,                      // lingering_network_type_bitmask
                     0,                      // apn_set_id
                     -1,                     // carrier_id
-                    -1,                     // skip_464xlat
-                    0                       // always_on
+                    -1                      // skip_464xlat
             };
         }
 
@@ -421,16 +405,12 @@ public class DcTrackerTest extends TelephonyTest {
                     0,                      // wait_time
                     0,                      // max_conns_time
                     0,                      // mtu
-                    0,                      // mtu_v4
-                    0,                      // mtu_v6
                     "",                     // mvno_type
                     "",                     // mnvo_match_data
                     NETWORK_TYPE_EHRPD_BITMASK, // network_type_bitmask
-                    0,                      // lingering_network_type_bitmask
                     0,                      // apn_set_id
                     -1,                     // carrier_id
-                    -1,                     // skip_464xlat
-                    0                       // always_on
+                    -1                      // skip_464xlat
             };
         }
 
@@ -460,16 +440,12 @@ public class DcTrackerTest extends TelephonyTest {
                     0,                      // wait_time
                     0,                      // max_conns_time
                     0,                      // mtu
-                    0,                      // mtu_v4
-                    0,                      // mtu_v6
                     "",                     // mvno_type
                     "",                     // mnvo_match_data
                     0,                      // network_type_bitmask
-                    0,                      // lingering_network_type_bitmask
                     0,                      // apn_set_id
                     -1,                     // carrier_id
-                    -1,                     // skip_464xlat
-                    0                       // always_on
+                    -1                      // skip_464xlat
             };
         }
 
@@ -499,16 +475,12 @@ public class DcTrackerTest extends TelephonyTest {
                     0,                      // wait_time
                     0,                      // max_conns_time
                     0,                      // mtu
-                    0,                      // mtu_v4
-                    0,                      // mtu_v6
                     "",                     // mvno_type
                     "",                     // mnvo_match_data
                     NETWORK_TYPE_LTE_BITMASK, // network_type_bitmask
-                    0,                      // lingering_network_type_bitmask
                     0,                      // apn_set_id
                     -1,                     // carrier_id
-                    -1,                     // skip_464xlat
-                    0                       // always_on
+                    -1                      // skip_464xlat
             };
         }
 
@@ -538,16 +510,12 @@ public class DcTrackerTest extends TelephonyTest {
                     0,                      // wait_time
                     0,                      // max_conns_time
                     0,                      // mtu
-                    0,                      // mtu_v4
-                    0,                      // mtu_v6
                     "",                     // mvno_type
                     "",                     // mnvo_match_data
                     NETWORK_TYPE_LTE_BITMASK,  // network_type_bitmask
-                    0,                      // lingering_network_type_bitmask
                     1,                      // apn_set_id
                     -1,                     // carrier_id
-                    -1,                     // skip_464xlat
-                    0                       // always_on
+                    -1                      // skip_464xlat
             };
         }
 
@@ -571,22 +539,18 @@ public class DcTrackerTest extends TelephonyTest {
                     1,                      // carrier_enabled
                     ServiceState.RIL_RADIO_TECHNOLOGY_LTE, // bearer
                     0,                      // bearer_bitmask
-                    2,                      // profile_id
+                    0,                      // profile_id
                     1,                      // modem_cognitive
                     0,                      // max_conns
                     0,                      // wait_time
                     0,                      // max_conns_time
                     0,                      // mtu
-                    0,                      // mtu_v4
-                    0,                      // mtu_v6
                     "",                     // mvno_type
                     "",                     // mnvo_match_data
-                    NETWORK_TYPE_LTE_BITMASK, // network_type_bitmask
-                    0,                      // lingering_network_type_bitmask
-                    -1,                     // apn_set_id
+                    NETWORK_TYPE_LTE_BITMASK,  // network_type_bitmask
+                    -1,                      // apn_set_id
                     -1,                     // carrier_id
-                    -1,                     // skip_464xlat
-                    0                       // always_on
+                    -1                      // skip_464xlat
             };
         }
 
@@ -616,16 +580,12 @@ public class DcTrackerTest extends TelephonyTest {
                     0,                      // wait_time
                     0,                      // max_conns_time
                     0,                      // mtu
-                    0,                      // mtu_v4
-                    0,                      // mtu_v6
                     "",                     // mvno_type
                     "",                     // mnvo_match_data
                     NETWORK_TYPE_NR_BITMASK, // network_type_bitmask
-                    0,                      // lingering_network_type_bitmask
                     0,                      // apn_set_id
                     -1,                     // carrier_id
-                    -1,                     // skip_464xlat
-                    0                       // always_on
+                    -1                      // skip_464xlat
             };
         }
 
@@ -708,9 +668,6 @@ public class DcTrackerTest extends TelephonyTest {
         doReturn("fake.action_attached").when(mPhone).getActionAttached();
         doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_LTE).when(mServiceState)
                 .getRilDataRadioTechnology();
-        doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
-                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE))
-                .when(mDisplayInfoController).getTelephonyDisplayInfo();
 
         mContextFixture.putStringArrayResource(com.android.internal.R.array
                 .config_mobile_tcp_buffers, new String[]{
@@ -1802,6 +1759,101 @@ public class DcTrackerTest extends TelephonyTest {
         assertTrue(mDct.isAnyDataConnected());
     }
 
+    // Test for fetchDunApns()
+    @Test
+    @SmallTest
+    public void testFetchDunApn() {
+
+        sendInitializationEvents();
+
+        String dunApnString = "[ApnSettingV3]HOT mobile PC,pc.hotm,,,,,,,,,440,10,,DUN,,,true,"
+                + "0,,,,,,,,";
+        ApnSetting dunApnExpected = ApnSetting.fromString(dunApnString);
+
+        Settings.Global.putString(mContext.getContentResolver(),
+                Settings.Global.TETHER_DUN_APN, dunApnString);
+        // should return APN from Setting
+        ApnSetting dunApn = mDct.fetchDunApns().get(0);
+        assertTrue(dunApnExpected.equals(dunApn));
+
+        Settings.Global.putString(mContext.getContentResolver(),
+                Settings.Global.TETHER_DUN_APN, null);
+        // should return APN from db
+        dunApn = mDct.fetchDunApns().get(0);
+        assertEquals(FAKE_APN5, dunApn.getApnName());
+    }
+
+    // Test for fetchDunApns() with apn set id
+    @Test
+    @SmallTest
+    public void testFetchDunApnWithPreferredApnSet() {
+        sendCarrierConfigChanged("testFetchDunApnWithPreferredApnSet: ");
+
+        // apnSetId=1
+        String dunApnString1 = "[ApnSettingV5]HOT mobile PC,pc.hotm,,,,,,,,,440,10,,DUN,,,true,"
+                + "0,,,,,,,,,,1";
+        // apnSetId=0
+        String dunApnString2 = "[ApnSettingV5]HOT mobile PC,pc.coldm,,,,,,,,,440,10,,DUN,,,true,"
+                + "0,,,,,,,,,,2";
+
+        ApnSetting dunApnExpected = ApnSetting.fromString(dunApnString1);
+
+        ContentResolver cr = mContext.getContentResolver();
+        Settings.Global.putString(cr, Settings.Global.TETHER_DUN_APN,
+                dunApnString1 + ";" + dunApnString2);
+
+        // set that we prefer apn set 1
+        ContentValues values = new ContentValues();
+        values.put(Telephony.Carriers.APN_SET_ID, 1);
+        cr.update(PREFERAPN_URI, values, null, null);
+
+        // return APN from Setting with apnSetId=1
+        ArrayList<ApnSetting> dunApns = mDct.fetchDunApns();
+        assertEquals(1, dunApns.size());
+        assertEquals(1, dunApns.get(0).getApnSetId());
+        assertTrue(dunApnExpected.equals(dunApns.get(0)));
+
+        // set that we prefer apn set 2
+        values = new ContentValues();
+        values.put(Telephony.Carriers.APN_SET_ID, 2);
+        cr.update(PREFERAPN_URI, values, null, null);
+
+        // return APN from Setting with apnSetId=2
+        dunApns = mDct.fetchDunApns();
+        assertEquals(1, dunApns.size());
+        assertEquals(2, dunApns.get(0).getApnSetId());
+        dunApnExpected = ApnSetting.fromString(dunApnString2);
+        assertTrue(dunApnExpected.equals(dunApns.get(0)));
+    }
+
+    @Test
+    @SmallTest
+    public void testFetchDunApnWhileRoaming() {
+        doReturn(true).when(mServiceState).getRoaming();
+        mBundle.putBoolean(CarrierConfigManager
+                .KEY_DISABLE_DUN_APN_WHILE_ROAMING_WITH_PRESET_APN_BOOL, true);
+
+        sendInitializationEvents();
+
+        String dunApnString = "[ApnSettingV3]HOT mobile PC,pc.hotm,,,,,,,,,440,10,,DUN,,,true,"
+                + "0,,,,,,,,";
+
+        Settings.Global.putString(mContext.getContentResolver(),
+                Settings.Global.TETHER_DUN_APN, dunApnString);
+
+        DcTracker spyDct = spy(mDct);
+        doReturn(true).when(spyDct).isPreferredApnUserEdited();
+        // Expect non-empty DUN APN list
+        assertEquals(1, spyDct.fetchDunApns().size());
+
+        doReturn(false).when(spyDct).isPreferredApnUserEdited();
+        // Expect empty DUN APN list
+        assertEquals(0, spyDct.fetchDunApns().size());
+
+        Settings.Global.putString(mContext.getContentResolver(),
+                Settings.Global.TETHER_DUN_APN, null);
+    }
+
     /**
      * Test that fetchDunApns() returns list that prioritize the preferred APN when the preferred
      * APN including DUN type.
@@ -2324,8 +2376,6 @@ public class DcTrackerTest extends TelephonyTest {
                 .setDataUsage(500_000_000, System.currentTimeMillis())
                 .build());
         replaceInstance(DcTracker.class, "mSubscriptionPlans", mDct, plans);
-        doReturn(plans.toArray(new SubscriptionPlan[0])).when(mNetworkPolicyManager)
-                .getSubscriptionPlans(anyInt(), any());
     }
 
     private void resetSubscriptionPlans() throws Exception {
@@ -2480,7 +2530,6 @@ public class DcTrackerTest extends TelephonyTest {
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA))
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         setUpTempNotMetered();
-        clearInvocations(mDataConnection);
 
         // NetCapability should be metered when connected to 5G with no unmetered plan or frequency
         mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_TELEPHONY_DISPLAY_INFO_CHANGED));
@@ -2502,12 +2551,11 @@ public class DcTrackerTest extends TelephonyTest {
         intent.putExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, mPhone.getSubId());
         mContext.sendBroadcast(intent);
         waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
-        clearInvocations(mDataConnection);
 
         // NetCapability should switch to metered without fr=MMWAVE
         mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_TELEPHONY_DISPLAY_INFO_CHANGED));
         waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
-        verify(mDataConnection, times(1)).onMeterednessChanged(false);
+        verify(mDataConnection, times(2)).onMeterednessChanged(false);
 
         // NetCapability should switch to unmetered with fr=MMWAVE
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
@@ -2515,7 +2563,7 @@ public class DcTrackerTest extends TelephonyTest {
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_TELEPHONY_DISPLAY_INFO_CHANGED));
         waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
-        verify(mDataConnection, times(1)).onMeterednessChanged(true);
+        verify(mDataConnection, times(2)).onMeterednessChanged(true);
 
         resetDataConnection(id);
         resetSubscriptionPlans();
@@ -2531,7 +2579,6 @@ public class DcTrackerTest extends TelephonyTest {
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA))
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         setUpTempNotMetered();
-        clearInvocations(mDataConnection);
 
         // NetCapability should be metered when connected to 5G with no unmetered plan or frequency
         mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_TELEPHONY_DISPLAY_INFO_CHANGED));
@@ -2546,7 +2593,6 @@ public class DcTrackerTest extends TelephonyTest {
         intent.putExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, mPhone.getSubId());
         mContext.sendBroadcast(intent);
         waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
-        clearInvocations(mDataConnection);
 
         // NetCapability should switch to unmetered when fr=MMWAVE and MMWAVE unmetered
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
@@ -2562,7 +2608,7 @@ public class DcTrackerTest extends TelephonyTest {
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_TELEPHONY_DISPLAY_INFO_CHANGED));
         waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
-        verify(mDataConnection, times(1)).onMeterednessChanged(false);
+        verify(mDataConnection, times(2)).onMeterednessChanged(false);
 
         // Set SUB6 frequency to unmetered
         doReturn(2).when(mPhone).getSubId();
@@ -2573,14 +2619,13 @@ public class DcTrackerTest extends TelephonyTest {
         intent.putExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, mPhone.getSubId());
         mContext.sendBroadcast(intent);
         waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
-        clearInvocations(mDataConnection);
 
         // NetCapability should switch to unmetered when fr=SUB6 and SUB6 unmetered
         mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_TELEPHONY_DISPLAY_INFO_CHANGED));
         waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
         // Data connection is running on a different thread. Have to wait.
         waitForMs(200);
-        verify(mDataConnection, times(1)).onMeterednessChanged(true);
+        verify(mDataConnection, times(2)).onMeterednessChanged(true);
 
         resetDataConnection(id);
         resetSubscriptionPlans();
@@ -2593,7 +2638,6 @@ public class DcTrackerTest extends TelephonyTest {
         setUpSubscriptionPlans(true);
         setUpWatchdogTimer();
         setUpTempNotMetered();
-        clearInvocations(mDataConnection);
 
         // NetCapability should be unmetered when connected to 5G
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,

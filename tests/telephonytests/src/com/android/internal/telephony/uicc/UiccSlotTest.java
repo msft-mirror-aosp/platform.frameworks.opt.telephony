@@ -31,7 +31,6 @@ import android.os.Message;
 
 import androidx.test.filters.SmallTest;
 
-import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.IccCardConstants;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.uicc.IccCardStatus.CardState;
@@ -90,7 +89,7 @@ public class UiccSlotTest extends TelephonyTest {
         mIccCardStatus.mCdmaSubscriptionAppIndex =
                 mIccCardStatus.mImsSubscriptionAppIndex =
                         mIccCardStatus.mGsmUmtsSubscriptionAppIndex = -1;
-        mIccCardStatus.mSlotPortMapping = new IccSlotPortMapping();
+
         /* starting the Handler Thread */
         mTestHandlerThread = new UiccSlotTestHandlerThread(getClass().getSimpleName());
         mTestHandlerThread.start();
@@ -109,17 +108,16 @@ public class UiccSlotTest extends TelephonyTest {
     @SmallTest
     public void testUpdateInactiveSlotStatus() {
         IccSlotStatus iss = new IccSlotStatus();
-        IccSimPortInfo simPortInfo = new IccSimPortInfo();
-        simPortInfo.mPortActive = false;
-        simPortInfo.mLogicalSlotIndex = 0;
-        simPortInfo.mIccId = "fake-iccid";
-        iss.mSimPortInfos = new IccSimPortInfo[] {simPortInfo};
+        iss.logicalSlotIndex = 0;
+        iss.slotState = IccSlotStatus.SlotState.SLOTSTATE_INACTIVE;
         iss.cardState = IccCardStatus.CardState.CARDSTATE_PRESENT;
+        iss.iccid = "fake-iccid";
 
         // initial state
         assertTrue(mUiccSlot.isActive());
         assertNull(mUiccSlot.getUiccCard());
         assertEquals(IccCardStatus.CardState.CARDSTATE_ABSENT, mUiccSlot.getCardState());
+        assertNull(mUiccSlot.getIccId());
 
         // update slot to inactive
         mUiccSlot.update(null, iss, 0 /* slotIndex */);
@@ -128,6 +126,7 @@ public class UiccSlotTest extends TelephonyTest {
         assertFalse(mUiccSlot.isActive());
         assertNull(mUiccSlot.getUiccCard());
         assertEquals(IccCardStatus.CardState.CARDSTATE_PRESENT, mUiccSlot.getCardState());
+        assertEquals(iss.iccid, mUiccSlot.getIccId());
     }
 
     @Test
@@ -137,44 +136,49 @@ public class UiccSlotTest extends TelephonyTest {
         assertTrue(mUiccSlot.isActive());
         assertNull(mUiccSlot.getUiccCard());
         assertEquals(IccCardStatus.CardState.CARDSTATE_ABSENT, mUiccSlot.getCardState());
+        assertNull(mUiccSlot.getIccId());
 
         mSimulatedCommands.setRadioPower(true, null);
         int phoneId = 0;
         IccSlotStatus iss = new IccSlotStatus();
-        IccSimPortInfo simPortInfo = new IccSimPortInfo();
-        simPortInfo.mPortActive = true;
-        simPortInfo.mLogicalSlotIndex = phoneId;
-        simPortInfo.mIccId = "fake-iccid";
-        iss.mSimPortInfos = new IccSimPortInfo[] {simPortInfo};
+        iss.logicalSlotIndex = phoneId;
+        iss.slotState = IccSlotStatus.SlotState.SLOTSTATE_ACTIVE;
         iss.cardState = IccCardStatus.CardState.CARDSTATE_ABSENT;
+        iss.iccid = "fake-iccid";
 
         // update slot to inactive
-        mUiccSlot.update(new CommandsInterface[] {mSimulatedCommands}, iss, 0 /* slotIndex */);
+        mUiccSlot.update(mSimulatedCommands, iss, 0 /* slotIndex */);
 
         // assert on updated values
         assertTrue(mUiccSlot.isActive());
         assertNull(mUiccSlot.getUiccCard());
         assertEquals(IccCardStatus.CardState.CARDSTATE_ABSENT, mUiccSlot.getCardState());
+        assertEquals(iss.iccid, mUiccSlot.getIccId());
         verify(mSubInfoRecordUpdater).updateInternalIccState(
                 IccCardConstants.INTENT_VALUE_ICC_ABSENT, null, phoneId);
+
+        // update slot to active
+        mUiccSlot.update(mSimulatedCommands, iss, 0 /* slotIndex */);
+
+        // assert on updated values
+        assertTrue(mUiccSlot.isActive());
     }
 
     @Test
     @SmallTest
     public void testUpdateSlotStatusEuiccIsSupported() {
         IccSlotStatus iss = new IccSlotStatus();
-        IccSimPortInfo simPortInfo = new IccSimPortInfo();
-        simPortInfo.mPortActive = false;
-        simPortInfo.mLogicalSlotIndex = 0;
-        simPortInfo.mIccId = "fake-iccid";
-        iss.mSimPortInfos = new IccSimPortInfo[] {simPortInfo};
+        iss.logicalSlotIndex = 0;
+        iss.slotState = IccSlotStatus.SlotState.SLOTSTATE_INACTIVE;
         iss.cardState = IccCardStatus.CardState.CARDSTATE_PRESENT;
+        iss.iccid = "fake-iccid";
         iss.atr = "3F979580BFFE8210428031A073BE211797";
 
         // initial state
         assertTrue(mUiccSlot.isActive());
         assertNull(mUiccSlot.getUiccCard());
         assertEquals(IccCardStatus.CardState.CARDSTATE_ABSENT, mUiccSlot.getCardState());
+        assertNull(mUiccSlot.getIccId());
 
         // update slot to inactive
         mUiccSlot.update(null, iss, 0 /* slotIndex */);
@@ -183,11 +187,12 @@ public class UiccSlotTest extends TelephonyTest {
         assertFalse(mUiccSlot.isActive());
         assertNull(mUiccSlot.getUiccCard());
         assertEquals(IccCardStatus.CardState.CARDSTATE_PRESENT, mUiccSlot.getCardState());
+        assertEquals(iss.iccid, mUiccSlot.getIccId());
 
-        iss.mSimPortInfos[0].mPortActive = true;
+        iss.slotState = IccSlotStatus.SlotState.SLOTSTATE_ACTIVE;
 
         // update slot to active
-        mUiccSlot.update(new CommandsInterface[] {mSimulatedCommands}, iss, 0 /* slotIndex */);
+        mUiccSlot.update(mSimulatedCommands, iss, 0 /* slotIndex */);
 
         // assert on updated values
         assertTrue(mUiccSlot.isActive());
@@ -198,18 +203,17 @@ public class UiccSlotTest extends TelephonyTest {
     @SmallTest
     public void testUpdateSlotStatusEuiccIsNotSupported() {
         IccSlotStatus iss = new IccSlotStatus();
-        IccSimPortInfo simPortInfo = new IccSimPortInfo();
-        simPortInfo.mPortActive = false;
-        simPortInfo.mLogicalSlotIndex = 0;
-        simPortInfo.mIccId = "fake-iccid";
-        iss.mSimPortInfos = new IccSimPortInfo[] {simPortInfo};
+        iss.logicalSlotIndex = 0;
+        iss.slotState = IccSlotStatus.SlotState.SLOTSTATE_INACTIVE;
         iss.cardState = IccCardStatus.CardState.CARDSTATE_PRESENT;
+        iss.iccid = "fake-iccid";
         iss.atr = "3F979580BFFE8110428031A073BE211797";
 
         // initial state
         assertTrue(mUiccSlot.isActive());
         assertNull(mUiccSlot.getUiccCard());
         assertEquals(IccCardStatus.CardState.CARDSTATE_ABSENT, mUiccSlot.getCardState());
+        assertNull(mUiccSlot.getIccId());
 
         // update slot to inactive
         mUiccSlot.update(null, iss, 0 /* slotIndex */);
@@ -218,11 +222,12 @@ public class UiccSlotTest extends TelephonyTest {
         assertFalse(mUiccSlot.isActive());
         assertNull(mUiccSlot.getUiccCard());
         assertEquals(IccCardStatus.CardState.CARDSTATE_PRESENT, mUiccSlot.getCardState());
+        assertEquals(iss.iccid, mUiccSlot.getIccId());
 
-        iss.mSimPortInfos[0].mPortActive = true;
+        iss.slotState = IccSlotStatus.SlotState.SLOTSTATE_ACTIVE;
 
         // update slot to active
-        mUiccSlot.update(new CommandsInterface[] {mSimulatedCommands}, iss, 0 /* slotIndex */);
+        mUiccSlot.update(mSimulatedCommands, iss, 0 /* slotIndex */);
 
         // assert on updated values
         assertTrue(mUiccSlot.isActive());
@@ -247,19 +252,15 @@ public class UiccSlotTest extends TelephonyTest {
     @SmallTest
     public void testUpdateAbsentStateInactiveSlotStatus() {
         IccSlotStatus activeIss = new IccSlotStatus();
-        IccSimPortInfo activePortInfo = new IccSimPortInfo();
-        activePortInfo.mPortActive = true;
-        activePortInfo.mLogicalSlotIndex = 0;
-        activePortInfo.mIccId = "fake-iccid";
-        activeIss.mSimPortInfos = new IccSimPortInfo[] {activePortInfo};
+        activeIss.logicalSlotIndex = 0;
+        activeIss.slotState = IccSlotStatus.SlotState.SLOTSTATE_ACTIVE;
         activeIss.cardState = IccCardStatus.CardState.CARDSTATE_PRESENT;
+        activeIss.iccid = "fake-iccid";
         IccSlotStatus inactiveIss = new IccSlotStatus();
-        IccSimPortInfo inactivePortInfo = new IccSimPortInfo();
-        inactivePortInfo.mPortActive = false;
-        inactivePortInfo.mLogicalSlotIndex = 0;
-        inactivePortInfo.mIccId = "fake-iccid";
-        inactiveIss.mSimPortInfos = new IccSimPortInfo[] {inactivePortInfo};
+        inactiveIss.logicalSlotIndex = 0;
+        inactiveIss.slotState = IccSlotStatus.SlotState.SLOTSTATE_INACTIVE;
         inactiveIss.cardState = IccCardStatus.CardState.CARDSTATE_ABSENT;
+        inactiveIss.iccid = "fake-iccid";
 
         // update slot to inactive with absent card
         mUiccSlot.update(null, activeIss, 0 /* slotIndex */);
@@ -271,8 +272,8 @@ public class UiccSlotTest extends TelephonyTest {
         assertEquals(IccCardStatus.CardState.CARDSTATE_ABSENT, mUiccSlot.getCardState());
 
         // assert that we tried to update subscriptions
-        verify(mSubInfoRecordUpdater).updateInternalIccStateForInactivePort(
-                activeIss.mSimPortInfos[0].mLogicalSlotIndex, inactiveIss.mSimPortInfos[0].mIccId);
+        verify(mSubInfoRecordUpdater).updateInternalIccStateForInactiveSlot(
+                activeIss.logicalSlotIndex, inactiveIss.iccid);
     }
 
     @Test
@@ -282,8 +283,6 @@ public class UiccSlotTest extends TelephonyTest {
         int slotIndex = 0;
         // Simulate when SIM is added, UiccCard and UiccProfile should be created.
         mIccCardStatus.mCardState = IccCardStatus.CardState.CARDSTATE_PRESENT;
-        mIccCardStatus.mSlotPortMapping.mPhysicalSlotIndex = slotIndex;
-        mIccCardStatus.mSlotPortMapping.mPortIndex = 0;
         mUiccSlot.update(mSimulatedCommands, mIccCardStatus, phoneId, slotIndex);
         verify(mTelephonyComponentFactory).makeUiccProfile(
                 anyObject(), eq(mSimulatedCommands), eq(mIccCardStatus), anyInt(), anyObject(),
@@ -317,7 +316,7 @@ public class UiccSlotTest extends TelephonyTest {
         assertNotNull(mUiccSlot.getUiccCard());
 
         // radio state unavailable
-        mUiccSlot.onRadioStateUnavailable(phoneId);
+        mUiccSlot.onRadioStateUnavailable();
 
         // Verify that UNKNOWN state is sent to SubscriptionInfoUpdater in this case.
         verify(mSubInfoRecordUpdater).updateInternalIccState(

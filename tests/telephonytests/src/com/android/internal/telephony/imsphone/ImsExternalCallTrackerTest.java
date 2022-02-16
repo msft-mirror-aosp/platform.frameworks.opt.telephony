@@ -58,8 +58,7 @@ public class ImsExternalCallTrackerTest {
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
 
-        mTracker = new ImsExternalCallTracker(mImsPhone, mImsPullCall, mCallNotifier,
-            Runnable::run);
+        mTracker = new ImsExternalCallTracker(mImsPhone, mImsPullCall, mCallNotifier);
     }
 
     @FlakyTest
