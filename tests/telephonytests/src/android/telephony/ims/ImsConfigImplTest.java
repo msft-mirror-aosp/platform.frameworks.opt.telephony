@@ -48,10 +48,6 @@ public class ImsConfigImplTest {
         // for testing caching
         private boolean mIsGetConfigCalled = false;
 
-        ImsConfigImpl() {
-            super(Runnable::run);
-        }
-
         @Override
         public int setConfig(int item, int value) {
             latestIntConfig = new Pair<>(item, value);
