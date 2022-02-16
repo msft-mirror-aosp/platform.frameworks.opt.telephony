@@ -16,8 +16,6 @@
 
 package com.android.internal.telephony;
 
-import static com.android.internal.telephony.TelephonyTestUtils.waitForMs;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -61,7 +59,6 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
     private FeatureConnector.Listener<ImsManager> mImsManagerListener;
     private HashMap<String, Object> mTrackerData;
     private ImsSmsDispatcher mImsSmsDispatcher;
-    private static final int SUB_0 = 0;
 
     @Before
     public void setUp() throws Exception {
@@ -77,7 +74,7 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
         processAllMessages();
         // set the ImsManager instance
         verify(mMockConnector).connect();
-        mImsManagerListener.connectionReady(mImsManager, SUB_0);
+        mImsManagerListener.connectionReady(mImsManager);
         when(mSmsDispatchersController.isIms()).thenReturn(true);
         mTrackerData = new HashMap<>(1);
         when(mSmsTracker.getData()).thenReturn(mTrackerData);
@@ -153,11 +150,9 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
         mImsSmsDispatcher.mTrackers.put(token, mSmsTracker);
         when(mPhone.getPhoneType()).thenReturn(PhoneConstants.PHONE_TYPE_GSM);
 
-        // Retry over IMS
+        // Fallback over GSM
         mImsSmsDispatcher.getSmsListener().onSendSmsResult(token, 0,
                 ImsSmsImplBase.SEND_STATUS_ERROR_RETRY, 0, SmsResponse.NO_ERROR_CODE);
-        waitForMs(SMSDispatcher.SEND_RETRY_DELAY + 200);
-        processAllMessages();
 
         // Make sure retry bit set
         ArgumentCaptor<byte[]> byteCaptor = ArgumentCaptor.forClass(byte[].class);

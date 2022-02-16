@@ -29,7 +29,6 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.ServiceStateTracker;
-import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularDataServiceSwitch;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularServiceState;
 import com.android.telephony.Rlog;
@@ -56,23 +55,6 @@ public class ServiceStateStats {
         TimestampedServiceState lastState =
                 mLastState.getAndUpdate(
                         state -> new TimestampedServiceState(state.mServiceState, now));
-        addServiceState(lastState, now);
-    }
-
-    /** Updates service state when IMS voice registration changes. */
-    public void onImsVoiceRegistrationChanged() {
-        final long now = getTimeMillis();
-        TimestampedServiceState lastState =
-                mLastState.getAndUpdate(
-                        state -> {
-                            if (state.mServiceState == null) {
-                                return new TimestampedServiceState(null, now);
-                            }
-                            CellularServiceState newServiceState = copyOf(state.mServiceState);
-                            newServiceState.voiceRat =
-                                    getVoiceRat(mPhone, getServiceStateForPhone(mPhone));
-                            return new TimestampedServiceState(newServiceState, now);
-                        });
         addServiceState(lastState, now);
     }
 
@@ -150,26 +132,24 @@ public class ServiceStateStats {
     }
 
     /**
-     * Returns the band used from the given phone, or {@code 0} if it is invalid or cannot be
-     * determined.
+     * Returns the band used from the given phone and RAT, or {@code 0} if it is invalid or cannot
+     * be determined.
      */
-    static int getBand(Phone phone) {
+    static int getBand(Phone phone, @NetworkType int rat) {
         ServiceState serviceState = getServiceStateForPhone(phone);
-        return getBand(serviceState);
+        return getBand(serviceState, rat);
     }
 
     /**
-     * Returns the band used from the given service state, or {@code 0} if it is invalid or cannot
-     * be determined.
+     * Returns the band used from the given service state and RAT, or {@code 0} if it is invalid or
+     * cannot be determined.
      */
-    static int getBand(@Nullable ServiceState serviceState) {
+    static int getBand(@Nullable ServiceState serviceState, @NetworkType int rat) {
         if (serviceState == null) {
-            Rlog.w(TAG, "getBand: serviceState=null");
             return 0; // Band unknown
         }
         int chNumber = serviceState.getChannelNumber();
         int band;
-        @NetworkType int rat = getRat(serviceState);
         switch (rat) {
             case TelephonyManager.NETWORK_TYPE_GSM:
             case TelephonyManager.NETWORK_TYPE_GPRS:
@@ -188,16 +168,10 @@ public class ServiceStateStats {
                 band = AccessNetworkUtils.getOperatingBandForEarfcn(chNumber);
                 break;
             default:
-                Rlog.w(TAG, "getBand: unknown WWAN RAT " + rat);
                 band = 0;
                 break;
         }
-        if (band == AccessNetworkUtils.INVALID_BAND) {
-            Rlog.w(TAG, "getBand: band invalid for rat=" + rat + " ch=" + chNumber);
-            return 0;
-        } else {
-            return band;
-        }
+        return band == AccessNetworkUtils.INVALID_BAND ? 0 : band;
     }
 
     private static CellularServiceState copyOf(CellularServiceState state) {
@@ -226,39 +200,15 @@ public class ServiceStateStats {
         return state.getVoiceRegState() == ServiceState.STATE_POWER_OFF;
     }
 
-    /**
-     * Returns the current voice RAT from IMS registration if present, otherwise from the service
-     * state.
-     */
-    static @NetworkType int getVoiceRat(Phone phone, @Nullable ServiceState state) {
-        if (state == null) {
-            return TelephonyManager.NETWORK_TYPE_UNKNOWN;
-        }
-        ImsPhone imsPhone = (ImsPhone) phone.getImsPhone();
-        if (imsPhone != null) {
-            @NetworkType int imsVoiceRat = imsPhone.getImsStats().getImsVoiceRadioTech();
-            if (imsVoiceRat != TelephonyManager.NETWORK_TYPE_UNKNOWN) {
-                return imsVoiceRat;
-            }
-        }
-        return state.getVoiceNetworkType();
+    private static @NetworkType int getVoiceRat(Phone phone, ServiceState state) {
+        boolean isWifiCall =
+                phone.getImsPhone() != null
+                        && phone.getImsPhone().isWifiCallingEnabled()
+                        && state.getDataNetworkType() == TelephonyManager.NETWORK_TYPE_IWLAN;
+        return isWifiCall ? TelephonyManager.NETWORK_TYPE_IWLAN : state.getVoiceNetworkType();
     }
 
-    /**
-     * Returns RAT used by WWAN.
-     *
-     * <p>Returns PS WWAN RAT, or CS WWAN RAT if PS WWAN RAT is unavailable.
-     */
-    private static @NetworkType int getRat(ServiceState state) {
-        @NetworkType int rat = getDataRat(state);
-        if (rat == TelephonyManager.NETWORK_TYPE_UNKNOWN) {
-            rat = state.getVoiceNetworkType();
-        }
-        return rat;
-    }
-
-    /** Returns PS (data) RAT used by WWAN. */
-    static @NetworkType int getDataRat(ServiceState state) {
+    private static @NetworkType int getDataRat(ServiceState state) {
         final NetworkRegistrationInfo wwanRegInfo =
                 state.getNetworkRegistrationInfo(
                         NetworkRegistrationInfo.DOMAIN_PS,
