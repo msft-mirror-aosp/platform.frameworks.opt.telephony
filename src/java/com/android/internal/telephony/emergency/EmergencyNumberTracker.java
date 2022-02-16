@@ -30,7 +30,6 @@ import android.os.SystemProperties;
 import android.telephony.CarrierConfigManager;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
-import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.emergency.EmergencyNumber;
 import android.telephony.emergency.EmergencyNumber.EmergencyCallRouting;
@@ -113,11 +112,11 @@ public class EmergencyNumberTracker extends Handler {
     private List<EmergencyNumber> mEmergencyNumberListFromTestMode = new ArrayList<>();
     private List<EmergencyNumber> mEmergencyNumberList = new ArrayList<>();
 
-    private final LocalLog mEmergencyNumberListDatabaseLocalLog = new LocalLog(16);
-    private final LocalLog mEmergencyNumberListRadioLocalLog = new LocalLog(16);
-    private final LocalLog mEmergencyNumberListPrefixLocalLog = new LocalLog(16);
-    private final LocalLog mEmergencyNumberListTestModeLocalLog = new LocalLog(16);
-    private final LocalLog mEmergencyNumberListLocalLog = new LocalLog(16);
+    private final LocalLog mEmergencyNumberListDatabaseLocalLog = new LocalLog(20);
+    private final LocalLog mEmergencyNumberListRadioLocalLog = new LocalLog(20);
+    private final LocalLog mEmergencyNumberListPrefixLocalLog = new LocalLog(20);
+    private final LocalLog mEmergencyNumberListTestModeLocalLog = new LocalLog(20);
+    private final LocalLog mEmergencyNumberListLocalLog = new LocalLog(20);
 
     /** Event indicating the update for the emergency number list from the radio. */
     private static final int EVENT_UNSOL_EMERGENCY_NUMBER_LIST = 1;
@@ -261,22 +260,6 @@ public class EmergencyNumberTracker extends Handler {
             }
         }
         return false;
-    }
-
-    /**
-     * Checks if it's sim absent to decide whether to apply sim-absent emergency numbers from 3gpp
-     */
-    @VisibleForTesting
-    public boolean isSimAbsent() {
-        for (Phone phone: PhoneFactory.getPhones()) {
-            int slotId = SubscriptionController.getInstance().getSlotIndex(phone.getSubId());
-            // If slot id is invalid, it means that there is no sim card.
-            if (slotId != SubscriptionManager.INVALID_SIM_SLOT_INDEX) {
-                // If there is at least one sim active, sim is not absent; it returns false.
-                return false;
-            }
-        }
-        return true;
     }
 
     private void initializeDatabaseEmergencyNumberList() {
@@ -736,16 +719,7 @@ public class EmergencyNumberTracker extends Handler {
         if (number == null) {
             return false;
         }
-
-        // Do not treat SIP address as emergency number
-        if (PhoneNumberUtils.isUriNumber(number)) {
-            return false;
-        }
-
-        // Strip the separators from the number before comparing it
-        // to the list.
-        number = PhoneNumberUtils.extractNetworkPortionAlt(number);
-
+        number = PhoneNumberUtils.stripSeparators(number);
         if (!mEmergencyNumberListFromRadio.isEmpty()) {
             for (EmergencyNumber num : mEmergencyNumberList) {
                 // According to com.android.i18n.phonenumbers.ShortNumberInfo, in
@@ -885,7 +859,7 @@ public class EmergencyNumberTracker extends Handler {
                 emergencyNumberList.add(getLabeledEmergencyNumberForEcclist(emergencyNum));
             }
         }
-        emergencyNumbers = ((isSimAbsent()) ? "112,911,000,08,110,118,119,999" : "112,911");
+        emergencyNumbers = ((slotId < 0) ? "112,911,000,08,110,118,119,999" : "112,911");
         for (String emergencyNum : emergencyNumbers.split(",")) {
             emergencyNumberList.add(getLabeledEmergencyNumberForEcclist(emergencyNum));
         }
@@ -971,9 +945,6 @@ public class EmergencyNumberTracker extends Handler {
         // If the number passed in is null, just return false:
         if (number == null) return false;
 
-        /// M: preprocess number for emergency check @{
-        // Move following logic to isEmergencyNumber()
-
         // If the number passed in is a SIP address, return false, since the
         // concept of "emergency numbers" is only meaningful for calls placed
         // over the cell network.
@@ -981,14 +952,13 @@ public class EmergencyNumberTracker extends Handler {
         // since the whole point of extractNetworkPortionAlt() is to filter out
         // any non-dialable characters (which would turn 'abc911def@example.com'
         // into '911', for example.))
-        //if (PhoneNumberUtils.isUriNumber(number)) {
-        //    return false;
-        //}
+        if (PhoneNumberUtils.isUriNumber(number)) {
+            return false;
+        }
 
         // Strip the separators from the number before comparing it
         // to the list.
-        //number = PhoneNumberUtils.extractNetworkPortionAlt(number);
-        /// @}
+        number = PhoneNumberUtils.extractNetworkPortionAlt(number);
 
         String emergencyNumbers = "";
         int slotId = SubscriptionController.getInstance().getSlotIndex(mPhone.getSubId());
@@ -1045,9 +1015,10 @@ public class EmergencyNumberTracker extends Handler {
         logd("System property doesn't provide any emergency numbers."
                 + " Use embedded logic for determining ones.");
 
+        // If slot id is invalid, means that there is no sim card.
         // According spec 3GPP TS22.101, the following numbers should be
         // ECC numbers when SIM/USIM is not present.
-        emergencyNumbers = ((isSimAbsent()) ? "112,911,000,08,110,118,119,999" : "112,911");
+        emergencyNumbers = ((slotId < 0) ? "112,911,000,08,110,118,119,999" : "112,911");
 
         for (String emergencyNum : emergencyNumbers.split(",")) {
             if (useExactMatch) {

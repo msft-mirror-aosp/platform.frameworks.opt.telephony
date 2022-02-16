@@ -34,7 +34,6 @@ import android.os.Message;
 import android.preference.PreferenceManager;
 import android.telephony.TelephonyManager;
 import android.telephony.UiccCardInfo;
-import android.telephony.UiccPortInfo;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
@@ -52,7 +51,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 
 import java.util.ArrayList;
-import java.util.Collections;
 
 
 @RunWith(AndroidTestingRunner.class)
@@ -79,8 +77,6 @@ public class UiccControllerTest extends TelephonyTest {
     private EuiccCard mMockEuiccCard;
     @Mock
     private UiccProfile mMockProfile;
-    @Mock
-    private UiccPort mMockPort;
 
     private IccCardApplicationStatus composeUiccApplicationStatus(
             IccCardApplicationStatus.AppType appType,
@@ -116,8 +112,7 @@ public class UiccControllerTest extends TelephonyTest {
         mSimulatedCommands.setIccCardStatus(mIccCardStatus);
         // for testing we pretend slotIndex is set. In reality it would be invalid on older versions
         // (before 1.2) of hal
-        mIccCardStatus.mSlotPortMapping = new IccSlotPortMapping();
-        mIccCardStatus.mSlotPortMapping.mPhysicalSlotIndex = 0;
+        mIccCardStatus.physicalSlotIndex = 0;
         mUiccControllerUT = UiccController.make(mContext);
         // reset sLastSlotStatus so that onGetSlotStatusDone always sees a change in the slot status
         mUiccControllerUT.sLastSlotStatus = null;
@@ -246,9 +241,7 @@ public class UiccControllerTest extends TelephonyTest {
         // Mock out UiccSlots
         mUiccControllerUT.mUiccSlots[0] = mMockSlot;
         doReturn(mMockCard).when(mMockSlot).getUiccCard();
-        doReturn(mMockPort).when(mMockCard).getUiccPort(0);
-        doReturn("A1B2C3D4").when(mMockPort).getIccId();
-
+        doReturn("A1B2C3D4").when(mMockCard).getIccId();
         doReturn("A1B2C3D4").when(mMockCard).getCardId();
         doReturn(IccCardStatus.CardState.CARDSTATE_PRESENT).when(mMockCard).getCardState();
 
@@ -259,9 +252,7 @@ public class UiccControllerTest extends TelephonyTest {
         ics.atr = "abcdef0123456789abcdef";
         ics.iccid = "123451234567890";
         ics.eid = "A1B2C3D4";
-        ics.mSlotPortMapping = new IccSlotPortMapping();
-        ics.mSlotPortMapping.mPhysicalSlotIndex = 0;
-        ics.mSlotPortMapping.mPortIndex = 0;
+        ics.physicalSlotIndex = 0;
         AsyncResult ar = new AsyncResult(null, ics, null);
         Message msg = Message.obtain(mUiccControllerUT, EVENT_GET_ICC_STATUS_DONE, ar);
         mUiccControllerUT.handleMessage(msg);
@@ -295,11 +286,7 @@ public class UiccControllerTest extends TelephonyTest {
 
         // simulate slot status loaded so that the UiccController sets the card ID
         IccSlotStatus iss = new IccSlotStatus();
-        IccSimPortInfo simPortInfo = new IccSimPortInfo();
-        simPortInfo.mPortActive = true;
-        simPortInfo.mLogicalSlotIndex = 0;
-        simPortInfo.mIccId = "fake-iccid";
-        iss.mSimPortInfos = new IccSimPortInfo[] {simPortInfo};
+        iss.setSlotState(1 /* active */);
         iss.eid = "ABADACB";
         ArrayList<IccSlotStatus> status = new ArrayList<IccSlotStatus>();
         status.add(iss);
@@ -322,11 +309,7 @@ public class UiccControllerTest extends TelephonyTest {
 
         // simulate slot status loaded so that the UiccController sets the card ID
         IccSlotStatus iss = new IccSlotStatus();
-        IccSimPortInfo simPortInfo = new IccSimPortInfo();
-        simPortInfo.mPortActive = true;
-        simPortInfo.mLogicalSlotIndex = 0;
-        simPortInfo.mIccId = "fake-iccid";
-        iss.mSimPortInfos = new IccSimPortInfo[] {simPortInfo};
+        iss.setSlotState(1 /* active */);
         iss.eid = "AB123456";
         ArrayList<IccSlotStatus> status = new ArrayList<IccSlotStatus>();
         status.add(iss);
@@ -351,15 +334,8 @@ public class UiccControllerTest extends TelephonyTest {
         doReturn("ASDF1234").when(mMockCard).getCardId();
         doReturn(true).when(mMockSlot).isRemovable();
         doReturn("A1B2C3D4").when(mMockCard).getCardId();
+        doReturn("123451234567890").when(mMockCard).getIccId();
         doReturn(IccCardStatus.CardState.CARDSTATE_PRESENT).when(mMockCard).getCardState();
-        doReturn(true).when(mMockSlot).isActive(); //TODO: use UICCPort when ready
-
-        // Mock out UiccPort
-        doReturn(new int[]{0}).when(mMockSlot).getPortList();
-        doReturn(mMockPort).when(mMockCard).getUiccPort(0);
-        doReturn("123451234567890").when(mMockPort).getIccId();
-        doReturn(true).when(mMockSlot).isPortActive(0);
-        doReturn("123451234567890").when(mMockSlot).getIccId(0);
 
         // simulate card status loaded so that the UiccController sets the card ID
         IccCardStatus ics = new IccCardStatus();
@@ -367,9 +343,7 @@ public class UiccControllerTest extends TelephonyTest {
         ics.setUniversalPinState(3 /* disabled */);
         ics.atr = "abcdef0123456789abcdef";
         ics.iccid = "123451234567890";
-        ics.mSlotPortMapping = new IccSlotPortMapping();
-        ics.mSlotPortMapping.mPhysicalSlotIndex = 0;
-        ics.mSlotPortMapping.mPortIndex = 0;
+        ics.physicalSlotIndex = 0;
         AsyncResult ar = new AsyncResult(null, ics, null);
         Message msg = Message.obtain(mUiccControllerUT, EVENT_GET_ICC_STATUS_DONE, ar);
         mUiccControllerUT.handleMessage(msg);
@@ -379,14 +353,9 @@ public class UiccControllerTest extends TelephonyTest {
                 false,     // isEuicc
                 0,         // cardId
                 null,      // eid
+                ics.iccid, // iccid
                 0,         // slotIndex
-                true, // isRemovable
-                false,   //  isMultipleEnabledProfileSupported
-                Collections.singletonList(new UiccPortInfo(
-                        ics.iccid, // iccid
-                        ics.mSlotPortMapping.mPortIndex, //portIdx
-                        0, //logicalSlotIdx
-                        true))); //isActive
+                true);     // isRemovable
         assertEquals(uiccCardInfo, mUiccControllerUT.getAllUiccCardInfos().get(0));
     }
 
@@ -402,15 +371,8 @@ public class UiccControllerTest extends TelephonyTest {
         doReturn("ASDF1234").when(mMockCard).getCardId();
         doReturn(true).when(mMockSlot).isRemovable();
         doReturn("A1B2C3D4").when(mMockCard).getCardId();
+        doReturn("123451234567890F").when(mMockCard).getIccId();
         doReturn(IccCardStatus.CardState.CARDSTATE_PRESENT).when(mMockCard).getCardState();
-        doReturn(true).when(mMockSlot).isActive(); //TODO: use UICCPort when ready
-
-        // Mock out UiccPort
-        doReturn(mMockPort).when(mMockCard).getUiccPort(0);
-        doReturn("123451234567890F").when(mMockPort).getIccId();
-        doReturn(new int[]{0}).when(mMockSlot).getPortList();
-        doReturn(true).when(mMockSlot).isPortActive(0);
-        doReturn("123451234567890F").when(mMockSlot).getIccId(0);
 
         // simulate card status loaded so that the UiccController sets the card ID
         IccCardStatus ics = new IccCardStatus();
@@ -418,9 +380,7 @@ public class UiccControllerTest extends TelephonyTest {
         ics.setUniversalPinState(3 /* disabled */);
         ics.atr = "abcdef0123456789abcdef";
         ics.iccid = "123451234567890F";
-        ics.mSlotPortMapping = new IccSlotPortMapping();
-        ics.mSlotPortMapping.mPhysicalSlotIndex = 0;
-        ics.mSlotPortMapping.mPortIndex = 0;
+        ics.physicalSlotIndex = 0;
         AsyncResult ar = new AsyncResult(null, ics, null);
         Message msg = Message.obtain(mUiccControllerUT, EVENT_GET_ICC_STATUS_DONE, ar);
         mUiccControllerUT.handleMessage(msg);
@@ -430,14 +390,9 @@ public class UiccControllerTest extends TelephonyTest {
                 false,     // isEuicc
                 0,         // cardId
                 null,      // eid
+                IccUtils.stripTrailingFs(ics.iccid), //iccid without ending F
                 0,         // slotIndex
-                true, // isRemovable
-                false,   //  isMultipleEnabledProfileSupported
-                Collections.singletonList(new UiccPortInfo(
-                        IccUtils.stripTrailingFs(ics.iccid), // iccid
-                        0, // portIdx
-                        0, //logicalSlotIdx
-                        true))); //isActive
+                true);     // isRemovable
         assertEquals(uiccCardInfo, mUiccControllerUT.getAllUiccCardInfos().get(0));
     }
 
@@ -450,13 +405,8 @@ public class UiccControllerTest extends TelephonyTest {
         mUiccControllerUT.mUiccSlots[0] = mMockSlot;
         doReturn(true).when(mMockSlot).isEuicc();
         doReturn(null).when(mMockSlot).getUiccCard();
+        doReturn("123451234567890").when(mMockSlot).getIccId();
         doReturn(false).when(mMockSlot).isRemovable();
-        doReturn(true).when(mMockSlot).isActive(); //TODO: use UICCPort when ready
-
-        // Mock out Port Index and IccId
-        doReturn(new int[]{0}).when(mMockSlot).getPortList();
-        doReturn("123451234567890").when(mMockSlot).getIccId(0);
-        doReturn(-1).when(mMockSlot).getPhoneIdFromPortIndex(0);
 
         // simulate card status loaded so that the UiccController sets the card ID
         IccCardStatus ics = new IccCardStatus();
@@ -465,10 +415,6 @@ public class UiccControllerTest extends TelephonyTest {
         ics.atr = "abcdef0123456789abcdef";
         ics.iccid = "123451234567890";
         ics.eid = "A1B2C3D4";
-        ics.mSlotPortMapping = new IccSlotPortMapping();
-        ics.mSlotPortMapping.mPhysicalSlotIndex = 0;
-        ics.mSlotPortMapping.mPortIndex = 0;
-
         AsyncResult ar = new AsyncResult(null, ics, null);
         Message msg = Message.obtain(mUiccControllerUT, EVENT_GET_ICC_STATUS_DONE, ar);
         mUiccControllerUT.handleMessage(msg);
@@ -478,14 +424,9 @@ public class UiccControllerTest extends TelephonyTest {
                 true,                                   // isEuicc
                 TelephonyManager.UNINITIALIZED_CARD_ID, // cardId
                 null,                                   // eid
+                ics.iccid,                              // iccid
                 0,                                      // slotIndex
-                false,                      // isRemovable
-                false,   //  isMultipleEnabledProfileSupported
-                Collections.singletonList(new UiccPortInfo(
-                        ics.iccid, // iccid
-                        0, // portIdx TODO: need to mock UiccPort
-                        -1, //logicalSlotIdx inactive port
-                        false)));    //isActive
+                false);                                 // isRemovable
         assertEquals(uiccCardInfo, mUiccControllerUT.getAllUiccCardInfos().get(0));
     }
 
@@ -506,12 +447,8 @@ public class UiccControllerTest extends TelephonyTest {
         ics.setUniversalPinState(3 /* disabled */);
         ics.atr = "abcdef0123456789abcdef";
         ics.iccid = "123451234567890";
-        ics.mSlotPortMapping = new IccSlotPortMapping();
-        ics.mSlotPortMapping.mPhysicalSlotIndex = UiccController.INVALID_SLOT_ID;
         // make it seem like EID is not supported by setting physical slot = -1 like on HAL < 1.2
-
-        mSimulatedCommands.setSupportsEid(false);
-
+        ics.physicalSlotIndex = UiccController.INVALID_SLOT_ID;
         AsyncResult ar = new AsyncResult(null, ics, null);
         Message msg = Message.obtain(mUiccControllerUT, EVENT_GET_ICC_STATUS_DONE, ar);
         mUiccControllerUT.handleMessage(msg);
@@ -519,8 +456,6 @@ public class UiccControllerTest extends TelephonyTest {
         // assert that the default eUICC card Id is UNSUPPORTED_CARD_ID
         assertEquals(TelephonyManager.UNSUPPORTED_CARD_ID,
                 mUiccControllerUT.getCardIdForDefaultEuicc());
-
-        mSimulatedCommands.setSupportsEid(true);
     }
 
     /**
@@ -547,18 +482,10 @@ public class UiccControllerTest extends TelephonyTest {
 
         // simulate slot status loaded so that the UiccController sets the card ID
         IccSlotStatus iss1 = new IccSlotStatus();
-        IccSimPortInfo simPortInfo1 = new IccSimPortInfo();
-        simPortInfo1.mPortActive = true;
-        simPortInfo1.mLogicalSlotIndex = 0;
-        simPortInfo1.mIccId = "fake-iccid";
-        iss1.mSimPortInfos = new IccSimPortInfo[] {simPortInfo1};
+        iss1.setSlotState(1 /* active */);
         iss1.eid = "AB123456";
         IccSlotStatus iss2 = new IccSlotStatus();
-        IccSimPortInfo simPortInfo2 = new IccSimPortInfo();
-        simPortInfo2.mPortActive = true;
-        simPortInfo2.mLogicalSlotIndex = 1;
-        simPortInfo2.mIccId = "fake-iccid";
-        iss2.mSimPortInfos = new IccSimPortInfo[] {simPortInfo2};
+        iss2.setSlotState(1 /* active */);
         iss2.eid = "ZYW13094";
         ArrayList<IccSlotStatus> status = new ArrayList<IccSlotStatus>();
         status.add(iss1);
@@ -598,18 +525,10 @@ public class UiccControllerTest extends TelephonyTest {
 
         // simulate slot status loaded so that the UiccController sets the card ID
         IccSlotStatus iss1 = new IccSlotStatus();
-        IccSimPortInfo simPortInfo1 = new IccSimPortInfo();
-        simPortInfo1.mPortActive = true;
-        simPortInfo1.mLogicalSlotIndex = 1;
-        simPortInfo1.mIccId = "fake-iccid";
-        iss1.mSimPortInfos = new IccSimPortInfo[] {simPortInfo1};
+        iss1.setSlotState(1 /* active */);
         iss1.eid = "AB123456";
         IccSlotStatus iss2 = new IccSlotStatus();
-        IccSimPortInfo simPortInfo2 = new IccSimPortInfo();
-        simPortInfo2.mPortActive = true;
-        simPortInfo2.mLogicalSlotIndex = 1;
-        simPortInfo2.mIccId = "fake-iccid";
-        iss2.mSimPortInfos = new IccSimPortInfo[] {simPortInfo2};
+        iss2.setSlotState(1 /* active */);
         iss2.eid = "ZYW13094";
         ArrayList<IccSlotStatus> status = new ArrayList<IccSlotStatus>();
         status.add(iss1);
@@ -651,18 +570,10 @@ public class UiccControllerTest extends TelephonyTest {
 
         // simulate slot status loaded with no EID provided (like HAL < 1.4)
         IccSlotStatus iss1 = new IccSlotStatus();
-        IccSimPortInfo simPortInfo1 = new IccSimPortInfo();
-        simPortInfo1.mPortActive = false;
-        simPortInfo1.mLogicalSlotIndex = 1;
-        simPortInfo1.mIccId = "fake-iccid";
-        iss1.mSimPortInfos = new IccSimPortInfo[] {simPortInfo1};
+        iss1.setSlotState(0 /* inactive */);
         iss1.eid = "";
         IccSlotStatus iss2 = new IccSlotStatus();
-        IccSimPortInfo simPortInfo2 = new IccSimPortInfo();
-        simPortInfo2.mPortActive = true;
-        simPortInfo2.mLogicalSlotIndex = 1;
-        simPortInfo2.mIccId = "fake-iccid";
-        iss2.mSimPortInfos = new IccSimPortInfo[] {simPortInfo2};
+        iss2.setSlotState(1 /* active */);
         iss2.eid = "";
         ArrayList<IccSlotStatus> status = new ArrayList<IccSlotStatus>();
         status.add(iss1);
@@ -700,7 +611,7 @@ public class UiccControllerTest extends TelephonyTest {
         mUiccControllerUT.mUiccSlots[0] = mMockSlot;
         doReturn(true).when(mMockSlot).isEuicc();
         doReturn(null).when(mMockSlot).getUiccCard();
-        //doReturn("123451234567890").when(mMockSlot).getIccId();
+        doReturn("123451234567890").when(mMockSlot).getIccId();
         doReturn(false).when(mMockSlot).isRemovable();
 
         // If APDU has already happened, the EuiccCard already knows EID
@@ -716,8 +627,6 @@ public class UiccControllerTest extends TelephonyTest {
         ics.iccid = "123451234567890";
         // the IccCardStatus does not contain EID, but it is known from previous APDU
         ics.eid = null;
-        ics.mSlotPortMapping = new IccSlotPortMapping();
-
         AsyncResult ar = new AsyncResult(null, ics, null);
         Message msg = Message.obtain(mUiccControllerUT, EVENT_GET_ICC_STATUS_DONE, ar);
         mUiccControllerUT.handleMessage(msg);
@@ -731,18 +640,10 @@ public class UiccControllerTest extends TelephonyTest {
     public void testSlotStatusChanged() {
         // simulate slot status loaded so that the UiccController sets the last slot status
         IccSlotStatus iss1 = new IccSlotStatus();
-        IccSimPortInfo simPortInfo1 = new IccSimPortInfo();
-        simPortInfo1.mPortActive = false;
-        simPortInfo1.mLogicalSlotIndex = 1;
-        simPortInfo1.mIccId = "fake-iccid";
-        iss1.mSimPortInfos = new IccSimPortInfo[] {simPortInfo1};
+        iss1.setSlotState(1 /* active */);
         iss1.eid = "eid1";
         IccSlotStatus iss2 = new IccSlotStatus();
-        IccSimPortInfo simPortInfo2 = new IccSimPortInfo();
-        simPortInfo2.mPortActive = true;
-        simPortInfo2.mLogicalSlotIndex = 1;
-        simPortInfo2.mIccId = "fake-iccid";
-        iss2.mSimPortInfos = new IccSimPortInfo[] {simPortInfo2};
+        iss2.setSlotState(1 /* active */);
         iss2.eid = "eid2";
         ArrayList<IccSlotStatus> status = new ArrayList<IccSlotStatus>();
         status.add(iss1);
