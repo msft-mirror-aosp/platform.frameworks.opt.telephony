@@ -1525,12 +1525,4 @@ public class SimulatedCommandsVerifier implements CommandsInterface {
     @Override
     public void unregisterForSimPhonebookRecordsReceived(Handler h){
     }
-
-    @Override
-    public void registerForSlicingConfigChanged(Handler h, int what, Object obj) {
-    }
-
-    @Override
-    public void unregisterForSlicingConfigChanged(Handler h) {
-    }
 }
