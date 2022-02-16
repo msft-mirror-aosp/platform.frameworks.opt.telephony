@@ -63,7 +63,6 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
         status.mCdmaSubscriptionAppIndex = -1;
         status.mGsmUmtsSubscriptionAppIndex = -1;
         status.mImsSubscriptionAppIndex = -1;
-        status.mSlotPortMapping = new IccSlotPortMapping();
         return status;
     }
 
@@ -102,7 +101,7 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
 
         // The first broadcast should be sent after initialization.
         UiccCard card = new UiccCard(mContext, mSimulatedCommands,
-                makeCardStatus(CardState.CARDSTATE_PRESENT), 0 /* phoneId */, new Object(), false);
+                makeCardStatus(CardState.CARDSTATE_PRESENT), 0 /* phoneId */, new Object());
         when(UiccController.getInstance().getUiccCardForPhone(0)).thenReturn(card);
         uiccLauncher.handleMessage(msg);
 
@@ -117,7 +116,7 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
 
         // Card state's changed to restricted. Broadcast should be sent.
         card.update(mContext, mSimulatedCommands,
-                makeCardStatus(CardState.CARDSTATE_RESTRICTED), 0);
+                makeCardStatus(CardState.CARDSTATE_RESTRICTED));
         uiccLauncher.handleMessage(msg);
 
         broadcast_count++;
@@ -132,7 +131,7 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
 
         // Card state's changed from restricted. Broadcast should be sent.
         card.update(mContext, mSimulatedCommands,
-                makeCardStatus(CardState.CARDSTATE_PRESENT), 0);
+                makeCardStatus(CardState.CARDSTATE_PRESENT));
         uiccLauncher.handleMessage(msg);
 
         broadcast_count++;

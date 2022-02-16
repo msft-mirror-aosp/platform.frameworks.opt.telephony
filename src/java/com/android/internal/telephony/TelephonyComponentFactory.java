@@ -33,12 +33,9 @@ import android.text.TextUtils;
 import com.android.ims.ImsManager;
 import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
 import com.android.internal.telephony.cdma.EriManager;
-import com.android.internal.telephony.data.AccessNetworksManager;
-import com.android.internal.telephony.data.DataNetworkController;
-import com.android.internal.telephony.data.LinkBandwidthEstimator;
-import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.dataconnection.DataEnabledSettings;
 import com.android.internal.telephony.dataconnection.DcTracker;
+import com.android.internal.telephony.dataconnection.LinkBandwidthEstimator;
 import com.android.internal.telephony.dataconnection.TransportManager;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
@@ -387,7 +384,7 @@ public class TelephonyComponentFactory {
 
     public ImsExternalCallTracker makeImsExternalCallTracker(ImsPhone imsPhone) {
 
-        return new ImsExternalCallTracker(imsPhone, imsPhone.getContext().getMainExecutor());
+        return new ImsExternalCallTracker(imsPhone);
     }
 
     /**
@@ -403,16 +400,6 @@ public class TelephonyComponentFactory {
 
     public TransportManager makeTransportManager(Phone phone) {
         return new TransportManager(phone);
-    }
-
-    /**
-     * Make access networks manager
-     *
-     * @param phone The phone instance
-     * @return The access networks manager
-     */
-    public AccessNetworksManager makeAccessNetworksManager(Phone phone) {
-        return new AccessNetworksManager(phone);
     }
 
     public CdmaSubscriptionSourceManager
@@ -458,13 +445,6 @@ public class TelephonyComponentFactory {
         return MultiSimSettingController.init(c, sc);
     }
 
-    /**
-     * Create a new SignalStrengthController instance.
-     */
-    public SignalStrengthController makeSignalStrengthController(GsmCdmaPhone phone) {
-        return new SignalStrengthController(phone);
-    }
-
     public SubscriptionInfoUpdater makeSubscriptionInfoUpdater(Looper looper, Context context,
             SubscriptionController sc) {
         return new SubscriptionInfoUpdater(looper, context, sc);
@@ -475,17 +455,5 @@ public class TelephonyComponentFactory {
      */
     public LinkBandwidthEstimator makeLinkBandwidthEstimator(Phone phone) {
         return new LinkBandwidthEstimator(phone, mTelephonyFacade);
-    }
-
-    /**
-     * Create a new data network controller instance. The instance is per-SIM. On multi-sim devices,
-     * there will be multiple {@link DataNetworkController} instances.
-     *
-     * @param phone The phone object
-     * @param looper The looper for event handling
-     * @return The data network controller instance
-     */
-    public DataNetworkController makeDataNetworkController(Phone phone, Looper looper) {
-        return new DataNetworkController(phone, looper);
     }
 }

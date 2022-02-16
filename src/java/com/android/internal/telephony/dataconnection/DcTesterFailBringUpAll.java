@@ -89,8 +89,7 @@ public class DcTesterFailBringUpAll {
             filter.addAction(mPhone.getActionAttached());
             log("register for intent action=" + mPhone.getActionAttached());
 
-            phone.getContext().registerReceiver(mIntentReceiver, filter, null, handler,
-                    Context.RECEIVER_EXPORTED);
+            phone.getContext().registerReceiver(mIntentReceiver, filter, null, handler);
         }
     }
 
