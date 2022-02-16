@@ -27,7 +27,6 @@ import android.content.IntentFilter;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.net.Uri;
-import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Message;
 import android.provider.Telephony;
@@ -107,7 +106,7 @@ public class CarrierResolver extends Handler {
     private Context mContext;
     private Phone mPhone;
     private IccRecords mIccRecords;
-    private final LocalLog mCarrierIdLocalLog = new LocalLog(16);
+    private final LocalLog mCarrierIdLocalLog = new LocalLog(20);
     private final TelephonyManager mTelephonyMgr;
 
     private final ContentObserver mContentObserver = new ContentObserver(this) {
@@ -165,7 +164,7 @@ public class CarrierResolver extends Handler {
                 updateCarrierIdAndName(
                     carrierId, carrierName != null ? carrierName : "",
                     specificCarrierId, specificCarrierName != null ? carrierName : "",
-                    mnoCarrierId, false);
+                    mnoCarrierId);
             }
         }
     };
@@ -216,12 +215,12 @@ public class CarrierResolver extends Handler {
                 handleSimAbsent();
                 break;
             case IccCardConstants.INTENT_VALUE_ICC_LOADED:
-                handleSimLoaded(false);
+                handleSimLoaded();
                 break;
         }
     }
 
-    private void handleSimLoaded(boolean isSimOverride) {
+    private void handleSimLoaded() {
         if (mIccRecords != null) {
             /**
              * returns empty string to be consistent with
@@ -233,9 +232,7 @@ public class CarrierResolver extends Handler {
             loge("mIccRecords is null on SIM_LOAD_EVENT, could not get SPN");
         }
         mPreferApn = getPreferApn();
-        loadCarrierMatchingRulesOnMccMnc(
-                false /* update carrier config */,
-                isSimOverride);
+        loadCarrierMatchingRulesOnMccMnc(false /* update carrier config */);
     }
 
     private void handleSimAbsent() {
@@ -244,7 +241,7 @@ public class CarrierResolver extends Handler {
         mPreferApn = null;
         updateCarrierIdAndName(TelephonyManager.UNKNOWN_CARRIER_ID, null,
                 TelephonyManager.UNKNOWN_CARRIER_ID, null,
-                TelephonyManager.UNKNOWN_CARRIER_ID, false);
+                TelephonyManager.UNKNOWN_CARRIER_ID);
     }
 
     private final PhoneStateListener mPhoneStateListener = new PhoneStateListener() {
@@ -277,24 +274,19 @@ public class CarrierResolver extends Handler {
         if (DBG) logd("handleMessage: " + msg.what);
         switch (msg.what) {
             case SIM_LOAD_EVENT:
-                AsyncResult result = (AsyncResult) msg.obj;
-                boolean isSimOverride = false;
-                if (result != null) {
-                    isSimOverride = result.userObj instanceof Boolean && (Boolean) result.userObj;
-                }
-                handleSimLoaded(isSimOverride);
+                handleSimLoaded();
                 break;
             case CARRIER_ID_DB_UPDATE_EVENT:
                 // clean the cached carrier list version, so that a new one will be queried.
                 mCarrierListVersion = null;
-                loadCarrierMatchingRulesOnMccMnc(true /* update carrier config*/, false);
+                loadCarrierMatchingRulesOnMccMnc(true /* update carrier config*/);
                 break;
             case PREFER_APN_UPDATE_EVENT:
                 String preferApn = getPreferApn();
                 if (!equals(mPreferApn, preferApn, true)) {
                     logd("[updatePreferApn] from:" + mPreferApn + " to:" + preferApn);
                     mPreferApn = preferApn;
-                    matchSubscriptionCarrier(true /* update carrier config*/, false);
+                    matchSubscriptionCarrier(true /* update carrier config*/);
                 }
                 break;
             case ICC_CHANGED_EVENT:
@@ -309,8 +301,7 @@ public class CarrierResolver extends Handler {
                     }
                     if (newIccRecords != null) {
                         logd("new Icc object");
-                        newIccRecords.registerForRecordsOverride(this, SIM_LOAD_EVENT,
-                                /* is sim override*/true);
+                        newIccRecords.registerForRecordsOverride(this, SIM_LOAD_EVENT, null);
                         mIccRecords = newIccRecords;
                     }
                 }
@@ -321,9 +312,7 @@ public class CarrierResolver extends Handler {
         }
     }
 
-    private void loadCarrierMatchingRulesOnMccMnc(
-            boolean updateCarrierConfig,
-            boolean isSimOverride) {
+    private void loadCarrierMatchingRulesOnMccMnc(boolean updateCarrierConfig) {
         try {
             String mccmnc = mTelephonyMgr.getSimOperatorNumericForPhone(mPhone.getPhoneId());
             Cursor cursor = mContext.getContentResolver().query(
@@ -341,7 +330,7 @@ public class CarrierResolver extends Handler {
                     while (cursor.moveToNext()) {
                         mCarrierMatchingRulesOnMccMnc.add(makeCarrierMatchingRule(cursor));
                     }
-                    matchSubscriptionCarrier(updateCarrierConfig, isSimOverride);
+                    matchSubscriptionCarrier(updateCarrierConfig);
 
                     // Generate metrics related to carrier ID table version.
                     CarrierIdMatchStats.sendCarrierIdTableVersion(getCarrierListVersion());
@@ -476,7 +465,7 @@ public class CarrierResolver extends Handler {
 
     private void updateCarrierIdAndName(int cid, String name,
                                         int specificCarrierId, String specificCarrierName,
-                                        int mnoCid, boolean isSimOverride) {
+                                        int mnoCid) {
         boolean update = false;
         if (specificCarrierId != mSpecificCarrierId) {
             logd("[updateSpecificCarrierId] from:" + mSpecificCarrierId + " to:"
@@ -545,7 +534,7 @@ public class CarrierResolver extends Handler {
         // during esim profile switch, there is no sim absent thus carrier id will persist and
         // might not trigger an update if switch profiles for the same carrier. thus always update
         // subscriptioninfo db to make sure we have correct carrier id set.
-        if (SubscriptionManager.isValidSubscriptionId(mPhone.getSubId()) && !isSimOverride) {
+        if (SubscriptionManager.isValidSubscriptionId(mPhone.getSubId())) {
             // only persist carrier id to simInfo db when subId is valid.
             SubscriptionController.getInstance().setCarrierId(mCarrierId, mPhone.getSubId());
         }
@@ -838,7 +827,7 @@ public class CarrierResolver extends Handler {
     /**
      * find the best matching carrier from candidates with matched subscription MCCMNC.
      */
-    private void matchSubscriptionCarrier(boolean updateCarrierConfig, boolean isSimOverride) {
+    private void matchSubscriptionCarrier(boolean updateCarrierConfig) {
         if (!SubscriptionManager.isValidSubscriptionId(mPhone.getSubId())) {
             logd("[matchSubscriptionCarrier]" + "skip before sim records loaded");
             return;
@@ -881,7 +870,7 @@ public class CarrierResolver extends Handler {
                     + " name: " + null);
             updateCarrierIdAndName(TelephonyManager.UNKNOWN_CARRIER_ID, null,
                     TelephonyManager.UNKNOWN_CARRIER_ID, null,
-                    TelephonyManager.UNKNOWN_CARRIER_ID, isSimOverride);
+                    TelephonyManager.UNKNOWN_CARRIER_ID);
         } else {
             // if there is a single matching result, check if this rule has parent cid assigned.
             if ((maxRule == maxRuleParent)
@@ -895,7 +884,7 @@ public class CarrierResolver extends Handler {
                     + " name: " + maxRuleParent.mName);
             updateCarrierIdAndName(maxRuleParent.mCid, maxRuleParent.mName,
                     maxRule.mCid, maxRule.mName,
-                    (mnoRule == null) ? maxRule.mCid : mnoRule.mCid, isSimOverride);
+                    (mnoRule == null) ? maxRule.mCid : mnoRule.mCid);
 
             if (updateCarrierConfig) {
                 logd("[matchSubscriptionCarrier] - Calling updateCarrierConfig()");

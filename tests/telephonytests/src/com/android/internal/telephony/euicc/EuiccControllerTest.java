@@ -56,7 +56,6 @@ import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.UiccAccessRule;
 import android.telephony.UiccCardInfo;
-import android.telephony.UiccPortInfo;
 import android.telephony.euicc.DownloadableSubscription;
 import android.telephony.euicc.EuiccInfo;
 import android.telephony.euicc.EuiccManager;
@@ -66,7 +65,6 @@ import androidx.test.runner.AndroidJUnit4;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.euicc.EuiccConnector.GetOtaStatusCommandCallback;
 import com.android.internal.telephony.euicc.EuiccConnector.OtaStatusChangedCallback;
-import com.android.internal.telephony.uicc.UiccSlot;
 
 import org.junit.After;
 import org.junit.Before;
@@ -119,10 +117,8 @@ public class EuiccControllerTest extends TelephonyTest {
     private static final int SUBSCRIPTION_ID = 12345;
     private static final String ICC_ID = "54321";
     private static final int CARD_ID = 25;
-    private static final int PORT_INDEX = 0;
 
     @Mock private EuiccConnector mMockConnector;
-    @Mock private UiccSlot mUiccSlot;
     private TestEuiccController mController;
     private int mSavedEuiccProvisionedValue;
 
@@ -151,7 +147,7 @@ public class EuiccControllerTest extends TelephonyTest {
         public void addResolutionIntent(
                 Intent extrasIntent, String resolutionAction, String callingPackage,
                 int resolvableErrors, boolean confirmationCodeRetried, EuiccOperation op,
-                int cardId, int portIndex, boolean usePortIndex, int subscriptionId) {
+                int cardId) {
             mResolutionAction = resolutionAction;
             mOp = op;
         }
@@ -768,8 +764,8 @@ public class EuiccControllerTest extends TelephonyTest {
                 "whatever" /* callingPackage */);
         verifyIntentSent(EuiccManager.EMBEDDED_SUBSCRIPTION_RESULT_ERROR,
                 0 /* detailedCode */);
-        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyInt(), anyString(),
-                anyBoolean(), any(), anyBoolean());
+        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyString(), anyBoolean(),
+                any());
     }
 
     @Test
@@ -780,29 +776,26 @@ public class EuiccControllerTest extends TelephonyTest {
                 0 /* result */, "whatever" /* callingPackage */);
         verifyIntentSent(EuiccManager.EMBEDDED_SUBSCRIPTION_RESULT_ERROR,
                 0 /* detailedCode */);
-        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyInt(), anyString(),
-                anyBoolean(), any(), anyBoolean());
+        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyString(), anyBoolean(),
+                any());
     }
 
     @Test
     public void testSwitchToSubscription_serviceUnavailable() throws Exception {
         setHasWriteEmbeddedPermission(true);
         prepareOperationSubscription(false /* hasPrivileges */);
-        setUpUiccSlotData();
         callSwitchToSubscription(
                 SUBSCRIPTION_ID, ICC_ID, false /* complete */, 0 /* result */,
                 "whatever" /* callingPackage */);
         verifyIntentSent(EuiccManager.EMBEDDED_SUBSCRIPTION_RESULT_ERROR,
                 0 /* detailedCode */);
-        verify(mMockConnector).switchToSubscription(anyInt(), anyInt(), anyString(), anyBoolean(),
-                any(), anyBoolean());
+        verify(mMockConnector).switchToSubscription(anyInt(), anyString(), anyBoolean(), any());
     }
 
     @Test
     public void testSwitchToSubscription_error() throws Exception {
         setHasWriteEmbeddedPermission(true);
         prepareOperationSubscription(false /* hasPrivileges */);
-        setUpUiccSlotData();
         callSwitchToSubscription(
                 SUBSCRIPTION_ID, ICC_ID, true /* complete */, 42 /* result */,
                 "whatever" /* callingPackage */);
@@ -814,7 +807,6 @@ public class EuiccControllerTest extends TelephonyTest {
     public void testSwitchToSubscription_success() throws Exception {
         setHasWriteEmbeddedPermission(true);
         prepareOperationSubscription(false /* hasPrivileges */);
-        setUpUiccSlotData();
         callSwitchToSubscription(
                 SUBSCRIPTION_ID, ICC_ID, true /* complete */, EuiccService.RESULT_OK,
                 "whatever" /* callingPackage */);
@@ -839,15 +831,14 @@ public class EuiccControllerTest extends TelephonyTest {
                 "whatever" /* callingPackage */);
         verifyIntentSent(EuiccManager.EMBEDDED_SUBSCRIPTION_RESULT_ERROR,
                 0 /* detailedCode */);
-        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyInt(), anyString(),
-                anyBoolean(), any(), anyBoolean());
+        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyString(), anyBoolean(),
+                any());
     }
 
     @Test
     public void testSwitchToSubscription_hasCarrierPrivileges() throws Exception {
         setHasWriteEmbeddedPermission(false);
         prepareOperationSubscription(true /* hasPrivileges */);
-        setUpUiccSlotData();
         when(mTelephonyManager.getPhoneCount()).thenReturn(1);
         setHasCarrierPrivilegesOnActiveSubscription(true);
         callSwitchToSubscription(
@@ -859,7 +850,6 @@ public class EuiccControllerTest extends TelephonyTest {
     public void testSwitchToSubscription_hasCarrierPrivileges_multiSim() throws Exception {
         setHasWriteEmbeddedPermission(false);
         prepareOperationSubscription(true /* hasPrivileges */);
-        setUpUiccSlotData();
         when(mTelephonyManager.getPhoneCount()).thenReturn(2);
         setCanManageSubscriptionOnTargetSim(true /* isTargetEuicc */, true /* hasPrivileges */);
         callSwitchToSubscription(
@@ -871,15 +861,14 @@ public class EuiccControllerTest extends TelephonyTest {
     public void testSwitchToSubscription_hasCarrierPrivileges_needsConsent() throws Exception {
         setHasWriteEmbeddedPermission(false);
         prepareOperationSubscription(true /* hasPrivileges */);
-        setUpUiccSlotData();
         setHasCarrierPrivilegesOnActiveSubscription(false);
         when(mTelephonyManager.getPhoneCount()).thenReturn(1);
         callSwitchToSubscription(
                 SUBSCRIPTION_ID, ICC_ID, false /* complete */, 0 /* result */, PACKAGE_NAME);
         verifyIntentSent(EuiccManager.EMBEDDED_SUBSCRIPTION_RESULT_RESOLVABLE_ERROR,
                 0 /* detailedCode */);
-        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyInt(), anyString(),
-                anyBoolean(), any(), anyBoolean());
+        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyString(), anyBoolean(),
+                any());
         verifyResolutionIntent(EuiccService.ACTION_RESOLVE_NO_PRIVILEGES,
                 EuiccOperation.ACTION_SWITCH_NO_PRIVILEGES);
     }
@@ -889,15 +878,14 @@ public class EuiccControllerTest extends TelephonyTest {
             throws Exception {
         setHasWriteEmbeddedPermission(false);
         prepareOperationSubscription(true /* hasPrivileges */);
-        setUpUiccSlotData();
         when(mTelephonyManager.getPhoneCount()).thenReturn(2);
         setCanManageSubscriptionOnTargetSim(true /* isTargetEuicc */, false /* hasPrivileges */);
         callSwitchToSubscription(
                 SUBSCRIPTION_ID, ICC_ID, false /* complete */, 0 /* result */, PACKAGE_NAME);
         verifyIntentSent(EuiccManager.EMBEDDED_SUBSCRIPTION_RESULT_RESOLVABLE_ERROR,
                 0 /* detailedCode */);
-        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyInt(), anyString(),
-                anyBoolean(), any(), anyBoolean());
+        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyString(), anyBoolean(),
+                any());
         verifyResolutionIntent(EuiccService.ACTION_RESOLVE_NO_PRIVILEGES,
                 EuiccOperation.ACTION_SWITCH_NO_PRIVILEGES);
     }
@@ -907,15 +895,14 @@ public class EuiccControllerTest extends TelephonyTest {
             throws Exception {
         setHasWriteEmbeddedPermission(false);
         prepareOperationSubscription(true /* hasPrivileges */);
-        setUpUiccSlotData();
         when(mTelephonyManager.getPhoneCount()).thenReturn(2);
         setCanManageSubscriptionOnTargetSim(false /* isTargetEuicc */, true /* hasPrivileges */);
         callSwitchToSubscription(
                 SUBSCRIPTION_ID, ICC_ID, false /* complete */, 0 /* result */, PACKAGE_NAME);
         verifyIntentSent(EuiccManager.EMBEDDED_SUBSCRIPTION_RESULT_RESOLVABLE_ERROR,
                 0 /* detailedCode */);
-        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyInt(), anyString(),
-                anyBoolean(), any(), anyBoolean());
+        verify(mMockConnector, never()).switchToSubscription(anyInt(), anyString(), anyBoolean(),
+                any());
         verifyResolutionIntent(EuiccService.ACTION_RESOLVE_NO_PRIVILEGES,
                 EuiccOperation.ACTION_SWITCH_NO_PRIVILEGES);
     }
@@ -1139,12 +1126,6 @@ public class EuiccControllerTest extends TelephonyTest {
                 EuiccManager.EXTRA_EMBEDDED_SUBSCRIPTION_ERROR_CODE, -1), 0x345678);
     }
 
-    private void setUpUiccSlotData() {
-        when(mUiccController.getUiccSlot(anyInt())).thenReturn(mUiccSlot);
-        // TODO(b/199559633): Add test cases for isMultipleEnabledProfileSupported true case
-        when(mUiccSlot.isMultipleEnabledProfileSupported()).thenReturn(false);
-    }
-
     private void setGetEidPermissions(
             boolean hasPhoneStatePrivileged, boolean hasCarrierPrivileges) throws Exception {
         doReturn(hasPhoneStatePrivileged
@@ -1173,7 +1154,7 @@ public class EuiccControllerTest extends TelephonyTest {
         SubscriptionInfo subInfo = new SubscriptionInfo(
                 0, "", 0, "", "", 0, 0, "", 0, null, "", "", "", true /* isEmbedded */,
                 hasPrivileges ? new UiccAccessRule[] { ACCESS_RULE } : null, "", CARD_ID,
-                false, null, false, 0, 0, 0, null, null, true, -1);
+                false, null, false, 0, 0, 0, null, null, true);
         when(mSubscriptionManager.canManageSubscription(subInfo, PACKAGE_NAME)).thenReturn(
                 hasPrivileges);
         when(mSubscriptionManager.getActiveSubscriptionInfoList(anyBoolean())).thenReturn(
@@ -1182,18 +1163,10 @@ public class EuiccControllerTest extends TelephonyTest {
 
     private void setCanManageSubscriptionOnTargetSim(boolean isTargetEuicc, boolean hasPrivileges)
             throws Exception {
-        UiccCardInfo cardInfo1 = new UiccCardInfo(isTargetEuicc, CARD_ID, "", 0,
-                false /* isRemovable */,
-                false /* isMultipleEnabledProfileSupported */,
-                Collections.singletonList(
-                        new UiccPortInfo("" /* iccId */, 0 /* portIdx */,
-                                -1 /* logicalSlotIdx */, false /* isActive */)));
+        UiccCardInfo cardInfo1 = new UiccCardInfo(isTargetEuicc, CARD_ID, "", "", 0,
+                false /* isRemovable */);
         UiccCardInfo cardInfo2 = new UiccCardInfo(true /* isEuicc */, 1 /* cardId */,
-                "", 0, false /* isRemovable */,
-                false /* isMultipleEnabledProfileSupported */,
-                Collections.singletonList(
-                        new UiccPortInfo("" /* iccId */, 0 /* portIdx */,
-                                -1 /* logicalSlotIdx */, false /* isActive */)));
+                "", "", 0, false /* isRemovable */);
         ArrayList<UiccCardInfo> cardInfos = new ArrayList<>();
         cardInfos.add(cardInfo1);
         cardInfos.add(cardInfo2);
@@ -1202,11 +1175,11 @@ public class EuiccControllerTest extends TelephonyTest {
         SubscriptionInfo subInfo1 = new SubscriptionInfo(
                 0, "", 0, "", "", 0, 0, "", 0, null, "", "", "", true /* isEmbedded */,
                 hasPrivileges ? new UiccAccessRule[] { ACCESS_RULE } : null, "", CARD_ID,
-                false, null, false, 0, 0, 0, null, null, true, -1);
+                false, null, false, 0, 0, 0, null, null, true);
         SubscriptionInfo subInfo2 = new SubscriptionInfo(
                 0, "", 0, "", "", 0, 0, "", 0, null, "", "", "", true /* isEmbedded */,
                 hasPrivileges ? new UiccAccessRule[] { ACCESS_RULE } : null, "",
-                1 /* cardId */, false, null, false, 0, 0, 0, null, null, true, -1);
+                1 /* cardId */, false, null, false, 0, 0, 0, null, null, true);
         when(mSubscriptionManager.canManageSubscription(subInfo1, PACKAGE_NAME)).thenReturn(
                 hasPrivileges);
         when(mSubscriptionManager.canManageSubscription(subInfo2, PACKAGE_NAME)).thenReturn(
@@ -1401,7 +1374,7 @@ public class EuiccControllerTest extends TelephonyTest {
             @Override
             public Void answer(InvocationOnMock invocation) throws Exception {
                 EuiccConnector.SwitchCommandCallback cb = invocation
-                        .getArgument(4 /* resultCallback */);
+                        .getArgument(3 /* resultCallback */);
                 if (complete) {
                     cb.onSwitchComplete(result);
                 } else {
@@ -1409,10 +1382,8 @@ public class EuiccControllerTest extends TelephonyTest {
                 }
                 return null;
             }
-        }).when(mMockConnector).switchToSubscription(anyInt(), anyInt(), eq(iccid), anyBoolean(),
-                any(), anyBoolean());
-        mController.switchToSubscription(CARD_ID, subscriptionId, callingPackage,
-                resultCallback);
+        }).when(mMockConnector).switchToSubscription(anyInt(), eq(iccid), anyBoolean(), any());
+        mController.switchToSubscription(CARD_ID, subscriptionId, callingPackage, resultCallback);
     }
 
     private void callUpdateSubscriptionNickname(int subscriptionId, String iccid, String nickname,

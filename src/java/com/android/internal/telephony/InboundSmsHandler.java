@@ -28,7 +28,6 @@ import static android.service.carrier.CarrierMessagingService.RECEIVE_OPTIONS_SK
 import static android.telephony.TelephonyManager.PHONE_TYPE_CDMA;
 
 import android.annotation.IntDef;
-import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.Activity;
 import android.app.AppOpsManager;
@@ -268,7 +267,7 @@ public abstract class InboundSmsHandler extends StateMachine {
     protected TelephonyMetrics mMetrics = TelephonyMetrics.getInstance();
 
     private LocalLog mLocalLog = new LocalLog(64);
-    private LocalLog mCarrierServiceLocalLog = new LocalLog(8);
+    private LocalLog mCarrierServiceLocalLog = new LocalLog(10);
 
     PowerWhitelistManager mPowerWhitelistManager;
 
@@ -1705,15 +1704,10 @@ public abstract class InboundSmsHandler extends StateMachine {
 
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (intent == null) {
-                logeWithLocalLog("onReceive: received null intent, faking " + mWaitingForIntent,
-                        mInboundSmsTracker.getMessageId());
-                return;
-            }
             handleAction(intent, true);
         }
 
-        private synchronized void handleAction(@NonNull Intent intent, boolean onReceive) {
+        private synchronized void handleAction(Intent intent, boolean onReceive) {
             String action = intent.getAction();
             if (mWaitingForIntent == null || !mWaitingForIntent.getAction().equals(action)) {
                 logeWithLocalLog("handleAction: Received " + action + " when expecting "
@@ -2115,8 +2109,7 @@ public abstract class InboundSmsHandler extends StateMachine {
     static void registerNewMessageNotificationActionHandler(Context context) {
         IntentFilter userFilter = new IntentFilter();
         userFilter.addAction(ACTION_OPEN_SMS_APP);
-        context.registerReceiver(new NewMessageNotificationActionReceiver(), userFilter,
-                Context.RECEIVER_NOT_EXPORTED);
+        context.registerReceiver(new NewMessageNotificationActionReceiver(), userFilter);
     }
 
     protected abstract class CbTestBroadcastReceiver extends BroadcastReceiver {

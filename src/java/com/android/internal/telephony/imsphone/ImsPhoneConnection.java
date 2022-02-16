@@ -59,8 +59,6 @@ import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.telephony.Rlog;
 
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
@@ -160,7 +158,7 @@ public class ImsPhoneConnection extends Connection implements
     private static final int EVENT_DTMF_DELAY_DONE = 5;
 
     //***** Constants
-    @VisibleForTesting static final int PAUSE_DELAY_MILLIS = 3 * 1000;
+    private static final int PAUSE_DELAY_MILLIS = 3 * 1000;
     private static final int WAKE_LOCK_TIMEOUT_MILLIS = 60*1000;
 
     //***** Inner Classes
@@ -356,8 +354,6 @@ public class ImsPhoneConnection extends Connection implements
         Rlog.w(LOG_TAG, "applyRemoteCallCapabilities - remoteProfile = "+remoteProfile);
         capabilities = removeCapability(capabilities,
                 Connection.Capability.SUPPORTS_VT_REMOTE_BIDIRECTIONAL);
-        capabilities = removeCapability(capabilities,
-                Connection.Capability.SUPPORTS_RTT_REMOTE);
 
         switch (remoteProfile.mCallType) {
             case ImsCallProfile.CALL_TYPE_VT:
@@ -366,10 +362,6 @@ public class ImsPhoneConnection extends Connection implements
                 capabilities = addCapability(capabilities,
                         Connection.Capability.SUPPORTS_VT_REMOTE_BIDIRECTIONAL);
                 break;
-        }
-
-        if (remoteProfile.getMediaProfile().getRttMode() == ImsStreamMediaProfile.RTT_MODE_FULL) {
-            capabilities = addCapability(capabilities, Connection.Capability.SUPPORTS_RTT_REMOTE);
         }
         return capabilities;
     }
@@ -1320,11 +1312,7 @@ public class ImsPhoneConnection extends Connection implements
             return;
         }
         if (extras.containsKey(ImsCallProfile.EXTRA_FORWARDED_NUMBER)) {
-            String[] forwardedNumberArray =
-                    extras.getStringArray(ImsCallProfile.EXTRA_FORWARDED_NUMBER);
-            if (forwardedNumberArray != null) {
-                mForwardedNumber = new ArrayList<String>(Arrays.asList(forwardedNumberArray));
-            }
+            mForwardedNumber = extras.getStringArrayList(ImsCallProfile.EXTRA_FORWARDED_NUMBER);
         }
     }
 
