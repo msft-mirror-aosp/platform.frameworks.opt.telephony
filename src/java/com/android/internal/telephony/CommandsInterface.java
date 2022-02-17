@@ -228,6 +228,10 @@ public interface CommandsInterface {
     void registerForApnUnthrottled(Handler h, int what, Object obj);
     /** Unregister for apn unthrottled event */
     void unregisterForApnUnthrottled(Handler h);
+    /** Register for the slicing config changed event */
+    void registerForSlicingConfigChanged(Handler h, int what, Object obj);
+    /** Unregister for slicing config changed event */
+    void unregisterForSlicingConfigChanged(Handler h);
 
     /** InCall voice privacy notifications */
     void registerForInCallVoicePrivacyOn(Handler h, int what, Object obj);
@@ -1599,6 +1603,17 @@ public interface CommandsInterface {
     default void isNrDualConnectivityEnabled(Message message, WorkSource workSource) {}
 
     /**
+     * Enable or disable Voice over NR (VoNR)
+     * @param enabled enable or disable VoNR.
+     */
+    default void setVoNrEnabled(boolean enabled, Message message, WorkSource workSource) {}
+
+    /**
+     * Is voice over NR enabled
+     */
+    default void isVoNrEnabled(Message message, WorkSource workSource) {}
+
+    /**
      * Request to enable/disable network state change notifications when
      * location information (lac and/or cid) has changed.
      *
@@ -2195,6 +2210,15 @@ public interface CommandsInterface {
             Message result);
 
     /**
+     * Whether the device modem supports reporting the EID in either the slot or card status or
+     * through ATR.
+     * @return true if the modem supports EID.
+     */
+    default boolean supportsEid() {
+        return false;
+    }
+
+    /**
      * Tells the modem if data is allowed or not.
      *
      * @param allowed
@@ -2659,6 +2683,25 @@ public interface CommandsInterface {
      */
     default void getSlicingConfig(Message result) {};
 
+    /**
+     * Request to enable/disable the mock modem service.
+     * This is used in shell commands during CTS testing only.
+     *
+     * @param serviceName the service name which telephony wants to bind to
+     */
+    default boolean setModemService(String serviceName) {
+        return true;
+    };
+
+   /**
+     * Return the class name of the currently bound modem service.
+     *
+     * @return the class name of the modem service.
+     */
+    default String getModemService() {
+        return "default";
+    };
+
    /**
      * Request the SIM phonebook records of all activated UICC applications
      *
@@ -2711,4 +2754,20 @@ public interface CommandsInterface {
      * @param h Handler to be removed from the registrant list.
      */
      public void unregisterForSimPhonebookRecordsReceived(Handler h);
+
+    /**
+     * Set the UE's usage setting.
+     *
+     * @param result Callback message containing the success or failure status.
+     * @param usageSetting the UE's usage setting, either VOICE_CENTRIC or DATA_CENTRIC.
+     */
+    default void setUsageSetting(Message result,
+            /* @TelephonyManager.UsageSetting */ int usageSetting) {}
+
+    /**
+     * Get the UE's usage setting.
+     *
+     * @param result Callback message containing the usage setting (or a failure status).
+     */
+    default void getUsageSetting(Message result) {}
 }

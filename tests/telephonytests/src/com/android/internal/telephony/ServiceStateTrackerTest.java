@@ -20,6 +20,7 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyLong;
@@ -43,6 +44,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
@@ -55,7 +57,6 @@ import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.Process;
 import android.os.SystemClock;
-import android.os.TimestampedValue;
 import android.os.UserHandle;
 import android.os.WorkSource;
 import android.telephony.AccessNetworkConstants;
@@ -69,13 +70,7 @@ import android.telephony.CellIdentityTdscdma;
 import android.telephony.CellIdentityWcdma;
 import android.telephony.CellInfo;
 import android.telephony.CellInfoGsm;
-import android.telephony.CellSignalStrength;
-import android.telephony.CellSignalStrengthCdma;
 import android.telephony.CellSignalStrengthGsm;
-import android.telephony.CellSignalStrengthLte;
-import android.telephony.CellSignalStrengthNr;
-import android.telephony.CellSignalStrengthTdscdma;
-import android.telephony.CellSignalStrengthWcdma;
 import android.telephony.INetworkService;
 import android.telephony.LteVopsSupportInfo;
 import android.telephony.NetworkRegistrationInfo;
@@ -83,7 +78,6 @@ import android.telephony.NetworkService;
 import android.telephony.NrVopsSupportInfo;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.ServiceState;
-import android.telephony.SignalStrength;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
@@ -139,6 +133,10 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @Mock
     private ServiceStateStats mServiceStateStats;
 
+    // SST now delegates all signal strength operations to SSC
+    // Add Mock SSC as the dependency to avoid NPE
+    private SignalStrengthController mSsc;
+
     private ServiceStateTracker sst;
     private ServiceStateTrackerTestHandler mSSTTestHandler;
     private PersistableBundle mBundle;
@@ -188,6 +186,9 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
         @Override
         public void onLooperPrepared() {
+            mSsc = new SignalStrengthController(mPhone);
+            doReturn(mSsc).when(mPhone).getSignalStrengthController();
+
             sst = new ServiceStateTracker(mPhone, mSimulatedCommands);
             sst.setServiceStateStats(mServiceStateStats);
             doReturn(sst).when(mPhone).getServiceStateTracker();
@@ -266,14 +267,12 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(dds).when(mPhone).getSubId();
         doReturn(true).when(mPhone).areAllDataDisconnected();
 
+        doReturn(true).when(mPackageManager)
+                .hasSystemFeature(PackageManager.FEATURE_TELEPHONY_CDMA);
+
         mSSTTestHandler = new ServiceStateTrackerTestHandler(getClass().getSimpleName());
         mSSTTestHandler.start();
         waitUntilReady();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-
-        Intent intent = new Intent(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        intent.putExtra(CarrierConfigManager.EXTRA_SLOT_INDEX, 0);
-        mContext.sendBroadcast(intent);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
 
         // Override SPN related resource
@@ -286,6 +285,10 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         mContextFixture.putStringArrayResource(
                 com.android.internal.R.array.wfcSpnFormats,
                 WIFI_CALLING_FORMATTERS);
+
+        // Start with power off delay disabled.
+        mContextFixture.putIntResource(
+                com.android.internal.R.integer.config_delay_for_ims_dereg_millis, 0);
 
         mBundle.putBoolean(
                 CarrierConfigManager.KEY_ENABLE_CARRIER_DISPLAY_NAME_RESOLVER_BOOL, true);
@@ -336,6 +339,12 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                     15, /* SIGNAL_STRENGTH_GOOD */
                     30  /* SIGNAL_STRENGTH_GREAT */
                 });
+
+        Intent intent = new Intent(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
+        intent.putExtra(CarrierConfigManager.EXTRA_SLOT_INDEX, 0);
+        mContext.sendBroadcast(intent);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+
         logd("ServiceStateTrackerTest -Setup!");
     }
 
@@ -688,58 +697,6 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         verify(mPhone, times(1)).notifyServiceStateChanged(any(ServiceState.class));
     }
 
-    private void sendSignalStrength(SignalStrength ss) {
-        mSimulatedCommands.setSignalStrength(ss);
-        mSimulatedCommands.notifySignalStrength();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-    }
-
-    @Test
-    @MediumTest
-    public void testSignalStrength() {
-        // Send in GSM Signal Strength Info and expect isGsm == true
-        SignalStrength ss = new SignalStrength(
-                new CellSignalStrengthCdma(),
-                new CellSignalStrengthGsm(-53, 0, SignalStrength.INVALID),
-                new CellSignalStrengthWcdma(),
-                new CellSignalStrengthTdscdma(),
-                new CellSignalStrengthLte(),
-                new CellSignalStrengthNr());
-
-        sendSignalStrength(ss);
-        assertEquals(sst.getSignalStrength(), ss);
-        assertEquals(sst.getSignalStrength().isGsm(), true);
-
-        // Send in CDMA+LTE Signal Strength Info and expect isGsm == true
-        ss = new SignalStrength(
-                new CellSignalStrengthCdma(-90, -12,
-                        SignalStrength.INVALID, SignalStrength.INVALID, SignalStrength.INVALID),
-                new CellSignalStrengthGsm(),
-                new CellSignalStrengthWcdma(),
-                new CellSignalStrengthTdscdma(),
-                new CellSignalStrengthLte(
-                        -110, -114, -5, 0, SignalStrength.INVALID, SignalStrength.INVALID),
-                new CellSignalStrengthNr());
-
-        sendSignalStrength(ss);
-        assertEquals(sst.getSignalStrength(), ss);
-        assertEquals(sst.getSignalStrength().isGsm(), true);
-
-        // Send in CDMA-only Signal Strength Info and expect isGsm == false
-        ss = new SignalStrength(
-                new CellSignalStrengthCdma(-90, -12,
-                        SignalStrength.INVALID, SignalStrength.INVALID, SignalStrength.INVALID),
-                new CellSignalStrengthGsm(),
-                new CellSignalStrengthWcdma(),
-                new CellSignalStrengthTdscdma(),
-                new CellSignalStrengthLte(),
-                new CellSignalStrengthNr());
-
-        sendSignalStrength(ss);
-        assertEquals(sst.getSignalStrength(), ss);
-        assertEquals(sst.getSignalStrength().isGsm(), false);
-    }
-
     private void sendCarrierConfigUpdate() {
         CarrierConfigManager mockConfigManager = Mockito.mock(CarrierConfigManager.class);
         when(mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE))
@@ -750,182 +707,6 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         intent.putExtra(CarrierConfigManager.EXTRA_SLOT_INDEX, PHONE_ID);
         mContext.sendBroadcast(intent);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-    }
-
-    @Test
-    public void testLteSignalStrengthReportingCriteria() {
-        SignalStrength ss = new SignalStrength(
-                new CellSignalStrengthCdma(),
-                new CellSignalStrengthGsm(),
-                new CellSignalStrengthWcdma(),
-                new CellSignalStrengthTdscdma(),
-                new CellSignalStrengthLte(
-                        -110, /* rssi */
-                        -114, /* rsrp */
-                        -5, /* rsrq */
-                        0, /* rssnr */
-                        SignalStrength.INVALID, /* cqi */
-                        SignalStrength.INVALID /* ta */),
-                new CellSignalStrengthNr());
-
-        mBundle.putBoolean(CarrierConfigManager.KEY_USE_ONLY_RSRP_FOR_LTE_SIGNAL_BAR_BOOL,
-                true);
-
-        sendCarrierConfigUpdate();
-
-        mSimulatedCommands.setSignalStrength(ss);
-        mSimulatedCommands.notifySignalStrength();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-        // Default thresholds are POOR=-115 MODERATE=-105 GOOD=-95 GREAT=-85
-        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_POOR, sst.getSignalStrength().getLevel());
-
-        int[] lteThresholds = {
-                -130, // SIGNAL_STRENGTH_POOR
-                -120, // SIGNAL_STRENGTH_MODERATE
-                -110, // SIGNAL_STRENGTH_GOOD
-                -100,  // SIGNAL_STRENGTH_GREAT
-        };
-        mBundle.putIntArray(CarrierConfigManager.KEY_LTE_RSRP_THRESHOLDS_INT_ARRAY,
-                lteThresholds);
-        sendCarrierConfigUpdate();
-
-        mSimulatedCommands.setSignalStrength(ss);
-        mSimulatedCommands.notifySignalStrength();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-        assertEquals(sst.getSignalStrength().getLevel(),
-                CellSignalStrength.SIGNAL_STRENGTH_MODERATE);
-    }
-
-    @Test
-    public void test5gNrSignalStrengthReportingCriteria_UseSsRsrp() {
-        SignalStrength ss = new SignalStrength(
-                new CellSignalStrengthCdma(),
-                new CellSignalStrengthGsm(),
-                new CellSignalStrengthWcdma(),
-                new CellSignalStrengthTdscdma(),
-                new CellSignalStrengthLte(),
-                new CellSignalStrengthNr(
-                    -139, /** csiRsrp NONE */
-                    -20, /** csiRsrq NONE */
-                    -23, /** CsiSinr NONE */
-                    -44, /** SsRsrp SIGNAL_STRENGTH_GREAT */
-                    -20, /** SsRsrq NONE */
-                    -23) /** SsSinr NONE */
-         );
-
-        // SSRSRP = 1 << 0
-        mBundle.putInt(CarrierConfigManager.KEY_PARAMETERS_USE_FOR_5G_NR_SIGNAL_BAR_INT,
-                CellSignalStrengthNr.USE_SSRSRP);
-        sendCarrierConfigUpdate();
-        mSimulatedCommands.setSignalStrength(ss);
-        mSimulatedCommands.notifySignalStrength();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_GREAT, sst.getSignalStrength().getLevel());
-    }
-
-    @Test
-    public void test5gNrSignalStrengthReportingCriteria_UseSsRsrpAndSsRsrq() {
-        SignalStrength ss = new SignalStrength(
-                new CellSignalStrengthCdma(),
-                new CellSignalStrengthGsm(),
-                new CellSignalStrengthWcdma(),
-                new CellSignalStrengthTdscdma(),
-                new CellSignalStrengthLte(),
-                new CellSignalStrengthNr(
-                    -139, /** csiRsrp NONE */
-                    -20, /** csiRsrq NONE */
-                    -23, /** CsiSinr NONE */
-                    -44, /** SsRsrp SIGNAL_STRENGTH_GREAT */
-                    -32, /** SsRsrq NONE */
-                    -23) /** SsSinr NONE */
-        );
-
-        // SSRSRP = 1 << 0 | SSSINR = 1 << 2
-        mBundle.putInt(CarrierConfigManager.KEY_PARAMETERS_USE_FOR_5G_NR_SIGNAL_BAR_INT,
-                CellSignalStrengthNr.USE_SSRSRP | CellSignalStrengthNr.USE_SSRSRQ);
-        sendCarrierConfigUpdate();
-        mSimulatedCommands.setSignalStrength(ss);
-        mSimulatedCommands.notifySignalStrength();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_NONE_OR_UNKNOWN,
-                sst.getSignalStrength().getLevel());
-    }
-
-    @Test
-    public void test5gNrSignalStrengthReportingCriteria_ConfiguredThresholds() {
-        SignalStrength ss = new SignalStrength(
-                new CellSignalStrengthCdma(),
-                new CellSignalStrengthGsm(),
-                new CellSignalStrengthWcdma(),
-                new CellSignalStrengthTdscdma(),
-                new CellSignalStrengthLte(),
-                new CellSignalStrengthNr(
-                    -139, /** csiRsrp NONE */
-                    -20, /** csiRsrq NONE */
-                    -23, /** CsiSinr NONE */
-                    -44, /** SsRsrp SIGNAL_STRENGTH_GREAT */
-                    -20, /** SsRsrq NONE */
-                    -23) /** SsSinr NONE */
-        );
-
-        // SSRSRP = 1 << 0
-        mBundle.putInt(CarrierConfigManager.KEY_PARAMETERS_USE_FOR_5G_NR_SIGNAL_BAR_INT,
-                CellSignalStrengthNr.USE_SSRSRP);
-        sendCarrierConfigUpdate();
-        mSimulatedCommands.setSignalStrength(ss);
-        mSimulatedCommands.notifySignalStrength();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_GREAT, sst.getSignalStrength().getLevel());
-
-        int[] nrSsRsrpThresholds = {
-                -45, // SIGNAL_STRENGTH_POOR
-                -40, // SIGNAL_STRENGTH_MODERATE
-                -37, // SIGNAL_STRENGTH_GOOD
-                -34,  // SIGNAL_STRENGTH_GREAT
-        };
-        mBundle.putIntArray(CarrierConfigManager.KEY_5G_NR_SSRSRP_THRESHOLDS_INT_ARRAY,
-                nrSsRsrpThresholds);
-        mBundle.putInt(CarrierConfigManager.KEY_PARAMETERS_USE_FOR_5G_NR_SIGNAL_BAR_INT,
-                CellSignalStrengthNr.USE_SSRSRP);
-        sendCarrierConfigUpdate();
-        mSimulatedCommands.setSignalStrength(ss);
-        mSimulatedCommands.notifySignalStrength();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_POOR,
-                sst.getSignalStrength().getLevel());
-    }
-
-    @Test
-    public void testWcdmaSignalStrengthReportingCriteria() {
-        SignalStrength ss = new SignalStrength(
-                new CellSignalStrengthCdma(),
-                new CellSignalStrengthGsm(),
-                new CellSignalStrengthWcdma(-79, 0, -85, -5),
-                new CellSignalStrengthTdscdma(),
-                new CellSignalStrengthLte(),
-                new CellSignalStrengthNr());
-
-        mSimulatedCommands.setSignalStrength(ss);
-        mSimulatedCommands.notifySignalStrength();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-        assertEquals(sst.getSignalStrength().getLevel(), CellSignalStrength.SIGNAL_STRENGTH_GOOD);
-
-        int[] wcdmaThresholds = {
-                -110, // SIGNAL_STRENGTH_POOR
-                -100, // SIGNAL_STRENGTH_MODERATE
-                -90, // SIGNAL_STRENGTH_GOOD
-                -80  // SIGNAL_STRENGTH_GREAT
-        };
-        mBundle.putIntArray(CarrierConfigManager.KEY_WCDMA_RSCP_THRESHOLDS_INT_ARRAY,
-                wcdmaThresholds);
-        mBundle.putString(
-                CarrierConfigManager.KEY_WCDMA_DEFAULT_SIGNAL_STRENGTH_MEASUREMENT_STRING,
-                "rscp");
-        sendCarrierConfigUpdate();
-        mSimulatedCommands.setSignalStrength(ss);
-        mSimulatedCommands.notifySignalStrength();
-        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-        assertEquals(sst.getSignalStrength().getLevel(), CellSignalStrength.SIGNAL_STRENGTH_GOOD);
     }
 
     @Test
@@ -1940,6 +1721,8 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @SmallTest
     public void testImsRegisteredDelayShutDown() throws Exception {
         doReturn(true).when(mPhone).isPhoneTypeGsm();
+        mContextFixture.putIntResource(
+                com.android.internal.R.integer.config_delay_for_ims_dereg_millis, 1000 /*ms*/);
         sst.setImsRegistrationState(true);
         mSimulatedCommands.setRadioPowerFailResponse(false);
         sst.setRadioPower(true);
@@ -1959,8 +1742,27 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testImsRegisteredNoDelayShutDown() throws Exception {
+        doReturn(true).when(mPhone).isPhoneTypeGsm();
+        // The radio power off delay time is 0, so there should should be no delay.
+        sst.setImsRegistrationState(true);
+        mSimulatedCommands.setRadioPowerFailResponse(false);
+        sst.setRadioPower(true);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+
+        // Turn off the radio and ensure radio power is off
+        assertEquals(TelephonyManager.RADIO_POWER_ON, mSimulatedCommands.getRadioState());
+        sst.setRadioPower(false);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+        assertEquals(TelephonyManager.RADIO_POWER_OFF, mSimulatedCommands.getRadioState());
+    }
+
+    @Test
+    @SmallTest
     public void testImsRegisteredDelayShutDownTimeout() throws Exception {
         doReturn(true).when(mPhone).isPhoneTypeGsm();
+        mContextFixture.putIntResource(
+                com.android.internal.R.integer.config_delay_for_ims_dereg_millis, 1000 /*ms*/);
         sst.setImsRegistrationState(true);
         mSimulatedCommands.setRadioPowerFailResponse(false);
         sst.setRadioPower(true);
@@ -1976,7 +1778,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         // move to off.
         // Timeout for IMS reg + some extra time to remove race conditions
         waitForDelayedHandlerAction(mSSTTestHandler.getThreadHandler(),
-                ServiceStateTracker.DELAY_RADIO_OFF_FOR_IMS_DEREG_TIMEOUT + 100, 1000);
+                sst.getRadioPowerOffDelayTimeoutForImsRegistration() + 1000, 1000);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertEquals(TelephonyManager.RADIO_POWER_OFF, mSimulatedCommands.getRadioState());
     }
@@ -1985,6 +1787,8 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @SmallTest
     public void testImsRegisteredAPMOnOffToggle() throws Exception {
         doReturn(true).when(mPhone).isPhoneTypeGsm();
+        mContextFixture.putIntResource(
+                com.android.internal.R.integer.config_delay_for_ims_dereg_millis, 1000 /*ms*/);
         sst.setImsRegistrationState(true);
         mSimulatedCommands.setRadioPowerFailResponse(false);
         sst.setRadioPower(true);
@@ -2000,14 +1804,14 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         // Ensure the timeout was cancelled and we still see radio power is on.
         // Timeout for IMS reg + some extra time to remove race conditions
         waitForDelayedHandlerAction(mSSTTestHandler.getThreadHandler(),
-                ServiceStateTracker.DELAY_RADIO_OFF_FOR_IMS_DEREG_TIMEOUT + 100, 1000);
+                sst.getRadioPowerOffDelayTimeoutForImsRegistration() + 1000, 1000);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertEquals(TelephonyManager.RADIO_POWER_ON, mSimulatedCommands.getRadioState());
     }
 
     @Test
     @SmallTest
-    public void testSetTimeFromNITZStr() throws Exception {
+    public void testSetTimeFromNITZStr_withoutAge() throws Exception {
         {
             // Mock sending incorrect nitz str from RIL
             mSimulatedCommands.triggerNITZupdate("38/06/20,00:00:00+0");
@@ -2015,21 +1819,55 @@ public class ServiceStateTrackerTest extends TelephonyTest {
             verify(mNitzStateMachine, times(0)).handleNitzReceived(any());
         }
         {
-            // Mock sending correct nitz str from RIL
+            // Mock sending correct nitz str from RIL with a zero ageMs
             String nitzStr = "15/06/20,00:00:00+0";
             NitzData expectedNitzData = NitzData.parse(nitzStr);
             mSimulatedCommands.triggerNITZupdate(nitzStr);
             waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
 
-            ArgumentCaptor<TimestampedValue<NitzData>> argumentsCaptor =
-                    ArgumentCaptor.forClass(TimestampedValue.class);
+            ArgumentCaptor<NitzSignal> argumentsCaptor =
+                    ArgumentCaptor.forClass(NitzSignal.class);
             verify(mNitzStateMachine, times(1))
                     .handleNitzReceived(argumentsCaptor.capture());
 
             // Confirm the argument was what we expected.
-            TimestampedValue<NitzData> actualNitzSignal = argumentsCaptor.getValue();
-            assertEquals(expectedNitzData, actualNitzSignal.getValue());
-            assertTrue(actualNitzSignal.getReferenceTimeMillis() <= SystemClock.elapsedRealtime());
+            NitzSignal actualNitzSignal = argumentsCaptor.getValue();
+            assertEquals(expectedNitzData, actualNitzSignal.getNitzData());
+            assertTrue(actualNitzSignal.getReceiptElapsedRealtimeMillis()
+                    <= SystemClock.elapsedRealtime());
+            assertEquals(actualNitzSignal.getAgeMillis(), 0);
+        }
+    }
+
+    @Test
+    @SmallTest
+    public void testSetTimeFromNITZStr_withAge() throws Exception {
+        {
+            // Mock sending incorrect nitz str from RIL with a non-zero ageMs
+            long ageMs = 60 * 1000;
+            mSimulatedCommands.triggerNITZupdate("38/06/20,00:00:00+0", ageMs);
+            waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+            verify(mNitzStateMachine, times(0)).handleNitzReceived(any());
+        }
+        {
+            // Mock sending correct nitz str from RIL with a non-zero ageMs
+            String nitzStr = "21/08/15,00:00:00+0";
+            long ageMs = 60 * 1000;
+            NitzData expectedNitzData = NitzData.parse(nitzStr);
+            mSimulatedCommands.triggerNITZupdate(nitzStr, ageMs);
+            waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+
+            ArgumentCaptor<NitzSignal> argumentsCaptor =
+                    ArgumentCaptor.forClass(NitzSignal.class);
+            verify(mNitzStateMachine, times(1))
+                    .handleNitzReceived(argumentsCaptor.capture());
+
+            // Confirm the argument was what we expected.
+            NitzSignal actualNitzSignal = argumentsCaptor.getValue();
+            assertEquals(expectedNitzData, actualNitzSignal.getNitzData());
+            assertTrue(actualNitzSignal.getReceiptElapsedRealtimeMillis()
+                    <= SystemClock.elapsedRealtime());
+            assertEquals(actualNitzSignal.getAgeMillis(), ageMs);
         }
     }
 
@@ -2284,6 +2122,30 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
     }
 
+    private void sendRegStateUpdateForLteOnOos() throws Exception {
+        LteVopsSupportInfo lteVopsSupportInfo =
+                new LteVopsSupportInfo(LteVopsSupportInfo.LTE_STATUS_NOT_AVAILABLE,
+                        LteVopsSupportInfo.LTE_STATUS_NOT_AVAILABLE);
+        NetworkRegistrationInfo dataResult = new NetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING,
+                TelephonyManager.NETWORK_TYPE_UNKNOWN, 0, false, null, null, "", 1, false, false,
+                false, lteVopsSupportInfo);
+        NetworkRegistrationInfo voiceResult = new NetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_CS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING,
+                TelephonyManager.NETWORK_TYPE_UNKNOWN, 0, false, null, null, "", false, 0, 0, 0);
+        sst.mPollingContext[0] = 2;
+        sst.sendMessage(sst.obtainMessage(
+                ServiceStateTracker.EVENT_POLL_STATE_PS_CELLULAR_REGISTRATION,
+                new AsyncResult(sst.mPollingContext, dataResult, null)));
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+        sst.sendMessage(sst.obtainMessage(
+                ServiceStateTracker.EVENT_POLL_STATE_CS_CELLULAR_REGISTRATION,
+                new AsyncResult(sst.mPollingContext, voiceResult, null)));
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+    }
+
     @Test
     public void testPhyChanBandwidthUpdatedOnDataRegState() throws Exception {
         // Cell ID change should trigger hasLocationChanged.
@@ -2357,7 +2219,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                 ServiceStateTracker.EVENT_POLL_STATE_CS_CELLULAR_REGISTRATION,
                 new AsyncResult(sst.mPollingContext, voiceResult, null)));
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-        assertTrue(Arrays.equals(new int[0], sst.mSS.getCellBandwidths()));
+        assertEquals(0, sst.mSS.getCellBandwidths().length);
     }
 
     @Test
@@ -2379,7 +2241,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @SmallTest
     @Test
     public void testRilDataTechnologyChangeTransportPreference() {
-        when(mTransportManager.isAnyApnPreferredOnIwlan()).thenReturn(false);
+        when(mTransportManager.isAnyApnOnIwlan()).thenReturn(false);
 
         // Start state: Cell data only LTE + IWLAN
         CellIdentityLte cellIdentity =
@@ -2398,7 +2260,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                 mTestHandler, EVENT_DATA_RAT_CHANGED, null);
         // transport preference change for a PDN for IWLAN occurred, no registration change, but
         // trigger unrelated poll to pick up transport preference.
-        when(mTransportManager.isAnyApnPreferredOnIwlan()).thenReturn(true);
+        when(mTransportManager.isAnyApnOnIwlan()).thenReturn(true);
         changeRegStateWithIwlan(
                 // WWAN
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME, cellIdentity,
@@ -2486,6 +2348,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(true).when(mPhone).isPhoneTypeCdmaLte();
         doReturn(CdmaSubscriptionSourceManager.SUBSCRIPTION_FROM_RUIM).when(mCdmaSSM)
                 .getCdmaSubscriptionSource();
+        doReturn(PHONE_ID).when(mPhone).getPhoneId();
 
         logd("Calling updatePhoneType");
         // switch to CDMA
@@ -2661,6 +2524,28 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         sst.obtainMessage(GsmCdmaPhone.EVENT_CARRIER_CONFIG_CHANGED, null).sendToTarget();
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         verify(mEriManager, times(1)).loadEriFile();
+    }
+
+    @Test
+    public void testLastKnownCellIdentity() throws Exception {
+        CellIdentityLte cellIdentity =
+                new CellIdentityLte(1, 1, 5, 1, new int[] {1, 2}, 5000, "001", "01", "test",
+                        "tst", Collections.emptyList(), null);
+
+        sendPhyChanConfigChange(new int[] {10000}, TelephonyManager.NETWORK_TYPE_LTE, 1);
+        sendRegStateUpdateForLteCellId(cellIdentity);
+        assertEquals(ServiceState.STATE_IN_SERVICE, sst.mSS.getState());
+        assertEquals(cellIdentity, sst.getLastKnownCellIdentity());
+        assertFalse(sst.hasMessages(sst.EVENT_RESET_LAST_KNOWN_CELL_IDENTITY));
+
+        sendRegStateUpdateForLteOnOos();
+        assertEquals(ServiceState.STATE_OUT_OF_SERVICE, sst.mSS.getState());
+        assertEquals(cellIdentity, sst.getLastKnownCellIdentity());
+        assertTrue(sst.hasMessages(sst.EVENT_RESET_LAST_KNOWN_CELL_IDENTITY));
+
+        sst.obtainMessage(sst.EVENT_RESET_LAST_KNOWN_CELL_IDENTITY, null).sendToTarget();
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+        assertNull(sst.getLastKnownCellIdentity());
     }
 
     @Test
