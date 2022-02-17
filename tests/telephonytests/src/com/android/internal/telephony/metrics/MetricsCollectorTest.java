@@ -16,8 +16,13 @@
 
 package com.android.internal.telephony.metrics;
 
+import static android.telephony.SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER;
+import static android.telephony.SubscriptionManager.PHONE_NUMBER_SOURCE_IMS;
+import static android.telephony.SubscriptionManager.PHONE_NUMBER_SOURCE_UICC;
+
 import static com.android.internal.telephony.TelephonyStatsLog.CELLULAR_DATA_SERVICE_SWITCH;
 import static com.android.internal.telephony.TelephonyStatsLog.CELLULAR_SERVICE_STATE;
+import static com.android.internal.telephony.TelephonyStatsLog.PER_SIM_STATUS;
 import static com.android.internal.telephony.TelephonyStatsLog.SIM_SLOT_STATE;
 import static com.android.internal.telephony.TelephonyStatsLog.SUPPORTED_RADIO_ACCESS_FAMILY;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_RAT_USAGE;
@@ -28,17 +33,20 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import android.app.StatsManager;
+import android.telephony.SubscriptionInfo;
 import android.telephony.TelephonyManager;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.util.StatsEvent;
 
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
+import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularDataServiceSwitch;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularServiceState;
@@ -47,6 +55,7 @@ import com.android.internal.telephony.nano.PersistAtomsProto.VoiceCallSession;
 import com.android.internal.telephony.uicc.IccCardStatus.CardState;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccController;
+import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccSlot;
 
 import org.junit.After;
@@ -82,9 +91,11 @@ public class MetricsCollectorTest extends TelephonyTest {
     // b/153195691: we cannot verify the contents of StatsEvent as its getters are marked with @hide
 
     @Mock private Phone mSecondPhone;
+    @Mock private TelephonyStatsLogHelper mTelephonyStatsLog;
     @Mock private UiccSlot mPhysicalSlot;
     @Mock private UiccSlot mEsimSlot;
     @Mock private UiccCard mActiveCard;
+    @Mock private UiccPort mActivePort;
 
     @Mock private ServiceStateStats mServiceStateStats;
 
@@ -93,8 +104,8 @@ public class MetricsCollectorTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mMetricsCollector = new MetricsCollector(mContext);
-        mMetricsCollector.setPersistAtomsStorage(mPersistAtomsStorage);
+        mMetricsCollector =
+                new MetricsCollector(mContext, mPersistAtomsStorage, mTelephonyStatsLog);
         doReturn(mSST).when(mSecondPhone).getServiceStateTracker();
         doReturn(mServiceStateStats).when(mSST).getServiceStateStats();
     }
@@ -115,7 +126,8 @@ public class MetricsCollectorTest extends TelephonyTest {
         doReturn(CardState.CARDSTATE_PRESENT).when(mEsimSlot).getCardState();
         doReturn(true).when(mEsimSlot).isEuicc();
         doReturn(mActiveCard).when(mEsimSlot).getUiccCard();
-        doReturn(4).when(mActiveCard).getNumApplications();
+        doReturn(4).when(mActivePort).getNumApplications();
+        doReturn(new UiccPort[] {mActivePort}).when(mActiveCard).getUiccPortList();
         doReturn(new UiccSlot[] {mPhysicalSlot, mEsimSlot}).when(mUiccController).getUiccSlots();
         doReturn(mPhysicalSlot).when(mUiccController).getUiccSlot(eq(0));
         doReturn(mEsimSlot).when(mUiccController).getUiccSlot(eq(1));
@@ -401,5 +413,67 @@ public class MetricsCollectorTest extends TelephonyTest {
         assertThat(actualAtoms).hasSize(3);
         assertThat(result).isEqualTo(StatsManager.PULL_SUCCESS);
         // TODO(b/153196254): verify atom contents
+    }
+
+    @Test
+    @SmallTest
+    public void onPullAtom_perSimStatus() throws Exception {
+        // Make PhoneFactory.getPhones() return an array of two
+        replaceInstance(PhoneFactory.class, "sPhones", null, new Phone[] {mPhone, mSecondPhone});
+        // phone 0 setup
+        doReturn(0).when(mPhone).getPhoneId();
+        doReturn(1).when(mPhone).getSubId();
+        doReturn(100).when(mPhone).getCarrierId();
+        doReturn("6506953210")
+                .when(mSubscriptionController)
+                .getPhoneNumber(1, PHONE_NUMBER_SOURCE_UICC);
+        doReturn("")
+                .when(mSubscriptionController)
+                .getPhoneNumber(1, PHONE_NUMBER_SOURCE_CARRIER);
+        doReturn("+16506953210")
+                .when(mSubscriptionController)
+                .getPhoneNumber(1, PHONE_NUMBER_SOURCE_IMS);
+        SubscriptionInfo subscriptionInfo1 = mock(SubscriptionInfo.class);
+        doReturn("us").when(subscriptionInfo1).getCountryIso();
+        doReturn(subscriptionInfo1).when(mSubscriptionController).getSubscriptionInfo(1);
+        // phone 1 setup
+        doReturn(1).when(mSecondPhone).getPhoneId();
+        doReturn(2).when(mSecondPhone).getSubId();
+        doReturn(101).when(mSecondPhone).getCarrierId();
+        doReturn("0123")
+                .when(mSubscriptionController)
+                .getPhoneNumber(2, PHONE_NUMBER_SOURCE_UICC);
+        doReturn("16506950123")
+                .when(mSubscriptionController)
+                .getPhoneNumber(2, PHONE_NUMBER_SOURCE_CARRIER);
+        doReturn("+16506950123")
+                .when(mSubscriptionController)
+                .getPhoneNumber(2, PHONE_NUMBER_SOURCE_IMS);
+        SubscriptionInfo subscriptionInfo2 = mock(SubscriptionInfo.class);
+        doReturn("us").when(subscriptionInfo2).getCountryIso();
+        doReturn(subscriptionInfo2).when(mSubscriptionController).getSubscriptionInfo(2);
+        List<StatsEvent> actualAtoms = new ArrayList<>();
+
+        int result = mMetricsCollector.onPullAtom(PER_SIM_STATUS, actualAtoms);
+
+        verify(mTelephonyStatsLog).buildStatsEvent(
+                PER_SIM_STATUS, 0, 100, 1, 0, 1);
+        verify(mTelephonyStatsLog).buildStatsEvent(
+                PER_SIM_STATUS, 1, 101, 1, 2, 2);
+        assertThat(actualAtoms).hasSize(2);
+        assertThat(result).isEqualTo(StatsManager.PULL_SUCCESS);
+    }
+
+    @Test
+    @SmallTest
+    public void onPullAtom_perSimStatus_noSubscriptionController_skip() throws Exception {
+        // Make SubscriptionController.getInstance() return null
+        replaceInstance(SubscriptionController.class, "sInstance", null, null);
+        List<StatsEvent> actualAtoms = new ArrayList<>();
+
+        int result = mMetricsCollector.onPullAtom(PER_SIM_STATUS, actualAtoms);
+
+        assertThat(actualAtoms).isEmpty();
+        assertThat(result).isEqualTo(StatsManager.PULL_SKIP);
     }
 }
