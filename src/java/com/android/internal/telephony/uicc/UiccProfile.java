@@ -111,7 +111,7 @@ public class UiccProfile extends IccCard {
             new UiccCardApplication[IccCardStatus.CARD_MAX_APPS];
     private Context mContext;
     private CommandsInterface mCi;
-    private final UiccCard mUiccCard; //parent
+    private final UiccCard mUiccCard;
     private CatService mCatService;
     private UiccCarrierPrivilegeRules mCarrierPrivilegeRules;
     private UiccCarrierPrivilegeRules mTestOverrideCarrierPrivilegeRules;
@@ -397,16 +397,21 @@ public class UiccProfile extends IccCard {
 
     private void setCurrentAppType(boolean isGsm) {
         if (VDBG) log("setCurrentAppType");
+        int primaryAppType;
+        int secondaryAppType;
+        if (isGsm) {
+            primaryAppType = UiccController.APP_FAM_3GPP;
+            secondaryAppType = UiccController.APP_FAM_3GPP2;
+        } else {
+            primaryAppType = UiccController.APP_FAM_3GPP2;
+            secondaryAppType = UiccController.APP_FAM_3GPP;
+        }
         synchronized (mLock) {
-            if (isGsm) {
-                mCurrentAppType = UiccController.APP_FAM_3GPP;
+            UiccCardApplication newApp = getApplication(primaryAppType);
+            if (newApp != null || getApplication(secondaryAppType) == null) {
+                mCurrentAppType = primaryAppType;
             } else {
-                UiccCardApplication newApp = getApplication(UiccController.APP_FAM_3GPP2);
-                if (newApp != null || getApplication(UiccController.APP_FAM_3GPP) == null) {
-                    mCurrentAppType = UiccController.APP_FAM_3GPP2;
-                } else {
-                    mCurrentAppType = UiccController.APP_FAM_3GPP;
-                }
+                mCurrentAppType = secondaryAppType;
             }
         }
     }
@@ -676,14 +681,14 @@ public class UiccProfile extends IccCard {
             case APPSTATE_READY:
                 checkAndUpdateIfAnyAppToBeIgnored();
                 if (areAllApplicationsReady()) {
-                    if (areAllRecordsLoaded() && areCarrierPriviligeRulesLoaded()) {
+                    if (areAllRecordsLoaded() && areCarrierPrivilegeRulesLoaded()) {
                         if (VDBG) log("updateExternalState: setting state to LOADED");
                         setExternalState(IccCardConstants.State.LOADED);
                     } else {
                         if (VDBG) {
                             log("updateExternalState: setting state to READY; records loaded "
                                     + areAllRecordsLoaded() + ", carrier privilige rules loaded "
-                                    + areCarrierPriviligeRulesLoaded());
+                                    + areCarrierPrivilegeRulesLoaded());
                         }
                         setExternalState(IccCardConstants.State.READY);
                     }
@@ -1279,7 +1284,7 @@ public class UiccProfile extends IccCard {
 
             mCarrierPrivilegeRegistrants.add(r);
 
-            if (areCarrierPriviligeRulesLoaded()) {
+            if (areCarrierPrivilegeRulesLoaded()) {
                 r.notifyRegistrant();
             }
         }
@@ -1329,6 +1334,7 @@ public class UiccProfile extends IccCard {
     }
 
     private void onCarrierPrivilegesLoadedMessage() {
+        // TODO(b/211796398): clean up logic below once all carrier privilege check migration done
         // Update set of enabled carrier apps now that the privilege rules may have changed.
         ActivityManager am = mContext.getSystemService(ActivityManager.class);
         CarrierAppUtils.disableCarrierAppsUntilPrivileged(mContext.getOpPackageName(),
@@ -1655,7 +1661,7 @@ public class UiccProfile extends IccCard {
     /**
      * Returns true iff carrier privileges rules are null (dont need to be loaded) or loaded.
      */
-    public boolean areCarrierPriviligeRulesLoaded() {
+    public boolean areCarrierPrivilegeRulesLoaded() {
         UiccCarrierPrivilegeRules carrierPrivilegeRules = getCarrierPrivilegeRules();
         return carrierPrivilegeRules == null
                 || carrierPrivilegeRules.areCarrierPriviligeRulesLoaded();
@@ -1745,17 +1751,6 @@ public class UiccProfile extends IccCard {
             return Collections.EMPTY_LIST;
         }
         return new ArrayList<>(carrierPrivilegeRules.getAccessRules());
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPackageNamesForIntent}.
-     */
-    public List<String> getCarrierPackageNamesForIntent(
-            PackageManager packageManager, Intent intent) {
-        UiccCarrierPrivilegeRules carrierPrivilegeRules = getCarrierPrivilegeRules();
-        return carrierPrivilegeRules == null ? null :
-                carrierPrivilegeRules.getCarrierPackageNamesForIntent(
-                        packageManager, intent);
     }
 
     /** Returns a reference to the current {@link UiccCarrierPrivilegeRules}. */
