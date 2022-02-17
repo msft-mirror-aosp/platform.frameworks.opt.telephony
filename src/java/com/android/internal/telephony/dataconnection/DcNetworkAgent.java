@@ -37,9 +37,7 @@ import android.telephony.AnomalyReporter;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
-import android.telephony.data.NrQosSessionAttributes;
 import android.telephony.data.QosBearerSession;
-import android.util.ArrayMap;
 import android.util.LocalLog;
 import android.util.SparseArray;
 
@@ -47,6 +45,9 @@ import com.android.internal.telephony.DctConstants;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.SlidingWindowEventCounter;
+import com.android.internal.telephony.data.KeepaliveStatus;
+import com.android.internal.telephony.data.NotifyQosSessionInterface;
+import com.android.internal.telephony.data.QosCallbackTracker;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.telephony.Rlog;
@@ -59,6 +60,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -73,7 +75,7 @@ import java.util.concurrent.TimeUnit;
  * {@link DataConnection} so for a short window of time this object might be accessed by two
  * different {@link DataConnection}. Thus each method in this class needs to be synchronized.
  */
-public class DcNetworkAgent extends NetworkAgent {
+public class DcNetworkAgent extends NetworkAgent implements NotifyQosSessionInterface {
     private final String mTag;
 
     private final int mId;
@@ -92,10 +94,10 @@ public class DcNetworkAgent extends NetworkAgent {
 
     private DataConnection mDataConnection;
 
-    private final LocalLog mNetCapsLocalLog = new LocalLog(50);
+    private final LocalLog mNetCapsLocalLog = new LocalLog(32);
 
     // For interface duplicate detection. Key is the net id, value is the interface name in string.
-    private static Map<Integer, String> sInterfaceNames = new ArrayMap<>();
+    private static Map<Integer, String> sInterfaceNames = new ConcurrentHashMap<>();
 
     private static final long NETWORK_UNWANTED_ANOMALY_WINDOW_MS = TimeUnit.MINUTES.toMillis(5);
     private static final int NETWORK_UNWANTED_ANOMALY_NUM_OCCURRENCES =  12;
@@ -119,7 +121,7 @@ public class DcNetworkAgent extends NetworkAgent {
         } else {
             loge("The connection does not have a valid link properties.");
         }
-        mQosCallbackTracker = new QosCallbackTracker(this);
+        mQosCallbackTracker = new QosCallbackTracker(this, mPhone);
     }
 
     private @NetworkType int getNetworkType() {
@@ -413,11 +415,13 @@ public class DcNetworkAgent extends NetworkAgent {
         mQosCallbackExecutor.execute(() -> mQosCallbackTracker.updateSessions(qosBearerSessions));
     }
 
+    @Override
     public void notifyQosSessionAvailable(final int qosCallbackId, final int sessionId,
             @NonNull final QosSessionAttributes attributes) {
         super.sendQosSessionAvailable(qosCallbackId, sessionId, attributes);
     }
 
+    @Override
     public void notifyQosSessionLost(final int qosCallbackId,
             final int sessionId, final int qosSessionType) {
         super.sendQosSessionLost(qosCallbackId, sessionId, qosSessionType);
