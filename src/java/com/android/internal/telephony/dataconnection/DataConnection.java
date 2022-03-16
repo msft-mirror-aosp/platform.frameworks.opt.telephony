@@ -1967,7 +1967,7 @@ public class DataConnection extends StateMachine {
         if (carrierServicePackageUid != Process.INVALID_UID
                 && ArrayUtils.contains(mAdministratorUids, carrierServicePackageUid)) {
             builder.setOwnerUid(carrierServicePackageUid);
-            builder.setAccessUids(Collections.singleton(carrierServicePackageUid));
+            builder.setAllowedUids(Collections.singleton(carrierServicePackageUid));
         }
         builder.setAdministratorUids(mAdministratorUids);
 
@@ -2793,7 +2793,8 @@ public class DataConnection extends StateMachine {
                     }
                     retVal = HANDLED;
                     mDataCallSessionStats
-                            .onSetupDataCallResponse(dataCallResponse, cp.mRilRat,
+                            .onSetupDataCallResponse(dataCallResponse,
+                                    ServiceState.rilRadioTechnologyToNetworkType(cp.mRilRat),
                                     getApnTypeBitmask(), mApnSetting.getProtocol(),
                                     result.mFailCause);
                     break;

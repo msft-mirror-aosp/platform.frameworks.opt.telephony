@@ -35,13 +35,13 @@ import java.util.Set;
  */
 public class DataEvaluation {
     /** The reason for this evaluation */
-    private final DataEvaluationReason mDataEvaluationReason;
+    private final @NonNull DataEvaluationReason mDataEvaluationReason;
 
     /** Data disallowed reasons. There could be multiple reasons for not allowing data. */
     private final @NonNull Set<DataDisallowedReason> mDataDisallowedReasons = new HashSet<>();
 
     /** Data allowed reason. It is intended to only have one allowed reason. */
-    private DataAllowedReason mDataAllowedReason = DataAllowedReason.NONE;
+    private @NonNull DataAllowedReason mDataAllowedReason = DataAllowedReason.NONE;
 
     private @Nullable DataProfile mCandidateDataProfile = null;
 
@@ -101,6 +101,13 @@ public class DataEvaluation {
      */
     public @NonNull List<DataDisallowedReason> getDataDisallowedReasons() {
         return new ArrayList<>(mDataDisallowedReasons);
+    }
+
+    /**
+     * @return The data allowed reason.
+     */
+    public @NonNull DataAllowedReason getDataAllowedReason() {
+        return mDataAllowedReason;
     }
 
     /**
@@ -207,6 +214,11 @@ public class DataEvaluation {
         PREFERRED_TRANSPORT_CHANGED,
         /** Slice config changed. */
         SLICE_CONFIG_CHANGED,
+        /**
+         * Single data network arbitration. On certain RATs, only one data network is allowed at the
+         * same time.
+         */
+        SINGLE_DATA_NETWORK_ARBITRATION,
     }
 
     /** Disallowed reasons. There could be multiple reasons if it is not allowed. */
@@ -259,7 +271,9 @@ public class DataEvaluation {
         /** Data network is not in the right state. */
         ILLEGAL_STATE(true),
         /** VoPS is not supported by the network. */
-        VOPS_NOT_SUPPORTED(true);
+        VOPS_NOT_SUPPORTED(true),
+        /** Only one data network is allowed at one time. */
+        ONLY_ALLOWED_SINGLE_NETWORK(true);
 
         private final boolean mIsHardReason;
 

@@ -67,10 +67,8 @@ import com.android.telephony.Rlog;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.stream.Collectors;
 
 /**
  *@hide
@@ -251,7 +249,10 @@ public class SubscriptionInfoUpdater extends Handler {
         for (int i = 0; i < TelephonyManager.getDefault().getActiveModemCount(); i++) {
             UiccSlot slot = UiccController.getInstance().getUiccSlotForPhone(i);
             int slotId = UiccController.getInstance().getSlotIdFromPhoneId(i);
-            if  (sIccId[i] == null || UiccController.getInstance().getUiccPort(i) == null) {
+            // When psim card is absent there is no port object even the port state is active.
+            // We should check the slot state for psim and port state for esim(MEP eUICC).
+            if  (sIccId[i] == null || slot == null || !slot.isActive()
+                    || (slot.isEuicc() && UiccController.getInstance().getUiccPort(i) == null)) {
                 if (sIccId[i] == null) {
                     logd("Wait for SIM " + i + " Iccid");
                 } else {
@@ -1116,7 +1117,8 @@ public class SubscriptionInfoUpdater extends Handler {
     private int getEmbeddedProfilePortIndex(String iccId) {
         UiccSlot[] slots = UiccController.getInstance().getUiccSlots();
         for (UiccSlot slot : slots) {
-            if (slot != null && slot.isEuicc() && slot.isIccIdMappedToPortIndex(iccId)) {
+            if (slot != null && slot.isEuicc()
+                    && slot.getPortIndexFromIccId(iccId) != TelephonyManager.INVALID_PORT_INDEX) {
                 return slot.getPortIndexFromIccId(iccId);
             }
         }
