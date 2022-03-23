@@ -23,13 +23,14 @@ import static org.mockito.Matchers.anyInt;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.ComponentName;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.os.Looper;
 import android.os.RemoteException;
@@ -39,9 +40,13 @@ import android.service.carrier.ICarrierMessagingService;
 import android.service.carrier.MessagePdu;
 import android.test.suitebuilder.annotation.SmallTest;
 
+import com.android.internal.telephony.LocalLog;
+import com.android.internal.telephony.uicc.UiccCard;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
@@ -57,19 +62,18 @@ public class CarrierServicesSmsFilterTest extends TelephonyTest {
     private static final String SYSTEM_APP_PACKAGE_NAME = "com.android.system";
 
     private CarrierServicesSmsFilter mCarrierServicesSmsFilterUT;
-
-    // Mocked classes
+    @Mock
     private CarrierServicesSmsFilter.CarrierServicesSmsFilterCallbackInterface mFilterCallback;
+    @Mock
+    private UiccCard mUiccCard;
+    @Mock
     private ICarrierMessagingService.Stub mICarrierAppMessagingService;
+    @Mock
     private ICarrierMessagingService.Stub mISystemCarrierMessagingService;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mFilterCallback = mock(
-                CarrierServicesSmsFilter.CarrierServicesSmsFilterCallbackInterface.class);
-        mICarrierAppMessagingService = mock(ICarrierMessagingService.Stub.class);
-        mISystemCarrierMessagingService = mock(ICarrierMessagingService.Stub.class);
         if (Looper.myLooper() == null) {
             Looper.prepare();
         }
@@ -80,7 +84,6 @@ public class CarrierServicesSmsFilterTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
-        mCarrierServicesSmsFilterUT = null;
         super.tearDown();
     }
 
@@ -175,10 +178,11 @@ public class CarrierServicesSmsFilterTest extends TelephonyTest {
     }
 
     private void mockUiccWithCarrierApp() {
+        when(mUiccController.getUiccCard(mPhone.getPhoneId())).thenReturn(mUiccCard);
         List<String> carrierPackages = new ArrayList<>();
         carrierPackages.add(CARRIER_APP_PACKAGE_NAME);
-        when(mCarrierPrivilegesTracker.getCarrierPackageNamesForIntent(any()))
-                .thenReturn(carrierPackages);
+        when(mUiccCard.getCarrierPackageNamesForIntent(
+                any(PackageManager.class), any(Intent.class))).thenReturn(carrierPackages);
     }
 
     private void mockSystemApp() {

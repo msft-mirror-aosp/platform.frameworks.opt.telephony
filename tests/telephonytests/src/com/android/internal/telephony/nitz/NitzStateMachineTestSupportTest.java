@@ -42,7 +42,6 @@ import android.timezone.CountryTimeZones.OffsetResult;
 
 import com.android.internal.telephony.nitz.TimeZoneLookupHelper.CountryResult;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -54,14 +53,9 @@ public class NitzStateMachineTestSupportTest {
     private TimeZoneLookupHelper mTimeZoneLookupHelper;
 
     @Before
-    public void setUp() {
+    public void setUp() throws Exception {
         // In tests we use the real TimeZoneLookupHelper implementation.
         mTimeZoneLookupHelper = new TimeZoneLookupHelper();
-    }
-
-    @After
-    public void tearDown() {
-        mTimeZoneLookupHelper = null;
     }
 
     @Test
