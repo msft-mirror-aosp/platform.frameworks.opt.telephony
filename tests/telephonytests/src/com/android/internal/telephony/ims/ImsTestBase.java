@@ -25,8 +25,6 @@ import android.testing.TestableLooper;
 
 import androidx.test.InstrumentationRegistry;
 
-import com.android.internal.telephony.TelephonyTest;
-
 import org.mockito.MockitoAnnotations;
 
 import java.util.ArrayList;
@@ -44,7 +42,6 @@ public class ImsTestBase {
     protected TestableLooper mTestableLooper;
 
     public void setUp() throws Exception {
-        TelephonyTest.enableStrictMode();
         mContext = InstrumentationRegistry.getTargetContext();
         MockitoAnnotations.initMocks(this);
         // Set up the looper if it does not exist on the test thread.

@@ -22,8 +22,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,27 +42,20 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 
-import java.util.concurrent.Executor;
-
 public class ImsCallTest extends TelephonyTest {
 
     private Bundle mBundle;
     private ImsCallProfile mTestCallProfile;
-
-    private final Executor mExecutor = Runnable::run;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
         mTestCallProfile = new ImsCallProfile();
         mBundle = mTestCallProfile.mCallExtras;
-        doReturn(mExecutor).when(mContext).getMainExecutor();
     }
 
     @After
     public void tearDown() throws Exception {
-        mBundle = null;
-        mTestCallProfile = null;
         super.tearDown();
     }
 
@@ -79,7 +70,7 @@ public class ImsCallTest extends TelephonyTest {
 
         ArgumentCaptor<ImsCallSession.Listener> listenerCaptor =
                 ArgumentCaptor.forClass(ImsCallSession.Listener.class);
-        verify(mockSession).setListener(listenerCaptor.capture(), any());
+        verify(mockSession).setListener(listenerCaptor.capture());
         ImsCallSession.Listener listener = listenerCaptor.getValue();
         assertNotNull(listener);
 

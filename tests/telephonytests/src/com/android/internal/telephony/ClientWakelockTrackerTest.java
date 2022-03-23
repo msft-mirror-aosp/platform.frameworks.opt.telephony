@@ -31,7 +31,6 @@ public class ClientWakelockTrackerTest extends TestCase {
     }
 
     public void tearDown() throws Exception {
-        myTracker = null;
         super.tearDown();
     }
 

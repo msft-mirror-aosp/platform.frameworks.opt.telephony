@@ -27,7 +27,6 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -46,15 +45,20 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class PhoneConfigurationManagerTest extends TelephonyTest {
-    // Mocked classes
+    @Mock
     Handler mHandler;
+    @Mock
     CommandsInterface mMockCi0;
+    @Mock
     CommandsInterface mMockCi1;
+    @Mock
     private Phone mPhone1; // mPhone as phone 0 is already defined in TelephonyTest.
+    @Mock
     PhoneConfigurationManager.MockableInterface mMi;
 
     private static final int EVENT_MULTI_SIM_CONFIG_CHANGED = 1;
@@ -63,11 +67,6 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mHandler = mock(Handler.class);
-        mMockCi0 = mock(CommandsInterface.class);
-        mMockCi1 = mock(CommandsInterface.class);
-        mPhone1 = mock(Phone.class);
-        mMi = mock(PhoneConfigurationManager.MockableInterface.class);
         mPhone.mCi = mMockCi0;
         mCT.mCi = mMockCi0;
         mPhone1.mCi = mMockCi1;
@@ -75,7 +74,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
-        mPcm = null;
+        // Restore system properties.
         super.tearDown();
     }
 
@@ -141,7 +140,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
 
         // Try switching to dual SIM. Shouldn't work as we haven't indicated DSDS is supported.
         mPcm.switchMultiSimConfig(2);
-        verify(mMockRadioConfig, never()).setNumOfLiveModems(anyInt(), any());
+        verify(mMockRadioConfig, never()).setModemsConfig(anyInt(), any());
     }
 
     @Test
@@ -156,7 +155,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
 
         // Try switching to dual SIM. Shouldn't work as we haven't indicated DSDS is supported.
         mPcm.switchMultiSimConfig(2);
-        verify(mMockRadioConfig, never()).setNumOfLiveModems(anyInt(), any());
+        verify(mMockRadioConfig, never()).setModemsConfig(anyInt(), any());
 
         // Send static capability back to indicate DSDS is supported.
         clearInvocations(mMockRadioConfig);
@@ -170,7 +169,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
         replaceInstance(PhoneFactory.class, "sPhones", null, mPhones);
         mPcm.switchMultiSimConfig(2);
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
-        verify(mMockRadioConfig).setNumOfLiveModems(eq(2), captor.capture());
+        verify(mMockRadioConfig).setModemsConfig(eq(2), captor.capture());
 
         // Send message back to indicate switch success.
         Message message = captor.getValue();
@@ -222,7 +221,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
         setRebootRequiredForConfigSwitch(false);
         mPcm.switchMultiSimConfig(1);
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
-        verify(mMockRadioConfig).setNumOfLiveModems(eq(1), captor.capture());
+        verify(mMockRadioConfig).setModemsConfig(eq(1), captor.capture());
 
         // Send message back to indicate switch success.
         Message message = captor.getValue();

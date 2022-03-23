@@ -22,7 +22,6 @@ import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.mock;
 
 import android.content.pm.Signature;
 import android.os.AsyncResult;
@@ -39,6 +38,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
@@ -56,19 +56,18 @@ public class UiccCarrierPrivilegeRulesTest extends TelephonyTest {
     private static final String ARAD = "A00000015144414300";
     private static final String PKCS15_AID = "A000000063504B43532D3135";
 
-    // Mocked classes
+    @Mock
     private UiccProfile mUiccProfile;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mUiccProfile = mock(UiccProfile.class);
     }
 
     @After
     public void tearDown() throws Exception {
-        mUiccCarrierPrivilegeRules = null;
         super.tearDown();
+        mUiccCarrierPrivilegeRules = null;
     }
 
     private void testHelper(String hexString) {

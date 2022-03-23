@@ -21,7 +21,6 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.AppOpsManager;
 import android.app.PendingIntent;
-import android.app.compat.CompatChanges;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -42,8 +41,6 @@ import android.telephony.TelephonyFrameworkInitializer;
 import android.telephony.TelephonyManager;
 import android.telephony.UiccAccessRule;
 import android.telephony.UiccCardInfo;
-import android.telephony.UiccPortInfo;
-import android.telephony.UiccSlotInfo;
 import android.telephony.euicc.DownloadableSubscription;
 import android.telephony.euicc.EuiccCardManager.ResetOption;
 import android.telephony.euicc.EuiccInfo;
@@ -55,15 +52,8 @@ import android.util.Log;
 import android.util.Pair;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.telephony.CarrierPrivilegesTracker;
-import com.android.internal.telephony.Phone;
-import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.euicc.EuiccConnector.OtaStatusChangedCallback;
-import com.android.internal.telephony.uicc.IccUtils;
-import com.android.internal.telephony.uicc.UiccController;
-import com.android.internal.telephony.uicc.UiccPort;
-import com.android.internal.telephony.uicc.UiccSlot;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -186,11 +176,6 @@ public class EuiccController extends IEuiccController.Stub {
             PendingIntent callbackIntent =
                     resolutionIntent.getParcelableExtra(
                             EuiccManager.EXTRA_EMBEDDED_SUBSCRIPTION_RESOLUTION_CALLBACK_INTENT);
-            boolean usePortIndex = resolutionIntent.getBooleanExtra(
-                    EuiccService.EXTRA_RESOLUTION_USE_PORT_INDEX, false);
-            resolutionExtras.putBoolean(EuiccService.EXTRA_RESOLUTION_USE_PORT_INDEX, usePortIndex);
-            Log.i(TAG, " continueOperation portIndex: " + resolutionExtras.getInt(
-                    EuiccService.EXTRA_RESOLUTION_PORT_INDEX) + " usePortIndex: " + usePortIndex);
             op.continueOperation(cardId, resolutionExtras, callbackIntent);
         } finally {
             Binder.restoreCallingIdentity(token);
@@ -216,8 +201,7 @@ public class EuiccController extends IEuiccController.Stub {
         long token = Binder.clearCallingIdentity();
         try {
             if (!callerCanReadPhoneStatePrivileged
-                    && !canManageSubscriptionOnTargetSim(cardId, callingPackage, false,
-                    TelephonyManager.INVALID_PORT_INDEX)) {
+                    && !canManageSubscriptionOnTargetSim(cardId, callingPackage)) {
                 throw new SecurityException(
                         "Must have carrier privileges on subscription to read EID for cardId="
                                 + cardId);
@@ -429,14 +413,13 @@ public class EuiccController extends IEuiccController.Stub {
                     break;
                 case EuiccService.RESULT_MUST_DEACTIVATE_SIM:
                     resultCode = RESOLVABLE_ERROR;
-                    addResolutionIntentWithPort(extrasIntent,
+                    addResolutionIntent(extrasIntent,
                             EuiccService.ACTION_RESOLVE_DEACTIVATE_SIM,
                             mCallingPackage,
                             0 /* resolvableErrors */,
                             false /* confirmationCodeRetried */,
                             getOperationForDeactivateSim(),
-                            cardId,
-                            TelephonyManager.DEFAULT_PORT_INDEX,   false /* usePortIndex */);
+                            cardId);
                     break;
                 default:
                     resultCode = ERROR;
@@ -462,13 +445,8 @@ public class EuiccController extends IEuiccController.Stub {
     public void downloadSubscription(int cardId, DownloadableSubscription subscription,
             boolean switchAfterDownload, String callingPackage, Bundle resolvedBundle,
             PendingIntent callbackIntent) {
-        // If switchAfterDownload is true, set portIndex as
-        // {@link android.telephony.TelephonyManager#INVALID_PORT_INDEX} to resolve the port index.
-        int portIndex = switchAfterDownload ? TelephonyManager.INVALID_PORT_INDEX
-                : TelephonyManager.DEFAULT_PORT_INDEX;
-        downloadSubscription(cardId, portIndex, subscription,
-                switchAfterDownload, callingPackage, false /* forceDeactivateSim */,
-                resolvedBundle, callbackIntent);
+        downloadSubscription(cardId, subscription, switchAfterDownload, callingPackage,
+                false /* forceDeactivateSim */, resolvedBundle, callbackIntent);
     }
 
     /**
@@ -550,7 +528,7 @@ public class EuiccController extends IEuiccController.Stub {
         }
     }
 
-    void downloadSubscription(int cardId, int portIndex, DownloadableSubscription subscription,
+    void downloadSubscription(int cardId, DownloadableSubscription subscription,
             boolean switchAfterDownload, String callingPackage, boolean forceDeactivateSim,
             Bundle resolvedBundle, PendingIntent callbackIntent) {
         boolean callerCanWriteEmbeddedSubscriptions = callerCanWriteEmbeddedSubscriptions();
@@ -558,30 +536,17 @@ public class EuiccController extends IEuiccController.Stub {
 
         long token = Binder.clearCallingIdentity();
         try {
-            boolean isConsentNeededToResolvePortIndex = false;
-            if (switchAfterDownload && portIndex == TelephonyManager.INVALID_PORT_INDEX) {
-                // If switchAfterDownload is true, resolve the portIndex
-                portIndex = getResolvedPortIndexForSubscriptionSwitch(cardId);
-                isConsentNeededToResolvePortIndex = (portIndex
-                        == TelephonyManager.INVALID_PORT_INDEX);
-            }
-            Log.d(TAG, " downloadSubscription cardId: " + cardId + " switchAfterDownload: "
-                    + switchAfterDownload + " portIndex: " + portIndex
-                    + " forceDeactivateSim: " + forceDeactivateSim + " callingPackage: "
-                    + callingPackage
-                    + " isConsentNeededToResolvePortIndex: " + isConsentNeededToResolvePortIndex);
-            if (!isConsentNeededToResolvePortIndex && callerCanWriteEmbeddedSubscriptions) {
+            if (callerCanWriteEmbeddedSubscriptions) {
                 // With WRITE_EMBEDDED_SUBSCRIPTIONS, we can skip profile-specific permission checks
                 // and move straight to the profile download.
-                downloadSubscriptionPrivileged(cardId, portIndex, token, subscription,
-                        switchAfterDownload, forceDeactivateSim, callingPackage, resolvedBundle,
-                        callbackIntent);
+                downloadSubscriptionPrivileged(cardId, token, subscription, switchAfterDownload,
+                        forceDeactivateSim, callingPackage, resolvedBundle, callbackIntent);
                 return;
             }
 
             // Without WRITE_EMBEDDED_SUBSCRIPTIONS, we first check whether the caller can manage
             // subscription on the target SIM (see comments below). If yes, the caller *must* be
-            // allowlisted per the metadata of the profile to be downloaded, so check the metadata;
+            // whitelisted per the metadata of the profile to be downloaded, so check the metadata;
             // If no, ask the user's consent before proceed.
             // On a multi-active SIM device, if the caller can manage the active subscription on the
             // target SIM, or there is no active subscription on the target SIM and the caller can
@@ -589,27 +554,22 @@ public class EuiccController extends IEuiccController.Stub {
             // Otherwise, the user must provide consent. If it's a single-active SIM device,
             // determine whether the caller can manage the current profile; if so, we can perform
             // the download silently; if not, the user must provide consent.
-            if (!isConsentNeededToResolvePortIndex
-                    && canManageSubscriptionOnTargetSim(cardId, callingPackage, true,
-                    portIndex)) {
+            if (canManageSubscriptionOnTargetSim(cardId, callingPackage)) {
                 mConnector.getDownloadableSubscriptionMetadata(cardId, subscription,
                     forceDeactivateSim,
                     new DownloadSubscriptionGetMetadataCommandCallback(token, subscription,
                         switchAfterDownload, callingPackage, forceDeactivateSim,
-                        callbackIntent, false /* withUserConsent */, portIndex));
+                        callbackIntent, false /* withUserConsent */));
             } else {
-                Log.i(TAG, "Caller can't manage subscription on target SIM or "
-                        + " User consent is required for resolving port index. "
+                Log.i(TAG, "Caller can't manage subscription on target SIM. "
                         + "Ask user's consent first");
                 Intent extrasIntent = new Intent();
-                addResolutionIntentWithPort(extrasIntent,
-                        EuiccService.ACTION_RESOLVE_NO_PRIVILEGES,
+                addResolutionIntent(extrasIntent, EuiccService.ACTION_RESOLVE_NO_PRIVILEGES,
                         callingPackage,
                         0 /* resolvableErrors */,
                         false /* confirmationCodeRetried */,
                         EuiccOperation.forDownloadNoPrivilegesOrDeactivateSimCheckMetadata(token,
-                                subscription, switchAfterDownload, callingPackage), cardId,
-                        portIndex, switchAfterDownload /* usePortIndex */);
+                                subscription, switchAfterDownload, callingPackage), cardId);
                 sendResult(callbackIntent, RESOLVABLE_ERROR, extrasIntent);
             }
         } finally {
@@ -621,17 +581,15 @@ public class EuiccController extends IEuiccController.Stub {
         private final boolean mSwitchAfterDownload;
         private final boolean mForceDeactivateSim;
         private final boolean mWithUserConsent;
-        private final int mPortIndex;
 
         DownloadSubscriptionGetMetadataCommandCallback(long callingToken,
                 DownloadableSubscription subscription, boolean switchAfterDownload,
                 String callingPackage, boolean forceDeactivateSim,
-                PendingIntent callbackIntent, boolean withUserConsent, int portIndex) {
+                PendingIntent callbackIntent, boolean withUserConsent) {
             super(callingToken, subscription, callingPackage, callbackIntent);
             mSwitchAfterDownload = switchAfterDownload;
             mForceDeactivateSim = forceDeactivateSim;
             mWithUserConsent = withUserConsent;
-            mPortIndex = portIndex;
         }
 
         @Override
@@ -649,7 +607,7 @@ public class EuiccController extends IEuiccController.Stub {
                 if (checkCarrierPrivilegeInMetadata(subscription, mCallingPackage)) {
                     // Caller can download this profile. Since we already have the user's consent,
                     // proceed to download.
-                    downloadSubscriptionPrivileged(cardId, mPortIndex,
+                    downloadSubscriptionPrivileged(cardId,
                             mCallingToken, subscription, mSwitchAfterDownload,  mForceDeactivateSim,
                             mCallingPackage, null /* resolvedBundle */,
                             mCallbackIntent);
@@ -662,15 +620,14 @@ public class EuiccController extends IEuiccController.Stub {
                     // The caller can manage the target SIM. Ask the user's consent to deactivate
                     // the current SIM.
                     Intent extrasIntent = new Intent();
-                    addResolutionIntentWithPort(extrasIntent,
-                            EuiccService.ACTION_RESOLVE_DEACTIVATE_SIM,
+                    addResolutionIntent(extrasIntent, EuiccService.ACTION_RESOLVE_DEACTIVATE_SIM,
                             mCallingPackage,
                             0 /* resolvableErrors */,
                             false /* confirmationCodeRetried */,
                             EuiccOperation.forDownloadNoPrivilegesOrDeactivateSimCheckMetadata(
                                     mCallingToken, mSubscription, mSwitchAfterDownload,
                                     mCallingPackage),
-                            cardId,  mPortIndex,  mSwitchAfterDownload /* usePortIndex */);
+                            cardId);
                     sendResult(mCallbackIntent, RESOLVABLE_ERROR, extrasIntent);
                     return;
                 }
@@ -684,7 +641,7 @@ public class EuiccController extends IEuiccController.Stub {
                 if (checkCarrierPrivilegeInMetadata(subscription, mCallingPackage)) {
                     // Caller can download this profile per profile metadata. Also, caller can
                     // manage the subscription on the target SIM, which is already checked.
-                    downloadSubscriptionPrivileged(cardId, mPortIndex,
+                    downloadSubscriptionPrivileged(cardId,
                             mCallingToken, subscription, mSwitchAfterDownload, mForceDeactivateSim,
                             mCallingPackage, null /* resolvedBundle */,
                             mCallbackIntent);
@@ -697,27 +654,23 @@ public class EuiccController extends IEuiccController.Stub {
     }
 
     // Already have user consent. Check metadata first before proceed to download.
-    void downloadSubscriptionPrivilegedCheckMetadata(int cardId, int portIndex,
-            final long callingToken, DownloadableSubscription subscription,
-            boolean switchAfterDownload, boolean forceDeactivateSim, final String callingPackage,
-            Bundle resolvedBundle, final PendingIntent callbackIntent) {
-        Log.d(TAG, " downloadSubscriptionPrivilegedCheckMetadata cardId: " + cardId
-                + " switchAfterDownload: " + switchAfterDownload + " portIndex: " + portIndex
-                + " forceDeactivateSim: " + forceDeactivateSim);
+    void downloadSubscriptionPrivilegedCheckMetadata(int cardId, final long callingToken,
+            DownloadableSubscription subscription, boolean switchAfterDownload,
+            boolean forceDeactivateSim, final String callingPackage, Bundle resolvedBundle,
+            final PendingIntent callbackIntent) {
         mConnector.getDownloadableSubscriptionMetadata(cardId, subscription, forceDeactivateSim,
                 new DownloadSubscriptionGetMetadataCommandCallback(callingToken, subscription,
                         switchAfterDownload, callingPackage, forceDeactivateSim, callbackIntent,
-                        true /* withUserConsent */, portIndex));
+                        true /* withUserConsent */));
     }
 
     // Continue to download subscription without checking anything.
-    void downloadSubscriptionPrivileged(int cardId, int portIndex, final long callingToken,
+    void downloadSubscriptionPrivileged(int cardId, final long callingToken,
             DownloadableSubscription subscription, boolean switchAfterDownload,
             boolean forceDeactivateSim, final String callingPackage, Bundle resolvedBundle,
             final PendingIntent callbackIntent) {
         mConnector.downloadSubscription(
                 cardId,
-                portIndex,
                 subscription,
                 switchAfterDownload,
                 forceDeactivateSim,
@@ -749,7 +702,7 @@ public class EuiccController extends IEuiccController.Stub {
                                 break;
                             case EuiccService.RESULT_MUST_DEACTIVATE_SIM:
                                 resultCode = RESOLVABLE_ERROR;
-                                addResolutionIntentWithPort(extrasIntent,
+                                addResolutionIntent(extrasIntent,
                                         EuiccService.ACTION_RESOLVE_DEACTIVATE_SIM,
                                         callingPackage,
                                         0 /* resolvableErrors */,
@@ -757,8 +710,7 @@ public class EuiccController extends IEuiccController.Stub {
                                         EuiccOperation.forDownloadDeactivateSim(
                                                 callingToken, subscription, switchAfterDownload,
                                                 callingPackage),
-                                        cardId,
-                                        portIndex, switchAfterDownload /* usePortIndex */);
+                                        cardId);
                                 break;
                             case EuiccService.RESULT_RESOLVABLE_ERRORS:
                                 // Same value as the deprecated
@@ -771,7 +723,7 @@ public class EuiccController extends IEuiccController.Stub {
                                     retried = true;
                                 }
                                 if (result.getResolvableErrors() != 0) {
-                                    addResolutionIntentWithPort(extrasIntent,
+                                    addResolutionIntent(extrasIntent,
                                             EuiccService.ACTION_RESOLVE_RESOLVABLE_ERRORS,
                                             callingPackage,
                                             result.getResolvableErrors(),
@@ -779,10 +731,9 @@ public class EuiccController extends IEuiccController.Stub {
                                             EuiccOperation.forDownloadResolvableErrors(
                                                 callingToken, subscription, switchAfterDownload,
                                                 callingPackage, result.getResolvableErrors()),
-                                            cardId,
-                                            portIndex, switchAfterDownload /* usePortIndex */);
+                                            cardId);
                                 }  else { // Deprecated case
-                                    addResolutionIntentWithPort(extrasIntent,
+                                    addResolutionIntent(extrasIntent,
                                             EuiccService.ACTION_RESOLVE_CONFIRMATION_CODE,
                                             callingPackage,
                                             0 /* resolvableErrors */,
@@ -790,8 +741,7 @@ public class EuiccController extends IEuiccController.Stub {
                                             EuiccOperation.forDownloadConfirmationCode(
                                                 callingToken, subscription, switchAfterDownload,
                                                 callingPackage),
-                                            cardId,
-                                            portIndex, switchAfterDownload /* usePortIndex */);
+                                            cardId);
                                 }
                                 break;
                             default:
@@ -897,15 +847,14 @@ public class EuiccController extends IEuiccController.Stub {
                     break;
                 case EuiccService.RESULT_MUST_DEACTIVATE_SIM:
                     resultCode = RESOLVABLE_ERROR;
-                    addResolutionIntentWithPort(extrasIntent,
+                    addResolutionIntent(extrasIntent,
                             EuiccService.ACTION_RESOLVE_DEACTIVATE_SIM,
                             mCallingPackage,
                             0 /* resolvableErrors */,
                             false /* confirmationCodeRetried */,
                             EuiccOperation.forGetDefaultListDeactivateSim(
                                     mCallingToken, mCallingPackage),
-                            cardId,
-                            TelephonyManager.DEFAULT_PORT_INDEX, false /* usePortIndex */);
+                            cardId);
                     break;
                 default:
                     resultCode = ERROR;
@@ -1006,26 +955,15 @@ public class EuiccController extends IEuiccController.Stub {
     @Override
     public void switchToSubscription(int cardId, int subscriptionId, String callingPackage,
             PendingIntent callbackIntent) {
-        // convert PendingIntent to callback if no callback provided
-        switchToSubscription(cardId, subscriptionId, 0, false /* forceDeactivateSim */,
-                callingPackage, callbackIntent, false);
+        switchToSubscription(cardId,
+                subscriptionId, false /* forceDeactivateSim */, callingPackage, callbackIntent);
     }
 
-    @Override
-    public void switchToSubscriptionWithPort(int cardId, int subscriptionId, int portIndex,
+    void switchToSubscription(int cardId, int subscriptionId, boolean forceDeactivateSim,
             String callingPackage, PendingIntent callbackIntent) {
-        switchToSubscription(cardId, subscriptionId, portIndex, false /* forceDeactivateSim */,
-                callingPackage, callbackIntent, true);
-    }
-
-    void switchToSubscription(int cardId, int subscriptionId, int portIndex,
-            boolean forceDeactivateSim, String callingPackage, PendingIntent callbackIntent,
-            boolean usePortIndex) {
         boolean callerCanWriteEmbeddedSubscriptions = callerCanWriteEmbeddedSubscriptions();
         mAppOpsManager.checkPackage(Binder.getCallingUid(), callingPackage);
-        Log.d(TAG, " subId: " + subscriptionId + " portIndex: " + portIndex
-                + " forceDeactivateSim: " + forceDeactivateSim + " usePortIndex: " + usePortIndex
-                + " callingPackage: " + callingPackage);
+
         long token = Binder.clearCallingIdentity();
         try {
             if (callerCanWriteEmbeddedSubscriptions) {
@@ -1037,24 +975,9 @@ public class EuiccController extends IEuiccController.Stub {
 
             final String iccid;
             boolean passConsent = false;
-            boolean isConsentNeededToResolvePortIndex = false;
             if (subscriptionId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
-                if (!usePortIndex) {
-                    // Resolve the portIndex internally if apps are calling switchToSubscription
-                    // API without portIndex and subscription id is invalid.
-                    portIndex = getResolvedPortIndexForDisableSubscription(cardId, callingPackage,
-                            callerCanWriteEmbeddedSubscriptions);
-                    if (portIndex == TelephonyManager.INVALID_PORT_INDEX) {
-                        Log.e(TAG, "Disable is not permitted: no active subscription or cannot"
-                                + " manage subscription");
-                        sendResult(callbackIntent, ERROR, null /* extrasIntent */);
-                        return;
-                    }
-                    usePortIndex = true;
-                }
                 if (callerCanWriteEmbeddedSubscriptions
-                        || canManageActiveSubscriptionOnTargetSim(cardId, callingPackage,
-                        usePortIndex, portIndex)) {
+                        || canManageActiveSubscriptionOnTargetSim(cardId, callingPackage)) {
                     passConsent = true;
                 } else {
                     Log.e(TAG, "Not permitted to switch to empty subscription");
@@ -1078,34 +1001,14 @@ public class EuiccController extends IEuiccController.Stub {
                         return;
                     }
 
-                    if (canManageSubscriptionOnTargetSim(cardId, callingPackage, usePortIndex,
-                            portIndex)) {
+                    if (canManageSubscriptionOnTargetSim(cardId, callingPackage)) {
                         passConsent = true;
                     }
                 }
                 iccid = sub.getIccId();
-                if (usePortIndex) {
-                    boolean hasValidPortIndex = isTargetPortIndexValid(cardId, portIndex);
-                    if (!hasValidPortIndex) {
-                        // Return permanent error.
-                        Log.e(TAG, "Not permitted to switch to invalid portIndex");
-                        Intent extrasIntent = new Intent();
-                        extrasIntent.putExtra(EuiccManager.EXTRA_EMBEDDED_SUBSCRIPTION_ERROR_CODE,
-                                EuiccManager.ERROR_INVALID_PORT);
-                        sendResult(callbackIntent, ERROR, extrasIntent /* extrasIntent */);
-                        return;
-                    }
-                } else {
-                    // Resolve the portIndex internally if apps are calling switchToSubscription
-                    // API without portIndex.
-                    portIndex = getResolvedPortIndexForSubscriptionSwitch(cardId);
-                    isConsentNeededToResolvePortIndex = (portIndex
-                            == TelephonyManager.INVALID_PORT_INDEX);
-                    usePortIndex = true;
-                    Log.d(TAG, " Resolved portIndex: " + portIndex);
-                }
             }
-            if (!passConsent || isConsentNeededToResolvePortIndex) {
+
+            if (!passConsent) {
                 // Switch needs consent.
                 Intent extrasIntent = new Intent();
                 addResolutionIntent(extrasIntent,
@@ -1115,237 +1018,35 @@ public class EuiccController extends IEuiccController.Stub {
                         false /* confirmationCodeRetried */,
                         EuiccOperation.forSwitchNoPrivileges(
                                 token, subscriptionId, callingPackage),
-                        cardId, portIndex, usePortIndex, subscriptionId);
+                        cardId);
                 sendResult(callbackIntent, RESOLVABLE_ERROR, extrasIntent);
                 return;
             }
 
-            switchToSubscriptionPrivileged(cardId, portIndex, token, subscriptionId, iccid,
-                    forceDeactivateSim, callingPackage, callbackIntent, usePortIndex);
+            switchToSubscriptionPrivileged(cardId, token, subscriptionId, iccid, forceDeactivateSim,
+                    callingPackage, callbackIntent);
         } finally {
             Binder.restoreCallingIdentity(token);
         }
     }
 
-    /**
-     * Returns the resolved portIndex or {@link TelephonyManager#INVALID_PORT_INDEX} if calling
-     * cannot manage any active subscription.
-     */
-    private int getResolvedPortIndexForDisableSubscription(int cardId, String callingPackage,
-            boolean callerCanWriteEmbeddedSubscriptions) {
-        List<SubscriptionInfo> subInfoList = mSubscriptionManager
-                .getActiveSubscriptionInfoList(/* userVisibleOnly */false);
-        if (subInfoList == null || subInfoList.size() == 0) {
-            // No active subscription on any SIM.
-            return TelephonyManager.INVALID_PORT_INDEX;
-        }
-        // Return the portIndex of the first active subscription managed by the calling app.
-        for (SubscriptionInfo subInfo : subInfoList) {
-            // If cardId == TelephonyManager.UNSUPPORTED_CARD_ID, we assume it does not support
-            // multiple eSIMs. There are older multi-active SIM devices which do not implement HAL
-            // 1.2 and if they have multiple eSIMs, we let it pass if the app can manage an active
-            // subscription on any eSIM. That's the best we can do here.
-            if ((cardId == TelephonyManager.UNSUPPORTED_CARD_ID || subInfo.getCardId() == cardId)
-                    && subInfo.isEmbedded()
-                    && (callerCanWriteEmbeddedSubscriptions
-                    || mSubscriptionManager.canManageSubscription(subInfo, callingPackage))) {
-                return subInfo.getPortIndex();
-            }
-        }
-        return TelephonyManager.INVALID_PORT_INDEX;
-    }
-
-    /**
-     * Returns the resolved portIndex or {@link TelephonyManager#INVALID_PORT_INDEX} if no port
-     * is available without user consent.
-     */
-    private int getResolvedPortIndexForSubscriptionSwitch(int cardId) {
-        int slotIndex = getSlotIndexFromCardId(cardId);
-        // Euicc Slot
-        UiccSlot slot = UiccController.getInstance().getUiccSlot(slotIndex);
-        if (slot == null) {
-            // Check is to make sure crash is avoided in case of slot is null.
-            Log.d(TAG, "Switch to inactive slot, return default port index. slotIndex: "
-                    + slotIndex);
-            return TelephonyManager.DEFAULT_PORT_INDEX;
-        }
-        if (!slot.isMultipleEnabledProfileSupported()) {
-            Log.d(TAG, "Multiple enabled profiles is not supported, return default port index");
-            return TelephonyManager.DEFAULT_PORT_INDEX;
-        }
-        boolean isPsimActive = getRemovableNonEuiccSlot() != null
-                && getRemovableNonEuiccSlot().isActive();
-        if (mTelephonyManager.getActiveModemCount() == 1) {
-            // SS Mode
-            if (isPsimActive) {
-                // In case of SS Mode and pSim is active, return default port index for
-                // two reasons.
-                // 1. If psim and esim share the same carrier privilege, then users wouldn't need
-                // to consent, the switch should be seamless.
-                // 2. If psim is active and empty or psim and esim doesn't share the same carrier
-                // privilege, then permission check dialog will be shown anyway.
-                return TelephonyManager.DEFAULT_PORT_INDEX;
-            }
-            // If esim port is active, return the active portIndex irrespective of whether port is
-            // empty or has active subscription.
-            for (int portIndex : slot.getPortList()) {
-                if (slot.isPortActive(portIndex)) {
-                    return portIndex;
-                }
-            }
-        } else {
-            // DSDS Mode
-            for (int portIndex : slot.getPortList()) {
-                if (slot.isPortActive(portIndex)
-                        && mSubscriptionManager.getActiveSubscriptionInfoForSimSlotIndex(
-                        slot.getPhoneIdFromPortIndex(portIndex)) == null) {
-                    // If the port is active and empty, return the portIndex.
-                    return portIndex;
-                }
-            }
-            // Check whether the pSim is active and empty
-            boolean isPsimEmpty = isPsimActive && !isRemovalNonEuiccSlotHasActiveSubscription();
-            if (isPsimEmpty) {
-                // This logic will execute only if below two conditions are true.
-                // 1. pSim is active and empty
-                // 2. eSim has active subscription
-                // Return the next available inactive eSim portIndex.
-                return getNextAvailableInActivePortIndex(slot);
-            }
-        }
-        return TelephonyManager.INVALID_PORT_INDEX;
-    }
-
-    /**
-     * Returns true if the target port index is valid.
-     * 1. Port index is valid if it is non-negative and less than the total port count.
-     * 2. In SS Mode, port index is invalid if the embedded slot already has an active port
-     * with different port index than the target port index.
-     * 3. In DSDS mode, port index is invalid if the pSim slot is active and the embedded slot
-     * already has an active empty port with different port index than the target port index.
-     */
-    private boolean isTargetPortIndexValid(int cardId, int targetPortIndex) {
-        if (targetPortIndex < 0) {
-            Log.e(TAG, "Invalid portIndex: " + targetPortIndex);
-            return false;
-        }
-        int slotIndex = getSlotIndexFromCardId(cardId);
-        UiccSlot slot = UiccController.getInstance().getUiccSlot(slotIndex);
-        if (slot == null || slot.getPortList().length == 0
-                || targetPortIndex >= slot.getPortList().length) {
-            Log.e(TAG, "Invalid portIndex");
-            return false;
-        }
-
-        if (mTelephonyManager.getActiveModemCount() == 1) {
-            // SS Mode
-            for (int portIndex : slot.getPortList()) {
-                if (slot.isPortActive(portIndex) && portIndex != targetPortIndex) {
-                    // if there is an active esim port, should not try to enable the
-                    // profile on other inactive port.
-                    Log.e(TAG, "In SS Mode, slot already has active port on portIndex " + portIndex
-                            + " , reject the switch request to portIndex " + targetPortIndex);
-                    return false;
-                }
-            }
-        } else if (mTelephonyManager.getActiveModemCount() > 1) {
-            // DSDS Mode
-            // If physical slot has active subscription and eSim has active port (without active
-            // subscription), should not try to enable the profile on other inactive port.
-            boolean isPsimActive = isRemovalNonEuiccSlotHasActiveSubscription();
-            if (isPsimActive) {
-                for (int portIndex : slot.getPortList()) {
-                    if (slot.isPortActive(portIndex)
-                            && mSubscriptionManager
-                            .getActiveSubscriptionInfoForSimSlotIndex(
-                                    slot.getPhoneIdFromPortIndex(portIndex)) == null
-                            && portIndex != targetPortIndex) {
-                        Log.e(TAG, "In DSDS Mode, pSim has active subscription, eSim has empty"
-                                + " active port on portIndex " + portIndex
-                                + " , reject the switch request to portIndex " + targetPortIndex);
-                        return false;
-                    }
-                }
-            }
-        }
-        return true;
-    }
-
-    private int getNextAvailableInActivePortIndex(UiccSlot slot) {
-        if (slot != null) {
-            for (int portIndex : slot.getPortList()) {
-                if (!slot.isPortActive(portIndex)) {
-                    return portIndex;
-                }
-            }
-        }
-        return TelephonyManager.INVALID_PORT_INDEX;
-    }
-
-    /**
-     * Gets the slot index from the card ID.
-     */
-    private int getSlotIndexFromCardId(int cardId) {
-        UiccSlotInfo[] slotInfos = mTelephonyManager.getUiccSlotsInfo();
-        if (slotInfos == null || slotInfos.length == 0) {
-            Log.e(TAG, "UiccSlotInfo is null or empty");
-            return SubscriptionManager.INVALID_SIM_SLOT_INDEX;
-        }
-        String cardIdString = UiccController.getInstance().convertToCardString(cardId);
-        for (int slotIndex = 0; slotIndex < slotInfos.length; slotIndex++) {
-            if (IccUtils.compareIgnoreTrailingFs(cardIdString, slotInfos[slotIndex].getCardId())) {
-                return slotIndex;
-            }
-        }
-        Log.i(TAG, "No UiccSlotInfo found for cardId: " + cardId);
-        return SubscriptionManager.INVALID_SIM_SLOT_INDEX;
-    }
-
-    private boolean isRemovalNonEuiccSlotHasActiveSubscription() {
-        UiccSlot uiccSlot = getRemovableNonEuiccSlot();
-        if (uiccSlot != null) {
-            for (int portIndex : uiccSlot.getPortList()) {
-                if (uiccSlot.isPortActive(portIndex)
-                        && mSubscriptionManager.getActiveSubscriptionInfoForSimSlotIndex(
-                                uiccSlot.getPhoneIdFromPortIndex(portIndex)) != null) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private UiccSlot getRemovableNonEuiccSlot() {
-        UiccSlot[] uiccSlots = UiccController.getInstance().getUiccSlots();
-        if (uiccSlots != null) {
-            for (int i = 0; i < uiccSlots.length; i++) {
-                if (uiccSlots[i] != null && uiccSlots[i].isRemovable()
-                        && !uiccSlots[i].isEuicc()) {
-                    return uiccSlots[i];
-                }
-            }
-        }
-        return null;
-    }
-
-    void switchToSubscriptionPrivileged(int cardId, int portIndex, final long callingToken,
-            int subscriptionId, boolean forceDeactivateSim, final String callingPackage,
-            final PendingIntent callbackIntent, boolean usePortIndex) {
+    void switchToSubscriptionPrivileged(int cardId, final long callingToken, int subscriptionId,
+            boolean forceDeactivateSim, final String callingPackage,
+            final PendingIntent callbackIntent) {
         String iccid = null;
         SubscriptionInfo sub = getSubscriptionForSubscriptionId(subscriptionId);
         if (sub != null) {
             iccid = sub.getIccId();
         }
-        switchToSubscriptionPrivileged(cardId, portIndex, callingToken, subscriptionId, iccid,
-                forceDeactivateSim, callingPackage, callbackIntent, usePortIndex);
+        switchToSubscriptionPrivileged(cardId, callingToken, subscriptionId, iccid,
+                forceDeactivateSim, callingPackage, callbackIntent);
     }
 
-    void switchToSubscriptionPrivileged(int cardId, int portIndex, final long callingToken,
-            int subscriptionId, @Nullable String iccid, boolean forceDeactivateSim,
-            final String callingPackage, final PendingIntent callbackIntent, boolean usePortIndex) {
+    void switchToSubscriptionPrivileged(int cardId, final long callingToken, int subscriptionId,
+            @Nullable String iccid, boolean forceDeactivateSim, final String callingPackage,
+            final PendingIntent callbackIntent) {
         mConnector.switchToSubscription(
                 cardId,
-                portIndex,
                 iccid,
                 forceDeactivateSim,
                 new EuiccConnector.SwitchCommandCallback() {
@@ -1366,13 +1067,14 @@ public class EuiccController extends IEuiccController.Stub {
                                         false /* confirmationCodeRetried */,
                                         EuiccOperation.forSwitchDeactivateSim(
                                                 callingToken, subscriptionId, callingPackage),
-                                        cardId, portIndex, usePortIndex, subscriptionId);
+                                        cardId);
                                 break;
                             default:
                                 resultCode = ERROR;
                                 addExtrasToResultIntent(extrasIntent, result);
                                 break;
                         }
+
                         sendResult(callbackIntent, resultCode, extrasIntent);
                     }
 
@@ -1380,8 +1082,7 @@ public class EuiccController extends IEuiccController.Stub {
                     public void onEuiccServiceUnavailable() {
                         sendResult(callbackIntent, ERROR, null /* extrasIntent */);
                     }
-                },
-                usePortIndex);
+                });
     }
 
     @Override
@@ -1574,22 +1275,11 @@ public class EuiccController extends IEuiccController.Stub {
         }
     }
 
-    /** Add a resolution intent to the given extras intent with invalid subscriptionId */
-    public void addResolutionIntentWithPort(Intent extrasIntent, String resolutionAction,
-            String callingPackage, int resolvableErrors, boolean confirmationCodeRetried,
-            EuiccOperation op, int cardId, int portIndex, boolean usePortIndex) {
-        // use invalid subscriptionId in case of download/metadata flow
-        addResolutionIntent(extrasIntent, resolutionAction, callingPackage, resolvableErrors,
-                confirmationCodeRetried, op, cardId, portIndex,
-                usePortIndex /* usePortIndex */, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
-    }
-
     /** Add a resolution intent to the given extras intent. */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public void addResolutionIntent(Intent extrasIntent, String resolutionAction,
             String callingPackage, int resolvableErrors, boolean confirmationCodeRetried,
-            EuiccOperation op, int cardId, int portIndex, boolean usePortIndex,
-            int subscriptionId) {
+            EuiccOperation op, int cardId) {
         Intent intent = new Intent(EuiccManager.ACTION_RESOLVE_ERROR);
         intent.setPackage(RESOLUTION_ACTIVITY_PACKAGE_NAME);
         intent.setComponent(new ComponentName(
@@ -1599,9 +1289,6 @@ public class EuiccController extends IEuiccController.Stub {
         intent.putExtra(EuiccService.EXTRA_RESOLUTION_CALLING_PACKAGE, callingPackage);
         intent.putExtra(EuiccService.EXTRA_RESOLVABLE_ERRORS, resolvableErrors);
         intent.putExtra(EuiccService.EXTRA_RESOLUTION_CARD_ID, cardId);
-        intent.putExtra(EuiccService.EXTRA_RESOLUTION_SUBSCRIPTION_ID, subscriptionId);
-        intent.putExtra(EuiccService.EXTRA_RESOLUTION_PORT_INDEX, portIndex);
-        intent.putExtra(EuiccService.EXTRA_RESOLUTION_USE_PORT_INDEX, usePortIndex);
         intent.putExtra(EuiccService.EXTRA_RESOLUTION_CONFIRMATION_CODE_RETRIED,
                 confirmationCodeRetried);
         intent.putExtra(EXTRA_OPERATION, op);
@@ -1782,10 +1469,7 @@ public class EuiccController extends IEuiccController.Stub {
 
     // Checks whether the caller can manage the active embedded subscription on the SIM with the
     // given cardId.
-    // From Android T, if usePortIndex is true then should check if the calling app has carrier
-    // privilege over the subscription on the target port index.
-    private boolean canManageActiveSubscriptionOnTargetSim(int cardId, String callingPackage,
-            boolean usePortIndex, int targetPortIndex) {
+    private boolean canManageActiveSubscriptionOnTargetSim(int cardId, String callingPackage) {
         List<SubscriptionInfo> subInfoList = mSubscriptionManager
                 .getActiveSubscriptionInfoList(/* userVisibleOnly */false);
         if (subInfoList == null || subInfoList.size() == 0) {
@@ -1799,7 +1483,6 @@ public class EuiccController extends IEuiccController.Stub {
             // subscription on any eSIM. That's the best we can do here.
             if ((cardId == TelephonyManager.UNSUPPORTED_CARD_ID || subInfo.getCardId() == cardId)
                     && subInfo.isEmbedded()
-                    && (!usePortIndex || subInfo.getPortIndex() == targetPortIndex)
                     && mSubscriptionManager.canManageSubscription(subInfo, callingPackage)) {
                 return true;
             }
@@ -1814,10 +1497,7 @@ public class EuiccController extends IEuiccController.Stub {
     // other SIM. The target SIM should be an eUICC.
     // For a single-active subscription phone, checks whether the caller can manage any active
     // embedded subscription.
-    // From Android T, If embedded slot supports Multiple Enabled Profiles then should check if
-    // the calling app has carrier privilege over the subscription on the target port index.
-    private boolean canManageSubscriptionOnTargetSim(int cardId, String callingPackage,
-            boolean usePortIndex, int targetPortIndex) {
+    private boolean canManageSubscriptionOnTargetSim(int cardId, String callingPackage) {
         List<SubscriptionInfo> subInfoList = mSubscriptionManager
                 .getActiveSubscriptionInfoList(false /* userVisibleonly */);
         // No active subscription on any SIM.
@@ -1835,11 +1515,9 @@ public class EuiccController extends IEuiccController.Stub {
                 return false;
             }
             boolean isEuicc = false;
-            boolean isMultipleEnabledProfilesSupported = false;
             for (UiccCardInfo info : cardInfos) {
                 if (info != null && info.getCardId() == cardId && info.isEuicc()) {
                     isEuicc = true;
-                    isMultipleEnabledProfilesSupported = info.isMultipleEnabledProfilesSupported();
                     break;
                 }
             }
@@ -1852,13 +1530,8 @@ public class EuiccController extends IEuiccController.Stub {
             // false. If the caller can manage the active embedded subscription on the target SIM,
             // return true directly.
             for (SubscriptionInfo subInfo : subInfoList) {
-                // 1. subInfo.isEmbedded() can only be true for the target SIM.
-                // 2. Check whether the caller can manage subscription on the target portIndex
-                // (i.e. subInfo.getPortIndex() == targetPortIndex condition) only in case if
-                // isMultipleEnabledProfilesSupported and usePortIndex both are true.
-                if (subInfo.isEmbedded() && subInfo.getCardId() == cardId
-                        && (!isMultipleEnabledProfilesSupported || !usePortIndex
-                        || subInfo.getPortIndex() == targetPortIndex)) {
+                // subInfo.isEmbedded() can only be true for the target SIM.
+                if (subInfo.isEmbedded() && subInfo.getCardId() == cardId) {
                     return mSubscriptionManager.canManageSubscription(subInfo, callingPackage);
                 }
             }
@@ -1893,88 +1566,5 @@ public class EuiccController extends IEuiccController.Stub {
         return mContext.checkCallingOrSelfPermission(
                 Manifest.permission.WRITE_EMBEDDED_SUBSCRIPTIONS)
                 == PackageManager.PERMISSION_GRANTED;
-    }
-
-    @Override
-    public boolean isSimPortAvailable(int cardId, int portIndex, String callingPackage) {
-        List<UiccCardInfo> cardInfos;
-        final long token = Binder.clearCallingIdentity();
-        try {
-            cardInfos = mTelephonyManager.getUiccCardsInfo();
-        } finally {
-            Binder.restoreCallingIdentity(token);
-        }
-        for (UiccCardInfo info : cardInfos) {
-            if (info == null || info.getCardId() != cardId) {
-                continue;
-            }
-            // Return false in case of non esim or passed port index is greater than
-            // the available ports.
-            if (!info.isEuicc() || (portIndex == TelephonyManager.INVALID_PORT_INDEX)
-                    || portIndex >= info.getPorts().size()) {
-                return false;
-            }
-            for (UiccPortInfo portInfo : info.getPorts()) {
-                if (portInfo == null || portInfo.getPortIndex() != portIndex) {
-                    continue;
-                }
-                // Return false if port is not active.
-                if (!portInfo.isActive()) {
-                    return false;
-                }
-                // A port is available if it has no profiles enabled on it or calling app has
-                // Carrier privilege over the profile installed on the selected port.
-                if (TextUtils.isEmpty(portInfo.getIccId())) {
-                    return true;
-                }
-                UiccPort uiccPort =
-                        UiccController.getInstance().getUiccPortForSlot(
-                                info.getPhysicalSlotIndex(), portIndex);
-                // Some eSim Vendors return boot profile iccid if no profile is installed.
-                // So in this case if profile is empty, port is available.
-                if (uiccPort != null
-                        && uiccPort.getUiccProfile() != null
-                        && uiccPort.getUiccProfile().isEmptyProfile()) {
-                    return true;
-                }
-                Phone phone = PhoneFactory.getPhone(portInfo.getLogicalSlotIndex());
-                if (phone == null) {
-                    Log.e(TAG, "Invalid logical slot: " + portInfo.getLogicalSlotIndex());
-                    return false;
-                }
-                CarrierPrivilegesTracker cpt = phone.getCarrierPrivilegesTracker();
-                if (cpt == null) {
-                    Log.e(TAG, "No CarrierPrivilegesTracker");
-                    return false;
-                }
-                return (cpt.getCarrierPrivilegeStatusForPackage(callingPackage)
-                        == TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS);
-            }
-        }
-        return false;
-    }
-
-    @Override
-    public boolean hasCarrierPrivilegesForPackageOnAnyPhone(String callingPackage) {
-        final long token = Binder.clearCallingIdentity();
-        try {
-            // checkCarrierPrivilegesForPackageAnyPhone API requires READ_PHONE_STATE permission,
-            // hence cannot call directly from EuiccManager switchToSubscription
-            return mTelephonyManager.checkCarrierPrivilegesForPackageAnyPhone(callingPackage)
-                    == TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS;
-        } finally {
-            Binder.restoreCallingIdentity(token);
-        }
-    }
-
-    @Override
-    public boolean isCompatChangeEnabled(String callingPackage, long changeId) {
-        // Platform compat framework kills the callingPackage app to ensure that the change
-        // takes affect immediately. So the corresponding compat checking is moved to controller.
-        boolean changeEnabled = CompatChanges.isChangeEnabled(changeId, callingPackage,
-                Binder.getCallingUserHandle());
-        Log.i(TAG, "isCompatChangeEnabled changeId: " + changeId
-                + " changeEnabled: " + changeEnabled);
-        return changeEnabled;
     }
 }
