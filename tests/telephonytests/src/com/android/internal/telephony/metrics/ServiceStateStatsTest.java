@@ -23,7 +23,6 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -46,16 +45,16 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 
 public class ServiceStateStatsTest extends TelephonyTest {
     private static final long START_TIME_MILLIS = 2000L;
     private static final int CARRIER1_ID = 1;
     private static final int CARRIER2_ID = 1187;
 
-    // Mocked classes
-    private UiccSlot mPhysicalSlot0;
-    private UiccSlot mPhysicalSlot1;
-    private Phone mSecondPhone;
+    @Mock private UiccSlot mPhysicalSlot0;
+    @Mock private UiccSlot mPhysicalSlot1;
+    @Mock private Phone mSecondPhone;
 
     private TestableServiceStateStats mServiceStateStats;
 
@@ -85,9 +84,6 @@ public class ServiceStateStatsTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mPhysicalSlot0 = mock(UiccSlot.class);
-        mPhysicalSlot1 = mock(UiccSlot.class);
-        mSecondPhone = mock(Phone.class);
 
         doReturn(CARRIER1_ID).when(mPhone).getCarrierId();
         doReturn(mImsPhone).when(mPhone).getImsPhone();
@@ -109,7 +105,6 @@ public class ServiceStateStatsTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
-        mServiceStateStats = null;
         super.tearDown();
     }
 
@@ -197,7 +192,7 @@ public class ServiceStateStatsTest extends TelephonyTest {
         doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mServiceState).getVoiceNetworkType();
         doReturn(TelephonyManager.NETWORK_TYPE_IWLAN).when(mServiceState).getDataNetworkType();
         mockWwanPsRat(TelephonyManager.NETWORK_TYPE_UNKNOWN);
-        doReturn(TelephonyManager.NETWORK_TYPE_IWLAN).when(mImsStats).getImsVoiceRadioTech();
+        doReturn(true).when(mImsPhone).isWifiCallingEnabled();
         mServiceStateStats.onServiceStateChanged(mServiceState);
 
         mServiceStateStats.incTimeMillis(100L);
@@ -400,7 +395,7 @@ public class ServiceStateStatsTest extends TelephonyTest {
         mServiceStateStats.incTimeMillis(100L);
         // Voice RAT changes to IWLAN and data RAT stays in LTE according to WWAN PS RAT
         doReturn(TelephonyManager.NETWORK_TYPE_IWLAN).when(mServiceState).getDataNetworkType();
-        doReturn(TelephonyManager.NETWORK_TYPE_IWLAN).when(mImsStats).getImsVoiceRadioTech();
+        doReturn(true).when(mImsPhone).isWifiCallingEnabled();
         mServiceStateStats.onServiceStateChanged(mServiceState);
         mServiceStateStats.incTimeMillis(100L);
 
@@ -438,6 +433,7 @@ public class ServiceStateStatsTest extends TelephonyTest {
     public void update_iwlanButNotWifiCalling() throws Exception {
         // Using default service state for LTE as WWAN PS RAT
         doReturn(TelephonyManager.NETWORK_TYPE_IWLAN).when(mServiceState).getDataNetworkType();
+        doReturn(false).when(mImsPhone).isWifiCallingEnabled();
 
         mServiceStateStats.onServiceStateChanged(mServiceState);
 

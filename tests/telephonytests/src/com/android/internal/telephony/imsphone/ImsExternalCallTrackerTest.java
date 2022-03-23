@@ -18,7 +18,6 @@ package com.android.internal.telephony.imsphone;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import android.net.Uri;
@@ -30,11 +29,12 @@ import androidx.test.filters.FlakyTest;
 import com.android.internal.telephony.Call;
 import com.android.internal.telephony.Connection;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -47,25 +47,18 @@ public class ImsExternalCallTrackerTest {
     private static final int CALL_ID = 1;
 
     ImsExternalCallTracker mTracker;
-
-    // Mocked classes
+    @Mock
     ImsPhone mImsPhone;
+    @Mock
     ImsPullCall mImsPullCall;
+    @Mock
     ImsExternalCallTracker.ImsCallNotify mCallNotifier;
 
     @Before
     public void setUp() throws Exception {
-        mImsPhone = mock(ImsPhone.class);
-        mImsPullCall = mock(ImsPullCall.class);
-        mCallNotifier = mock(ImsExternalCallTracker.ImsCallNotify.class);
+        MockitoAnnotations.initMocks(this);
 
-        mTracker = new ImsExternalCallTracker(mImsPhone, mImsPullCall, mCallNotifier,
-            Runnable::run);
-    }
-
-    @After
-    public void tearDown() throws Exception {
-        mTracker = null;
+        mTracker = new ImsExternalCallTracker(mImsPhone, mImsPullCall, mCallNotifier);
     }
 
     @FlakyTest
