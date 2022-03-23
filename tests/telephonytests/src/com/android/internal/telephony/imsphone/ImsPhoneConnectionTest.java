@@ -66,11 +66,12 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -81,18 +82,16 @@ public class ImsPhoneConnectionTest extends TelephonyTest {
 
     private ImsPhoneConnection mConnectionUT;
     private Bundle mBundle = new Bundle();
-
-    // Mocked classes
+    @Mock
     private ImsPhoneCall mForeGroundCall;
+    @Mock
     private ImsPhoneCall mBackGroundCall;
+    @Mock
     private ImsPhoneCall mRingGroundCall;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mForeGroundCall = mock(ImsPhoneCall.class);
-        mBackGroundCall = mock(ImsPhoneCall.class);
-        mRingGroundCall = mock(ImsPhoneCall.class);
         replaceInstance(Handler.class, "mLooper", mImsCT, Looper.myLooper());
         replaceInstance(ImsPhoneCallTracker.class, "mForegroundCall", mImsCT, mForeGroundCall);
         replaceInstance(ImsPhoneCallTracker.class, "mBackgroundCall", mImsCT, mBackGroundCall);
@@ -105,8 +104,6 @@ public class ImsPhoneConnectionTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
-        mBundle = null;
-        mConnectionUT = null;
         super.tearDown();
     }
 
@@ -278,7 +275,13 @@ public class ImsPhoneConnectionTest extends TelephonyTest {
         // process post dial string during update
         assertTrue(mConnectionUT.update(mImsCall, Call.State.ACTIVE));
         assertEquals(Connection.PostDialState.STARTED, mConnectionUT.getPostDialState());
-        moveTimeForward(ImsPhoneConnection.PAUSE_DELAY_MILLIS);
+        try {
+            Field field = ImsPhoneConnection.class.getDeclaredField("PAUSE_DELAY_MILLIS");
+            field.setAccessible(true);
+            moveTimeForward((Integer) field.get(null));
+        } catch (Exception ex) {
+            Assert.fail("unexpected exception thrown" + ex.getMessage());
+        }
         processAllMessages();
         assertEquals(Connection.PostDialState.COMPLETE, mConnectionUT.getPostDialState());
     }
@@ -430,14 +433,15 @@ public class ImsPhoneConnectionTest extends TelephonyTest {
     @SmallTest
     public void testSetRedirectingAddress() {
         mConnectionUT = new ImsPhoneConnection(mImsPhone, mImsCall, mImsCT, mForeGroundCall, false);
-        String[] forwardedNumber = new String[]{"11111", "22222", "33333"};
-        ArrayList<String> forwardedNumberList =
-                new ArrayList<String>(Arrays.asList(forwardedNumber));
+        ArrayList<String> forwardedNumber = new ArrayList<String>();
+        forwardedNumber.add("11111");
+        forwardedNumber.add("22222");
+        forwardedNumber.add("33333");
 
         assertEquals(mConnectionUT.getForwardedNumber(), null);
-        mBundle.putStringArray(ImsCallProfile.EXTRA_FORWARDED_NUMBER, forwardedNumber);
+        mBundle.putStringArrayList(ImsCallProfile.EXTRA_FORWARDED_NUMBER, forwardedNumber);
         assertTrue(mConnectionUT.update(mImsCall, Call.State.ACTIVE));
-        assertEquals(forwardedNumberList, mConnectionUT.getForwardedNumber());
+        assertEquals(forwardedNumber, mConnectionUT.getForwardedNumber());
     }
 
     @Test

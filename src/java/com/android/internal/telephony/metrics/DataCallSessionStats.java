@@ -67,21 +67,20 @@ public class DataCallSessionStats {
     public synchronized void onSetupDataCall(@ApnType int apnTypeBitMask) {
         mDataCallSession = getDefaultProto(apnTypeBitMask);
         mStartTime = getTimeMillis();
-        PhoneFactory.getMetricsCollector().registerOngoingDataCallStat(this);
     }
 
     /**
      * Updates the ongoing dataCall's atom for data call response event.
      *
      * @param response setup Data call response
-     * @param currentRat The data call current Network Type
+     * @param radioTechnology The data call RAT
      * @param apnTypeBitmask APN type bitmask
      * @param protocol Data connection protocol
      * @param failureCause failure cause as per android.telephony.DataFailCause
      */
     public synchronized void onSetupDataCallResponse(
             @Nullable DataCallResponse response,
-            @NetworkType int currentRat,
+            @RilRadioTechnology int radioTechnology,
             @ApnType int apnTypeBitmask,
             @ProtocolType int protocol,
             @DataFailureCause int failureCause) {
@@ -91,14 +90,7 @@ public class DataCallSessionStats {
             loge("onSetupDataCallResponse: no DataCallSession atom has been initiated.");
             return;
         }
-
-        if (currentRat != TelephonyManager.NETWORK_TYPE_UNKNOWN) {
-            mDataCallSession.ratAtEnd = currentRat;
-            mDataCallSession.bandAtEnd =
-                    (currentRat == TelephonyManager.NETWORK_TYPE_IWLAN)
-                            ? 0
-                            : ServiceStateStats.getBand(mPhone);
-        }
+        mDataCallSession.ratAtEnd = ServiceState.rilRadioTechnologyToNetworkType(radioTechnology);
 
         // only set if apn hasn't been set during setup
         if (mDataCallSession.apnTypeBitmask == 0) {
@@ -112,10 +104,9 @@ public class DataCallSessionStats {
                     (int) Math.min(response.getRetryDurationMillis(), Integer.MAX_VALUE);
             // If setup has failed, then store the atom
             if (failureCause != DataFailCause.NONE) {
-                mDataCallSession.oosAtEnd = getIsOos();
+                mDataCallSession.failureCause = failureCause;
                 mDataCallSession.setupFailed = true;
                 mDataCallSession.ongoing = false;
-                PhoneFactory.getMetricsCollector().unregisterOngoingDataCallStat(this);
                 mAtomsStorage.addDataCallSession(mDataCallSession);
                 mDataCallSession = null;
             }
@@ -154,17 +145,14 @@ public class DataCallSessionStats {
         }
     }
 
-    /**
-     * Stores the atom when DataConnection reaches DISCONNECTED state.
-     *
-     * @param failureCause failure cause as per android.telephony.DataFailCause
-     */
+    /** Stores the atom when DataConnection reaches DISCONNECTED state.
+     *  @param failureCause failure cause as per android.telephony.DataFailCause
+     **/
     public synchronized void onDataCallDisconnected(@DataFailureCause int failureCause) {
         // there should've been another call to initiate the atom,
         // so this method is being called out of order -> no atom will be saved
-        // this also happens when DataConnection is created, which is expected
         if (mDataCallSession == null) {
-            logi("onDataCallDisconnected: no DataCallSession atom has been initiated.");
+            loge("onDataCallDisconnected: no DataCallSession atom has been initiated.");
             return;
         }
         mDataCallSession.failureCause = failureCause;
@@ -173,7 +161,6 @@ public class DataCallSessionStats {
         mDataCallSession.durationMinutes = convertMillisToMinutes(getTimeMillis() - mStartTime);
         // store for the data call list event, after DataCall is disconnected and entered into
         // inactive mode
-        PhoneFactory.getMetricsCollector().unregisterOngoingDataCallStat(this);
         mAtomsStorage.addDataCallSession(mDataCallSession);
         mDataCallSession = null;
     }
@@ -185,57 +172,19 @@ public class DataCallSessionStats {
      * registration state change.
      */
     public synchronized void onDrsOrRatChanged(@RilRadioTechnology int radioTechnology) {
-        @NetworkType int currentRat = ServiceState.rilRadioTechnologyToNetworkType(radioTechnology);
-        if (mDataCallSession != null && currentRat != TelephonyManager.NETWORK_TYPE_UNKNOWN) {
-            if (mDataCallSession.ratAtEnd != currentRat) {
-                mDataCallSession.ratSwitchCount++;
-                mDataCallSession.ratAtEnd = currentRat;
-            }
-            // band may have changed even if RAT was the same
-            mDataCallSession.bandAtEnd =
-                    (currentRat == TelephonyManager.NETWORK_TYPE_IWLAN)
-                            ? 0
-                            : ServiceStateStats.getBand(mPhone);
-        }
-    }
-
-    /** Add the on-going data call segment to the atom storage. */
-    public synchronized void conclude() {
-        if (mDataCallSession != null) {
-            DataCallSession call = copyOf(mDataCallSession);
-            long nowMillis = getTimeMillis();
-            call.durationMinutes = convertMillisToMinutes(nowMillis - mStartTime);
-            mStartTime = nowMillis;
-            mDataCallSession.ratSwitchCount = 0L;
-            mAtomsStorage.addDataCallSession(call);
+        @NetworkType int currentRat =
+                ServiceState.rilRadioTechnologyToNetworkType(radioTechnology);
+        if (mDataCallSession != null
+                && currentRat != TelephonyManager.NETWORK_TYPE_UNKNOWN
+                && mDataCallSession.ratAtEnd != currentRat) {
+            mDataCallSession.ratSwitchCount++;
+            mDataCallSession.ratAtEnd = currentRat;
+            mDataCallSession.bandAtEnd = ServiceStateStats.getBand(mPhone, currentRat);
         }
     }
 
     private static long convertMillisToMinutes(long millis) {
         return Math.round(millis / 60000.0);
-    }
-
-    private static DataCallSession copyOf(DataCallSession call) {
-        DataCallSession copy = new DataCallSession();
-        copy.dimension = call.dimension;
-        copy.isMultiSim = call.isMultiSim;
-        copy.isEsim = call.isEsim;
-        copy.apnTypeBitmask = call.apnTypeBitmask;
-        copy.carrierId = call.carrierId;
-        copy.isRoaming = call.isRoaming;
-        copy.ratAtEnd = call.ratAtEnd;
-        copy.oosAtEnd = call.oosAtEnd;
-        copy.ratSwitchCount = call.ratSwitchCount;
-        copy.isOpportunistic = call.isOpportunistic;
-        copy.ipType = call.ipType;
-        copy.setupFailed = call.setupFailed;
-        copy.failureCause = call.failureCause;
-        copy.suggestedRetryMillis = call.suggestedRetryMillis;
-        copy.deactivateReason = call.deactivateReason;
-        copy.durationMinutes = call.durationMinutes;
-        copy.ongoing = call.ongoing;
-        copy.bandAtEnd = call.bandAtEnd;
-        return copy;
     }
 
     /** Creates a proto for a normal {@code DataCallSession} with default values. */
@@ -279,10 +228,6 @@ public class DataCallSessionStats {
         return serviceState != null
                 ? serviceState.getDataRegistrationState() == ServiceState.STATE_OUT_OF_SERVICE
                 : false;
-    }
-
-    private void logi(String format, Object... args) {
-        Rlog.i(TAG, "[" + mPhone.getPhoneId() + "]" + String.format(format, args));
     }
 
     private void loge(String format, Object... args) {

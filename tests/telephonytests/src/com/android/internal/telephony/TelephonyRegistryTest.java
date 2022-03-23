@@ -47,11 +47,9 @@ import android.telephony.CellIdentity;
 import android.telephony.CellIdentityGsm;
 import android.telephony.CellLocation;
 import android.telephony.LinkCapacityEstimate;
-import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneCapability;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseDataConnectionState;
-import android.telephony.ServiceState;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyCallback;
@@ -61,7 +59,6 @@ import android.telephony.data.ApnSetting;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
-import android.text.TextUtils;
 
 import androidx.annotation.NonNull;
 
@@ -71,6 +68,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -83,10 +81,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class TelephonyRegistryTest extends TelephonyTest {
-    // Mocked classes
+    @Mock
     private SubscriptionInfo mMockSubInfo;
-    private TelephonyRegistry.ConfigurationProvider mMockConfigurationProvider;
-
     private TelephonyCallbackWrapper mTelephonyCallback;
     private List<LinkCapacityEstimate> mLinkCapacityEstimateList;
     private TelephonyRegistry mTelephonyRegistry;
@@ -94,11 +90,9 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private int mActiveSubId;
     private TelephonyDisplayInfo mTelephonyDisplayInfo;
     private int mSrvccState = -1;
-    private ServiceState mServiceState = null;
     private int mRadioPowerState = RADIO_POWER_UNAVAILABLE;
-    private int mDataConnectionState = TelephonyManager.DATA_UNKNOWN;
-    private int mNetworkType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
     private List<PhysicalChannelConfig> mPhysicalChannelConfigs;
+    private TelephonyRegistry.ConfigurationProvider mMockConfigurationProvider;
     private CellLocation mCellLocation;
 
     // All events contribute to TelephonyRegistry#isPhoneStatePermissionRequired
@@ -161,12 +155,10 @@ public class TelephonyRegistryTest extends TelephonyTest {
             TelephonyCallback.ActiveDataSubscriptionIdListener,
             TelephonyCallback.RadioPowerStateListener,
             TelephonyCallback.PreciseDataConnectionStateListener,
-            TelephonyCallback.DataConnectionStateListener,
             TelephonyCallback.DisplayInfoListener,
             TelephonyCallback.LinkCapacityEstimateChangedListener,
             TelephonyCallback.PhysicalChannelConfigListener,
-            TelephonyCallback.CellLocationListener,
-            TelephonyCallback.ServiceStateListener {
+            TelephonyCallback.CellLocationListener {
         // This class isn't mockable to get invocation counts because the IBinder is null and
         // crashes the TelephonyRegistry. Make a cheesy verify(times()) alternative.
         public AtomicInteger invocationCount = new AtomicInteger(0);
@@ -175,12 +167,6 @@ public class TelephonyRegistryTest extends TelephonyTest {
         public void onSrvccStateChanged(int srvccState) {
             invocationCount.incrementAndGet();
             mSrvccState = srvccState;
-        }
-
-        @Override
-        public void onServiceStateChanged(ServiceState serviceState) {
-            invocationCount.incrementAndGet();
-            mServiceState = serviceState;
         }
 
         @Override
@@ -201,12 +187,6 @@ public class TelephonyRegistryTest extends TelephonyTest {
         @Override
         public void onPreciseDataConnectionStateChanged(PreciseDataConnectionState preciseState) {
             invocationCount.incrementAndGet();
-        }
-        @Override
-        public void onDataConnectionStateChanged(int state, int networkType) {
-            invocationCount.incrementAndGet();
-            mDataConnectionState = state;
-            mNetworkType = networkType;
         }
         @Override
         public void onDisplayInfoChanged(TelephonyDisplayInfo displayInfo) {
@@ -235,12 +215,16 @@ public class TelephonyRegistryTest extends TelephonyTest {
         mTelephonyRegistry.systemRunning();
     }
 
-    private final Executor mSimpleExecutor = Runnable::run;
+    private Executor mSimpleExecutor = new Executor() {
+        @Override
+        public void execute(Runnable r) {
+            r.run();
+        }
+    };
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(getClass().getSimpleName());
-        mMockSubInfo = mock(SubscriptionInfo.class);
+        super.setUp("TelephonyRegistryTest");
         mMockConfigurationProvider = mock(TelephonyRegistry.ConfigurationProvider.class);
         when(mMockConfigurationProvider.getRegistrationLimit()).thenReturn(-1);
         when(mMockConfigurationProvider.isRegistrationLimitEnabledInPlatformCompat(anyInt()))
@@ -267,20 +251,6 @@ public class TelephonyRegistryTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         mTelephonyRegistry = null;
-        mTelephonyCallback = null;
-        if (mLinkCapacityEstimateList != null) {
-            mLinkCapacityEstimateList.clear();
-            mLinkCapacityEstimateList = null;
-        }
-        mTelephonyRegistry = null;
-        mPhoneCapability = null;
-        mTelephonyDisplayInfo = null;
-        mServiceState = null;
-        if (mPhysicalChannelConfigs != null) {
-            mPhysicalChannelConfigs.clear();
-            mPhysicalChannelConfigs = null;
-        }
-        mCellLocation = null;
         super.tearDown();
     }
 
@@ -292,7 +262,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
         PhoneCapability phoneCapability = new PhoneCapability(1, 2, null, false, new int[0]);
         int[] events = {TelephonyCallback.EVENT_PHONE_CAPABILITY_CHANGED};
         mTelephonyRegistry.notifyPhoneCapabilityChanged(phoneCapability);
-        mTelephonyRegistry.listenWithEventList(false, false, 0, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(0, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
         processAllMessages();
         assertEquals(phoneCapability, mPhoneCapability);
@@ -312,9 +282,8 @@ public class TelephonyRegistryTest extends TelephonyTest {
         when(mSubscriptionManager.getActiveSubscriptionIdList()).thenReturn(activeSubs);
         int activeSubId = 0;
         mTelephonyRegistry.notifyActiveDataSubIdChanged(activeSubId);
-        mTelephonyRegistry.listenWithEventList(false, false, activeSubId,
-                mContext.getOpPackageName(), mContext.getAttributionTag(),
-                mTelephonyCallback.callback, events, true);
+        mTelephonyRegistry.listenWithEventList(activeSubId, mContext.getOpPackageName(),
+                mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
         processAllMessages();
         assertEquals(activeSubId, mActiveSubId);
 
@@ -340,9 +309,8 @@ public class TelephonyRegistryTest extends TelephonyTest {
         int[] events = {TelephonyCallback.EVENT_SRVCC_STATE_CHANGED};
         mTelephonyRegistry.notifySrvccStateChanged(1 /*subId*/, srvccState);
         // Should receive callback when listen is called that contains the latest notify result.
-        mTelephonyRegistry.listenWithEventList(false, false, 1 /*subId*/,
-                mContext.getOpPackageName(), mContext.getAttributionTag(),
-                mTelephonyCallback.callback, events, true);
+        mTelephonyRegistry.listenWithEventList(1 /*subId*/, mContext.getOpPackageName(),
+                mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
         processAllMessages();
         assertEquals(srvccState, mSrvccState);
 
@@ -351,82 +319,6 @@ public class TelephonyRegistryTest extends TelephonyTest {
         mTelephonyRegistry.notifySrvccStateChanged(1 /*subId*/, srvccState);
         processAllMessages();
         assertEquals(srvccState, mSrvccState);
-    }
-
-    /**
-     * Test that we first receive a callback when listen(...) is called that contains the latest
-     * notify(...) response and then that the callback is called correctly when notify(...) is
-     * called.
-     */
-    @Test
-    @SmallTest
-    public void testSrvccStateChangedWithRenouncedLocationAccess() throws Exception {
-        // Return a slotIndex / phoneId of 0 for all sub ids given.
-        doReturn(mMockSubInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
-        doReturn(0/*slotIndex*/).when(mMockSubInfo).getSimSlotIndex();
-        int srvccState = TelephonyManager.SRVCC_STATE_HANDOVER_STARTED;
-        int[] events = {TelephonyCallback.EVENT_SRVCC_STATE_CHANGED};
-        mTelephonyRegistry.notifySrvccStateChanged(1 /*subId*/, srvccState);
-        // Should receive callback when listen is called that contains the latest notify result.
-        mTelephonyRegistry.listenWithEventList(true, true, 1 /*subId*/,
-                mContext.getOpPackageName(), mContext.getAttributionTag(),
-                mTelephonyCallback.callback, events, true);
-        processAllMessages();
-        assertEquals(srvccState, mSrvccState);
-        assertServiceStateForLocationAccessSanitization(mServiceState);
-
-        // trigger callback
-        srvccState = TelephonyManager.SRVCC_STATE_HANDOVER_COMPLETED;
-        mTelephonyRegistry.notifySrvccStateChanged(1 /*subId*/, srvccState);
-        processAllMessages();
-        assertEquals(srvccState, mSrvccState);
-    }
-
-    /**
-     * Test that we first receive a callback when listen(...) is called that contains the latest
-     * notify(...) response and then that the callback is called correctly when notify(...) is
-     * called.
-     */
-    @Test
-    @SmallTest
-    public void testSrvccStateChangedWithRenouncedFineLocationAccess() throws Exception {
-        // Return a slotIndex / phoneId of 0 for all sub ids given.
-        doReturn(mMockSubInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
-        doReturn(0/*slotIndex*/).when(mMockSubInfo).getSimSlotIndex();
-        int srvccState = TelephonyManager.SRVCC_STATE_HANDOVER_STARTED;
-        int[] events = {TelephonyCallback.EVENT_SRVCC_STATE_CHANGED};
-        mTelephonyRegistry.notifySrvccStateChanged(1 /*subId*/, srvccState);
-        // Should receive callback when listen is called that contains the latest notify result.
-        mTelephonyRegistry.listenWithEventList(false, true, 1 /*subId*/,
-                mContext.getOpPackageName(), mContext.getAttributionTag(),
-                mTelephonyCallback.callback, events, true);
-        processAllMessages();
-        assertEquals(srvccState, mSrvccState);
-        assertServiceStateForFineAccessSanitization(mServiceState);
-
-        // trigger callback
-        srvccState = TelephonyManager.SRVCC_STATE_HANDOVER_COMPLETED;
-        mTelephonyRegistry.notifySrvccStateChanged(1 /*subId*/, srvccState);
-        processAllMessages();
-        assertEquals(srvccState, mSrvccState);
-    }
-
-    private void assertServiceStateForFineAccessSanitization(ServiceState state) {
-        if (state == null) return;
-
-        if (state.getNetworkRegistrationInfoList() != null) {
-            for (NetworkRegistrationInfo nrs : state.getNetworkRegistrationInfoList()) {
-                assertEquals(nrs.getCellIdentity(), null);
-            }
-        }
-    }
-
-    private void assertServiceStateForLocationAccessSanitization(ServiceState state) {
-        if (state == null) return;
-        assertServiceStateForFineAccessSanitization(state);
-        assertEquals(TextUtils.isEmpty(state.getOperatorAlphaLong()), true);
-        assertEquals(TextUtils.isEmpty(state.getOperatorAlphaShort()), true);
-        assertEquals(TextUtils.isEmpty(state.getOperatorNumeric()), true);
     }
 
     /**
@@ -442,9 +334,8 @@ public class TelephonyRegistryTest extends TelephonyTest {
         int[] events = {TelephonyCallback.EVENT_SRVCC_STATE_CHANGED};
         mTelephonyRegistry.notifySrvccStateChanged(0 /*subId*/, srvccState);
         try {
-            mTelephonyRegistry.listenWithEventList(false, false, 0 /*subId*/,
-                    mContext.getOpPackageName(), mContext.getAttributionTag(),
-                    mTelephonyCallback.callback, events, true);
+            mTelephonyRegistry.listenWithEventList(0 /*subId*/, mContext.getOpPackageName(),
+                    mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
             fail();
         } catch (SecurityException e) {
             // pass test!
@@ -457,7 +348,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
     @Test
     public void testMultiSimConfigChange() {
         int[] events = {TelephonyCallback.EVENT_RADIO_POWER_STATE_CHANGED};
-        mTelephonyRegistry.listenWithEventList(false, false, 1, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(1, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
         processAllMessages();
         assertEquals(RADIO_POWER_UNAVAILABLE, mRadioPowerState);
@@ -480,285 +371,6 @@ public class TelephonyRegistryTest extends TelephonyTest {
         mTelephonyRegistry.notifyRadioPowerStateChanged(0, 1, RADIO_POWER_OFF);
         processAllMessages();
         assertEquals(RADIO_POWER_OFF, mRadioPowerState);
-    }
-
-    /**
-     * Test {@link TelephonyCallback.DataConnectionStateListener}
-     */
-    @Test
-    public void testDataConnectionStateChanged() {
-        final int subId = 1;
-        int[] events = {TelephonyCallback.EVENT_DATA_CONNECTION_STATE_CHANGED};
-        doReturn(mMockSubInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
-        doReturn(0/*slotIndex*/).when(mMockSubInfo).getSimSlotIndex();
-
-        assertEquals(TelephonyManager.DATA_UNKNOWN, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_UNKNOWN, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_CONNECTED)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
-                                .setApnName("default")
-                                .setEntryName("default")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
-                mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
-
-        assertEquals(TelephonyManager.DATA_CONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_DISCONNECTING)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
-                                .setApnName("default")
-                                .setEntryName("default")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_DISCONNECTING, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_DISCONNECTED)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
-                                .setApnName("default")
-                                .setEntryName("default")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_DISCONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-    }
-
-    /**
-     * Test the scenario that multiple PDNs support default type APN scenario. Make sure it reports
-     * aggregate data connection state.
-     */
-    @Test
-    public void testDataConnectionStateChangedMultipleInternet() {
-        final int subId = 1;
-        int[] events = {TelephonyCallback.EVENT_DATA_CONNECTION_STATE_CHANGED};
-        doReturn(mMockSubInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
-        doReturn(0/*slotIndex*/).when(mMockSubInfo).getSimSlotIndex();
-
-        assertEquals(TelephonyManager.DATA_UNKNOWN, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_UNKNOWN, mNetworkType);
-
-        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
-                mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_CONNECTED)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
-                                .setApnName("default")
-                                .setEntryName("default")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_CONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_CONNECTING)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS)
-                                .setApnName("default+mms")
-                                .setEntryName("default+mms")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_CONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_DISCONNECTING)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS)
-                                .setApnName("default+mms")
-                                .setEntryName("default+mms")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-        assertEquals(TelephonyManager.DATA_CONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_DISCONNECTED)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS)
-                                .setApnName("default+mms")
-                                .setEntryName("default+mms")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-        assertEquals(TelephonyManager.DATA_CONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_CONNECTING)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS)
-                                .setApnName("default+mms")
-                                .setEntryName("default+mms")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_CONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_CONNECTED)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS)
-                                .setApnName("default+mms")
-                                .setEntryName("default+mms")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_CONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_DISCONNECTING)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
-                                .setApnName("default")
-                                .setEntryName("default")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_CONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_DISCONNECTING)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS)
-                                .setApnName("default+mms")
-                                .setEntryName("default+mms")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_DISCONNECTING, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_DISCONNECTED)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
-                                .setApnName("default")
-                                .setEntryName("default")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_DISCONNECTING, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
-
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*phoneId*/ 0, subId,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_DISCONNECTED)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS)
-                                .setApnName("default+mms")
-                                .setEntryName("default+mms")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        assertEquals(TelephonyManager.DATA_DISCONNECTED, mDataConnectionState);
-        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mNetworkType);
     }
 
     /**
@@ -786,7 +398,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
                         .setLinkProperties(new LinkProperties())
                         .setFailCause(0)
                         .build());
-        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(subId, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
         processAllMessages();
         // Verify that the PDCS is reported for the only APN
@@ -813,12 +425,12 @@ public class TelephonyRegistryTest extends TelephonyTest {
         assertEquals(mTelephonyCallback.invocationCount.get(), 2);
 
         // Unregister the listener
-        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(subId, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback, new int[0], true);
         processAllMessages();
 
         // Re-register the listener and ensure that both APN types are reported
-        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(subId, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
         processAllMessages();
         assertEquals(4, mTelephonyCallback.invocationCount.get());
@@ -863,7 +475,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
         configs.add(config);
 
         mTelephonyRegistry.notifyPhysicalChannelConfigForSubscriber(0, subId, configs);
-        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(subId, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
         processAllMessages();
 
@@ -1002,7 +614,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
                 .putExtra(SubscriptionManager.EXTRA_SLOT_INDEX, 0));
         processAllMessages();
         int[] events = {TelephonyCallback.EVENT_DISPLAY_INFO_CHANGED};
-        mTelephonyRegistry.listenWithEventList(false, false, 2, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(2, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback, events, false);
         when(mMockConfigurationProvider.isDisplayInfoNrAdvancedSupported(
                 anyString(), any())).thenReturn(true);
@@ -1028,7 +640,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
                 .putExtra(SubscriptionManager.EXTRA_SLOT_INDEX, 0));
         processAllMessages();
         int[] events = {TelephonyCallback.EVENT_DISPLAY_INFO_CHANGED};
-        mTelephonyRegistry.listenWithEventList(false, false, 2, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(2, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback, events, false);
         when(mMockConfigurationProvider.isDisplayInfoNrAdvancedSupported(
                 anyString(), any())).thenReturn(false);
@@ -1076,9 +688,9 @@ public class TelephonyRegistryTest extends TelephonyTest {
             }
         };
         telephonyCallback2.init(mSimpleExecutor2);
-        mTelephonyRegistry.listenWithEventList(false, false, 2, "pkg1",
+        mTelephonyRegistry.listenWithEventList(2, "pkg1",
                 mContext.getAttributionTag(), mTelephonyCallback.callback, events, false);
-        mTelephonyRegistry.listenWithEventList(false, false, 2, "pkg2",
+        mTelephonyRegistry.listenWithEventList(2, "pkg2",
                 mContext.getAttributionTag(), telephonyCallback2.callback, events, false);
         when(mMockConfigurationProvider.isDisplayInfoNrAdvancedSupported(
                 eq("pkg1"), any())).thenReturn(false);
@@ -1122,7 +734,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
 
         // Listen to EVENT_CELL_LOCATION_CHANGED for the current user Id.
         int[] events = {TelephonyCallback.EVENT_CELL_LOCATION_CHANGED};
-        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(subId, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback, events, false);
 
         // Broadcast ACTION_USER_SWITCHED for USER_SYSTEM. Callback should be triggered.
@@ -1146,9 +758,8 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private void assertSecurityExceptionThrown(int[] event) {
         try {
             mTelephonyRegistry.listenWithEventList(
-                    false, false, SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
-                    mContext.getOpPackageName(), mContext.getAttributionTag(),
-                    mTelephonyCallback.callback, event, true);
+                    SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, mContext.getOpPackageName(),
+                    mContext.getAttributionTag(), mTelephonyCallback.callback, event, true);
             fail("SecurityException should throw without permission");
         } catch (SecurityException expected) {
         }
@@ -1157,9 +768,8 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private void assertSecurityExceptionNotThrown(int[] event) {
         try {
             mTelephonyRegistry.listenWithEventList(
-                    false, false, SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
-                    mContext.getOpPackageName(), mContext.getAttributionTag(),
-                    mTelephonyCallback.callback, event, true);
+                    SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, mContext.getOpPackageName(),
+                    mContext.getAttributionTag(), mTelephonyCallback.callback, event, true);
         } catch (SecurityException unexpected) {
             fail("SecurityException thrown with permission");
         }
@@ -1172,7 +782,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
                 .putExtra(SubscriptionManager.EXTRA_SLOT_INDEX, 0));
         processAllMessages();
         int[] events = {TelephonyCallback.EVENT_LINK_CAPACITY_ESTIMATE_CHANGED};
-        mTelephonyRegistry.listenWithEventList(false, false, 2, mContext.getOpPackageName(),
+        mTelephonyRegistry.listenWithEventList(2, mContext.getOpPackageName(),
                 mContext.getAttributionTag(), mTelephonyCallback.callback,
                 events, false);
 
@@ -1193,68 +803,5 @@ public class TelephonyRegistryTest extends TelephonyTest {
         mTelephonyRegistry.notifyLinkCapacityEstimateChanged(0, 2, lceList);
         processAllMessages();
         assertEquals(lceList, mLinkCapacityEstimateList);
-    }
-
-    @Test
-    public void testPreciseDataConnectionStateChangedForInvalidSubId() {
-        //set dual sim
-        doReturn(2).when(mTelephonyManager).getActiveModemCount();
-        mContext.sendBroadcast(new Intent(ACTION_MULTI_SIM_CONFIG_CHANGED));
-        // set default slot
-        mContext.sendBroadcast(new Intent(ACTION_DEFAULT_SUBSCRIPTION_CHANGED)
-                .putExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, 2)
-                .putExtra(SubscriptionManager.EXTRA_SLOT_INDEX, 0));
-        processAllMessages();
-
-        final int subId = 1;
-        int[] events = {TelephonyCallback.EVENT_PRECISE_DATA_CONNECTION_STATE_CHANGED};
-        doReturn(mMockSubInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
-        doReturn(1).when(mMockSubInfo).getSimSlotIndex();
-
-        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
-                mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
-        processAllMessages();
-
-        // notify data connection with invalid sub id and default phone id
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*default phoneId*/ 0, /*invalid subId*/ -1,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(1)
-                        .setState(TelephonyManager.DATA_CONNECTED)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_IMS)
-                                .setApnName("ims")
-                                .setEntryName("ims")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        processAllMessages();
-
-        assertEquals(0, mTelephonyCallback.invocationCount.get());
-
-        // notify data connection with invalid sub id and default phone id
-        mTelephonyRegistry.notifyDataConnectionForSubscriber(
-                /*target phoneId*/ 1, /*invalid subId*/ -1,
-                new PreciseDataConnectionState.Builder()
-                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
-                        .setId(2)
-                        .setState(TelephonyManager.DATA_SUSPENDED)
-                        .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
-                        .setApnSetting(new ApnSetting.Builder()
-                                .setApnTypeBitmask(ApnSetting.TYPE_IMS)
-                                .setApnName("ims")
-                                .setEntryName("ims")
-                                .build())
-                        .setLinkProperties(new LinkProperties())
-                        .setFailCause(0)
-                        .build());
-
-        processAllMessages();
-
-        assertEquals(1, mTelephonyCallback.invocationCount.get());
     }
 }
