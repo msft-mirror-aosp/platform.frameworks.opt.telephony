@@ -23,16 +23,28 @@ import static org.junit.Assert.assertFalse;
 import android.telephony.TelephonyManager;
 import android.testing.AndroidTestingRunner;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import java.util.Set;
 
 @RunWith(AndroidTestingRunner.class)
-public class RadioConfigResponseTest {
+public class RadioConfigResponseTest extends TelephonyTest {
+    @Before
+    public void setUp() throws Exception {
+        super.setUp(RadioConfigResponseTest.class.getSimpleName());
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        super.tearDown();
+    }
+
     @Test
     public void testVersion_1_5() {
-        Set<String> caps = RILUtils.getCaps(RIL.RADIO_HAL_VERSION_1_5, false);
+        Set<String> caps = RadioConfigResponse.getCaps(RIL.RADIO_HAL_VERSION_1_5, false);
         assertFalse(
                 caps.contains(TelephonyManager.CAPABILITY_SECONDARY_LINK_BANDWIDTH_VISIBLE));
         assertFalse(
@@ -48,7 +60,7 @@ public class RadioConfigResponseTest {
 
     @Test
     public void testReducedFeatureSet() {
-        Set<String> caps = RILUtils.getCaps(RIL.RADIO_HAL_VERSION_1_6, true);
+        Set<String> caps = RadioConfigResponse.getCaps(RIL.RADIO_HAL_VERSION_1_6, true);
         assertFalse(
                 caps.contains(TelephonyManager.CAPABILITY_SECONDARY_LINK_BANDWIDTH_VISIBLE));
         assertTrue(
@@ -66,7 +78,7 @@ public class RadioConfigResponseTest {
 
     @Test
     public void testNonReducedFeatureSet() {
-        Set<String> caps = RILUtils.getCaps(RIL.RADIO_HAL_VERSION_1_6, false);
+        Set<String> caps = RadioConfigResponse.getCaps(RIL.RADIO_HAL_VERSION_1_6, false);
         assertTrue(
                 caps.contains(TelephonyManager.CAPABILITY_SECONDARY_LINK_BANDWIDTH_VISIBLE));
         assertTrue(
