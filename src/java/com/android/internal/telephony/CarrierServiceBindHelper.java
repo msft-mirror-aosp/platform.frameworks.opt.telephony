@@ -38,7 +38,6 @@ import android.service.carrier.CarrierService;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
-import android.util.LocalLog;
 import android.util.Log;
 import android.util.SparseArray;
 
@@ -47,6 +46,7 @@ import com.android.internal.telephony.util.TelephonyUtils;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.List;
 
 /**
  * Manages long-lived bindings to carrier services
@@ -55,10 +55,6 @@ import java.io.PrintWriter;
 public class CarrierServiceBindHelper {
     private static final String LOG_TAG = "CarrierSvcBindHelper";
 
-    // TODO(b/201423849): Remove the UNBIND_DELAY_MILLIS and switch to CarrierPrivilegesCallback
-    // The grace period has been replaced by CarrierPrivilegesTracker. CarrierPrivilegesCallback has
-    // provided the callback for both carrier privileges change and carrier service change (with
-    // awareness of the grace period), the delay based logic here should be cleaned up.
     /**
      * How long to linger a binding after an app loses carrier privileges, as long as no new
      * binding comes in to take its place.
@@ -72,13 +68,15 @@ public class CarrierServiceBindHelper {
     @VisibleForTesting
     public SparseArray<String> mLastSimState = new SparseArray<>();
     private final PackageChangeReceiver mPackageMonitor = new CarrierServicePackageMonitor();
-    private final LocalLog mLocalLog = new LocalLog(100);
+
+    // whether we have successfully bound to the service
+    private boolean mServiceBound = false;
 
     private BroadcastReceiver mUserUnlockedReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             final String action = intent.getAction();
-            logdWithLocalLog("Received " + action);
+            log("Received " + action);
 
             if (Intent.ACTION_USER_UNLOCKED.equals(action)) {
                 // On user unlock, new components might become available, so reevaluate all
@@ -103,21 +101,20 @@ public class CarrierServiceBindHelper {
         public void handleMessage(Message msg) {
             int phoneId;
             AppBinding binding;
-            logdWithLocalLog("mHandler: " + msg.what);
+            log("mHandler: " + msg.what);
 
             switch (msg.what) {
                 case EVENT_REBIND:
                     phoneId = (int) msg.obj;
                     binding = mBindings.get(phoneId);
                     if (binding == null) return;
-                    logdWithLocalLog("Rebinding if necessary for phoneId: " + binding.getPhoneId());
+                    log("Rebinding if necessary for phoneId: " + binding.getPhoneId());
                     binding.rebind();
                     break;
                 case EVENT_PERFORM_IMMEDIATE_UNBIND:
                     phoneId = (int) msg.obj;
                     binding = mBindings.get(phoneId);
                     if (binding == null) return;
-                    logdWithLocalLog("Unbind immediate with phoneId: " + binding.getPhoneId());
                     binding.performImmediateUnbind();
                     break;
                 case EVENT_MULTI_SIM_CONFIG_CHANGED:
@@ -128,7 +125,7 @@ public class CarrierServiceBindHelper {
     };
 
     public CarrierServiceBindHelper(Context context) {
-        mContext = context.createContextAsUser(Process.myUserHandle(), 0);
+        mContext = context;
 
         updateBindingsAndSimStates();
 
@@ -144,7 +141,7 @@ public class CarrierServiceBindHelper {
                 new IntentFilter(Intent.ACTION_USER_UNLOCKED), null /* broadcastPermission */,
                 mHandler);
         } catch (PackageManager.NameNotFoundException e) {
-            logeWithLocalLog("Package name not found: " + e.getMessage());
+            loge("Package name not found: " + e.getMessage());
         }
     }
 
@@ -169,7 +166,7 @@ public class CarrierServiceBindHelper {
     }
 
     void updateForPhoneId(int phoneId, String simState) {
-        logdWithLocalLog("update binding for phoneId: " + phoneId + " simState: " + simState);
+        log("update binding for phoneId: " + phoneId + " simState: " + simState);
         if (!SubscriptionManager.isValidPhoneId(phoneId)) {
             return;
         }
@@ -215,25 +212,28 @@ public class CarrierServiceBindHelper {
          */
         void rebind() {
             // Get the package name for the carrier app
-            String carrierPackageName = TelephonyManager.from(
-                    mContext).getCarrierServicePackageNameForLogicalSlot(phoneId);
+            List<String> carrierPackageNames =
+                TelephonyManager.from(mContext).getCarrierPackageNamesForIntentAndPhone(
+                    new Intent(CarrierService.CARRIER_SERVICE_INTERFACE), phoneId
+                );
 
-            if (carrierPackageName == null) {
-                logdWithLocalLog("No carrier app for: " + phoneId);
+            if (carrierPackageNames == null || carrierPackageNames.size() <= 0) {
+                log("No carrier app for: " + phoneId);
                 // Unbind after a delay in case this is a temporary blip in carrier privileges.
                 unbind(false /* immediate */);
                 return;
             }
 
-            logdWithLocalLog("Found carrier app: " + carrierPackageName);
+            log("Found carrier app: " + carrierPackageNames);
+            String candidateCarrierPackage = carrierPackageNames.get(0);
             // If we are binding to a different package, unbind immediately from the current one.
-            if (!TextUtils.equals(carrierPackage, carrierPackageName)) {
+            if (!TextUtils.equals(carrierPackage, candidateCarrierPackage)) {
                 unbind(true /* immediate */);
             }
 
             // Look up the carrier service
             Intent carrierService = new Intent(CarrierService.CARRIER_SERVICE_INTERFACE);
-            carrierService.setPackage(carrierPackageName);
+            carrierService.setPackage(candidateCarrierPackage);
 
             ResolveInfo carrierResolveInfo = mContext.getPackageManager().resolveService(
                 carrierService, PackageManager.GET_META_DATA);
@@ -249,28 +249,25 @@ public class CarrierServiceBindHelper {
             // Only bind if the service wants it
             if (metadata == null ||
                 !metadata.getBoolean("android.service.carrier.LONG_LIVED_BINDING", false)) {
-                logdWithLocalLog("Carrier app does not want a long lived binding");
+                log("Carrier app does not want a long lived binding");
                 unbind(true /* immediate */);
                 return;
             }
 
             if (!TextUtils.equals(carrierServiceClass, candidateServiceClass)) {
-                logdWithLocalLog("CarrierService class changed, unbind immediately.");
                 // Unbind immediately if the carrier service component has changed.
                 unbind(true /* immediate */);
             } else if (connection != null) {
-                logdWithLocalLog(
-                        "CarrierService class unchanged with connection up, cancelScheduledUnbind");
                 // Component is unchanged and connection is up - do nothing, but cancel any
                 // scheduled unbinds.
                 cancelScheduledUnbind();
                 return;
             }
 
-            carrierPackage = carrierPackageName;
+            carrierPackage = candidateCarrierPackage;
             carrierServiceClass = candidateServiceClass;
 
-            logdWithLocalLog("Binding to " + carrierPackage + " for phone " + phoneId);
+            log("Binding to " + carrierPackage + " for phone " + phoneId);
 
             // Log debug information
             bindCount++;
@@ -280,14 +277,15 @@ public class CarrierServiceBindHelper {
 
             String error;
             try {
-                if (mContext.bindService(
-                        carrierService,
-                        Context.BIND_AUTO_CREATE
+                if (mContext.createContextAsUser(Process.myUserHandle(), 0)
+                        .bindService(carrierService,
+                                Context.BIND_AUTO_CREATE
                                 | Context.BIND_FOREGROUND_SERVICE
                                 | Context.BIND_INCLUDE_CAPABILITIES,
-                        (r) -> mHandler.post(r),
-                        connection)) {
-                    logdWithLocalLog("service bound");
+                                (r) -> mHandler.post(r),
+                                connection)) {
+                    log("service bound");
+                    mServiceBound = true;
                     return;
                 }
 
@@ -296,8 +294,8 @@ public class CarrierServiceBindHelper {
                 error = ex.getMessage();
             }
 
-            logdWithLocalLog("Unable to bind to " + carrierPackage + " for phone " + phoneId
-                    + ". Error: " + error);
+            log("Unable to bind to " + carrierPackage + " for phone " + phoneId +
+                ". Error: " + error);
             unbind(true /* immediate */);
         }
 
@@ -320,13 +318,12 @@ public class CarrierServiceBindHelper {
             // not running anyway and it may be a permanent disconnection (e.g. the app was
             // disabled).
             if (immediate || !connection.connected) {
-                logdWithLocalLog("unbind immediately or with disconnected connection");
                 cancelScheduledUnbind();
                 performImmediateUnbind();
             } else if (mUnbindScheduledUptimeMillis == -1) {
                 long currentUptimeMillis = SystemClock.uptimeMillis();
                 mUnbindScheduledUptimeMillis = currentUptimeMillis + UNBIND_DELAY_MILLIS;
-                logdWithLocalLog("Scheduling unbind in " + UNBIND_DELAY_MILLIS + " millis");
+                log("Scheduling unbind in " + UNBIND_DELAY_MILLIS + " millis");
                 mHandler.sendMessageAtTime(
                         mHandler.obtainMessage(EVENT_PERFORM_IMMEDIATE_UNBIND, phoneId),
                         mUnbindScheduledUptimeMillis);
@@ -342,17 +339,24 @@ public class CarrierServiceBindHelper {
             carrierPackage = null;
             carrierServiceClass = null;
 
-            // Always call unbindService, no matter if bindService succeed.
-            if (connection != null) {
-                mContext.unbindService(connection);
-                logdWithLocalLog("Unbinding from carrier app");
-                connection = null;
-                mUnbindScheduledUptimeMillis = -1;
+            // Actually unbind
+            if (mServiceBound) {
+                log("Unbinding from carrier app");
+                mServiceBound = false;
+                try {
+                    mContext.unbindService(connection);
+                } catch (IllegalArgumentException e) {
+                    //TODO(b/151328766): Figure out why we unbind without binding
+                    loge("Tried to unbind without binding e=" + e);
+                }
+            } else {
+                log("Not bound, skipping unbindService call");
             }
+            connection = null;
+            mUnbindScheduledUptimeMillis = -1;
         }
 
         private void cancelScheduledUnbind() {
-            logdWithLocalLog("cancelScheduledUnbind");
             mHandler.removeMessages(EVENT_PERFORM_IMMEDIATE_UNBIND);
             mUnbindScheduledUptimeMillis = -1;
         }
@@ -374,25 +378,25 @@ public class CarrierServiceBindHelper {
 
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
-            logdWithLocalLog("Connected to carrier app: " + name.flattenToString());
+            log("Connected to carrier app: " + name.flattenToString());
             connected = true;
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
-            logdWithLocalLog("Disconnected from carrier app: " + name.flattenToString());
+            log("Disconnected from carrier app: " + name.flattenToString());
             connected = false;
         }
 
         @Override
         public void onBindingDied(ComponentName name) {
-            logdWithLocalLog("Binding from carrier app died: " + name.flattenToString());
+            log("Binding from carrier app died: " + name.flattenToString());
             connected = false;
         }
 
         @Override
         public void onNullBinding(ComponentName name) {
-            logdWithLocalLog("Null binding from carrier app: " + name.flattenToString());
+            log("Null binding from carrier app: " + name.flattenToString());
             connected = false;
         }
 
@@ -442,8 +446,7 @@ public class CarrierServiceBindHelper {
                 // is unset, in case this package change resulted in a new carrier package becoming
                 // available for binding.
                 if (isBindingForPackage) {
-                    logdWithLocalLog(
-                            carrierPackageName + " changed and corresponds to a phone. Rebinding.");
+                    log(carrierPackageName + " changed and corresponds to a phone. Rebinding.");
                 }
                 if (appBindingPackage == null || isBindingForPackage) {
                     if (forceUnbind) {
@@ -455,22 +458,16 @@ public class CarrierServiceBindHelper {
         }
     }
 
-    private void logdWithLocalLog(String msg) {
-        Log.d(LOG_TAG, msg);
-        mLocalLog.log(msg);
+    private static void log(String message) {
+        Log.d(LOG_TAG, message);
     }
 
-    private void logeWithLocalLog(String msg) {
-        Log.e(LOG_TAG, msg);
-        mLocalLog.log(msg);
-    }
+    private static void loge(String message) { Log.e(LOG_TAG, message); }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         pw.println("CarrierServiceBindHelper:");
         for (int i = 0; i < mBindings.size(); i++) {
             mBindings.get(i).dump(fd, pw, args);
         }
-        pw.println("CarrierServiceBindHelperLogs=");
-        mLocalLog.dump(fd, pw, args);
     }
 }

@@ -19,7 +19,6 @@ import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -38,6 +37,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -48,28 +48,25 @@ public class DefaultPhoneNotifierTest extends TelephonyTest {
     private static final int SUB_ID = 0;
 
     private DefaultPhoneNotifier mDefaultPhoneNotifierUT;
-
-    // Mocked classes
+    @Mock
     SignalStrength mSignalStrength;
+    @Mock
     CellInfo mCellInfo;
+    @Mock
     GsmCdmaCall mForeGroundCall;
+    @Mock
     GsmCdmaCall mBackGroundCall;
+    @Mock
     GsmCdmaCall mRingingCall;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mSignalStrength = mock(SignalStrength.class);
-        mCellInfo = mock(CellInfo.class);
-        mForeGroundCall = mock(GsmCdmaCall.class);
-        mBackGroundCall = mock(GsmCdmaCall.class);
-        mRingingCall = mock(GsmCdmaCall.class);
         mDefaultPhoneNotifierUT = new DefaultPhoneNotifier(mContext);
     }
 
     @After
     public void tearDown() throws Exception {
-        mDefaultPhoneNotifierUT = null;
         super.tearDown();
     }
 
