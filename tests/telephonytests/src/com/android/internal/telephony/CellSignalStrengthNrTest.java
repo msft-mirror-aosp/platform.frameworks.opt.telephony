@@ -20,6 +20,7 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 
 import android.hardware.radio.V1_6.NrSignalStrength;
 import android.os.Parcel;
@@ -34,7 +35,6 @@ import com.google.common.collect.Range;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -57,12 +57,13 @@ public class CellSignalStrengthNrTest extends TelephonyTest {
     private static final int SSRSRQ = -13;
     private static final int SSSINR = 32;
 
-    @Mock
+    // Mocked classes
     ServiceState mSS;
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(this.getClass().getSimpleName());
+        super.setUp(getClass().getSimpleName());
+        mSS = mock(ServiceState.class);
     }
 
     @After
@@ -108,7 +109,7 @@ public class CellSignalStrengthNrTest extends TelephonyTest {
         nrSignalStrength.base.ssSinr = SSSINR;
 
         // THEN the get method should return the correct value
-        CellSignalStrengthNr css = new CellSignalStrengthNr(nrSignalStrength);
+        CellSignalStrengthNr css = RILUtils.convertHalNrSignalStrength(nrSignalStrength);
         assertThat(css.getCsiRsrp()).isEqualTo(CSIRSRP);
         assertThat(css.getCsiRsrq()).isEqualTo(CSIRSRQ);
         assertThat(css.getCsiSinr()).isEqualTo(CSISINR);
@@ -134,7 +135,7 @@ public class CellSignalStrengthNrTest extends TelephonyTest {
         nrSignalStrength.base.ssSinr = CellInfo.UNAVAILABLE;
 
         // THEN the get method should return unavailable value
-        CellSignalStrengthNr css = new CellSignalStrengthNr(nrSignalStrength);
+        CellSignalStrengthNr css = RILUtils.convertHalNrSignalStrength(nrSignalStrength);
         assertThat(css.getCsiRsrp()).isEqualTo(CellInfo.UNAVAILABLE);
         assertThat(css.getCsiRsrq()).isEqualTo(CellInfo.UNAVAILABLE);
         assertThat(css.getCsiSinr()).isEqualTo(CellInfo.UNAVAILABLE);
