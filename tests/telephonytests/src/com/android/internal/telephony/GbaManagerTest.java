@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony;
 
+import static com.android.internal.telephony.TelephonyStatsLog.GBA_EVENT__FAILED_REASON__FEATURE_NOT_READY;
+
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertTrue;
 import static junit.framework.Assert.fail;
@@ -50,13 +52,13 @@ import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.util.Log;
 
+import com.android.internal.telephony.metrics.RcsStats;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 
 /**
  * Unit tests for GbaManager
@@ -75,10 +77,13 @@ public final class GbaManagerTest {
     private static final int RELEASE_TIME_60S = 60 * 1000;
     private static final int TEST_SUB_ID = Integer.MAX_VALUE;
 
-    @Mock Context mMockContext;
-    @Mock IBinder mMockBinder;
-    @Mock IGbaService mMockGbaServiceBinder;
-    @Mock IBootstrapAuthenticationCallback mMockCallback;
+    // Mocked classes
+    Context mMockContext;
+    IBinder mMockBinder;
+    IGbaService mMockGbaServiceBinder;
+    IBootstrapAuthenticationCallback mMockCallback;
+    RcsStats mMockRcsStats;
+
     private GbaManager mTestGbaManager;
     private Handler mHandler;
     private TestableLooper mLooper;
@@ -86,13 +91,17 @@ public final class GbaManagerTest {
     @Before
     public void setUp() throws Exception {
         log("setUp");
-        MockitoAnnotations.initMocks(this);
+        mMockContext = mock(Context.class);
+        mMockBinder = mock(IBinder.class);
+        mMockGbaServiceBinder = mock(IGbaService.class);
+        mMockCallback = mock(IBootstrapAuthenticationCallback.class);
+        mMockRcsStats = mock(RcsStats.class);
         if (Looper.myLooper() == null) {
             Looper.prepare();
         }
         when(mMockContext.bindService(any(), any(), anyInt())).thenReturn(true);
         when(mMockGbaServiceBinder.asBinder()).thenReturn(mMockBinder);
-        mTestGbaManager = new GbaManager(mMockContext, TEST_SUB_ID, null, 0);
+        mTestGbaManager = new GbaManager(mMockContext, TEST_SUB_ID, null, 0, mMockRcsStats);
         mHandler = mTestGbaManager.getHandler();
         try {
             mLooper = new TestableLooper(mHandler.getLooper());
@@ -106,6 +115,7 @@ public final class GbaManagerTest {
         log("tearDown");
         mTestGbaManager.destroy();
         mTestGbaManager = null;
+        mHandler = null;
         mLooper.destroy();
         mLooper = null;
     }
@@ -214,6 +224,45 @@ public final class GbaManagerTest {
 
         verify(mMockContext, never()).bindService(any(), any(), anyInt());
         assertTrue(!mTestGbaManager.isServiceConnected());
+    }
+
+    @Test
+    @SmallTest
+    public void testMetricsGbaEvent() throws Exception {
+        mTestGbaManager.overrideServicePackage(TEST_DEFAULT_SERVICE_NAME.getPackageName());
+        mTestGbaManager.overrideReleaseTime(RELEASE_NEVER);
+
+        mLooper.processAllMessages();
+        bindAndConnectService(TEST_DEFAULT_SERVICE_NAME);
+        GbaAuthRequest request = createDefaultRequest();
+
+        // Failure case
+        mTestGbaManager.bootstrapAuthenticationRequest(request);
+        mLooper.processAllMessages();
+
+        ArgumentCaptor<GbaAuthRequest> captor = ArgumentCaptor.forClass(GbaAuthRequest.class);
+        verify(mMockGbaServiceBinder, times(1)).authenticationRequest(captor.capture());
+
+        GbaAuthRequest capturedRequest = captor.getValue();
+        IBootstrapAuthenticationCallback callback = capturedRequest.getCallback();
+        callback.onAuthenticationFailure(capturedRequest.getToken(),
+                GBA_EVENT__FAILED_REASON__FEATURE_NOT_READY);
+
+        verify(mMockRcsStats).onGbaFailureEvent(anyInt(),
+                eq(GBA_EVENT__FAILED_REASON__FEATURE_NOT_READY));
+
+        // Success case
+        mTestGbaManager.bootstrapAuthenticationRequest(request);
+        mLooper.processAllMessages();
+
+        ArgumentCaptor<GbaAuthRequest> captor2 = ArgumentCaptor.forClass(GbaAuthRequest.class);
+        verify(mMockGbaServiceBinder, times(2)).authenticationRequest(captor2.capture());
+
+        GbaAuthRequest capturedRequest2 = captor2.getValue();
+        IBootstrapAuthenticationCallback callback2 = capturedRequest2.getCallback();
+        callback2.onKeysAvailable(capturedRequest2.getToken(), "".getBytes(), "");
+
+        verify(mMockRcsStats).onGbaSuccessEvent(anyInt());
     }
 
     private ServiceConnection bindAndConnectService(ComponentName component) {
