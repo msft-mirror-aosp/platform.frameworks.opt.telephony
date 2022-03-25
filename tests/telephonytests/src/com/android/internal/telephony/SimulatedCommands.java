@@ -17,6 +17,7 @@
 package com.android.internal.telephony.test;
 
 import android.compat.annotation.UnsupportedAppUsage;
+import android.hardware.radio.RadioError;
 import android.hardware.radio.V1_0.DataRegStateResult;
 import android.hardware.radio.V1_0.SetupDataCallResult;
 import android.hardware.radio.V1_0.VoiceRegStateResult;
@@ -43,6 +44,7 @@ import android.telephony.IccOpenLogicalChannelResponse;
 import android.telephony.ImsiEncryptionInfo;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.NetworkScanRequest;
+import android.telephony.PcoData;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.telephony.SignalThresholdInfo;
@@ -61,7 +63,7 @@ import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.LastCallFailCause;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
-import com.android.internal.telephony.RIL;
+import com.android.internal.telephony.RILUtils;
 import com.android.internal.telephony.RadioCapability;
 import com.android.internal.telephony.SmsResponse;
 import com.android.internal.telephony.UUSInfo;
@@ -69,12 +71,12 @@ import com.android.internal.telephony.cdma.CdmaSmsBroadcastConfigInfo;
 import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.uicc.AdnCapacity;
-import com.android.internal.telephony.uicc.ReceivedPhonebookRecords;
-import com.android.internal.telephony.uicc.SimPhonebookRecord;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.PersoSubState;
 import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.IccIoResult;
 import com.android.internal.telephony.uicc.IccSlotStatus;
+import com.android.internal.telephony.uicc.ReceivedPhonebookRecords;
+import com.android.internal.telephony.uicc.SimPhonebookRecord;
 import com.android.telephony.Rlog;
 
 import java.util.ArrayList;
@@ -85,6 +87,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class SimulatedCommands extends BaseCommands
         implements CommandsInterface, SimulatedRadioControl {
     private static final String LOG_TAG = "SimulatedCommands";
+    private boolean mSupportsEid = true;
 
     private enum SimLockState {
         NONE,
@@ -1189,6 +1192,13 @@ public class SimulatedCommands extends BaseCommands
         }
     }
 
+    public void triggerNITZupdate(String NITZStr, long ageMs) {
+        if (NITZStr != null) {
+            mNITZTimeRegistrant.notifyRegistrant(new AsyncResult (null, new Object[]{NITZStr,
+                    SystemClock.elapsedRealtime(), ageMs}, null));
+        }
+    }
+
     @Override
     public void setupDataCall(int accessNetworkType, DataProfile dataProfile, boolean isRoaming,
             boolean allowRoaming, int reason, LinkProperties linkProperties, int pduSessionId,
@@ -1219,7 +1229,7 @@ public class SimulatedCommands extends BaseCommands
             }
         }
 
-        DataCallResponse response = RIL.convertDataCallResult(mSetupDataCallResult);
+        DataCallResponse response = RILUtils.convertHalDataCallResult(mSetupDataCallResult);
         if (mDcSuccess) {
             resultSuccess(result, response);
         } else {
@@ -1230,7 +1240,7 @@ public class SimulatedCommands extends BaseCommands
     @Override
     public void deactivateDataCall(int cid, int reason, Message result) {
         SimulatedCommandsVerifier.getInstance().deactivateDataCall(cid, reason, result);
-        resultSuccess(result, null);
+        resultSuccess(result, RadioError.NONE);
     }
 
     @Override
@@ -2327,10 +2337,12 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void registerForPcoData(Handler h, int what, Object obj) {
+        mPcoDataRegistrants.addUnique(h, what, obj);
     }
 
     @Override
     public void unregisterForPcoData(Handler h) {
+        mPcoDataRegistrants.remove(h);
     }
 
     @Override
@@ -2467,6 +2479,15 @@ public class SimulatedCommands extends BaseCommands
                 new ReceivedPhonebookRecords(4, phonebookRecordInfoGroup), null));
     }
 
+    public void setSupportsEid(boolean supportsEid) {
+        mSupportsEid = supportsEid;
+    }
+
+    @Override
+    public boolean supportsEid() {
+        return mSupportsEid;
+    }
+
     @Override
     public void getSimPhonebookCapacity(Message result) {
         resultSuccess(result, new AdnCapacity(1, 2, 3, 4, 5, 6, 7, 8, 9, 10));
@@ -2474,12 +2495,24 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void updateSimPhonebookRecord(SimPhonebookRecord phonebookRecord, Message result) {
-        resultSuccess(result, new int[]{phonebookRecord.getRecordIndex()});
+        int recordId = phonebookRecord.getRecordId();
+        // Based on design, the record ID starts from 1.
+        // So if the record ID passed from upper layer is 0, it indicates to insert one new record
+        // without record ID specific.
+        if (recordId == 0) {
+            recordId = 1; // hack code for unit test
+        }
+        resultSuccess(result, new int[]{recordId});
         notifySimPhonebookChanged();
     }
 
     @VisibleForTesting
     public void notifySimPhonebookChanged() {
         mSimPhonebookChangedRegistrants.notifyRegistrants();
+    }
+
+    public void triggerPcoData(int cid, String bearerProto, int pcoId, byte[] contents) {
+        PcoData response = new PcoData(cid, bearerProto, pcoId, contents);
+        mPcoDataRegistrants.notifyRegistrants(new AsyncResult(null, response, null));
     }
 }
