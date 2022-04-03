@@ -40,6 +40,7 @@ import android.net.vcn.VcnNetworkPolicyResult;
 import android.os.AsyncResult;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Process;
 import android.os.SystemClock;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
@@ -86,6 +87,7 @@ import com.android.internal.telephony.data.DataNetworkController.NetworkRequestL
 import com.android.internal.telephony.data.DataRetryManager.DataHandoverRetryEntry;
 import com.android.internal.telephony.data.DataRetryManager.DataRetryEntry;
 import com.android.internal.telephony.data.TelephonyNetworkAgent.TelephonyNetworkAgentCallback;
+import com.android.internal.telephony.metrics.DataCallSessionStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.IState;
@@ -132,7 +134,7 @@ import java.util.stream.Collectors;
  *                                  │Handover │
  *                                  └─▲────┬──┘
  *                                    │    │
- *             ┌───────────┐        ┌─┴────▼──┐        ┌───────▼──────┐
+ *             ┌───────────┐        ┌─┴────▼──┐        ┌──────────────┐
  *             │Connecting ├────────►Connected├────────►Disconnecting │
  *             └─────┬─────┘        └────┬────┘        └───────┬──────┘
  *                   │                   │                     │
@@ -190,6 +192,9 @@ public class DataNetwork extends StateMachine {
 
     /** Event for PCO data received from network. */
     private static final int EVENT_PCO_DATA_RECEIVED = 17;
+
+    /** Event for carrier privileged UIDs changed. */
+    private static final int EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED = 18;
 
     /** The default MTU for IPv4 network. */
     private static final int DEFAULT_MTU_V4 = 1280;
@@ -446,6 +451,10 @@ public class DataNetwork extends StateMachine {
     /** The log tag. */
     private String mLogTag;
 
+    /** Metrics of per data network connection. */
+    private final DataCallSessionStats mDataCallSessionStats;
+
+
     /**
      * The unique context id assigned by the data service in {@link DataCallResponse#getId()}. One
      * for {@link AccessNetworkConstants#TRANSPORT_TYPE_WWAN} and one for
@@ -515,6 +524,9 @@ public class DataNetwork extends StateMachine {
     /** The network bandwidth. */
     private @NonNull NetworkBandwidth mNetworkBandwidth = new NetworkBandwidth(14, 14);
 
+    /** The TCP buffer sizes config. */
+    private @NonNull String mTcpBufferSizes;
+
     /** Whether {@link NetworkCapabilities#NET_CAPABILITY_TEMPORARILY_NOT_METERED} is supported. */
     private boolean mTempNotMeteredSupported = false;
 
@@ -568,6 +580,17 @@ public class DataNetwork extends StateMachine {
 
     /** The QOS bearer sessions. */
     private final @NonNull List<QosBearerSession> mQosBearerSessions = new ArrayList<>();
+
+    /**
+     * The UIDs of packages that have carrier privilege. These UIDs will not change through the
+     * life cycle of data network.
+     */
+    private @NonNull int[] mAdministratorUids = new int[0];
+
+    /**
+     * Carrier service package uid. This UID will not change through the life cycle of data network.
+     */
+    private int mCarrierServicePackageUid = Process.INVALID_UID;
 
     /**
      * The network bandwidth.
@@ -759,6 +782,7 @@ public class DataNetwork extends StateMachine {
                         sendMessage(EVENT_SUBSCRIPTION_PLAN_OVERRIDE);
                     }});
         mDataConfigManager = mDataNetworkController.getDataConfigManager();
+        mDataCallSessionStats = new DataCallSessionStats(mPhone);
         mDataNetworkCallback = callback;
         mDataProfile = dataProfile;
         mTransport = transport;
@@ -767,6 +791,7 @@ public class DataNetwork extends StateMachine {
         mAttachedNetworkRequestList.addAll(networkRequestList);
         mCid.put(AccessNetworkConstants.TRANSPORT_TYPE_WWAN, INVALID_CID);
         mCid.put(AccessNetworkConstants.TRANSPORT_TYPE_WLAN, INVALID_CID);
+        mTcpBufferSizes = mDataConfigManager.getDefaultTcpConfigString();
 
         for (TelephonyNetworkRequest networkRequest : networkRequestList) {
             networkRequest.setAttachedNetwork(DataNetwork.this);
@@ -843,6 +868,9 @@ public class DataNetwork extends StateMachine {
                         transport, getHandler(), EVENT_SERVICE_STATE_CHANGED, transport);
             }
 
+            mPhone.getCarrierPrivilegesTracker().registerCarrierPrivilegesListener(getHandler(),
+                    EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED, null);
+
             // Only add symmetric code here, for example, registering and unregistering.
             // DefaultState.enter() is the starting point in the life cycle of the DataNetwork,
             // and DefaultState.exit() is the end. For non-symmetric initializing works, put them
@@ -873,7 +901,9 @@ public class DataNetwork extends StateMachine {
                     // TODO: Should update suspend state when CSS indicator changes.
                     // TODO: Should update suspend state when call started/ended.
                     updateSuspendState();
+                    updateTcpBufferSizes();
                     updateBandwidthFromDataConfig();
+                    updateDataCallSessionStatsOfDrsOrRatChange((AsyncResult) msg.obj);
                     break;
                 }
                 case EVENT_ATTACH_NETWORK_REQUEST: {
@@ -919,6 +949,12 @@ public class DataNetwork extends StateMachine {
                     onDataStateChanged(transport, (List<DataCallResponse>) ar.result);
                     break;
                 }
+                case EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED: {
+                    AsyncResult asyncResult = (AsyncResult) msg.obj;
+                    int[] administratorUids = (int[]) asyncResult.result;
+                    mAdministratorUids = Arrays.copyOf(administratorUids, administratorUids.length);
+                    break;
+                }
                 case EVENT_START_HANDOVER:
                 case EVENT_BANDWIDTH_ESTIMATE_FROM_MODEM_CHANGED:
                 case EVENT_BANDWIDTH_ESTIMATE_FROM_BANDWIDTH_ESTIMATOR_CHANGED:
@@ -948,6 +984,11 @@ public class DataNetwork extends StateMachine {
             mInitialNetworkAgentId = mNetworkAgent.getId();
             mLogTag = "DN-" + mInitialNetworkAgentId + "-"
                     + ((mTransport == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) ? "C" : "I");
+
+            // Get carrier config package uid. Note that this uid will not change through the life
+            // cycle of this data network. So there is no need to listen to the change event.
+            mCarrierServicePackageUid = mPhone.getCarrierPrivilegesTracker()
+                    .getCarrierServicePackageUid();
 
             notifyPreciseDataConnectionState();
             if (mTransport == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
@@ -1025,9 +1066,12 @@ public class DataNetwork extends StateMachine {
                 // to tear down the VCN-managed network.
                 if (mVcnManager != null) {
                     mVcnPolicyChangeListener = () -> {
+                        log("VCN policy changed.");
                         if (mVcnManager.applyVcnNetworkPolicy(mNetworkCapabilities, mLinkProperties)
                                 .isTeardownRequested()) {
                             tearDown(TEAR_DOWN_REASON_VCN_REQUESTED);
+                        } else {
+                            updateNetworkCapabilities();
                         }
                     };
                     mVcnManager.addVcnNetworkPolicyChangeListener(
@@ -1213,6 +1257,7 @@ public class DataNetwork extends StateMachine {
             quit();
             notifyPreciseDataConnectionState();
             mNetworkAgent.unregister();
+            mDataCallSessionStats.onDataCallDisconnected(mFailCause);
 
             if (mTransport == AccessNetworkConstants.TRANSPORT_TYPE_WLAN
                     && mPduSessionId != DataCallResponse.PDU_SESSION_ID_NOT_SET) {
@@ -1474,6 +1519,13 @@ public class DataNetwork extends StateMachine {
             builder.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED);
         }
 
+        if (mCarrierServicePackageUid != Process.INVALID_UID
+                && ArrayUtils.contains(mAdministratorUids, mCarrierServicePackageUid)) {
+            builder.setOwnerUid(mCarrierServicePackageUid);
+            builder.setAllowedUids(Collections.singleton(mCarrierServicePackageUid));
+        }
+        builder.setAdministratorUids(mAdministratorUids);
+
         Set<Integer> meteredCapabilities = mDataConfigManager
                 .getMeteredNetworkCapabilities(roaming).stream()
                 .filter(cap -> mAccessNetworksManager.getPreferredTransportByNetworkCapability(cap)
@@ -1590,6 +1642,19 @@ public class DataNetwork extends StateMachine {
     }
 
     /**
+     * Once RIL Data Radio Technology changes, the new radio technology will be returned in
+     * AsyncResult.
+     * See
+     * {@link com.android.internal.telephony.ServiceStateTracker#registerForDataRegStateOrRatChanged}
+     *
+     * @param ar RegistrationInfo: {@code Pair(drs, rat)}
+     */
+    private void updateDataCallSessionStatsOfDrsOrRatChange(AsyncResult ar) {
+        Pair<Integer, Integer> drsRatPair = (Pair<Integer, Integer>) ar.result;
+        mDataCallSessionStats.onDrsOrRatChanged(drsRatPair.second);
+    }
+
+    /**
      * Update data suspended state.
      */
     private void updateSuspendState() {
@@ -1664,7 +1729,7 @@ public class DataNetwork extends StateMachine {
 
         TrafficDescriptor trafficDescriptor = mDataProfile.getTrafficDescriptor();
         final boolean matchAllRuleAllowed = trafficDescriptor == null
-                || trafficDescriptor.getOsAppId() == null;
+                || !TextUtils.isEmpty(trafficDescriptor.getDataNetworkName());
 
         int accessNetwork = DataUtils.networkTypeToAccessNetworkType(dataNetworkType);
 
@@ -1673,6 +1738,10 @@ public class DataNetwork extends StateMachine {
                         DataService.REQUEST_REASON_NORMAL, null, mPduSessionId, null,
                         trafficDescriptor, matchAllRuleAllowed,
                         obtainMessage(EVENT_SETUP_DATA_CALL_RESPONSE));
+
+        int apnTypeBitmask = mDataProfile.getApnSetting() != null
+                ? mDataProfile.getApnSetting().getApnTypeBitmask() : ApnSetting.TYPE_NONE;
+        mDataCallSessionStats.onSetupDataCall(apnTypeBitmask);
 
         logl("setupData: accessNetwork="
                 + AccessNetworkType.toString(accessNetwork) + ", " + mDataProfile
@@ -1824,7 +1893,7 @@ public class DataNetwork extends StateMachine {
             linkProperties.setHttpProxy(proxy);
         }
 
-        linkProperties.setTcpBufferSizes(mDataConfigManager.getTcpConfigString());
+        linkProperties.setTcpBufferSizes(mTcpBufferSizes);
 
         mNetworkSliceInfo = response.getSliceInfo();
 
@@ -1854,6 +1923,28 @@ public class DataNetwork extends StateMachine {
         return mPhone.getServiceState().getNrState() == NetworkRegistrationInfo.NR_STATE_CONNECTED
                 && mPhone.getServiceStateTracker().getNrContextIds().contains(
                         mCid.get(AccessNetworkConstants.TRANSPORT_TYPE_WWAN));
+    }
+
+    /**
+     * Get the TCP buffer sizes config string.
+     *
+     * @return The TCP buffer sizes config used in {@link LinkProperties#setTcpBufferSizes(String)}.
+     */
+    private @Nullable String getTcpConfig() {
+        ServiceState ss = mPhone.getServiceState();
+        NetworkRegistrationInfo nrs = ss.getNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_PS, mTransport);
+        int networkType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+        if (nrs != null) {
+            networkType = nrs.getAccessNetworkTechnology();
+            if (networkType == TelephonyManager.NETWORK_TYPE_LTE
+                    && nrs.isUsingCarrierAggregation()) {
+                // Although LTE_CA is not a real RAT, but since LTE CA generally has higher speed
+                // we use LTE_CA to get a different TCP config for LTE CA.
+                networkType = TelephonyManager.NETWORK_TYPE_LTE_CA;
+            }
+        }
+        return mDataConfigManager.getTcpConfigString(networkType, ss);
     }
 
     /**
@@ -1907,6 +1998,18 @@ public class DataNetwork extends StateMachine {
                             DataNetwork.this, requestList, mFailCause, retryDelayMillis));
             transitionTo(mDisconnectedState);
         }
+
+        int apnTypeBitmask = ApnSetting.TYPE_NONE;
+        int protocol = ApnSetting.PROTOCOL_UNKNOWN;
+        if (mDataProfile.getApnSetting() != null) {
+            apnTypeBitmask = mDataProfile.getApnSetting().getApnTypeBitmask();
+            protocol = mDataProfile.getApnSetting().getProtocol();
+        }
+        mDataCallSessionStats.onSetupDataCallResponse(response,
+                getDataNetworkType(),
+                apnTypeBitmask,
+                protocol,
+                mFailCause);
     }
 
     /**
@@ -1935,6 +2038,7 @@ public class DataNetwork extends StateMachine {
         // TODO: Need to support DataService.REQUEST_REASON_SHUTDOWN
         mDataServiceManagers.get(mTransport).deactivateDataCall(mCid.get(mTransport),
                 DataService.REQUEST_REASON_NORMAL, null);
+        mDataCallSessionStats.setDeactivateDataCallReason(DataService.REQUEST_REASON_NORMAL);
         mInvokedDataDeactivation = true;
     }
 
@@ -2045,6 +2149,7 @@ public class DataNetwork extends StateMachine {
         log("onDataConfigUpdated");
 
         updateBandwidthFromDataConfig();
+        updateTcpBufferSizes();
         updateMeteredAndCongested();
     }
 
@@ -2110,6 +2215,7 @@ public class DataNetwork extends StateMachine {
      */
     private void onDisplayInfoChanged() {
         updateBandwidthFromDataConfig();
+        updateTcpBufferSizes();
         updateMeteredAndCongested();
     }
 
@@ -2125,6 +2231,21 @@ public class DataNetwork extends StateMachine {
         mNetworkBandwidth = mDataConfigManager.getBandwidthForNetworkType(
                 getDataNetworkType(), mPhone.getServiceState());
         updateNetworkCapabilities();
+    }
+
+    /**
+     * Update the TCP buffer sizes from resource overlays.
+     */
+    private void updateTcpBufferSizes() {
+        log("updateTcpBufferSizes");
+        mTcpBufferSizes = getTcpConfig();
+        LinkProperties linkProperties = new LinkProperties(mLinkProperties);
+        linkProperties.setTcpBufferSizes(mTcpBufferSizes);
+        if (!linkProperties.equals(mLinkProperties)) {
+            mLinkProperties = linkProperties;
+            log("sendLinkProperties " + mLinkProperties);
+            mNetworkAgent.sendLinkProperties(mLinkProperties);
+        }
     }
 
     /**
@@ -2681,6 +2802,8 @@ public class DataNetwork extends StateMachine {
                 return "EVENT_SUBSCRIPTION_PLAN_OVERRIDE";
             case EVENT_PCO_DATA_RECEIVED:
                 return "EVENT_PCO_DATA_RECEIVED";
+            case EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED:
+                return "EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED";
             default:
                 return "Unknown(" + event + ")";
         }
@@ -2754,18 +2877,27 @@ public class DataNetwork extends StateMachine {
         pw.println("Tag: " + name());
         pw.increaseIndent();
         pw.println("mSubId=" + mSubId);
+        pw.println("mTransport=" + AccessNetworkConstants.transportTypeToString(mTransport));
         pw.println("WWAN cid=" + mCid.get(AccessNetworkConstants.TRANSPORT_TYPE_WWAN));
         pw.println("WLAN cid=" + mCid.get(AccessNetworkConstants.TRANSPORT_TYPE_WLAN));
+        pw.println("mDataAllowedReason=" + mDataAllowedReason);
         pw.println("mPduSessionId=" + mPduSessionId);
         pw.println("mDataProfile=" + mDataProfile);
         pw.println("mNetworkCapabilities" + mNetworkCapabilities);
         pw.println("mLinkProperties=" + mLinkProperties);
         pw.println("mNetworkSliceInfo=" + mNetworkSliceInfo);
         pw.println("mNetworkBandwidth=" + mNetworkBandwidth);
+        pw.println("mTcpBufferSizes=" + mTcpBufferSizes);
         pw.println("mTempNotMeteredSupported=" + mTempNotMeteredSupported);
         pw.println("mTempNotMetered=" + mTempNotMetered);
         pw.println("mCongested=" + mCongested);
+        pw.println("mSuspended" + mSuspended);
         pw.println("mDataCallResponse=" + mDataCallResponse);
+        pw.println("mFailCause=" + DataFailCause.toString(mFailCause));
+        pw.println("mAdministratorUids=" + Arrays.toString(mAdministratorUids));
+        pw.println("mCarrierServicePackageUid=" + mCarrierServicePackageUid);
+        pw.println("mEverConnected=" + mEverConnected);
+        pw.println("mInvokedDataDeactivation=" + mInvokedDataDeactivation);
 
         pw.println("Attached network requests:");
         pw.increaseIndent();
@@ -2774,8 +2906,6 @@ public class DataNetwork extends StateMachine {
         }
         pw.decreaseIndent();
         pw.println("mQosBearerSessions=" + mQosBearerSessions);
-        pw.println("mEverConnected=" + mEverConnected);
-        pw.println("mInvokedDataDeactivation=" + mInvokedDataDeactivation);
 
         mNetworkAgent.dump(fd, pw, args);
         pw.println("Local logs:");
