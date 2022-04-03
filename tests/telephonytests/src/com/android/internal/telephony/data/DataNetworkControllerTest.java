@@ -37,6 +37,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
 import android.content.Intent;
@@ -82,6 +83,7 @@ import android.util.ArraySet;
 import android.util.SparseArray;
 
 import com.android.internal.telephony.ISub;
+import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.data.DataNetworkController.HandoverRule;
@@ -92,7 +94,6 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 import org.mockito.Mockito;
 
 import java.lang.reflect.Field;
@@ -112,10 +113,11 @@ public class DataNetworkControllerTest extends TelephonyTest {
     private static final String IPV4_ADDRESS = "10.0.2.15";
     private static final String IPV6_ADDRESS = "2607:fb90:a620:651d:eabe:f8da:c107:44be";
 
-    @Mock
+    // Mocked classes
     private PhoneSwitcher mMockedPhoneSwitcher;
-    @Mock
     protected ISub mIsub;
+    private DataNetworkControllerCallback mMockedDataNetworkControllerCallback;
+    private DataRetryManagerCallback mMockedDataRetryManagerCallback;
 
     private int mNetworkRequestId = 0;
 
@@ -123,10 +125,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
     private final SparseArray<RegistrantList> mDataCallListChangedRegistrants = new SparseArray<>();
     private DataNetworkController mDataNetworkControllerUT;
     private PersistableBundle mCarrierConfig;
-    @Mock
-    private DataNetworkControllerCallback mMockedDataNetworkControllerCallback;
-    @Mock
-    private DataRetryManagerCallback mMockedDataRetryManagerCallback;
 
     private final DataProfile mGeneralPurposeDataProfile = new DataProfile.Builder()
             .setApnSetting(new ApnSetting.Builder()
@@ -430,6 +428,13 @@ public class DataNetworkControllerTest extends TelephonyTest {
     public void setUp() throws Exception {
         logd("DataNetworkControllerTest +Setup!");
         super.setUp(getClass().getSimpleName());
+        mMockedPhoneSwitcher = Mockito.mock(PhoneSwitcher.class);
+        mIsub = Mockito.mock(ISub.class);
+        mMockedDataNetworkControllerCallback = Mockito.mock(DataNetworkControllerCallback.class);
+        mMockedDataRetryManagerCallback = Mockito.mock(DataRetryManagerCallback.class);
+        when(mTelephonyComponentFactory.makeDataSettingsManager(any(Phone.class),
+                any(DataNetworkController.class), any(Looper.class),
+                any(DataSettingsManager.DataSettingsManagerCallback.class))).thenCallRealMethod();
 
         initializeConfig();
         doReturn(true).when(mPhone).isUsingNewDataStack();
@@ -556,6 +561,10 @@ public class DataNetworkControllerTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         logd("tearDown");
+        mMockedDataServiceManagers.clear();
+        mDataCallListChangedRegistrants.clear();
+        mDataNetworkControllerUT = null;
+        mCarrierConfig = null;
         super.tearDown();
     }
 
@@ -1096,20 +1105,25 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 AccessNetworkType.IWLAN);
         assertThat(handoverRule.type).isEqualTo(HandoverRule.RULE_TYPE_ALLOWED);
         assertThat(handoverRule.isOnlyForRoaming).isFalse();
+        assertThat(handoverRule.networkCapabilities).isEmpty();
 
         handoverRule = new HandoverRule("source=   NGRAN|     IWLAN, "
-                + "target  =    EUTRAN,    type  =    disallowed");
+                + "target  =    EUTRAN,    type  =    disallowed ");
         assertThat(handoverRule.sourceAccessNetworks).containsExactly(AccessNetworkType.NGRAN,
                 AccessNetworkType.IWLAN);
         assertThat(handoverRule.targetAccessNetworks).containsExactly(AccessNetworkType.EUTRAN);
         assertThat(handoverRule.type).isEqualTo(HandoverRule.RULE_TYPE_DISALLOWED);
         assertThat(handoverRule.isOnlyForRoaming).isFalse();
+        assertThat(handoverRule.networkCapabilities).isEmpty();
 
         handoverRule = new HandoverRule("source=   IWLAN, "
-                + "target  =    EUTRAN,    type  =    disallowed, roaming = true");
+                + "target  =    EUTRAN,    type  =    disallowed, roaming = true,"
+                + " capabilities = IMS | EIMS ");
         assertThat(handoverRule.sourceAccessNetworks).containsExactly(AccessNetworkType.IWLAN);
         assertThat(handoverRule.targetAccessNetworks).containsExactly(AccessNetworkType.EUTRAN);
         assertThat(handoverRule.type).isEqualTo(HandoverRule.RULE_TYPE_DISALLOWED);
+        assertThat(handoverRule.networkCapabilities).containsExactly(
+                NetworkCapabilities.NET_CAPABILITY_IMS, NetworkCapabilities.NET_CAPABILITY_EIMS);
         assertThat(handoverRule.isOnlyForRoaming).isTrue();
 
         assertThrows(IllegalArgumentException.class,
@@ -1129,6 +1143,19 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> new HandoverRule("source=IWLAN, target=WTFRAN, type=allowed"));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new HandoverRule("source=IWLAN, target=|, type=allowed"));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new HandoverRule("source=GERAN, target=IWLAN, type=allowed, capabilities=|"));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new HandoverRule("source=GERAN, target=IWLAN, type=allowed, capabilities="));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new HandoverRule("source=GERAN, target=IWLAN, type=allowed, "
+                        + "capabilities=wtf"));
     }
 
     @Test
@@ -1300,7 +1327,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
     @Test
     public void testHandoverDataNetworkNotAllowedByPolicy() throws Exception {
         mCarrierConfig.putStringArray(CarrierConfigManager.KEY_IWLAN_HANDOVER_POLICY_STRING_ARRAY,
-                new String[]{"source=EUTRAN, target=IWLAN, type=disallowed"});
+                new String[]{"source=EUTRAN, target=IWLAN, type=disallowed, capabilities=MMS|IMS",
+                        "source=IWLAN, target=EUTRAN, type=disallowed, capabilities=MMS"});
         // Force data config manager to reload the carrier config.
         mDataNetworkControllerUT.getDataConfigManager().obtainMessage(
                 1/*EVENT_CARRIER_CONFIG_CHANGED*/).sendToTarget();
@@ -1327,6 +1355,19 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 NetworkCapabilities.NET_CAPABILITY_IMS)).isTrue();
         assertThat(dataNetworkList.get(0).getTransport())
                 .isEqualTo(AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+
+        // test IWLAN -> EUTRAN no need to tear down because the disallowed rule only applies to MMS
+        doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WWAN).when(mAccessNetworksManager)
+                .getPreferredTransportByNetworkCapability(NetworkCapabilities.NET_CAPABILITY_IMS);
+        mDataNetworkControllerUT.obtainMessage(21/*EVENT_PREFERRED_TRANSPORT_CHANGED*/,
+                NetworkCapabilities.NET_CAPABILITY_IMS, 0).sendToTarget();
+        // After this, IMS data network should be disconnected, and DNC should attempt to
+        // establish a new one on IWLAN
+        processAllMessages();
+        DataNetwork dataNetwork = getDataNetworks().get(0);
+        // Verify that IWWAN handover succeeded.
+        assertThat(dataNetwork.getTransport()).isEqualTo(
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
     }
 
     @Test
