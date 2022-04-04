@@ -792,6 +792,7 @@ public class CarrierPrivilegesTracker extends Handler {
      * Dump the local log buffer and other internal state of CarrierPrivilegesTracker.
      */
     public void dump(@NonNull FileDescriptor fd, @NonNull PrintWriter pw, @NonNull String[] args) {
+        pw.println("CarrierPrivilegesTracker - phoneId: " + mPhone.getPhoneId());
         pw.println("CarrierPrivilegesTracker - Log Begin ----");
         mLocalLog.dump(fd, pw, args);
         pw.println("CarrierPrivilegesTracker - Log End ----");
@@ -933,22 +934,38 @@ public class CarrierPrivilegesTracker extends Handler {
     }
 
     /**
+     * Backing of {@link TelephonyManager#getCarrierServicePackageName()} and
+     * {@link TelephonyManager#getCarrierServicePackageNameForLogicalSlot(int)}
+     */
+    @Nullable
+    public String getCarrierServicePackageName() {
+        // Return the cached one if present, it is fast and safe (no IPC call to PackageManager)
+        mPrivilegedPackageInfoLock.readLock().lock();
+        try {
+            // If SIM is READY but not LOADED, neither the cache nor the queries below are reliable,
+            // we should return null for this transient state for security/privacy's concern.
+            if (mSimIsReadyButNotLoaded) return null;
+
+            return mPrivilegedPackageInfo.mCarrierService.first;
+        } finally {
+            mPrivilegedPackageInfoLock.readLock().unlock();
+        }
+        // Do NOT query package manager, mPrivilegedPackageInfo.mCarrierService has maintained the
+        // latest CarrierService info. Querying PM will not get better result.
+    }
+
+    /**
      * @return The UID of carrier service package. {@link Process#INVALID_UID} if not found.
      */
     public int getCarrierServicePackageUid() {
-        Intent intent = new Intent(CarrierService.CARRIER_SERVICE_INTERFACE);
-        List<String> carrierPackageNames = getCarrierPackageNamesForIntent(intent);
-        if (!carrierPackageNames.isEmpty()) {
-            List<Integer> uids = new ArrayList<>(getUidsForPackage(carrierPackageNames.get(0),
-                    /* invalidateCache= */ false));
-            if (uids.isEmpty()) return Process.INVALID_UID;
-            if (uids.size() > 1) {
-                Rlog.w(TAG, "getCarrierServicePackageUid: more than one uid for carrier "
-                        + "service package.");
-            }
-            return uids.get(0);
+        mPrivilegedPackageInfoLock.readLock().lock();
+        try {
+            if (mSimIsReadyButNotLoaded) return Process.INVALID_UID;
+
+            return mPrivilegedPackageInfo.mCarrierService.second;
+        } finally {
+            mPrivilegedPackageInfoLock.readLock().unlock();
         }
-        return Process.INVALID_UID;
     }
 
     /**
