@@ -18,7 +18,6 @@ package com.android.internal.telephony.cat;
 
 import android.compat.annotation.UnsupportedAppUsage;
 import android.graphics.Bitmap;
-import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
 
@@ -31,7 +30,7 @@ import java.util.List;
  */
 public class Menu implements Parcelable {
     public List<Item> items;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public List<TextAttribute> titleAttrs;
     public PresentationType presentationType;
     public String title;

@@ -27,24 +27,18 @@ import android.net.LinkAddress;
 import android.os.Parcel;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
-import android.telephony.data.EpsQos;
-import android.telephony.data.TrafficDescriptor;
 import android.test.AndroidTestCase;
 import android.test.suitebuilder.annotation.SmallTest;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 
 public class DataCallResponseTest extends AndroidTestCase {
-    public static final String FAKE_DNN = "FAKE_DNN";
-    public static final byte[] FAKE_OS_APP_ID = {1, 2, 3, 4};
-    public static final byte[] FAKE_OS_APP_ID_2 = {5, 6, 8, 9};
 
     @SmallTest
-    public void testParcel() {
+    public void testParcel() throws Exception {
         DataCallResponse response = new DataCallResponse.Builder()
                 .setCause(0)
-                .setRetryDurationMillis(-1L)
+                .setSuggestedRetryTime(-1)
                 .setId(1)
                 .setLinkStatus(2)
                 .setProtocolType(ApnSetting.PROTOCOL_IP)
@@ -57,10 +51,6 @@ public class DataCallResponseTest extends AndroidTestCase {
                         Arrays.asList(InetAddresses.parseNumericAddress(FAKE_PCSCF_ADDRESS)))
                 .setMtuV4(1440)
                 .setMtuV6(1440)
-                .setDefaultQos(new EpsQos())
-                .setQosBearerSessions(new ArrayList<>())
-                .setTrafficDescriptors(
-                        Arrays.asList(new TrafficDescriptor(FAKE_DNN, FAKE_OS_APP_ID)))
                 .build();
 
         Parcel p = Parcel.obtain();
@@ -72,10 +62,10 @@ public class DataCallResponseTest extends AndroidTestCase {
     }
 
     @SmallTest
-    public void testEquals() {
+    public void testEquals() throws Exception {
         DataCallResponse response = new DataCallResponse.Builder()
                 .setCause(0)
-                .setRetryDurationMillis(-1L)
+                .setSuggestedRetryTime(-1)
                 .setId(1)
                 .setLinkStatus(2)
                 .setProtocolType(ApnSetting.PROTOCOL_IP)
@@ -88,13 +78,11 @@ public class DataCallResponseTest extends AndroidTestCase {
                         Arrays.asList(InetAddresses.parseNumericAddress(FAKE_PCSCF_ADDRESS)))
                 .setMtuV4(1440)
                 .setMtuV6(1400)
-                .setTrafficDescriptors(
-                        Arrays.asList(new TrafficDescriptor(FAKE_DNN, FAKE_OS_APP_ID)))
                 .build();
 
         DataCallResponse response1 = new DataCallResponse.Builder()
                 .setCause(0)
-                .setRetryDurationMillis(-1L)
+                .setSuggestedRetryTime(-1)
                 .setId(1)
                 .setLinkStatus(2)
                 .setProtocolType(ApnSetting.PROTOCOL_IP)
@@ -107,8 +95,6 @@ public class DataCallResponseTest extends AndroidTestCase {
                         Arrays.asList(InetAddresses.parseNumericAddress(FAKE_PCSCF_ADDRESS)))
                 .setMtuV4(1440)
                 .setMtuV6(1400)
-                .setTrafficDescriptors(
-                        Arrays.asList(new TrafficDescriptor(FAKE_DNN, FAKE_OS_APP_ID)))
                 .build();
 
         assertEquals(response, response);
@@ -116,7 +102,7 @@ public class DataCallResponseTest extends AndroidTestCase {
 
         DataCallResponse response2 = new DataCallResponse.Builder()
                 .setCause(1)
-                .setRetryDurationMillis(-1L)
+                .setSuggestedRetryTime(-1)
                 .setId(1)
                 .setLinkStatus(3)
                 .setProtocolType(ApnSetting.PROTOCOL_IP)
@@ -131,8 +117,6 @@ public class DataCallResponseTest extends AndroidTestCase {
                         InetAddresses.parseNumericAddress(FAKE_PCSCF_ADDRESS)))
                 .setMtuV4(1441)
                 .setMtuV6(1440)
-                .setTrafficDescriptors(
-                        Arrays.asList(new TrafficDescriptor("FAKE_DNN_2", FAKE_OS_APP_ID_2)))
                 .build();
 
         assertNotSame(response1, response2);

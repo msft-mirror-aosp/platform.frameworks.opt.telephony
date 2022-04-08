@@ -19,10 +19,10 @@ package com.android.internal.telephony.cdma;
 import static com.android.internal.telephony.SmsResponse.NO_ERROR_CODE;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 import android.os.Message;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
+import android.util.Pair;
 
 import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
 import com.android.internal.telephony.GsmCdmaPhone;
@@ -30,7 +30,6 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.SMSDispatcher;
 import com.android.internal.telephony.SmsConstants;
-import com.android.internal.telephony.SmsController;
 import com.android.internal.telephony.SmsDispatchersController;
 import com.android.internal.telephony.SmsHeader;
 import com.android.internal.telephony.SmsMessageBase;
@@ -46,7 +45,7 @@ public class CdmaSMSDispatcher extends SMSDispatcher {
         Rlog.d(TAG, "CdmaSMSDispatcher created");
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     @Override
     public String getFormat() {
         return SmsConstants.FORMAT_3GPP2;
@@ -64,9 +63,8 @@ public class CdmaSMSDispatcher extends SMSDispatcher {
     @Override
     protected void handleStatusReport(Object o) {
         if (o instanceof SmsMessage) {
-            if (VDBG) Rlog.d(TAG, "calling handleSmsStatusReport()");
-            byte[] pdu = ((SmsMessage) o).getPdu();
-            mSmsDispatchersController.handleSmsStatusReport(SmsConstants.FORMAT_3GPP2, pdu);
+            if (VDBG) Rlog.d(TAG, "calling handleCdmaStatusReport()");
+            handleCdmaStatusReport((SmsMessage) o);
         } else {
             Rlog.e(TAG, "handleStatusReport() called for object type " + o.getClass().getName());
         }
@@ -97,6 +95,32 @@ public class CdmaSMSDispatcher extends SMSDispatcher {
     protected TextEncodingDetails calculateLength(CharSequence messageBody, boolean use7bitOnly) {
         return SMSDispatcherUtil.calculateLengthCdma(messageBody, use7bitOnly);
     }
+    /**
+     * Called from parent class to handle status report from {@code CdmaInboundSmsHandler}.
+     * @param sms the CDMA SMS message to process
+     */
+    @UnsupportedAppUsage
+    private void handleCdmaStatusReport(SmsMessage sms) {
+        byte[] pdu = sms.getPdu();
+        int messageRef = sms.mMessageRef;
+        boolean handled = false;
+        for (int i = 0, count = deliveryPendingList.size(); i < count; i++) {
+            SmsTracker tracker = deliveryPendingList.get(i);
+            if (tracker.mMessageRef == messageRef) {
+                Pair<Boolean, Boolean> result =
+                        mSmsDispatchersController.handleSmsStatusReport(tracker, getFormat(), pdu);
+                if (result.second) {
+                    deliveryPendingList.remove(i);
+                }
+                handled = true;
+                break; // Only expect to see one tracker matching this message.
+            }
+        }
+        if (!handled) {
+            // Try to find the sent SMS from the map in ImsSmsDispatcher.
+            mSmsDispatchersController.handleSentOverImsStatusReport(messageRef, getFormat(), pdu);
+        }
+    }
 
     /** {@inheritDoc} */
     @Override
@@ -110,7 +134,7 @@ public class CdmaSMSDispatcher extends SMSDispatcher {
                 + " mMessageRef=" + tracker.mMessageRef
                 + " mUsesImsServiceForIms=" + tracker.mUsesImsServiceForIms
                 + " SS=" + ss
-                + " " + SmsController.formatCrossStackMessageId(tracker.mMessageId));
+                + " id=" + tracker.mMessageId);
 
         // if sms over IMS is not supported on data and voice is not available...
         if (!isIms() && ss != ServiceState.STATE_IN_SERVICE) {

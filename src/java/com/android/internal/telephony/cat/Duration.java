@@ -17,7 +17,6 @@
 package com.android.internal.telephony.cat;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
 
@@ -28,9 +27,9 @@ import android.os.Parcelable;
  * {@hide}
  */
 public class Duration implements Parcelable {
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public int timeInterval;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public TimeUnit timeUnit;
 
     public enum TimeUnit {
@@ -44,7 +43,7 @@ public class Duration implements Parcelable {
             mValue = value;
         }
 
-        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+        @UnsupportedAppUsage
         public int value() {
             return mValue;
         }

@@ -22,7 +22,6 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Binder;
-import android.os.Build;
 import android.service.carrier.CarrierMessagingService;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -34,11 +33,11 @@ import com.android.telephony.Rlog;
 public class SmsPermissions {
     static final String LOG_TAG = "SmsPermissions";
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private final Phone mPhone;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private final Context mContext;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private final AppOpsManager mAppOps;
 
     public SmsPermissions(Phone phone, Context context, AppOpsManager appOps) {
@@ -78,14 +77,14 @@ public class SmsPermissions {
     /**
      * Enforces that the caller is one of the following apps:
      * <ul>
-     *     <li> IMS App determined by telephony to implement RCS features
+     *     <li> IMS App
      *     <li> Carrier App
      * </ul>
      */
     public void enforceCallerIsImsAppOrCarrierApp(String message) {
-        String imsRcsPackage = CarrierSmsUtils.getImsRcsPackageForIntent(mContext,
+        String carrierImsPackage = CarrierSmsUtils.getCarrierImsPackageForIntent(mContext,
                 mPhone, new Intent(CarrierMessagingService.SERVICE_INTERFACE));
-        if (imsRcsPackage != null && packageNameMatchesCallingUid(imsRcsPackage)) {
+        if (carrierImsPackage != null && packageNameMatchesCallingUid(carrierImsPackage)) {
             return;
         }
         TelephonyPermissions.enforceCallingOrSelfCarrierPrivilege(
@@ -134,7 +133,7 @@ public class SmsPermissions {
         // Allow it to the default SMS app always.
         if (!isCallerDefaultSmsPackage(callingPackage)) {
             TelephonyPermissions
-                        .enforceCallingOrSelfReadPrivilegedPhoneStatePermissionOrCarrierPrivilege(
+                        .enforeceCallingOrSelfReadPrivilegedPhoneStatePermissionOrCarrierPrivilege(
                                 mContext, mPhone.getSubId(), message);
         }
         return true;
@@ -185,7 +184,7 @@ public class SmsPermissions {
         }
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected void log(String msg) {
         Rlog.d(LOG_TAG, msg);
     }

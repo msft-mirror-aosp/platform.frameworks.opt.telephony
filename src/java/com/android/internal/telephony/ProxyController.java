@@ -22,7 +22,6 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.Intent;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
 import android.os.PowerManager;
@@ -64,7 +63,7 @@ public class ProxyController {
     private static final int SET_RC_TIMEOUT_WAITING_MSEC    = (45 * 1000);
 
     //***** Class Variables
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private static ProxyController sProxyController;
 
     private Phone[] mPhones;
@@ -85,7 +84,7 @@ public class ProxyController {
     WakeLock mWakeLock;
 
     // record each phone's set radio capability status
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private int[] mSetRadioAccessFamilyStatus;
     private int mRadioAccessFamilyStatusCounter;
     private boolean mTransactionFailed = false;
@@ -94,18 +93,18 @@ public class ProxyController {
     private String[] mNewLogicalModemIds;
 
     // Allows the generation of unique Id's for radio capability request session  id
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private AtomicInteger mUniqueIdGenerator = new AtomicInteger(new Random().nextInt());
 
     // on-going radio capability request session id
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private int mRadioCapabilitySessionId;
 
     // Record new and old Radio Access Family (raf) configuration.
     // The old raf configuration is used to restore each logical modem raf when FINISH is
     // issued if any requests fail.
     private int[] mNewRadioAccessFamily;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private int[] mOldRadioAccessFamily;
 
 
@@ -117,7 +116,7 @@ public class ProxyController {
         return sProxyController;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public static ProxyController getInstance() {
         return sProxyController;
     }
@@ -481,7 +480,7 @@ public class ProxyController {
                 mSetRadioAccessFamilyStatus[id] = SET_RC_STATUS_SUCCESS;
                 // The modems may have been restarted and forgotten this
                 mPhoneSwitcher.onRadioCapChanged(id);
-                mPhones[id].radioCapabilityUpdated(rc, true);
+                mPhones[id].radioCapabilityUpdated(rc);
             }
 
             mRadioAccessFamilyStatusCounter--;
@@ -568,7 +567,7 @@ public class ProxyController {
         }
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void completeRadioCapabilityTransaction() {
         // Create the intent to broadcast
         Intent intent;
@@ -628,7 +627,7 @@ public class ProxyController {
         mRadioAccessFamilyStatusCounter = mPhones.length;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void sendRadioCapabilityRequest(int phoneId, int sessionId, int rcPhase,
             int radioFamily, String logicalModemId, int status, int eventId) {
         RadioCapability requestRC = new RadioCapability(
@@ -686,7 +685,7 @@ public class ProxyController {
         return modemUuid;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void logd(String string) {
         Rlog.d(LOG_TAG, string);
     }

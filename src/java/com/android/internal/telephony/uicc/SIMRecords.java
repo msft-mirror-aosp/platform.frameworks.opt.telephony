@@ -23,7 +23,6 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.res.Resources;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
@@ -59,7 +58,7 @@ public class SIMRecords extends IccRecords {
 
     // ***** Instance Variables
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     VoiceMailConstants mVmConfig;
 
     // ***** Cached SIM State; cleared on channel close
@@ -79,21 +78,21 @@ public class SIMRecords extends IccRecords {
     private byte[] mCphsInfo = null;
     boolean mCspPlmnEnabled = true;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     byte[] mEfMWIS = null;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     byte[] mEfCPHS_MWI =null;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     byte[] mEfCff = null;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     byte[] mEfCfis = null;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     byte[] mEfLi = null;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     byte[] mEfPl = null;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     UsimServiceTable mUsimServiceTable;
 
     @Override
@@ -122,9 +121,6 @@ public class SIMRecords extends IccRecords {
 
     // Short Name IEI from TS 24.008
     static final int TAG_SHORT_NETWORK_NAME = 0x45;
-
-    // PLMN Additional Information tag from from TS 24.008
-    static final int TAG_PLMN_ADDITIONAL_INFORMATION = 0x80;
 
     // active CFF from CPHS 4.2 B.4.5
     static final int CFF_UNCONDITIONAL_ACTIVE = 0x0a;
@@ -161,8 +157,7 @@ public class SIMRecords extends IccRecords {
     private static final int EVENT_GET_SPN_DONE = 12 + SIM_RECORD_EVENT_BASE;
     private static final int EVENT_GET_SPDI_DONE = 13 + SIM_RECORD_EVENT_BASE;
     private static final int EVENT_UPDATE_DONE = 14 + SIM_RECORD_EVENT_BASE;
-    protected static final int EVENT_GET_PNN_DONE = 15 + SIM_RECORD_EVENT_BASE;
-    protected static final int EVENT_GET_OPL_DONE = 16 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_PNN_DONE = 15 + SIM_RECORD_EVENT_BASE;
     private static final int EVENT_GET_SST_DONE = 17 + SIM_RECORD_EVENT_BASE;
     private static final int EVENT_GET_ALL_SMS_DONE = 18 + SIM_RECORD_EVENT_BASE;
     private static final int EVENT_MARK_SMS_READ_DONE = 19 + SIM_RECORD_EVENT_BASE;
@@ -233,8 +228,6 @@ public class SIMRecords extends IccRecords {
         mEfCPHS_MWI = null;
         mSpdi = null;
         mPnnHomeName = null;
-        mPnns = null;
-        mOpl = null;
         mGid1 = null;
         mGid2 = null;
         mPlmnActRecords = null;
@@ -261,7 +254,7 @@ public class SIMRecords extends IccRecords {
 
     //***** Public Methods
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     @Override
     public String getMsisdnNumber() {
         return mMsisdn;
@@ -272,7 +265,7 @@ public class SIMRecords extends IccRecords {
         return mUsimServiceTable;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private int getExtFromEf(int ef) {
         int ext;
         switch (ef) {
@@ -328,7 +321,7 @@ public class SIMRecords extends IccRecords {
         return mMsisdnTag;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     @Override
     public String getVoiceMailNumber() {
         return mVoiceMailNum;
@@ -361,10 +354,6 @@ public class SIMRecords extends IccRecords {
     @Override
     public void setVoiceMailNumber(String alphaTag, String voiceNumber,
             Message onComplete) {
-        if (mDestroyed.get()) {
-            return;
-        }
-
         if (mIsVoiceMailFixed) {
             AsyncResult.forMessage((onComplete)).exception =
                     new IccVmFixedException("Voicemail number is fixed by operator");
@@ -512,7 +501,7 @@ public class SIMRecords extends IccRecords {
     /**
      * {@inheritDoc}
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     @Override
     public void setVoiceCallForwardingFlag(int line, boolean enable, String dialNumber) {
 
@@ -595,7 +584,7 @@ public class SIMRecords extends IccRecords {
     /**
      * {@inheritDoc}
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     @Override
     public String getOperatorNumeric() {
         String imsi = getIMSI();
@@ -913,22 +902,22 @@ public class SIMRecords extends IccRecords {
                     isRecordLoadResponse = true;
 
                     ar = (AsyncResult) msg.obj;
+                    data = (byte[]) ar.result;
+
                     if (ar.exception != null) {
                         break;
                     }
 
-                    parseEfPnn((ArrayList<byte[]>) ar.result);
-                    break;
+                    SimTlv tlv = new SimTlv(data, 0, data.length);
 
-                case EVENT_GET_OPL_DONE:
-                    isRecordLoadResponse = true;
-
-                    ar = (AsyncResult) msg.obj;
-                    if (ar.exception != null) {
-                        break;
+                    for (; tlv.isValidObject(); tlv.nextObject()) {
+                        if (tlv.getTag() == TAG_FULL_NETWORK_NAME) {
+                            mPnnHomeName = IccUtils.networkNameToString(
+                                    tlv.getData(), 0, tlv.getData().length);
+                            log("PNN: " + mPnnHomeName);
+                            break;
+                        }
                     }
-
-                    parseEfOpl((ArrayList<byte[]>) ar.result);
                     break;
 
                 case EVENT_GET_ALL_SMS_DONE:
@@ -939,7 +928,7 @@ public class SIMRecords extends IccRecords {
                         break;
                     }
 
-                    handleSmses((ArrayList<byte[]>) ar.result);
+                    handleSmses((ArrayList<byte []>) ar.result);
                     break;
 
                 case EVENT_MARK_SMS_READ_DONE:
@@ -1581,7 +1570,7 @@ public class SIMRecords extends IccRecords {
         mRecordsToLoad++;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected void fetchSimRecords() {
         mRecordsRequested = true;
 
@@ -1629,10 +1618,7 @@ public class SIMRecords extends IccRecords {
         mFh.loadEFTransparent(EF_SPDI, obtainMessage(EVENT_GET_SPDI_DONE));
         mRecordsToLoad++;
 
-        mFh.loadEFLinearFixedAll(EF_PNN, obtainMessage(EVENT_GET_PNN_DONE));
-        mRecordsToLoad++;
-
-        mFh.loadEFLinearFixedAll(EF_OPL, obtainMessage(EVENT_GET_OPL_DONE));
+        mFh.loadEFLinearFixed(EF_PNN, 1, obtainMessage(EVENT_GET_PNN_DONE));
         mRecordsToLoad++;
 
         mFh.loadEFTransparent(EF_SST, obtainMessage(EVENT_GET_SST_DONE));
@@ -1731,7 +1717,7 @@ public class SIMRecords extends IccRecords {
      *        ar.exception holds exception in error
      *        ar.result is byte[] for data in success
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void getSpnFsm(boolean start, AsyncResult ar) {
         byte[] data;
 
@@ -1892,93 +1878,11 @@ public class SIMRecords extends IccRecords {
         for (int i = 0; i + 2 < plmnEntries.length; i += 3) {
             String plmnCode = IccUtils.bcdPlmnToString(plmnEntries, i);
             if (!TextUtils.isEmpty(plmnCode)) {
+                log("EF_SPDI PLMN: " + plmnCode);
                 tmpSpdi.add(plmnCode);
             }
         }
-        log("parseEfSpdi: " + tmpSpdi);
-
         mSpdi = tmpSpdi.toArray(new String[tmpSpdi.size()]);
-    }
-
-    /**
-     * Parse EF PLMN Network Name (PNN) record from SIM
-     * Reference: 3GPP TS 31.102 Section 4.2.58.
-     */
-    private void parseEfPnn(ArrayList<byte[]> dataArray) {
-        if (dataArray == null) return;
-
-        final int count = dataArray.size();
-        List<PlmnNetworkName> tmpPnns = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            byte[] data = dataArray.get(i);
-            SimTlv tlv = new SimTlv(data, 0, data.length);
-
-            String longName = null;
-            String shortName = null;
-            for (; tlv.isValidObject(); tlv.nextObject()) {
-                switch (tlv.getTag()) {
-                    case TAG_FULL_NETWORK_NAME:
-                        longName = IccUtils.networkNameToString(tlv.getData(), 0,
-                                tlv.getData().length);
-                        break;
-
-                    case TAG_SHORT_NETWORK_NAME:
-                        shortName = IccUtils.networkNameToString(tlv.getData(), 0,
-                                tlv.getData().length);
-                        break;
-
-                    case TAG_PLMN_ADDITIONAL_INFORMATION:
-                        // TODO(b/154300344): read PLMN Additional Information.
-                        break;
-                }
-            }
-            // PNNs must maintain their original indices. They will be referred to by index in OPL.
-            tmpPnns.add(new PlmnNetworkName(longName, shortName));
-        }
-        log("parseEfPnn: " + tmpPnns);
-
-        mPnns = tmpPnns.toArray(new PlmnNetworkName[0]);
-
-        // For compatiblility with legacy code.
-        if (mPnns.length > 0) mPnnHomeName = mPnns[0].getName();
-    }
-
-    /**
-     * Parse EF Operator PLMN List (OPL) record from SIM
-     * Reference: 3GPP TS 31.102 Section 4.2.59.
-     */
-    private void parseEfOpl(ArrayList<byte[]> dataArray) {
-        if (dataArray == null) return;
-
-        final int count = dataArray.size();
-        List<OperatorPlmnInfo> tmpOpl = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            byte[] data = dataArray.get(i);
-            // data.length is 8 as defined in 3GPP TS 31.102 Section 4.2.59.
-            // Byte 0 to 2 are for PLMN.
-            // Byte 3 and 4 are for lacTacStart.
-            // Byte 5 and 6 are for lacTacEnd.
-            // Byte 7 is for PNN Record Identifier.
-            if (data.length != 8) {
-                loge("Invalid length for OPL record " + data);
-                continue;
-            }
-
-            // A BCD value of 'D' in any of the MCC and/or MNC digits shall be used to indicate
-            // a "wild" value for that corresponding MCC/MNC digit.
-            String plmn = IccUtils.bcdPlmnToString(data, 0);
-            if (plmn.length() < PLMN_MIN_LENGTH) {
-                loge("Invalid length for decoded PLMN " + plmn);
-                continue;
-            }
-            int lacTacStart = IccUtils.bytesToInt(data, 3, 2);
-            int lacTacEnd = IccUtils.bytesToInt(data, 5, 2);
-            int pnnRecordId = IccUtils.bytesToInt(data, 7, 1);
-
-            tmpOpl.add(new OperatorPlmnInfo(plmn, lacTacStart, lacTacEnd, pnnRecordId));
-        }
-        log("parseEfOpl: " + tmpOpl);
-        mOpl = tmpOpl.toArray(new OperatorPlmnInfo[0]);
     }
 
     /**
@@ -2007,13 +1911,13 @@ public class SIMRecords extends IccRecords {
     /**
      * check to see if Mailbox Number is allocated and activated in CPHS SST
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private boolean isCphsMailboxEnabled() {
         if (mCphsInfo == null)  return false;
         return ((mCphsInfo[1] & CPHS_SST_MBN_MASK) == CPHS_SST_MBN_ENABLED );
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     @Override
     protected void log(String s) {
         if (mParentApp != null) {
@@ -2023,7 +1927,7 @@ public class SIMRecords extends IccRecords {
         }
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     @Override
     protected void loge(String s) {
         if (mParentApp != null) {
@@ -2041,7 +1945,7 @@ public class SIMRecords extends IccRecords {
         }
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected void logv(String s) {
         if (mParentApp != null) {
             Rlog.v(LOG_TAG, "[SIMRecords-" + mParentApp.getPhoneId() + "] " + s);

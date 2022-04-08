@@ -17,7 +17,6 @@
 package com.android.internal.telephony.cat;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 
 
 /**
@@ -30,7 +29,7 @@ public class ResultException extends CatException {
     private int mAdditionalInfo;
     private String mExplanation;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public ResultException(ResultCode result) {
         super();
 

@@ -19,7 +19,6 @@ package com.android.internal.telephony.cdma;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
 import android.os.Registrant;
@@ -153,7 +152,7 @@ public class CdmaSubscriptionSourceManager extends Handler {
      * Returns the current CDMA subscription source value
      * @return CDMA subscription source value
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public int getCdmaSubscriptionSource() {
         log("getcdmasubscriptionSource: " + mCdmaSubscriptionSource.get());
         return mCdmaSubscriptionSource.get();

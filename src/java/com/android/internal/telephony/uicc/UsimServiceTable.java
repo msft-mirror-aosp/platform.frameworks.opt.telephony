@@ -17,7 +17,6 @@
 package com.android.internal.telephony.uicc;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 
 
 /**
@@ -143,7 +142,7 @@ public final class UsimServiceTable extends IccServiceTable {
         super(table);
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public boolean isAvailable(UsimService service) {
         return super.isAvailable(service.ordinal());
     }

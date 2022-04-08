@@ -46,7 +46,6 @@ import android.os.Message;
 import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
 import android.telephony.TelephonyManager;
-import android.telephony.UiccAccessRule;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.util.ArraySet;
@@ -115,8 +114,8 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
         mHandler = new CarrierPrivilegesTrackerTestHandler();
 
         // set mock behavior so CarrierPrivilegeTracker initializes with no privileged UIDs
-        setupCarrierConfigRules();
-        setupSimLoadedRules();
+        setupCarrierConfigCerts();
+        setupSimLoadedCerts();
         setupInstalledPackages();
     }
 
@@ -125,33 +124,16 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
         super.tearDown();
     }
 
-    /** @param rules can either be "hash" or "hash:package[,package...]" */
-    private void setupCarrierConfigRules(String... rules) {
-        mCarrierConfigs.putStringArray(KEY_CARRIER_CERTIFICATE_STRING_ARRAY, rules);
+    private void setupCarrierConfigCerts(String... certHashes) {
+        mCarrierConfigs.putStringArray(KEY_CARRIER_CERTIFICATE_STRING_ARRAY, certHashes);
         mCarrierConfigs.putBoolean(KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
         when(mCarrierConfigManager.getConfigForSubId(SUB_ID)).thenReturn(mCarrierConfigs);
     }
 
-    private static String carrierConfigRuleString(String certificateHash, String... packageNames) {
-        if (packageNames == null || packageNames.length == 0) {
-            return certificateHash;
-        }
-        return certificateHash + ':' + String.join(",", packageNames);
-    }
-
-    private void setupSimLoadedRules(UiccAccessRule... certHashes) {
+    private void setupSimLoadedCerts(String... certHashes) {
         when(mTelephonyManager.hasIccCard(PHONE_ID)).thenReturn(true);
-        when(mUiccProfile.getCarrierPrivilegeAccessRules()).thenReturn(Arrays.asList(certHashes));
-    }
-
-    private static UiccAccessRule ruleWithHashOnly(String certificateHash) {
-        return ruleWithHashAndPackage(certificateHash, null /* packageName */);
-    }
-
-    private static UiccAccessRule ruleWithHashAndPackage(
-            String certificateHash, String packageName) {
-        return new UiccAccessRule(
-                IccUtils.hexStringToBytes(certificateHash), packageName, /* accessType= */ 0L);
+        when(mTelephonyManager.getCertsFromCarrierPrivilegeAccessRules())
+                .thenReturn(Arrays.asList(certHashes));
     }
 
     private void setupInstalledPackages(PackageCertInfo... pkgCertInfos) throws Exception {
@@ -183,8 +165,7 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
      * <p>The initial configuration of the CarrierPrivilegesTracker will be based on the current
      * state of certificate hashes and installed packages.
      *
-     * <p>See {@link #setupCarrierConfigRules}, {@link #setupSimLoadedRules}, {@link
-     * #setupInstalledPackages}.
+     * See #setupCarrierConfigCerts, #setupSimLoadedCerts, #setupInstalledPackages.
      */
     private CarrierPrivilegesTracker createCarrierPrivilegesTracker() throws Exception {
         CarrierPrivilegesTracker cpt =
@@ -199,8 +180,7 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
     }
 
     private void setupCarrierPrivilegesTrackerWithCarrierConfigUids() throws Exception {
-        setupCarrierConfigRules(
-                carrierConfigRuleString(getHash(CERT_1)), carrierConfigRuleString(getHash(CERT_2)));
+        setupCarrierConfigCerts(getHash(CERT_1), getHash(CERT_2));
         setupInstalledPackages(
                 new PackageCertInfo(PACKAGE_1, CERT_1, USER_1, UID_1),
                 new PackageCertInfo(PACKAGE_2, CERT_2, USER_1, UID_2));
@@ -208,7 +188,7 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
     }
 
     private void setupCarrierPrivilegesTrackerWithSimLoadedUids() throws Exception {
-        setupSimLoadedRules(ruleWithHashOnly(getHash(CERT_1)), ruleWithHashOnly(getHash(CERT_2)));
+        setupSimLoadedCerts(getHash(CERT_1), getHash(CERT_2));
         setupInstalledPackages(
                 new PackageCertInfo(PACKAGE_1, CERT_1, USER_1, UID_1),
                 new PackageCertInfo(PACKAGE_2, CERT_2, USER_1, UID_2));
@@ -222,13 +202,15 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
-                case REGISTRANT_WHAT:
+                case REGISTRANT_WHAT: {
                     AsyncResult asyncResult = (AsyncResult) msg.obj;
                     privilegedUids = (int[]) asyncResult.result;
                     numUidUpdates++;
                     break;
-                default:
+                }
+                default: {
                     fail("Unexpected msg received. what=" + msg.what);
+                }
             }
         }
 
@@ -289,8 +271,10 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
                 new PackageCertInfo(PACKAGE_1, CERT_1, USER_1, UID_1),
                 new PackageCertInfo(PACKAGE_2, CERT_2, USER_1, UID_2));
         mCarrierPrivilegesTracker = createCarrierPrivilegesTracker();
-        setupCarrierConfigRules(
-                carrierConfigRuleString(getHash(CERT_1)), carrierConfigRuleString(getHash(CERT_2)));
+        mCarrierConfigs.putStringArray(
+                KEY_CARRIER_CERTIFICATE_STRING_ARRAY,
+                new String[] {getHash(CERT_1), getHash(CERT_2)});
+        when(mCarrierConfigManager.getConfigForSubId(SUB_ID)).thenReturn(mCarrierConfigs);
 
         sendCarrierConfigChangedIntent(SUB_ID, PHONE_ID);
         mTestableLooper.processAllMessages();
@@ -335,34 +319,6 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
     }
 
     @Test
-    public void testCarrierConfigUpdatedExplicitPackageNames() throws Exception {
-        // Start with privileges specified just by wildcard certificate hashes, verify specifying
-        // package names clears privileges on UIDs that don't match the updated rules.
-        setupCarrierPrivilegesTrackerWithCarrierConfigUids();
-
-        // Package 1 keeps its privileges by matching the first rule; the second rule no longer
-        // matches package 2.
-        setupCarrierConfigRules(
-                carrierConfigRuleString(getHash(CERT_1), PACKAGE_1),
-                carrierConfigRuleString(getHash(CERT_2), PACKAGE_1));
-
-        sendCarrierConfigChangedIntent(SUB_ID, PHONE_ID);
-        mTestableLooper.processAllMessages();
-
-        verifyPrivilegedUids(new int[] {UID_1} /* expectedUids */, 1 /* expectedUidUpdates */);
-
-        // Give package 2 privileges again.
-        setupCarrierConfigRules(
-                carrierConfigRuleString(getHash(CERT_1), PACKAGE_1),
-                carrierConfigRuleString(getHash(CERT_2), PACKAGE_1, PACKAGE_2));
-
-        sendCarrierConfigChangedIntent(SUB_ID, PHONE_ID);
-        mTestableLooper.processAllMessages();
-
-        verifyPrivilegedUids(PRIVILEGED_UIDS /* expectedUids */, 2 /* expectedUidUpdates */);
-    }
-
-    @Test
     public void testSimCardStateChanged() throws Exception {
         // Start with packages installed and no certs
         setupInstalledPackages(
@@ -370,7 +326,9 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
                 new PackageCertInfo(PACKAGE_2, CERT_2, USER_1, UID_2));
         mCarrierPrivilegesTracker = createCarrierPrivilegesTracker();
 
-        setupSimLoadedRules(ruleWithHashOnly(getHash(CERT_1)), ruleWithHashOnly(getHash(CERT_2)));
+        when(mTelephonyManager.getCertsFromCarrierPrivilegeAccessRules())
+                .thenReturn(Arrays.asList(getHash(CERT_1), getHash(CERT_2)));
+        when(mTelephonyManager.hasIccCard(PHONE_ID)).thenReturn(true);
 
         sendSimCardStateChangedIntent(PHONE_ID, SIM_STATE_LOADED);
         mTestableLooper.processAllMessages();
@@ -386,7 +344,9 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
                 new PackageCertInfo(PACKAGE_2, CERT_2, USER_1, UID_2));
         mCarrierPrivilegesTracker = createCarrierPrivilegesTracker();
 
-        setupSimLoadedRules(ruleWithHashOnly(getHash(CERT_1)), ruleWithHashOnly(getHash(CERT_2)));
+        when(mTelephonyManager.getCertsFromCarrierPrivilegeAccessRules())
+                .thenReturn(Arrays.asList(getHash(CERT_1), getHash(CERT_2)));
+        when(mTelephonyManager.hasIccCard(PHONE_ID)).thenReturn(true);
 
         sendSimApplicationStateChangedIntent(PHONE_ID, SIM_STATE_LOADED);
         mTestableLooper.processAllMessages();
@@ -432,38 +392,9 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
     }
 
     @Test
-    public void testSimStateChangedExplicitPackageNames() throws Exception {
-        // Start with privileges specified just by wildcard certificate hashes, verify specifying
-        // package names clears privileges on UIDs that don't match the updated rules.
-        setupCarrierPrivilegesTrackerWithSimLoadedUids();
-
-        // Package 1 keeps its privileges by matching the first rule; the second rule no longer
-        // matches package 2.
-        setupSimLoadedRules(
-                ruleWithHashAndPackage(getHash(CERT_1), PACKAGE_1),
-                ruleWithHashAndPackage(getHash(CERT_2), PACKAGE_1));
-
-        sendSimCardStateChangedIntent(PHONE_ID, SIM_STATE_LOADED);
-        mTestableLooper.processAllMessages();
-
-        verifyPrivilegedUids(new int[] {UID_1} /* expectedUids */, 1 /* expectedUidUpdates */);
-
-        // Give package 2 privileges again.
-        setupSimLoadedRules(
-                ruleWithHashAndPackage(getHash(CERT_1), PACKAGE_1),
-                ruleWithHashAndPackage(getHash(CERT_2), PACKAGE_1),
-                ruleWithHashAndPackage(getHash(CERT_2), PACKAGE_2));
-
-        sendSimCardStateChangedIntent(PHONE_ID, SIM_STATE_LOADED);
-        mTestableLooper.processAllMessages();
-
-        verifyPrivilegedUids(PRIVILEGED_UIDS /* expectedUids */, 2 /* expectedUidUpdates */);
-    }
-
-    @Test
     public void testPackageAdded() throws Exception {
         // Start with certs and no packages installed
-        setupCarrierConfigRules(carrierConfigRuleString(getHash(CERT_1)));
+        setupCarrierConfigCerts(getHash(CERT_1));
         mCarrierPrivilegesTracker = createCarrierPrivilegesTracker();
 
         setupInstalledPackages(new PackageCertInfo(PACKAGE_1, CERT_1, USER_1, UID_1));
@@ -477,8 +408,7 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
     @Test
     public void testPackageAddedMultipleUsers() throws Exception {
         // Start with certs and no packages installed
-        setupCarrierConfigRules(
-                carrierConfigRuleString(getHash(CERT_1)), carrierConfigRuleString(getHash(CERT_2)));
+        setupCarrierConfigCerts(getHash(CERT_1), getHash(CERT_2));
         mCarrierPrivilegesTracker = createCarrierPrivilegesTracker();
 
         setupInstalledPackages(
@@ -494,8 +424,7 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
     @Test
     public void testPackageReplaced() throws Exception {
         // Start with certs and an unmatched package
-        setupCarrierConfigRules(
-                carrierConfigRuleString(getHash(CERT_1)), carrierConfigRuleString(getHash(CERT_2)));
+        setupCarrierConfigCerts(getHash(CERT_1), getHash(CERT_2));
         setupInstalledPackages(new PackageCertInfo(PACKAGE_1, CERT_3, USER_1, UID_1));
         mCarrierPrivilegesTracker = createCarrierPrivilegesTracker();
 
@@ -512,8 +441,7 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
     @Test
     public void testPackageAddedOrReplacedNoSignatures() throws Exception {
         // Start with certs and packages installed
-        setupCarrierConfigRules(
-                carrierConfigRuleString(getHash(CERT_1)), carrierConfigRuleString(getHash(CERT_2)));
+        setupCarrierConfigCerts(getHash(CERT_1), getHash(CERT_2));
         setupInstalledPackages(
                 new PackageCertInfo(PACKAGE_1, CERT_1, USER_1, UID_1),
                 new PackageCertInfo(PACKAGE_2, CERT_2, USER_1, UID_2));
@@ -534,8 +462,7 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
     @Test
     public void testPackageAddedOrReplacedSignatureChanged() throws Exception {
         // Start with certs and packages installed
-        setupCarrierConfigRules(
-                carrierConfigRuleString(getHash(CERT_1)), carrierConfigRuleString(getHash(CERT_2)));
+        setupCarrierConfigCerts(getHash(CERT_1), getHash(CERT_2));
         setupInstalledPackages(
                 new PackageCertInfo(PACKAGE_1, CERT_1, USER_1, UID_1),
                 new PackageCertInfo(PACKAGE_2, CERT_2, USER_1, UID_2));
@@ -555,8 +482,7 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
     @Test
     public void testPackageRemoved() throws Exception {
         // Start with certs and packages installed
-        setupCarrierConfigRules(
-                carrierConfigRuleString(getHash(CERT_1)), carrierConfigRuleString(getHash(CERT_2)));
+        setupCarrierConfigCerts(getHash(CERT_1), getHash(CERT_2));
         setupInstalledPackages(
                 new PackageCertInfo(PACKAGE_1, CERT_1, USER_1, UID_1),
                 new PackageCertInfo(PACKAGE_2, CERT_2, USER_1, UID_2));
@@ -605,7 +531,9 @@ public class CarrierPrivilegesTrackerTest extends TelephonyTest {
         mContext.sendBroadcast(new Intent(action, new Uri.Builder().path(pkgName).build()));
     }
 
-    /** Returns the SHA-1 hash (as a hex String) for the given hex String. */
+    /**
+     * Returns the SHA-1 hash (as a hex String) for the given hex String.
+     */
     private static String getHash(String hexString) throws Exception {
         MessageDigest sha1 = MessageDigest.getInstance(SHA_1);
         byte[] result = sha1.digest(IccUtils.hexStringToBytes(hexString));

@@ -59,6 +59,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
@@ -79,9 +80,7 @@ public class EmergencyNumberTracker extends Handler {
     private static final String EMERGENCY_NUMBER_DB_OTA_FILE_NAME = "emergency_number_db";
     private static final String EMERGENCY_NUMBER_DB_OTA_FILE_PATH =
             "misc/emergencynumberdb/" + EMERGENCY_NUMBER_DB_OTA_FILE_NAME;
-
-    /** Used for storing overrided (non-default) OTA database file path */
-    private ParcelFileDescriptor mOverridedOtaDbParcelFileDescriptor = null;
+    private FileInputStream mEmergencyNumberDbOtaFileInputStream = null;
 
     /** @hide */
     public static boolean DBG = false;
@@ -95,7 +94,6 @@ public class EmergencyNumberTracker extends Handler {
     private final CommandsInterface mCi;
     private final Phone mPhone;
     private String mCountryIso;
-    private String mLastKnownEmergencyCountryIso = "";
     private int mCurrentDatabaseVersion = INVALID_DATABASE_VERSION;
     /**
      * Indicates if the country iso is set by another subscription.
@@ -130,11 +128,9 @@ public class EmergencyNumberTracker extends Handler {
     /** Event indicating the update for the emergency number prefix from carrier config. */
     private static final int EVENT_UPDATE_EMERGENCY_NUMBER_PREFIX = 4;
     /** Event indicating the update for the OTA emergency number database. */
-    @VisibleForTesting
-    public static final int EVENT_UPDATE_OTA_EMERGENCY_NUMBER_DB = 5;
+    private static final int EVENT_UPDATE_OTA_EMERGENCY_NUMBER_DB = 5;
     /** Event indicating the override for the test OTA emergency number database. */
-    @VisibleForTesting
-    public static final int EVENT_OVERRIDE_OTA_EMERGENCY_NUMBER_DB_FILE_PATH = 6;
+    private static final int EVENT_OVERRIDE_OTA_EMERGENCY_NUMBER_DB_FILE_PATH = 6;
 
     private BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
         @Override
@@ -152,6 +148,16 @@ public class EmergencyNumberTracker extends Handler {
                     logd("ACTION_NETWORK_COUNTRY_CHANGED: PhoneId: " + phoneId + " CountryIso: "
                             + countryIso);
 
+                    // Sometimes the country is updated as an empty string when the network signal
+                    // is lost; though we may not call emergency when there is no signal, we want
+                    // to keep the old country iso to provide country-related emergency numbers,
+                    // because they think they are still in that country. We don't need to update
+                    // country change in this case. We will still need to update the empty string
+                    // if device is in APM.
+                    if (TextUtils.isEmpty(countryIso) && !isAirplaneModeEnabled()) {
+                        return;
+                    }
+
                     // Update country iso change for available Phones
                     updateEmergencyCountryIsoAllPhones(countryIso == null ? "" : countryIso);
                 }
@@ -163,6 +169,13 @@ public class EmergencyNumberTracker extends Handler {
     public EmergencyNumberTracker(Phone phone, CommandsInterface ci) {
         mPhone = phone;
         mCi = ci;
+
+        try {
+            mEmergencyNumberDbOtaFileInputStream = new FileInputStream(
+                    new File(Environment.getDataDirectory(), EMERGENCY_NUMBER_DB_OTA_FILE_PATH));
+        } catch (FileNotFoundException ex) {
+            loge("Initialize ota emergency database file input failure: " + ex);
+        }
 
         if (mPhone != null) {
             CarrierConfigManager configMgr = (CarrierConfigManager)
@@ -296,14 +309,11 @@ public class EmergencyNumberTracker extends Handler {
             EmergencyNumberTracker emergencyNumberTracker;
             if (phone != null && phone.getEmergencyNumberTracker() != null) {
                 emergencyNumberTracker = phone.getEmergencyNumberTracker();
-                // If signal is lost, do not update the empty country iso for other slots.
-                if (!TextUtils.isEmpty(countryIso)) {
-                    if (TextUtils.isEmpty(emergencyNumberTracker.getEmergencyCountryIso())
-                            || emergencyNumberTracker.mIsCountrySetByAnotherSub) {
-                        emergencyNumberTracker.mIsCountrySetByAnotherSub = true;
-                        emergencyNumberTracker.updateEmergencyNumberDatabaseCountryChange(
+                if (TextUtils.isEmpty(emergencyNumberTracker.getEmergencyCountryIso())
+                        || emergencyNumberTracker.mIsCountrySetByAnotherSub) {
+                    emergencyNumberTracker.mIsCountrySetByAnotherSub = true;
+                    emergencyNumberTracker.updateEmergencyNumberDatabaseCountryChange(
                             countryIso);
-                    }
                 }
             }
         }
@@ -396,32 +406,22 @@ public class EmergencyNumberTracker extends Handler {
         for (int typeData : eccInfo.types) {
             switch (typeData) {
                 case EccInfo.Type.POLICE:
-                    emergencyServiceCategoryBitmask |=
-                            EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_POLICE;
+                    emergencyServiceCategoryBitmask = emergencyServiceCategoryBitmask == 0
+                            ? EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_POLICE
+                            : emergencyServiceCategoryBitmask
+                            | EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_POLICE;
                     break;
                 case EccInfo.Type.AMBULANCE:
-                    emergencyServiceCategoryBitmask |=
-                            EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_AMBULANCE;
+                    emergencyServiceCategoryBitmask = emergencyServiceCategoryBitmask == 0
+                            ? EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_AMBULANCE
+                            : emergencyServiceCategoryBitmask
+                            | EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_AMBULANCE;
                     break;
                 case EccInfo.Type.FIRE:
-                    emergencyServiceCategoryBitmask |=
-                            EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_FIRE_BRIGADE;
-                    break;
-                case EccInfo.Type.MARINE_GUARD:
-                    emergencyServiceCategoryBitmask |=
-                            EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_MARINE_GUARD;
-                    break;
-                case EccInfo.Type.MOUNTAIN_RESCUE:
-                    emergencyServiceCategoryBitmask |=
-                            EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_MOUNTAIN_RESCUE;
-                    break;
-                case EccInfo.Type.MIEC:
-                    emergencyServiceCategoryBitmask |=
-                            EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_MIEC;
-                    break;
-                case EccInfo.Type.AIEC:
-                    emergencyServiceCategoryBitmask |=
-                            EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_AIEC;
+                    emergencyServiceCategoryBitmask = emergencyServiceCategoryBitmask == 0
+                            ? EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_FIRE_BRIGADE
+                            : emergencyServiceCategoryBitmask
+                            | EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_FIRE_BRIGADE;
                     break;
                 default:
                     // Ignores unknown types.
@@ -457,7 +457,7 @@ public class EmergencyNumberTracker extends Handler {
             }
             EmergencyNumber.mergeSameNumbersInEmergencyNumberList(updatedAssetEmergencyNumberList);
         } catch (IOException ex) {
-            logw("Cache asset emergency database failure: " + ex);
+            loge("Cache asset emergency database failure: " + ex);
         } finally {
             // close quietly by catching non-runtime exceptions.
             if (inputStream != null) {
@@ -488,7 +488,6 @@ public class EmergencyNumberTracker extends Handler {
     }
 
     private int cacheOtaEmergencyNumberDatabase() {
-        FileInputStream fileInputStream = null;
         BufferedInputStream inputStream = null;
         ProtobufEccData.AllInfo allEccMessages = null;
         int otaDatabaseVersion = INVALID_DATABASE_VERSION;
@@ -497,26 +496,20 @@ public class EmergencyNumberTracker extends Handler {
         List<EmergencyNumber> updatedOtaEmergencyNumberList = new ArrayList<>();
         try {
             // If OTA File partition is not available, try to reload the default one.
-            if (mOverridedOtaDbParcelFileDescriptor == null) {
-                fileInputStream = new FileInputStream(
-                        new File(Environment.getDataDirectory(),
-                                EMERGENCY_NUMBER_DB_OTA_FILE_PATH));
-            } else {
-                File file = ParcelFileDescriptor
-                        .getFile(mOverridedOtaDbParcelFileDescriptor.getFileDescriptor());
-                fileInputStream = new FileInputStream(new File(file.getAbsolutePath()));
+            if (mEmergencyNumberDbOtaFileInputStream == null) {
+                mEmergencyNumberDbOtaFileInputStream = new FileInputStream(
+                      new File(Environment.getDataDirectory(), EMERGENCY_NUMBER_DB_OTA_FILE_PATH));
             }
-            inputStream = new BufferedInputStream(fileInputStream);
+            inputStream = new BufferedInputStream(mEmergencyNumberDbOtaFileInputStream);
             allEccMessages = ProtobufEccData.AllInfo.parseFrom(readInputStreamToByteArray(
                     new GZIPInputStream(inputStream)));
-            String countryIso = getLastKnownEmergencyCountryIso();
-            logd(countryIso + " ota emergency database is loaded. Ver: " + otaDatabaseVersion);
+            logd(mCountryIso + " ota emergency database is loaded. Ver: " + otaDatabaseVersion);
             otaDatabaseVersion = allEccMessages.revision;
             for (ProtobufEccData.CountryInfo countryEccInfo : allEccMessages.countries) {
-                if (countryEccInfo.isoCode.equals(countryIso.toUpperCase())) {
+                if (countryEccInfo.isoCode.equals(mCountryIso.toUpperCase())) {
                     for (ProtobufEccData.EccInfo eccInfo : countryEccInfo.eccs) {
                         updatedOtaEmergencyNumberList.add(convertEmergencyNumberFromEccInfo(
-                                eccInfo, countryIso));
+                                eccInfo, mCountryIso));
                     }
                 }
             }
@@ -524,18 +517,10 @@ public class EmergencyNumberTracker extends Handler {
         } catch (IOException ex) {
             loge("Cache ota emergency database IOException: " + ex);
         } finally {
-            // Close quietly by catching non-runtime exceptions.
+            // close quietly by catching non-runtime exceptions.
             if (inputStream != null) {
                 try {
                     inputStream.close();
-                } catch (RuntimeException rethrown) {
-                    throw rethrown;
-                } catch (Exception ignored) {
-                }
-            }
-            if (fileInputStream != null) {
-                try {
-                    fileInputStream.close();
                 } catch (RuntimeException rethrown) {
                     throw rethrown;
                 } catch (Exception ignored) {
@@ -621,7 +606,17 @@ public class EmergencyNumberTracker extends Handler {
     private void overrideOtaEmergencyNumberDbFilePath(
             ParcelFileDescriptor otaParcelableFileDescriptor) {
         logd("overrideOtaEmergencyNumberDbFilePath:" + otaParcelableFileDescriptor);
-        mOverridedOtaDbParcelFileDescriptor = otaParcelableFileDescriptor;
+        try {
+            if (otaParcelableFileDescriptor == null) {
+                mEmergencyNumberDbOtaFileInputStream = new FileInputStream(
+                    new File(Environment.getDataDirectory(), EMERGENCY_NUMBER_DB_OTA_FILE_PATH));
+            } else {
+                mEmergencyNumberDbOtaFileInputStream = new FileInputStream(
+                    otaParcelableFileDescriptor.getFileDescriptor());
+            }
+        } catch (FileNotFoundException ex) {
+            loge("Override ota emergency database failure: " + ex);
+        }
     }
 
     private void updateOtaEmergencyNumberListDatabaseAndNotify() {
@@ -725,9 +720,8 @@ public class EmergencyNumberTracker extends Handler {
                 // According to com.android.i18n.phonenumbers.ShortNumberInfo, in
                 // these countries, if extra digits are added to an emergency number,
                 // it no longer connects to the emergency service.
-                String countryIso = getLastKnownEmergencyCountryIso();
-                if (countryIso.equals("br") || countryIso.equals("cl")
-                        || countryIso.equals("ni")) {
+                if (mCountryIso.equals("br") || mCountryIso.equals("cl")
+                        || mCountryIso.equals("ni")) {
                     exactMatch = true;
                 } else {
                     exactMatch = false || exactMatch;
@@ -810,10 +804,6 @@ public class EmergencyNumberTracker extends Handler {
         return mCountryIso;
     }
 
-    public String getLastKnownEmergencyCountryIso() {
-        return mLastKnownEmergencyCountryIso;
-    }
-
     private String getCountryIsoForCachingDatabase() {
         ServiceStateTracker sst = mPhone.getServiceStateTracker();
         if (sst != null) {
@@ -831,10 +821,6 @@ public class EmergencyNumberTracker extends Handler {
 
     private synchronized void updateEmergencyCountryIso(String countryIso) {
         mCountryIso = countryIso;
-        if (!TextUtils.isEmpty(mCountryIso)) {
-            mLastKnownEmergencyCountryIso = mCountryIso;
-        }
-        mCurrentDatabaseVersion = INVALID_DATABASE_VERSION;
     }
 
     /**
@@ -925,8 +911,8 @@ public class EmergencyNumberTracker extends Handler {
         number = PhoneNumberUtils.stripSeparators(number);
         for (EmergencyNumber num : mEmergencyNumberListFromDatabase) {
             if (num.getNumber().equals(number)) {
-                return new EmergencyNumber(number, getLastKnownEmergencyCountryIso().toLowerCase(),
-                        "", num.getEmergencyServiceCategoryBitmask(),
+                return new EmergencyNumber(number, mCountryIso.toLowerCase(), "",
+                        num.getEmergencyServiceCategoryBitmask(),
                         new ArrayList<String>(), EmergencyNumber.EMERGENCY_NUMBER_SOURCE_DATABASE,
                         EmergencyNumber.EMERGENCY_CALL_ROUTING_UNKNOWN);
             }
@@ -969,8 +955,7 @@ public class EmergencyNumberTracker extends Handler {
 
         emergencyNumbers = SystemProperties.get(ecclist, "");
 
-        String countryIso = getLastKnownEmergencyCountryIso();
-        logd("slotId:" + slotId + " country:" + countryIso + " emergencyNumbers: "
+        logd("slotId:" + slotId + " country:" + mCountryIso + " emergencyNumbers: "
                 +  emergencyNumbers);
 
         if (TextUtils.isEmpty(emergencyNumbers)) {
@@ -985,8 +970,8 @@ public class EmergencyNumberTracker extends Handler {
                 // According to com.android.i18n.phonenumbers.ShortNumberInfo, in
                 // these countries, if extra digits are added to an emergency number,
                 // it no longer connects to the emergency service.
-                if (useExactMatch || countryIso.equals("br") || countryIso.equals("cl")
-                        || countryIso.equals("ni")) {
+                if (useExactMatch || mCountryIso.equals("br") || mCountryIso.equals("cl")
+                        || mCountryIso.equals("ni")) {
                     if (number.equals(emergencyNum)) {
                         return true;
                     } else {
@@ -1045,26 +1030,26 @@ public class EmergencyNumberTracker extends Handler {
         }
 
         // No ecclist system property, so use our own list.
-        if (countryIso != null) {
+        if (mCountryIso != null) {
             ShortNumberInfo info = ShortNumberInfo.getInstance();
             if (useExactMatch) {
-                if (info.isEmergencyNumber(number, countryIso.toUpperCase())) {
+                if (info.isEmergencyNumber(number, mCountryIso.toUpperCase())) {
                     return true;
                 } else {
                     for (String prefix : mEmergencyNumberPrefix) {
-                        if (info.isEmergencyNumber(prefix + number, countryIso.toUpperCase())) {
+                        if (info.isEmergencyNumber(prefix + number, mCountryIso.toUpperCase())) {
                             return true;
                         }
                     }
                 }
                 return false;
             } else {
-                if (info.connectsToEmergencyNumber(number, countryIso.toUpperCase())) {
+                if (info.connectsToEmergencyNumber(number, mCountryIso.toUpperCase())) {
                     return true;
                 } else {
                     for (String prefix : mEmergencyNumberPrefix) {
                         if (info.connectsToEmergencyNumber(prefix + number,
-                                countryIso.toUpperCase())) {
+                                mCountryIso.toUpperCase())) {
                             return true;
                         }
                     }
@@ -1141,10 +1126,6 @@ public class EmergencyNumberTracker extends Handler {
 
     private static void logd(String str) {
         Rlog.d(TAG, str);
-    }
-
-    private static void logw(String str) {
-        Rlog.w(TAG, str);
     }
 
     private static void loge(String str) {

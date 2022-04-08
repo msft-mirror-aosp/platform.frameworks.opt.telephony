@@ -27,7 +27,6 @@ import android.net.sip.SipManager;
 import android.net.sip.SipProfile;
 import android.net.sip.SipSession;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Message;
 import android.telephony.DisconnectCause;
 import android.telephony.PhoneNumberUtils;
@@ -43,7 +42,6 @@ import com.android.internal.telephony.PhoneNotifier;
 import com.android.telephony.Rlog;
 
 import java.text.ParseException;
-import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
@@ -61,9 +59,9 @@ public class SipPhone extends SipPhoneBase {
 
     // A call that is ringing or (call) waiting
     private SipCall mRingingCall = new SipCall();
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private SipCall mForegroundCall = new SipCall();
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private SipCall mBackgroundCall = new SipCall();
 
     private SipManager mSipManager;
@@ -193,9 +191,7 @@ public class SipPhone extends SipPhoneBase {
     }
 
     @Override
-    public Connection dial(String dialString, DialArgs dialArgs,
-            Consumer<Phone> chosenPhoneConsumer) throws CallStateException {
-        chosenPhoneConsumer.accept(this);
+    public Connection dial(String dialString, DialArgs dialArgs) throws CallStateException {
         synchronized (SipPhone.class) {
             return dialInternal(dialString, dialArgs.videoState);
         }
@@ -443,7 +439,7 @@ public class SipPhone extends SipPhoneBase {
         return false;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void log(String s) {
         Rlog.d(LOG_TAG, s);
     }
@@ -452,7 +448,7 @@ public class SipPhone extends SipPhoneBase {
         Rlog.d(LOG_TAG, s);
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void loge(String s) {
         Rlog.e(LOG_TAG, s);
     }
@@ -472,7 +468,7 @@ public class SipPhone extends SipPhoneBase {
             setState(Call.State.IDLE);
         }
 
-        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+        @UnsupportedAppUsage
         void switchWith(SipCall that) {
             if (SC_DBG) log("switchWith");
             synchronized (SipPhone.class) {
@@ -610,7 +606,7 @@ public class SipPhone extends SipPhoneBase {
                     audioGroup.getMode()));
         }
 
-        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+        @UnsupportedAppUsage
         void hold() throws CallStateException {
             if (SC_DBG) log("hold:");
             setState(State.HOLDING);
@@ -618,7 +614,7 @@ public class SipPhone extends SipPhoneBase {
             setAudioGroupMode();
         }
 
-        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+        @UnsupportedAppUsage
         void unhold() throws CallStateException {
             if (SC_DBG) log("unhold:");
             setState(State.ACTIVE);

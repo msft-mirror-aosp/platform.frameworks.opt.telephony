@@ -232,20 +232,20 @@ public class RILRequest {
     }
 
     @UnsupportedAppUsage
-    void onError(final int error, final Object ret) {
-        final CommandException ex = CommandException.fromRilErrno(error);
+    void onError(int error, Object ret) {
+        CommandException ex;
 
-        final Message result = mResult;
+        ex = CommandException.fromRilErrno(error);
+
         if (RIL.RILJ_LOGD) {
             Rlog.d(LOG_TAG, serialString() + "< "
                     + RIL.requestToString(mRequest)
-                    + " error: " + ex + " ret=" + RIL.retToString(mRequest, ret)
-                    + " result=" + result);
+                    + " error: " + ex + " ret=" + RIL.retToString(mRequest, ret));
         }
 
-        if (result != null && result.getTarget() != null) {
-            AsyncResult.forMessage(result, ret, ex);
-            result.sendToTarget();
+        if (mResult != null) {
+            AsyncResult.forMessage(mResult, ret, ex);
+            mResult.sendToTarget();
         }
     }
 }

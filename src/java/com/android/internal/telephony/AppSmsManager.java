@@ -36,8 +36,8 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.Preconditions;
 
 import java.security.SecureRandom;
-import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 
@@ -144,7 +144,7 @@ public class AppSmsManager {
      * Handle an incoming SMS_DELIVER_ACTION intent if it is an app-only SMS.
      */
     public boolean handleSmsReceivedIntent(Intent intent) {
-        // Correctness check the action.
+        // Sanity check the action.
         if (intent.getAction() != Intents.SMS_DELIVER_ACTION) {
             Log.wtf(LOG_TAG, "Got intent with incorrect action: " + intent.getAction());
             return false;
@@ -187,10 +187,9 @@ public class AppSmsManager {
     private void removeExpiredTokenLocked() {
         final long currentTimeMillis = System.currentTimeMillis();
 
-        Iterator<Map.Entry<String, AppRequestInfo>> iterator = mTokenMap.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<String, AppRequestInfo> entry = iterator.next();
-            AppRequestInfo request = entry.getValue();
+        final Set<String> keySet = mTokenMap.keySet();
+        for (String token : keySet) {
+            AppRequestInfo request = mTokenMap.get(token);
             if (request.packageBasedToken
                     && (currentTimeMillis - TIMEOUT_MILLIS > request.timestamp)) {
                 // Send the provided intent with SMS retriever status
@@ -203,9 +202,8 @@ public class AppSmsManager {
                 } catch (PendingIntent.CanceledException e) {
                     // do nothing
                 }
-                // Remove from mTokenMap and mPackageMap
-                iterator.remove();
-                mPackageMap.remove(entry.getValue().packageName);
+
+                removeRequestLocked(request);
             }
         }
     }

@@ -248,8 +248,6 @@ public class ImsFeatureTest {
         // add some capabilities
         request.addCapabilitiesToEnableForTech(MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
                 ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN);
-        request.addCapabilitiesToEnableForTech(MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
-                ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM);
         request.addCapabilitiesToEnableForTech(
                 MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VIDEO
                         | MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,

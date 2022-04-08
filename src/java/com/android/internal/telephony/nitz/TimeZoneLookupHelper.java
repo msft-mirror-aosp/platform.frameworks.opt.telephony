@@ -259,11 +259,7 @@ public final class TimeZoneLookupHelper {
     private static OffsetResult lookupByInstantOffsetDst(long timeMillis, int utcOffsetMillis,
             @Nullable Boolean isDst) {
 
-        // Use java.util.TimeZone and not android.icu.util.TimeZone to find candidate zone IDs: ICU
-        // references some non-standard zone IDs that can be rejected by java.util.TimeZone. There
-        // is a CTS test (in com.android.i18n.test.timezone.TimeZoneIntegrationTest) that confirms
-        // that ICU can interpret all IDs that are known to java.util.TimeZone.
-        String[] zones = java.util.TimeZone.getAvailableIDs();
+        String[] zones = TimeZone.getAvailableIDs();
         TimeZone match = null;
         boolean isOnlyMatch = true;
         for (String zone : zones) {

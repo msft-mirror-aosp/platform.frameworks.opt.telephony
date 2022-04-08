@@ -17,7 +17,6 @@
 package com.android.internal.telephony;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -184,7 +183,7 @@ public abstract class IntRangeManager {
     /**
      * List of integer ranges, one per client, sorted by start id.
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private ArrayList<IntRange> mRanges = new ArrayList<IntRange>();
 
     protected IntRangeManager() {}

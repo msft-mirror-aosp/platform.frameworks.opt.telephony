@@ -16,7 +16,6 @@
 
 package com.android.internal.telephony.dataconnection;
 
-import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
@@ -24,7 +23,6 @@ import android.os.Message;
 import android.telephony.Annotation.ApnType;
 import android.telephony.data.ApnSetting;
 import android.text.TextUtils;
-import android.util.ArraySet;
 import android.util.LocalLog;
 import android.util.SparseIntArray;
 
@@ -115,7 +113,8 @@ public class ApnContext {
      * @param tracker Data call tracker
      * @param priority Priority of APN type
      */
-    public ApnContext(Phone phone, String apnType, String logTag, DcTracker tracker, int priority) {
+    public ApnContext(Phone phone, String apnType, String logTag, DcTracker tracker,
+            int priority) {
         mPhone = phone;
         mApnType = apnType;
         mState = DctConstants.State.IDLE;
@@ -124,8 +123,7 @@ public class ApnContext {
         mPriority = priority;
         LOG_TAG = logTag;
         mDcTracker = tracker;
-        mRetryManager = new RetryManager(phone, tracker.getDataThrottler(),
-                ApnSetting.getApnTypesBitmaskFromString(apnType));
+        mRetryManager = new RetryManager(phone, apnType);
     }
 
 
@@ -236,9 +234,18 @@ public class ApnContext {
     }
 
     /**
+     * Save the modem suggested delay for retrying the current APN.
+     * This method is called when we get the suggested delay from RIL.
+     * @param delay The delay in milliseconds
+     */
+    public void setModemSuggestedDelay(long delay) {
+        mRetryManager.setModemSuggestedDelay(delay);
+    }
+
+    /**
      * Get the delay for trying the next APN setting if the current one failed.
      * @param failFastEnabled True if fail fast mode enabled. In this case we'll use a shorter
-     * delay.
+     *                        delay.
      * @return The delay in milliseconds
      */
     public long getDelayForNextApn(boolean failFastEnabled) {
@@ -257,7 +264,7 @@ public class ApnContext {
      * Get the list of waiting APNs.
      * @return the list of waiting APNs
      */
-    public @NonNull ArrayList<ApnSetting> getWaitingApns() {
+    public ArrayList<ApnSetting> getWaitingApns() {
         return mRetryManager.getWaitingApns();
     }
 
@@ -290,8 +297,10 @@ public class ApnContext {
         }
 
         if (mState == DctConstants.State.FAILED) {
-            // when teardown the connection and set to IDLE
-            mRetryManager.getWaitingApns().clear();
+            if (mRetryManager.getWaitingApns() != null) {
+                // when teardown the connection and set to IDLE
+                mRetryManager.getWaitingApns().clear();
+            }
         }
     }
 
@@ -395,7 +404,7 @@ public class ApnContext {
     }
 
     private final LocalLog mLocalLog = new LocalLog(150);
-    private final ArraySet<NetworkRequest> mNetworkRequests = new ArraySet<>();
+    private final ArrayList<NetworkRequest> mNetworkRequests = new ArrayList<>();
     private final LocalLog mStateLocalLog = new LocalLog(50);
 
     public void requestLog(String str) {
@@ -404,22 +413,14 @@ public class ApnContext {
         }
     }
 
-    /**
-     * Request a network
-     *
-     * @param networkRequest Network request from clients
-     * @param type The request type
-     * @param onHandoverCompleteMsg When request type is handover, this message will be sent when
-     * handover is completed. For normal request, this should be null.
-     */
     public void requestNetwork(NetworkRequest networkRequest, @RequestNetworkType int type,
-            Message onHandoverCompleteMsg) {
+                               Message onCompleteMsg) {
         synchronized (mRefCountLock) {
             mNetworkRequests.add(networkRequest);
             logl("requestNetwork for " + networkRequest + ", type="
                     + DcTracker.requestTypeToString(type));
             mDcTracker.enableApn(ApnSetting.getApnTypesBitmaskFromString(mApnType), type,
-                    onHandoverCompleteMsg);
+                    onCompleteMsg);
             if (mDataConnection != null) {
                 // New network request added. Should re-evaluate properties of
                 // the data connection. For example, the score may change.
@@ -430,7 +431,9 @@ public class ApnContext {
 
     public void releaseNetwork(NetworkRequest networkRequest, @ReleaseNetworkType int type) {
         synchronized (mRefCountLock) {
-            if (mNetworkRequests.contains(networkRequest)) {
+            if (mNetworkRequests.contains(networkRequest) == false) {
+                logl("releaseNetwork can't find this request (" + networkRequest + ")");
+            } else {
                 mNetworkRequests.remove(networkRequest);
                 if (mDataConnection != null) {
                     // New network request added. Should re-evaluate properties of
@@ -456,10 +459,12 @@ public class ApnContext {
         synchronized (mRefCountLock) {
             for (NetworkRequest nr : mNetworkRequests) {
                 if (excludeDun &&
-                        nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)) {
+                        nr.networkCapabilities.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_DUN)) {
                     continue;
                 }
-                if (!nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
+                if (!nr.networkCapabilities.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
                     return true;
                 }
             }
@@ -538,9 +543,10 @@ public class ApnContext {
     }
 
     static @ApnType int getApnTypeFromNetworkRequest(NetworkRequest nr) {
+        NetworkCapabilities nc = nr.networkCapabilities;
         // For now, ignore the bandwidth stuff
-        if (nr.getTransportTypes().length > 0
-                && !nr.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+        if (nc.getTransportTypes().length > 0 &&
+                nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == false) {
             return ApnSetting.TYPE_NONE;
         }
 
@@ -549,52 +555,48 @@ public class ApnContext {
         int apnType = ApnSetting.TYPE_NONE;
         boolean error = false;
 
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
             apnType = ApnSetting.TYPE_DEFAULT;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_MMS)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_MMS)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_MMS;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_SUPL)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_SUPL)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_SUPL;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_DUN;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_FOTA)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_FOTA)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_FOTA;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_IMS;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_CBS)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_CBS)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_CBS;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_IA)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_IA)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_IA;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_EMERGENCY;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_MCX)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_MCX)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_MCX;
         }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_XCAP)) {
+        if (nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_XCAP)) {
             if (apnType != ApnSetting.TYPE_NONE) error = true;
             apnType = ApnSetting.TYPE_XCAP;
-        }
-        if (nr.hasCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)) {
-            if (apnType != ApnSetting.TYPE_NONE) error = true;
-            apnType = ApnSetting.TYPE_ENTERPRISE;
         }
         if (error) {
             // TODO: If this error condition is removed, the framework's handling of

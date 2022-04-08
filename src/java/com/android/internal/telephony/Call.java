@@ -17,7 +17,6 @@
 package com.android.internal.telephony;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 
 import com.android.ims.internal.ConferenceParticipant;
 import com.android.telephony.Rlog;
@@ -82,10 +81,10 @@ public abstract class Call {
 
     /* Instance Variables */
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public State mState = State.IDLE;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public ArrayList<Connection> mConnections = new ArrayList<>();
 
     private Object mLock = new Object();
@@ -121,9 +120,9 @@ public abstract class Call {
         }
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public abstract Phone getPhone();
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public abstract boolean isMultiparty();
     @UnsupportedAppUsage
     public abstract void hangup() throws CallStateException;
@@ -209,7 +208,7 @@ public abstract class Call {
      * FIXME rename
      * @return true if the call contains only disconnected connections (if any)
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public boolean isIdle() {
         return !getState().isAlive();
     }
@@ -306,7 +305,7 @@ public abstract class Call {
      * Returns the Connection associated with this Call that was created
      * last, or null if there are no Connections in this Call
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public Connection
     getLatestConnection() {
         List<Connection> l = getConnections();

@@ -17,7 +17,6 @@
 package com.android.internal.telephony;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 import android.telephony.TelephonyManager;
 
 /**
@@ -182,7 +181,7 @@ public class RadioCapability {
      *
      * @return radio access family
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public int getRadioAccessFamily() {
         return mRadioAccessFamily;
     }

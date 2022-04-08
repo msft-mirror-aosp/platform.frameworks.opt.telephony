@@ -29,7 +29,6 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Resources.NotFoundException;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.LocaleList;
 import android.os.Message;
@@ -54,13 +53,13 @@ import java.util.List;
 import java.util.Locale;
 
 class RilMessage {
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     int mId;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     Object mData;
     ResultCode mResCode;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     RilMessage(int msgId, String rawData) {
         mId = msgId;
         mData = rawData;
@@ -90,13 +89,13 @@ public class CatService extends Handler implements AppInterface {
     // Protects singleton instance lazy initialization.
     @UnsupportedAppUsage
     private static final Object sInstanceLock = new Object();
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private static CatService[] sInstance = null;
     @UnsupportedAppUsage
     private CommandsInterface mCmdIf;
     @UnsupportedAppUsage
     private Context mContext;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private CatCmdMessage mCurrntCmd = null;
     @UnsupportedAppUsage
     private CatCmdMessage mMenuCmd = null;
@@ -138,7 +137,7 @@ public class CatService extends Handler implements AppInterface {
 
     static final String STK_DEFAULT = "Default Message";
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private int mSlotId;
 
     /* For multisim catservice should not be singleton */
@@ -561,7 +560,7 @@ public class CatService extends Handler implements AppInterface {
     }
 
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void sendTerminalResponse(CommandDetails cmdDet,
             ResultCode resultCode, boolean includeAdditionalInfo,
             int additionalInfo, ResponseData resp) {
@@ -1104,7 +1103,7 @@ public class CatService extends Handler implements AppInterface {
         mCurrntCmd = null;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private boolean isStkAppInstalled() {
         Intent intent = new Intent(AppInterface.CAT_CMD_ACTION);
         PackageManager pm = mContext.getPackageManager();

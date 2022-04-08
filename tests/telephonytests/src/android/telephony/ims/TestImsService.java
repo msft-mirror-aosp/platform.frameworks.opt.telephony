@@ -36,8 +36,6 @@ public class TestImsService extends android.telephony.ims.ImsService {
 
     public ImsFeatureConfiguration testFeatureConfig;
 
-    public long testCaps;
-
     public TestImsService(Context context) {
         attachBaseContext(context);
         MockitoAnnotations.initMocks(this);
@@ -59,10 +57,5 @@ public class TestImsService extends android.telephony.ims.ImsService {
     @Override
     public ImsFeatureConfiguration querySupportedImsFeatures() {
         return testFeatureConfig;
-    }
-
-    @Override
-    public long getImsServiceCapabilities() {
-        return testCaps;
     }
 }

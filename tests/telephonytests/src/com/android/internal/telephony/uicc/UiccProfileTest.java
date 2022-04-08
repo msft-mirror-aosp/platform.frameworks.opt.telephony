@@ -19,7 +19,6 @@ import static com.android.internal.telephony.TelephonyTestUtils.waitForMs;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,7 +37,6 @@ import android.os.Handler;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
-import android.telephony.ServiceState;
 import android.telephony.SubscriptionInfo;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
@@ -137,21 +135,21 @@ public class UiccProfileTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testParseAllowListMapFromString() {
-        String allowList = "";
-        Map<String, String> parsedMap = UiccProfile.parseToCertificateToPackageMap(allowList);
+    public void testParseWhitelistMapFromString() {
+        String whitelist = "";
+        Map<String, String> parsedMap = UiccProfile.parseToCertificateToPackageMap(whitelist);
         assertTrue(parsedMap.isEmpty());
 
-        allowList = "nokey;value;separation";
-        parsedMap = UiccProfile.parseToCertificateToPackageMap(allowList);
+        whitelist = "nokey;value;separation";
+        parsedMap = UiccProfile.parseToCertificateToPackageMap(whitelist);
         assertTrue(parsedMap.isEmpty());
 
-        allowList = "KEY1:value1";
-        parsedMap = UiccProfile.parseToCertificateToPackageMap(allowList);
+        whitelist = "KEY1:value1";
+        parsedMap = UiccProfile.parseToCertificateToPackageMap(whitelist);
         assertEquals("value1", parsedMap.get("KEY1"));
 
-        allowList = "KEY1:value1;   KEY2:value2  ;KEY3:value3";
-        parsedMap = UiccProfile.parseToCertificateToPackageMap(allowList);
+        whitelist = "KEY1:value1;   KEY2:value2  ;KEY3:value3";
+        parsedMap = UiccProfile.parseToCertificateToPackageMap(whitelist);
         assertEquals("value1", parsedMap.get("KEY1"));
         assertEquals("value2", parsedMap.get("KEY2"));
         assertEquals("value3", parsedMap.get("KEY3"));
@@ -562,18 +560,12 @@ public class UiccProfileTest extends TelephonyTest {
         String fakeBrand = "operator";
 
         mUiccProfile.getApplicationIndex(0).getIccRecords().mIccId = fakeIccId;
+        doReturn(fakeIccId).when(mSubscriptionInfo).getIccId();
+        doReturn(mSubscriptionInfo).when(mSubscriptionController)
+                .getActiveSubscriptionInfoForSimSlotIndex(eq(0), any(), any());
 
-        doReturn(false).when(mSubscriptionController)
-                .checkPhoneIdAndIccIdMatch(anyInt(), anyString());
         mUiccProfile.setOperatorBrandOverride(fakeBrand);
         String brandInSharedPreference = mContext.getSharedPreferences("file name", 0)
-                .getString("operator_branding_" + fakeIccId, null);
-        assertNotEquals(fakeBrand, brandInSharedPreference);
-
-        doReturn(true).when(mSubscriptionController)
-                .checkPhoneIdAndIccIdMatch(anyInt(), anyString());
-        mUiccProfile.setOperatorBrandOverride(fakeBrand);
-        brandInSharedPreference = mContext.getSharedPreferences("file name", 0)
                 .getString("operator_branding_" + fakeIccId, null);
         assertEquals(fakeBrand, brandInSharedPreference);
     }
@@ -613,45 +605,5 @@ public class UiccProfileTest extends TelephonyTest {
         testUpdateUiccProfileApplicationNoApplication();
         assertTrue(mUiccProfile.isEmptyProfile());
 
-    }
-
-    private void testUpdateUiccProfileApplicationNoCsim() {
-        /* update app status and index */
-        IccCardApplicationStatus imsApp = composeUiccApplicationStatus(
-                IccCardApplicationStatus.AppType.APPTYPE_ISIM,
-                IccCardApplicationStatus.AppState.APPSTATE_UNKNOWN, "0xA1");
-        IccCardApplicationStatus umtsApp = composeUiccApplicationStatus(
-                IccCardApplicationStatus.AppType.APPTYPE_USIM,
-                IccCardApplicationStatus.AppState.APPSTATE_UNKNOWN, "0xA2");
-        mIccCardStatus.mApplications = new IccCardApplicationStatus[]{imsApp, umtsApp};
-        mIccCardStatus.mCdmaSubscriptionAppIndex = -1;
-        mIccCardStatus.mImsSubscriptionAppIndex = 0;
-        mIccCardStatus.mGsmUmtsSubscriptionAppIndex = 1;
-        logd("Update UICC Profile Applications");
-        mUiccProfile.update(mContext, mSimulatedCommands, mIccCardStatus);
-        processAllMessages();
-
-        assertEquals(2, mUiccProfile.getNumApplications());
-        assertFalse(mUiccProfile.isApplicationOnIcc(IccCardApplicationStatus.AppType.APPTYPE_CSIM));
-        assertTrue(mUiccProfile.isApplicationOnIcc(IccCardApplicationStatus.AppType.APPTYPE_ISIM));
-        assertTrue(mUiccProfile.isApplicationOnIcc(IccCardApplicationStatus.AppType.APPTYPE_USIM));
-    }
-
-    @Test
-    @SmallTest
-    public void testSetVoiceRadioTech() {
-        // if voice rat is GSM, mCurrentAppType should be 3gpp
-        mUiccProfile.setVoiceRadioTech(ServiceState.RIL_RADIO_TECHNOLOGY_GSM);
-        assertEquals(UiccController.APP_FAM_3GPP, mUiccProfile.mCurrentAppType);
-
-        // if voice rat is CDMA, mCurrentAppType should be 3gpp2
-        mUiccProfile.setVoiceRadioTech(ServiceState.RIL_RADIO_TECHNOLOGY_IS95A);
-        assertEquals(UiccController.APP_FAM_3GPP2, mUiccProfile.mCurrentAppType);
-
-        // if voice rat is CDMA, there is no CSIM app, and there is a SIM/USIM app, then
-        // mCurrentAppType should be 3gpp
-        testUpdateUiccProfileApplicationNoCsim();
-        mUiccProfile.setVoiceRadioTech(ServiceState.RIL_RADIO_TECHNOLOGY_IS95A);
-        assertEquals(UiccController.APP_FAM_3GPP, mUiccProfile.mCurrentAppType);
     }
 }

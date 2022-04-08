@@ -17,7 +17,6 @@
 package com.android.internal.telephony.cat;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 
 import com.android.internal.telephony.GsmAlphabet;
 import com.android.internal.telephony.cat.Duration.TimeUnit;
@@ -62,7 +61,7 @@ abstract class ValueParser {
      *         Command Details object is found, ResultException is thrown.
      * @throws ResultException
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     static DeviceIdentities retrieveDeviceIdentities(ComprehensionTlv ctlv)
             throws ResultException {
 
@@ -215,7 +214,7 @@ abstract class ValueParser {
      * @return A list of TextAttribute objects
      * @throws ResultException
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     static List<TextAttribute> retrieveTextAttribute(ComprehensionTlv ctlv)
             throws ResultException {
         ArrayList<TextAttribute> lst = new ArrayList<TextAttribute>();
@@ -276,7 +275,7 @@ abstract class ValueParser {
      * @return String corresponding to the alpha identifier
      * @throws ResultException
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     static String retrieveAlphaId(ComprehensionTlv ctlv, boolean noAlphaUsrCnf)
             throws ResultException {
 
@@ -313,7 +312,7 @@ abstract class ValueParser {
      * @return A Java String object decoded from the Text object
      * @throws ResultException
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     static String retrieveTextString(ComprehensionTlv ctlv) throws ResultException {
         byte[] rawValue = ctlv.getRawValue();
         int valueIndex = ctlv.getValueIndex();

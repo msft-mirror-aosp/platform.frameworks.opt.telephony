@@ -109,9 +109,8 @@ public class ImsRegistrationCallbackHelper {
     public synchronized void updateRegistrationState(
             @RegistrationManager.ImsRegistrationState int newState) {
         synchronized (mLock) {
-            Log.d(TAG, "updateRegistrationState: registration state from "
-                    + RegistrationManager.registrationStateToString(mRegistrationState)
-                    + " to " + RegistrationManager.registrationStateToString(newState));
+            Log.d(TAG, "updateRegistrationState: registration state from " + mRegistrationState
+                    + " to " + newState);
             mRegistrationState = newState;
         }
     }

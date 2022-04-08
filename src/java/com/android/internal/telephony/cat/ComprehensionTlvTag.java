@@ -17,7 +17,6 @@
 package com.android.internal.telephony.cat;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 
 /**
  * Enumeration for representing the tag value of COMPREHENSION-TLV objects. If
@@ -72,7 +71,7 @@ public enum ComprehensionTlvTag {
      *
      * @return Actual tag value of this object
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public int value() {
         return mValue;
     }

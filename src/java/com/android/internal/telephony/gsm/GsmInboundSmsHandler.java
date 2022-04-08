@@ -23,7 +23,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Message;
 import android.os.SystemProperties;
 import android.provider.Telephony.Sms.Intents;
@@ -39,7 +38,8 @@ import com.android.internal.telephony.VisualVoicemailSmsFilter;
 import com.android.internal.telephony.uicc.UsimServiceTable;
 
 /**
- * Subclass of {@link InboundSmsHandler} for 3GPP type messages.
+ * This class broadcasts incoming SMS messages to interested apps after storing them in
+ * the SmsProvider "raw" table and ACKing them to the SMSC. After each message has been
  */
 public class GsmInboundSmsHandler extends InboundSmsHandler {
 
@@ -105,6 +105,12 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
                 return;
             }
 
+            // Return early if phone_id is explicilty included and does not match mPhone.
+            // If phone_id extra is not included, continue.
+            int phoneId = mPhone.getPhoneId();
+            if (intent.getIntExtra("phone_id", phoneId) != phoneId) {
+                return;
+            }
             Message m = Message.obtain();
             AsyncResult.forMessage(m, smsPdu, null);
             mCellBroadcastServiceManager.sendGsmMessageToHandler(m);
@@ -147,12 +153,11 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
      * are handled by {@link #dispatchNormalMessage} in parent class.
      *
      * @param smsb the SmsMessageBase object from the RIL
-     * @param smsSource the source of the SMS message
      * @return a result code from {@link android.provider.Telephony.Sms.Intents},
      * or {@link Activity#RESULT_OK} for delayed acknowledgment to SMSC
      */
     @Override
-    protected int dispatchMessageRadioSpecific(SmsMessageBase smsb, @SmsSource int smsSource) {
+    protected int dispatchMessageRadioSpecific(SmsMessageBase smsb) {
         SmsMessage sms = (SmsMessage) smsb;
 
         if (sms.isTypeZero()) {
@@ -169,14 +174,14 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
             // As per 3GPP TS 23.040 9.2.3.9, Type Zero messages should not be
             // Displayed/Stored/Notified. They should only be acknowledged.
             log("Received short message type 0, Don't display or store it. Send Ack");
-            addSmsTypeZeroToMetrics(smsSource);
+            addSmsTypeZeroToMetrics();
             return Intents.RESULT_SMS_HANDLED;
         }
 
         // Send SMS-PP data download messages to UICC. See 3GPP TS 31.111 section 7.1.1.
         if (sms.isUsimDataDownload()) {
             UsimServiceTable ust = mPhone.getUsimServiceTable();
-            return mDataDownloadHandler.handleUsimDataDownload(ust, sms, smsSource);
+            return mDataDownloadHandler.handleUsimDataDownload(ust, sms);
         }
 
         boolean handled = false;
@@ -190,7 +195,7 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
             if (DBG) log("Received voice mail indicator clear SMS shouldStore=" + !handled);
         }
         if (handled) {
-            addVoicemailSmsToMetrics(smsSource);
+            addVoicemailSmsToMetrics();
             return Intents.RESULT_SMS_HANDLED;
         }
 
@@ -201,7 +206,7 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
             return Intents.RESULT_SMS_OUT_OF_MEMORY;
         }
 
-        return dispatchNormalMessage(smsb, smsSource);
+        return dispatchNormalMessage(smsb);
     }
 
     private void updateMessageWaitingIndicator(int voicemailCount) {
@@ -224,7 +229,7 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
      * @param result result code indicating any error
      * @param response callback message sent when operation completes.
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     @Override
     protected void acknowledgeLastIncomingSms(boolean success, int result, Message response) {
         mPhone.mCi.acknowledgeLastIncomingGsmSms(success, resultToCause(result), response);
@@ -253,18 +258,16 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
     /**
      * Add SMS of type 0 to metrics.
      */
-    private void addSmsTypeZeroToMetrics(@SmsSource int smsSource) {
+    private void addSmsTypeZeroToMetrics() {
         mMetrics.writeIncomingSmsTypeZero(mPhone.getPhoneId(),
                 android.telephony.SmsMessage.FORMAT_3GPP);
-        mPhone.getSmsStats().onIncomingSmsTypeZero(smsSource);
     }
 
     /**
      * Add voicemail indication SMS 0 to metrics.
      */
-    private void addVoicemailSmsToMetrics(@SmsSource int smsSource) {
+    private void addVoicemailSmsToMetrics() {
         mMetrics.writeIncomingVoiceMailSms(mPhone.getPhoneId(),
                 android.telephony.SmsMessage.FORMAT_3GPP);
-        mPhone.getSmsStats().onIncomingSmsVoicemail(false /* is3gpp2 */, smsSource);
     }
 }

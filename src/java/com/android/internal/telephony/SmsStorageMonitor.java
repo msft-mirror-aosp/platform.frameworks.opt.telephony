@@ -22,7 +22,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
 import android.os.PowerManager;
@@ -61,7 +60,7 @@ public class SmsStorageMonitor extends Handler {
     /** it is use to put in to extra value for SIM_FULL_ACTION and SMS_REJECTED_ACTION */
     Phone mPhone;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     final CommandsInterface mCi;                            // accessed from inner class
     boolean mStorageAvailable = true;                       // accessed from inner class
 

@@ -51,8 +51,7 @@ public class InboundSmsTrackerTest {
         mInboundSmsTracker = new InboundSmsTracker(InstrumentationRegistry.getContext(),
                 FAKE_PDU, FAKE_TIMESTAMP, FAKE_DEST_PORT, false,
                 FAKE_ADDRESS, FAKE_DISPLAY_ADDRESS, FAKE_REFERENCE_NUMBER, FAKE_SEQUENCE_NUMBER,
-                FAKE_MESSAGE_COUNT, false, FAKE_MESSAGE_BODY, false /* isClass0 */, FAKE_SUBID,
-                InboundSmsHandler.SOURCE_NOT_INJECTED);
+                FAKE_MESSAGE_COUNT, false, FAKE_MESSAGE_BODY, false /* isClass0 */, FAKE_SUBID);
     }
 
     public static MatrixCursor createFakeCursor() {
@@ -88,7 +87,6 @@ public class InboundSmsTrackerTest {
         assertEquals(FAKE_DISPLAY_ADDRESS, mInboundSmsTracker.getDisplayAddress());
         assertEquals(false, mInboundSmsTracker.isClass0());
         assertEquals(FAKE_SUBID, mInboundSmsTracker.getSubId());
-        assertEquals(InboundSmsHandler.SOURCE_NOT_INJECTED, mInboundSmsTracker.getSource());
 //        assertNotEquals(0L, mInboundSmsTracker.getMessageId());
 
         String[] args = new String[]{"123"};

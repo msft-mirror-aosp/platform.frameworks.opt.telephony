@@ -78,8 +78,8 @@ public class UiccCardTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testUiccCartdInfoCorrectness() {
-        /* before update correctness test */
+    public void tesUiccCartdInfoSanity() {
+        /* before update sanity test */
         assertEquals(0, mUiccCard.getNumApplications());
         assertEquals(IccCardStatus.CardState.CARDSTATE_PRESENT, mUiccCard.getCardState());
         assertNull(mUiccCard.getUniversalPinState());

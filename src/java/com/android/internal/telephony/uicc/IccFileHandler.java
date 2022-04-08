@@ -18,7 +18,6 @@ package com.android.internal.telephony.uicc;
 
 import android.compat.annotation.UnsupportedAppUsage;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
 
@@ -101,27 +100,27 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
     protected static final int EVENT_GET_EF_TRANSPARENT_SIZE_DONE = 12;
 
      // member variables
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected final CommandsInterface mCi;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected final UiccCardApplication mParentApp;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected final String mAid;
 
     static class LoadLinearFixedContext {
 
         int mEfid;
-        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+        @UnsupportedAppUsage
         int mRecordNum, mRecordSize, mCountRecords;
         boolean mLoadAll;
         String mPath;
 
         Message mOnLoaded;
 
-        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+        @UnsupportedAppUsage
         ArrayList<byte[]> results;
 
-        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+        @UnsupportedAppUsage
         LoadLinearFixedContext(int efid, int recordNum, Message onLoaded) {
             mEfid = efid;
             mRecordNum = recordNum;
@@ -180,7 +179,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
      * ((AsyncResult)(onLoaded.obj)).result is the byte[]
      *
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void loadEFLinearFixed(int fileid, String path, int recordNum, Message onLoaded) {
         String efPath = (path == null) ? getEFPath(fileid) : path;
         Message response
@@ -201,7 +200,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
      * ((AsyncResult)(onLoaded.obj)).result is the byte[]
      *
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void loadEFLinearFixed(int fileid, int recordNum, Message onLoaded) {
         loadEFLinearFixed(fileid, getEFPath(fileid), recordNum, onLoaded);
     }
@@ -236,7 +235,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
      *                 and recordSize[2] is the number of records in the EF file. So recordSize[0]
      *                 * recordSize[2] = recordSize[1].
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void getEFLinearRecordSize(int fileid, String path, Message onLoaded) {
         String efPath = (path == null) ? getEFPath(fileid) : path;
         Message response
@@ -255,7 +254,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
      *                 and recordSize[2] is the number of records in the EF file. So recordSize[0]
      *                 * recordSize[2] = recordSize[1].
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void getEFLinearRecordSize(int fileid, Message onLoaded) {
         getEFLinearRecordSize(fileid, getEFPath(fileid), onLoaded);
     }
@@ -302,7 +301,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
      *
      * ((AsyncResult)(onLoaded.obj)).result is an ArrayList<byte[]>
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void loadEFLinearFixedAll(int fileid, String path, Message onLoaded) {
         String efPath = (path == null) ? getEFPath(fileid) : path;
         Message response = obtainMessage(EVENT_GET_RECORD_SIZE_DONE,
@@ -321,7 +320,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
      * ((AsyncResult)(onLoaded.obj)).result is an ArrayList<byte[]>
      *
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void loadEFLinearFixedAll(int fileid, Message onLoaded) {
         loadEFLinearFixedAll(fileid, getEFPath(fileid), onLoaded);
     }
@@ -400,7 +399,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
      * @param onComplete onComplete.obj will be an AsyncResult
      *                   onComplete.obj.userObj will be a IccIoResult on success
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void updateEFLinearFixed(int fileid, String path, int recordNum, byte[] data,
             String pin2, Message onComplete) {
         String efPath = (path == null) ? getEFPath(fileid) : path;
@@ -418,7 +417,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
      * @param onComplete onComplete.obj will be an AsyncResult
      *                   onComplete.obj.userObj will be a IccIoResult on success
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void updateEFLinearFixed(int fileid, int recordNum, byte[] data,
             String pin2, Message onComplete) {
         mCi.iccIOForApp(COMMAND_UPDATE_RECORD, fileid, getEFPath(fileid),
@@ -431,7 +430,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
      * @param fileid EF id
      * @param data must be exactly as long as the EF
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void updateEFTransparent(int fileid, byte[] data, Message onComplete) {
         mCi.iccIOForApp(COMMAND_UPDATE_BINARY, fileid, getEFPath(fileid),
                         0, 0, data.length,
@@ -676,7 +675,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
 
     /**
      * Returns the root path of the EF file.
-     * i.e returns MainFile + DFfile as a string.
+     * i.e returns MasterFile + DFfile as a string.
      * Ex: For EF_ADN on a SIM, it will return "3F007F10"
      * This function handles only EFids that are common to
      * RUIM, SIM, USIM and other types of Icc cards.
@@ -708,7 +707,7 @@ public abstract class IccFileHandler extends Handler implements IccConstants {
         return null;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected abstract String getEFPath(int efid);
     protected abstract void logd(String s);
     protected abstract void loge(String s);

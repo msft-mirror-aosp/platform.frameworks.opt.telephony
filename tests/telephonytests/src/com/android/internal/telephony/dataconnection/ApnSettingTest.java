@@ -31,6 +31,7 @@ import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
 import android.test.suitebuilder.annotation.SmallTest;
 
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.TelephonyTest;
 
 import org.junit.After;
@@ -72,17 +73,17 @@ public class ApnSettingTest extends TelephonyTest {
                 "44010",                // numeric
                 "sp-mode",              // name
                 "spmode.ne.jp",         // apn
-                null,                   // proxy
+                null,                     // proxy
                 -1,                     // port
-                null,                   // mmsc
-                null,                   // mmsproxy
+                null,                     // mmsc
+                null,                     // mmsproxy
                 -1,                     // mmsport
                 "",                     // user
                 "",                     // password
                 -1,                     // authtype
-                apnTypeBitmask,         // types
-                ApnSetting.PROTOCOL_IP, // protocol
-                ApnSetting.PROTOCOL_IP, // roaming_protocol
+                apnTypeBitmask,               // types
+                ApnSetting.PROTOCOL_IP,                   // protocol
+                ApnSetting.PROTOCOL_IP,                   // roaming_protocol
                 carrierEnabled,         // carrier_enabled
                 0,                      // networktype_bitmask
                 0,                      // profile_id
@@ -134,7 +135,7 @@ public class ApnSettingTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testFromString() {
+    public void testFromString() throws Exception {
         final int dunTypesBitmask = ApnSetting.TYPE_DUN;
         final int mmsTypesBitmask = ApnSetting.TYPE_MMS | ApnSetting.TYPE_ALL;
 
@@ -263,7 +264,7 @@ public class ApnSettingTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testArrayFromString() {
+    public void testArrayFromString() throws Exception {
         final int mmsTypesBitmask = ApnSetting.TYPE_MMS;
         // Test a multiple v3 string.
         String testString =
@@ -296,7 +297,7 @@ public class ApnSettingTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testToString() {
+    public void testToString() throws Exception {
         // Use default apn_set_id constructor.
         ApnSetting apn = ApnSetting.makeApnSetting(
                 99, "12345", "Name", "apn", null, 10,
@@ -322,9 +323,9 @@ public class ApnSettingTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testIsMetered() {
+    public void testIsMetered() throws Exception {
         mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_DEFAULT_STRING, ApnSetting.TYPE_MMS_STRING});
+                new String[]{PhoneConstants.APN_TYPE_DEFAULT, PhoneConstants.APN_TYPE_MMS});
 
         doReturn(false).when(mServiceState).getDataRoaming();
         doReturn(1).when(mPhone).getSubId();
@@ -359,11 +360,10 @@ public class ApnSettingTest extends TelephonyTest {
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_IA, mPhone));
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_HIPRI, mPhone));
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_XCAP, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_ENTERPRISE, mPhone));
 
         // Carrier config settings changes.
         mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_DEFAULT_STRING});
+                new String[]{PhoneConstants.APN_TYPE_DEFAULT});
 
         assertTrue(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_DEFAULT, mPhone));
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_MMS, mPhone));
@@ -371,9 +371,9 @@ public class ApnSettingTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testIsRoamingMetered() {
+    public void testIsRoamingMetered() throws Exception {
         mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_ROAMING_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_DEFAULT_STRING, ApnSetting.TYPE_MMS_STRING});
+                new String[]{PhoneConstants.APN_TYPE_DEFAULT, PhoneConstants.APN_TYPE_MMS});
         doReturn(true).when(mServiceState).getDataRoaming();
         doReturn(1).when(mPhone).getSubId();
 
@@ -400,20 +400,19 @@ public class ApnSettingTest extends TelephonyTest {
 
         // Carrier config settings changes.
         mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_ROAMING_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_FOTA_STRING});
+                new String[]{PhoneConstants.APN_TYPE_FOTA});
 
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_DEFAULT, mPhone));
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_MMS, mPhone));
         assertTrue(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_FOTA, mPhone));
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_XCAP, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_ENTERPRISE, mPhone));
     }
 
     @Test
     @SmallTest
-    public void testIsMeteredAnother() {
+    public void testIsMeteredAnother() throws Exception {
         mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_SUPL_STRING, ApnSetting.TYPE_CBS_STRING});
+                new String[]{PhoneConstants.APN_TYPE_SUPL, PhoneConstants.APN_TYPE_CBS});
 
         doReturn(false).when(mServiceState).getDataRoaming();
         doReturn(1).when(mPhone).getSubId();
@@ -438,15 +437,13 @@ public class ApnSettingTest extends TelephonyTest {
 
         assertFalse(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_IMS), mPhone));
         assertFalse(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_XCAP), mPhone));
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_ENTERPRISE), mPhone));
     }
 
     @Test
     @SmallTest
-    public void testIsRoamingMeteredAnother() {
+    public void testIsRoamingMeteredAnother() throws Exception {
         mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_ROAMING_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_SUPL_STRING, ApnSetting.TYPE_CBS_STRING});
+                new String[]{PhoneConstants.APN_TYPE_SUPL, PhoneConstants.APN_TYPE_CBS});
         doReturn(true).when(mServiceState).getDataRoaming();
         doReturn(2).when(mPhone).getSubId();
 
@@ -479,12 +476,11 @@ public class ApnSettingTest extends TelephonyTest {
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_IA, mPhone));
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_HIPRI, mPhone));
         assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_XCAP, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_ENTERPRISE, mPhone));
     }
 
     @Test
     @SmallTest
-    public void testIsMeteredNothingCharged() {
+    public void testIsMeteredNothingCharged() throws Exception {
         mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
                 new String[]{});
 
@@ -505,7 +501,7 @@ public class ApnSettingTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testIsRoamingMeteredNothingCharged() {
+    public void testIsRoamingMeteredNothingCharged() throws Exception {
         mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_ROAMING_APN_TYPES_STRINGS,
                 new String[]{});
         doReturn(true).when(mServiceState).getDataRoaming();
@@ -525,7 +521,7 @@ public class ApnSettingTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testCanHandleType() {
+    public void testCanHandleType() throws Exception {
         String types[] = {"mms"};
 
         assertTrue(createApnSetting(ApnSetting.TYPE_ALL)
@@ -560,7 +556,7 @@ public class ApnSettingTest extends TelephonyTest {
                 ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS | ApnSetting.TYPE_IA)
                 .canHandleType(ApnSetting.TYPE_IA));
 
-        // same for emergency, mcx, xcap, and enterprise
+        // same for emergency, mcx, and xcap
         assertFalse(createApnSetting(ApnSetting.TYPE_ALL)
                 .canHandleType(ApnSetting.TYPE_EMERGENCY));
         assertTrue(createApnSetting(
@@ -576,11 +572,6 @@ public class ApnSettingTest extends TelephonyTest {
         assertTrue(createApnSetting(
                 ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS | ApnSetting.TYPE_XCAP)
                 .canHandleType(ApnSetting.TYPE_XCAP));
-        assertFalse(createApnSetting(ApnSetting.TYPE_ALL)
-                .canHandleType(ApnSetting.TYPE_ENTERPRISE));
-        assertTrue(createApnSetting(
-                ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS | ApnSetting.TYPE_ENTERPRISE)
-                .canHandleType(ApnSetting.TYPE_ENTERPRISE));
 
         // check carrier disabled
         assertFalse(createDisabledApnSetting(ApnSetting.TYPE_ALL)
@@ -599,9 +590,6 @@ public class ApnSettingTest extends TelephonyTest {
         assertFalse(createDisabledApnSetting(
                 ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS | ApnSetting.TYPE_XCAP)
                 .canHandleType(ApnSetting.TYPE_XCAP));
-        assertFalse(createDisabledApnSetting(
-                ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS | ApnSetting.TYPE_ENTERPRISE)
-                .canHandleType(ApnSetting.TYPE_ENTERPRISE));
     }
 
     @Test
@@ -651,7 +639,7 @@ public class ApnSettingTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testEqualsRoamingProtocol() {
+    public void testEqualsRoamingProtocol() throws Exception {
         ApnSetting apn1 = ApnSetting.makeApnSetting(
                 1234,
                 "310260",
@@ -712,7 +700,7 @@ public class ApnSettingTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testCanHandleNetwork() {
+    public void testCanHandleNetwork() throws Exception {
         ApnSetting apn1 = ApnSetting.makeApnSetting(
                 1234,
                 "310260",

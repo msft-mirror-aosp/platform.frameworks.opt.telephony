@@ -16,7 +16,7 @@
 
 package com.android.internal.telephony.metrics;
 
-import com.android.internal.telephony.nano.PersistAtomsProto.VoiceCallRatUsage;
+import com.android.internal.telephony.nano.PersistAtomsProto.RawVoiceCallRatUsage;
 import com.android.telephony.Rlog;
 
 import java.util.Arrays;
@@ -52,7 +52,7 @@ public class VoiceCallRatTracker {
     }
 
     /** Creates an RAT tracker from saved atoms at startup. */
-    public static VoiceCallRatTracker fromProto(VoiceCallRatUsage[] usages) {
+    public static VoiceCallRatTracker fromProto(RawVoiceCallRatUsage[] usages) {
         VoiceCallRatTracker tracker = new VoiceCallRatTracker();
         if (usages == null) {
             Rlog.e(TAG, "fromProto: usages=null");
@@ -63,10 +63,10 @@ public class VoiceCallRatTracker {
     }
 
     /** Append the map to javanano persist atoms. */
-    public VoiceCallRatUsage[] toProto() {
+    public RawVoiceCallRatUsage[] toProto() {
         return mRatUsageMap.entrySet().stream()
                 .map(VoiceCallRatTracker::entryToProto)
-                .toArray(VoiceCallRatUsage[]::new);
+                .toArray(RawVoiceCallRatUsage[]::new);
     }
 
     /** Resets the tracker. */
@@ -140,14 +140,14 @@ public class VoiceCallRatTracker {
         }
     }
 
-    private void addProto(VoiceCallRatUsage usage) {
+    private void addProto(RawVoiceCallRatUsage usage) {
         mRatUsageMap.put(Key.fromProto(usage), Value.fromProto(usage));
     }
 
-    private static VoiceCallRatUsage entryToProto(Map.Entry<Key, Value> entry) {
+    private static RawVoiceCallRatUsage entryToProto(Map.Entry<Key, Value> entry) {
         Key key = entry.getKey();
         Value value = entry.getValue();
-        VoiceCallRatUsage usage = new VoiceCallRatUsage();
+        RawVoiceCallRatUsage usage = new RawVoiceCallRatUsage();
         usage.carrierId = key.carrierId;
         usage.rat = key.rat;
         if (value.mConnectionIds != null) {
@@ -172,7 +172,7 @@ public class VoiceCallRatTracker {
             this.rat = rat;
         }
 
-        static Key fromProto(VoiceCallRatUsage usage) {
+        static Key fromProto(RawVoiceCallRatUsage usage) {
             return new Key(usage.carrierId, usage.rat);
         }
 
@@ -226,7 +226,7 @@ public class VoiceCallRatTracker {
             }
         }
 
-        static Value fromProto(VoiceCallRatUsage usage) {
+        static Value fromProto(RawVoiceCallRatUsage usage) {
             Value value = new Value(usage.totalDurationMillis, usage.callCount);
             return value;
         }

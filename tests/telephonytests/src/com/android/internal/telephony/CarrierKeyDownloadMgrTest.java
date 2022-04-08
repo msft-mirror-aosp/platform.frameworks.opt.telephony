@@ -15,14 +15,13 @@
  */
 package com.android.internal.telephony;
 
-import static junit.framework.Assert.assertNull;
+import static android.preference.PreferenceManager.getDefaultSharedPreferences;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.anyBoolean;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -31,10 +30,10 @@ import static org.mockito.Mockito.when;
 import android.app.DownloadManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
 import android.telephony.ImsiEncryptionInfo;
-import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
@@ -105,8 +104,7 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
         String dateExpected = dt.format(expectedCal.getTime());
         ImsiEncryptionInfo imsiEncryptionInfo = new ImsiEncryptionInfo("mcc", "mnc", 1,
                 "keyIdentifier", publicKey, date);
-        when(mPhone.getCarrierInfoForImsiEncryption(anyInt(), anyBoolean()))
-                .thenReturn(imsiEncryptionInfo);
+        when(mPhone.getCarrierInfoForImsiEncryption(anyInt())).thenReturn(imsiEncryptionInfo);
         Date expirationDate = new Date(mCarrierKeyDM.getExpirationDate());
         assertTrue(dt.format(expirationDate).equals(dateExpected));
     }
@@ -132,8 +130,7 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
         Date maxExpirationDate = maxExpirationCal.getTime();
         ImsiEncryptionInfo imsiEncryptionInfo = new ImsiEncryptionInfo("mcc", "mnc", 1,
                 "keyIdentifier", publicKey, date);
-        when(mPhone.getCarrierInfoForImsiEncryption(anyInt(), anyBoolean()))
-                .thenReturn(imsiEncryptionInfo);
+        when(mPhone.getCarrierInfoForImsiEncryption(anyInt())).thenReturn(imsiEncryptionInfo);
         Date expirationDate = new Date(mCarrierKeyDM.getExpirationDate());
         assertTrue(expirationDate.before(minExpirationDate));
         assertTrue(expirationDate.after(maxExpirationDate));
@@ -154,7 +151,7 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
         }
         ImsiEncryptionInfo imsiEncryptionInfo = new ImsiEncryptionInfo("310", "270", 2,
                 "key1=value", keyInfo.first, new Date(keyInfo.second));
-        String mccMnc = "310270";
+        String mccMnc = "310:270";
         mCarrierKeyDM.parseJsonAndPersistKey(mJsonStr, mccMnc);
         verify(mPhone, times(2)).setCarrierInfoForImsiEncryption(
                 (Matchers.refEq(imsiEncryptionInfo)));
@@ -175,7 +172,7 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
         }
         ImsiEncryptionInfo imsiEncryptionInfo = new ImsiEncryptionInfo("310", "270", 2,
                 "key1=value", keyInfo.first, new Date(keyInfo.second));
-        String mccMnc = "310270";
+        String mccMnc = "310:270";
         mCarrierKeyDM.parseJsonAndPersistKey(mJsonStr1, mccMnc);
         verify(mPhone, times(2)).setCarrierInfoForImsiEncryption(
                 (Matchers.refEq(imsiEncryptionInfo)));
@@ -188,7 +185,7 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testParseBadJsonFail() {
-        String mccMnc = "310290";
+        String mccMnc = "310:290";
         String badJsonStr = "{badJsonString}";
         mCarrierKeyDM.parseJsonAndPersistKey(badJsonStr, mccMnc);
         verify(mPhone, times(0)).setCarrierInfoForImsiEncryption(any());
@@ -201,13 +198,9 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testIsValidDownload() {
-        String currentMccMnc = "310260";
-        long currentDownloadId = 1;
-        // mock downloadId to match
-        mCarrierKeyDM.mMccMncForDownload = currentMccMnc;
-        mCarrierKeyDM.mDownloadId = currentDownloadId;
-
-        assertTrue(mCarrierKeyDM.isValidDownload(currentMccMnc, currentDownloadId));
+        String mccMnc = "310:260";
+        when(mTelephonyManager.getSimOperator(anyInt())).thenReturn("310260");
+        assertTrue(mCarrierKeyDM.isValidDownload(mccMnc));
     }
 
     /**
@@ -217,18 +210,9 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testIsValidDownloadFail() {
-        String currentMccMnc = "310260";
-        long currentDownloadId = 1;
-
-        // mock downloadId to match, mccmnc so it doesn't match
-        mCarrierKeyDM.mMccMncForDownload = "310290";
-        mCarrierKeyDM.mDownloadId = currentDownloadId;
-        assertFalse(mCarrierKeyDM.isValidDownload(currentMccMnc, currentDownloadId));
-
-        // pass in mccmnc to match, and mock shared pref downloadId so it doesn't match
-        currentMccMnc = "310290";
-        mCarrierKeyDM.mDownloadId = currentDownloadId + 1;
-        assertFalse(mCarrierKeyDM.isValidDownload(currentMccMnc, currentDownloadId));
+        String mccMnc = "310:290";
+        when(mTelephonyManager.getSimOperator(anyInt())).thenReturn("310260");
+        assertFalse(mCarrierKeyDM.isValidDownload(mccMnc));
     }
 
     /**
@@ -256,10 +240,11 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testDownloadComplete() {
-        String mccMnc = "310260";
-        long downloadId = 1;
-        mCarrierKeyDM.mMccMncForDownload = mccMnc;
-        mCarrierKeyDM.mDownloadId = downloadId;
+        SharedPreferences.Editor editor = getDefaultSharedPreferences(mContext).edit();
+        String mccMnc = "310:260";
+        int slotId = mPhone.getPhoneId();
+        editor.putString("CARRIER_KEY_DM_MCC_MNC" + slotId, mccMnc);
+        editor.commit();
 
         SimpleDateFormat dt = new SimpleDateFormat("yyyy-mm-dd");
         Calendar expectedCal = new GregorianCalendar();
@@ -268,7 +253,6 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
 
         when(mTelephonyManager.getSimOperator(anyInt())).thenReturn("310260");
         Intent mIntent = new Intent(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
-        mIntent.putExtra(DownloadManager.EXTRA_DOWNLOAD_ID, downloadId);
         mContext.sendBroadcast(mIntent);
         processAllMessages();
         Date expirationDate = new Date(mCarrierKeyDM.getExpirationDate());
@@ -294,30 +278,9 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
         mIntent.putExtra(PhoneConstants.PHONE_KEY, 0);
         mContext.sendBroadcast(mIntent);
         processAllMessages();
-        assertEquals("310260", mCarrierKeyDM.mMccMncForDownload);
-    }
-
-    /**
-     * Tests sending the ACTION_CARRIER_CONFIG_CHANGED intent with an empty key.
-     * Verify that the carrier keys are removed if IMSI_KEY_DOWNLOAD_URL_STRING is null.
-     */
-    @Test
-    @SmallTest
-    public void testCarrierConfigChangedEmptyKey() {
-        CarrierConfigManager carrierConfigManager = (CarrierConfigManager)
-                mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
-        int slotId = mPhone.getPhoneId();
-        PersistableBundle bundle = carrierConfigManager.getConfigForSubId(slotId);
-        bundle.putInt(CarrierConfigManager.IMSI_KEY_AVAILABILITY_INT, 3);
-        bundle.putString(CarrierConfigManager.IMSI_KEY_DOWNLOAD_URL_STRING, null);
-
-        Intent mIntent = new Intent(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        mIntent.putExtra(PhoneConstants.PHONE_KEY, 0);
-        mContext.sendBroadcast(mIntent);
-        processAllMessages();
-        assertNull(mCarrierKeyDM.mMccMncForDownload);
-
-        verify(mPhone).deleteCarrierInfoForImsiEncryption();
+        SharedPreferences preferences = getDefaultSharedPreferences(mContext);
+        String mccMnc = preferences.getString("CARRIER_KEY_DM_MCC_MNC" + slotId, null);
+        assertTrue(mccMnc.equals("310:260"));
     }
 
     /**
@@ -329,17 +292,19 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
     public void testAlarmRenewal() {
         CarrierConfigManager carrierConfigManager = (CarrierConfigManager)
                 mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
-        int slotIndex = SubscriptionManager.getSlotIndex(mPhone.getSubId());
-        PersistableBundle bundle = carrierConfigManager.getConfigForSubId(slotIndex);
+        int slotId = mPhone.getPhoneId();
+        PersistableBundle bundle = carrierConfigManager.getConfigForSubId(slotId);
         bundle.putInt(CarrierConfigManager.IMSI_KEY_AVAILABILITY_INT, 3);
         bundle.putString(CarrierConfigManager.IMSI_KEY_DOWNLOAD_URL_STRING, mURL);
 
         when(mTelephonyManager.getSimOperator(anyInt())).thenReturn("310260");
-        Intent mIntent = new Intent("com.android.internal.telephony.carrier_key_download_alarm");
-        mIntent.putExtra(SubscriptionManager.EXTRA_SLOT_INDEX, slotIndex);
+        Intent mIntent = new Intent("com.android.internal.telephony.carrier_key_download_alarm"
+                + slotId);
         mContext.sendBroadcast(mIntent);
         processAllMessages();
-        assertEquals("310260", mCarrierKeyDM.mMccMncForDownload);
+        SharedPreferences preferences = getDefaultSharedPreferences(mContext);
+        String mccMnc = preferences.getString("CARRIER_KEY_DM_MCC_MNC" + slotId, null);
+        assertTrue(mccMnc.equals("310:260"));
     }
 
     /**
@@ -357,7 +322,7 @@ public class CarrierKeyDownloadMgrTest extends TelephonyTest {
         ImsiEncryptionInfo imsiEncryptionInfo = new ImsiEncryptionInfo("310", "270",
                 TelephonyManager.KEY_TYPE_WLAN, "key1=value", keyInfo.first,
                 new Date(CERT_EXPIRATION));
-        String mccMnc = "310270";
+        String mccMnc = "310:270";
         mCarrierKeyDM.parseJsonAndPersistKey(mJsonStr3GppSpec, mccMnc);
         verify(mPhone).setCarrierInfoForImsiEncryption(
                 (Matchers.refEq(imsiEncryptionInfo)));

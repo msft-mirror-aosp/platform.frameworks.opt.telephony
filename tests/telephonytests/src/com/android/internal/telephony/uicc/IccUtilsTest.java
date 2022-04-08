@@ -16,29 +16,20 @@
 
 package com.android.internal.telephony.uicc;
 
-import static com.google.common.truth.Truth.assertThat;
-
-import static org.junit.Assert.assertEquals;
-
+import android.test.AndroidTestCase;
+import android.test.suitebuilder.annotation.SmallTest;
 import android.text.TextUtils;
-
-import androidx.test.ext.junit.runners.AndroidJUnit4;
-
-import org.junit.Test;
-import org.junit.runner.RunWith;
 
 import java.util.Arrays;
 import java.util.List;
 
-@RunWith(AndroidJUnit4.class)
-public class IccUtilsTest {
+public class IccUtilsTest extends AndroidTestCase {
     private static final int NUM_FPLMN = 3;
     private static final List<String> FPLMNS_SAMPLE = Arrays.asList("123456", "12345", "54321");
     private static final int DATA_LENGTH = 12;
-    private static final String EMOJI = new String(Character.toChars(0x1F642));
 
-    @Test
-    public void encodeFplmns() {
+    @SmallTest
+    public void testEncodeFplmns() {
         byte[] encodedFplmns = IccUtils.encodeFplmns(FPLMNS_SAMPLE, DATA_LENGTH);
         int numValidPlmns = 0;
         for (int i = 0; i < NUM_FPLMN; i++) {
@@ -48,59 +39,5 @@ public class IccUtilsTest {
             if (!TextUtils.isEmpty(parsed)) numValidPlmns++;
         }
         assertEquals(NUM_FPLMN, numValidPlmns);
-    }
-
-    @Test
-    public void stringToAdnStringField_gsmBasic() {
-        String alphaTag = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz 1234567890"
-                + "!@#$%&*()_+,.?;:<>";
-
-        byte[] result = IccUtils.stringToAdnStringField(alphaTag);
-        assertThat(result.length).isEqualTo(alphaTag.length());
-        assertThat(IccUtils.adnStringFieldToString(result, 0, result.length))
-                .isEqualTo(alphaTag);
-    }
-
-    @Test
-    public void stringToAdnStringField_nonGsm() {
-        String alphaTag = "日本";
-
-        byte[] result = IccUtils.stringToAdnStringField(alphaTag);
-        assertThat(result.length).isEqualTo(alphaTag.length() * 2 + 1);
-        assertThat(result[0]).isEqualTo((byte) 0x80);
-        assertThat(IccUtils.adnStringFieldToString(result, 0, result.length))
-                .isEqualTo(alphaTag);
-    }
-
-    @Test
-    public void stringToAdnStringField_mixed() {
-        String alphaTag = "ni=日;hon=本;";
-
-        byte[] result = IccUtils.stringToAdnStringField(alphaTag);
-        assertThat(result.length).isEqualTo(alphaTag.length() * 2 + 1);
-        assertThat(result[0]).isEqualTo((byte) 0x80);
-        assertThat(IccUtils.adnStringFieldToString(result, 0, result.length))
-                .isEqualTo(alphaTag);
-    }
-
-    @Test
-    public void stringToAdnStringField_gsmWithEmoji() {
-        String alphaTag = ":)=" + EMOJI + ";";
-
-        byte[] result = IccUtils.stringToAdnStringField(alphaTag);
-        assertThat(result.length).isEqualTo(alphaTag.length() * 2 + 1);
-        assertThat(IccUtils.adnStringFieldToString(result, 0, result.length))
-                .isEqualTo(alphaTag);
-    }
-
-    @Test
-    public void stringToAdnStringField_mixedWithEmoji() {
-        String alphaTag = "ni=日;hon=本;:)=" + EMOJI + ";";
-
-        byte[] result = IccUtils.stringToAdnStringField(alphaTag);
-        assertThat(result.length).isEqualTo(alphaTag.length() * 2 + 1);
-        assertThat(result[0]).isEqualTo((byte) 0x80);
-        assertThat(IccUtils.adnStringFieldToString(result, 0, result.length))
-                .isEqualTo(alphaTag);
     }
 }

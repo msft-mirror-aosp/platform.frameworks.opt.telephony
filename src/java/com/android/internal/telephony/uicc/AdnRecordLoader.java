@@ -18,7 +18,6 @@ package com.android.internal.telephony.uicc;
 
 import android.compat.annotation.UnsupportedAppUsage;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -33,7 +32,7 @@ public class AdnRecordLoader extends Handler {
 
     //***** Instance Variables
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private IccFileHandler mFh;
     int mEf;
     int mExtensionEF;
@@ -61,7 +60,7 @@ public class AdnRecordLoader extends Handler {
 
     //***** Constructor
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     AdnRecordLoader(IccFileHandler fh) {
         // The telephony unit-test cases may create AdnRecords
         // in secondary threads
@@ -69,7 +68,7 @@ public class AdnRecordLoader extends Handler {
         mFh = fh;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private String getEFPath(int efid) {
         if (efid == IccConstants.EF_ADN) {
             return IccConstants.MF_SIM + IccConstants.DF_TELECOM;
@@ -82,7 +81,7 @@ public class AdnRecordLoader extends Handler {
      * Resulting AdnRecord is placed in response.obj.result
      * or response.obj.exception is set
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void
     loadFromEF(int ef, int extensionEF, int recordNumber,
                 Message response) {
@@ -129,7 +128,7 @@ public class AdnRecordLoader extends Handler {
      * @param pin2 for CHV2 operations, must be null if pin2 is not needed
      * @param response will be sent to its handler when completed
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void
     updateEF(AdnRecord adn, int ef, int extensionEF, int recordNumber,
             String pin2, Message response) {

@@ -17,7 +17,6 @@
 package com.android.internal.telephony;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 
 /**
  * Object returned by the RIL upon successful completion of sendSMS.
@@ -28,38 +27,31 @@ public class SmsResponse {
     public static final int NO_ERROR_CODE = -1;
 
     /** Message reference of the just-sent SMS. */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     int mMessageRef;
     /** ackPdu for the just-sent SMS. */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     String mAckPdu;
     /**
      * errorCode: See 3GPP 27.005, 3.2.5 for GSM/UMTS,
      * 3GPP2 N.S0005 (IS-41C) Table 171 for CDMA, -1 if unknown or not applicable.
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public int mErrorCode;
-
-    public long mMessageId;
 
     @UnsupportedAppUsage
     public SmsResponse(int messageRef, String ackPdu, int errorCode) {
-        this(messageRef, ackPdu, errorCode, /* messageId= */ 0L);
-    }
-
-    public SmsResponse(int messageRef, String ackPdu, int errorCode, long messageId) {
         mMessageRef = messageRef;
         mAckPdu = ackPdu;
         mErrorCode = errorCode;
-        mMessageId = messageId;
     }
 
     @Override
     public String toString() {
         String ret = "{ mMessageRef = " + mMessageRef
                         + ", mErrorCode = " + mErrorCode
-                + ", mAckPdu = " + mAckPdu
-                + ", " + SmsController.formatCrossStackMessageId(mMessageId) + "}";
+                        + ", mAckPdu = " + mAckPdu
+                        + "}";
         return ret;
     }
 }

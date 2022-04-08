@@ -182,8 +182,8 @@ public class NetworkRegistrationManager extends Handler {
         @Override
         public void binderDied() {
             // TODO: try to restart the service.
-            logd("Network service " + mComponentName + " for transport type "
-                    + AccessNetworkConstants.transportTypeToString(mTransportType) + " died.");
+            logd("NetworkService(" + mComponentName +  " transport type "
+                    + mTransportType + ") died.");
         }
     }
 
@@ -202,6 +202,7 @@ public class NetworkRegistrationManager extends Handler {
                         new NetworkRegStateCallback());
             } catch (RemoteException exception) {
                 // Remote exception means that the binder already died.
+                mDeathRecipient.binderDied();
                 logd("RemoteException " + exception);
             }
         }

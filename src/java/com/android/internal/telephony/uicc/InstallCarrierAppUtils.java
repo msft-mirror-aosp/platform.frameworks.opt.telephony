@@ -125,7 +125,7 @@ public class InstallCarrierAppUtils {
                 context,
                 0,
                 ShowInstallAppNotificationReceiver.get(context, pkgName),
-                PendingIntent.FLAG_IMMUTABLE);
+                0);
         alarmManager.set(AlarmManager.ELAPSED_REALTIME,
                 SystemClock.elapsedRealtime() + delayMillis,
                 pendingIntent);

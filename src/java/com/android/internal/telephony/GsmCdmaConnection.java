@@ -18,7 +18,6 @@ package com.android.internal.telephony;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -32,7 +31,6 @@ import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
 import android.text.TextUtils;
 
-import com.android.internal.telephony.PhoneInternalInterface.DialArgs;
 import com.android.internal.telephony.cdma.CdmaCallWaitingNotification;
 import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
@@ -40,9 +38,6 @@ import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppState;
 import com.android.internal.telephony.uicc.UiccCardApplication;
 import com.android.telephony.Rlog;
-
-import java.util.ArrayList;
-import java.util.Collections;
 
 /**
  * {@hide}
@@ -56,13 +51,13 @@ public class GsmCdmaConnection extends Connection {
 
     //***** Instance Variables
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     GsmCdmaCallTracker mOwner;
     GsmCdmaCall mParent;
 
     boolean mDisconnected;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     int mIndex;          // index in GsmCdmaCallTracker.connections[], -1 if unassigned
                         // The GsmCdma index is 1 + this
 
@@ -141,10 +136,6 @@ public class GsmCdmaConnection extends Connection {
         mAddress = dc.number;
         setEmergencyCallInfo(mOwner);
 
-        String forwardedNumber = TextUtils.isEmpty(dc.forwardedNumber) ? null : dc.forwardedNumber;
-        Rlog.i(LOG_TAG, "create, forwardedNumber=" + Rlog.pii(LOG_TAG, forwardedNumber));
-        mForwardedNumber =  forwardedNumber == null ? null :
-                new ArrayList<>(Collections.singletonList(dc.forwardedNumber));
         mIsIncoming = dc.isMT;
         mCreateTime = System.currentTimeMillis();
         mCnapName = dc.name;
@@ -166,7 +157,7 @@ public class GsmCdmaConnection extends Connection {
 
     /** This is an MO call, created when dialing */
     public GsmCdmaConnection (GsmCdmaPhone phone, String dialString, GsmCdmaCallTracker ct,
-                              GsmCdmaCall parent, DialArgs dialArgs) {
+                              GsmCdmaCall parent, boolean isEmergencyCall) {
         super(phone.getPhoneType());
         createWakeLock(phone.getContext());
         acquireWakeLock();
@@ -185,15 +176,8 @@ public class GsmCdmaConnection extends Connection {
         }
 
         mAddress = PhoneNumberUtils.extractNetworkPortionAlt(dialString);
-        if (dialArgs.isEmergency) {
+        if (isEmergencyCall) {
             setEmergencyCallInfo(mOwner);
-
-            // There was no emergency number info found for this call, however it is
-            // still marked as an emergency number. This may happen if it was a redialed
-            // non-detectable emergency call from IMS.
-            if (getEmergencyNumberInfo() == null) {
-                setNonDetectableEmergencyCallInfo(dialArgs.eccCategory);
-            }
         }
 
         mPostDialString = PhoneNumberUtils.extractPostDialPortion(dialString);
@@ -281,7 +265,7 @@ public class GsmCdmaConnection extends Connection {
      *    If consecutive PAUSE/WAIT sequence in the middle of the string,
      *    and if there is any WAIT in PAUSE/WAIT sequence, treat them like WAIT.
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public static String formatDialString(String phoneNumber) {
         /**
          * TODO(cleanup): This function should move to PhoneNumberUtils, and
@@ -371,7 +355,7 @@ public class GsmCdmaConnection extends Connection {
         }
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     @Override
     public GsmCdmaCall.State getState() {
         if (mDisconnected) {
@@ -477,7 +461,7 @@ public class GsmCdmaConnection extends Connection {
      * @param causeCode RIL disconnect code
      * @return the corresponding value from {@link DisconnectCause}
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     int disconnectCauseFromCode(int causeCode) {
         /**
          * See 22.001 Annex F.4 for mapping of cause codes
@@ -561,9 +545,6 @@ public class GsmCdmaConnection extends Connection {
 
             case CallFailCause.USER_ALERTING_NO_ANSWER:
                 return DisconnectCause.TIMED_OUT;
-
-            case CallFailCause.RADIO_OFF:
-                return DisconnectCause.POWER_OFF;
 
             case CallFailCause.ACCESS_CLASS_BLOCKED:
             case CallFailCause.ERROR_UNSPECIFIED:
@@ -713,16 +694,6 @@ public class GsmCdmaConnection extends Connection {
             mOwner.getPhone().getVoiceCallSessionStats().onAudioCodecChanged(this, dc.audioQuality);
         }
 
-        String forwardedNumber = TextUtils.isEmpty(dc.forwardedNumber) ? null : dc.forwardedNumber;
-        Rlog.i(LOG_TAG, "update: forwardedNumber=" + Rlog.pii(LOG_TAG, forwardedNumber));
-        ArrayList<String> forwardedNumbers =  forwardedNumber == null ? null :
-                new ArrayList<>(Collections.singletonList(dc.forwardedNumber));
-        if (!equalsHandlesNulls(mForwardedNumber, forwardedNumbers)) {
-            if (Phone.DEBUG_PHONE) log("update: mForwardedNumber, # changed");
-            mForwardedNumber = forwardedNumbers;
-            changed = true;
-        }
-
         // A null cnapName should be the same as ""
         if (TextUtils.isEmpty(dc.name)) {
             if (!TextUtils.isEmpty(mCnapName)) {
@@ -804,7 +775,7 @@ public class GsmCdmaConnection extends Connection {
     /**
      * An incoming or outgoing call has connected
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     void
     onConnectedInOrOut() {
         mConnectTime = System.currentTimeMillis();
@@ -907,7 +878,7 @@ public class GsmCdmaConnection extends Connection {
     }
 
     //CDMA
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void updateParent(GsmCdmaCall oldParent, GsmCdmaCall newParent){
         if (newParent != oldParent) {
             if (oldParent != null) {
@@ -1063,13 +1034,13 @@ public class GsmCdmaConnection extends Connection {
         notifyPostDialListeners();
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void createWakeLock(Context context) {
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         mPartialWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, LOG_TAG);
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void acquireWakeLock() {
         if (mPartialWakeLock != null) {
             synchronized (mPartialWakeLock) {
@@ -1100,12 +1071,12 @@ public class GsmCdmaConnection extends Connection {
         }
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private static boolean isPause(char c) {
         return c == PhoneNumberUtils.PAUSE;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private static boolean isWait(char c) {
         return c == PhoneNumberUtils.WAIT;
     }
@@ -1118,7 +1089,7 @@ public class GsmCdmaConnection extends Connection {
     // This function is to find the next PAUSE character index if
     // multiple pauses in a row. Otherwise it finds the next non PAUSE or
     // non WAIT character index.
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private static int findNextPCharOrNonPOrNonWCharIndex(String phoneNumber, int currIndex) {
         boolean wMatched = isWait(phoneNumber.charAt(currIndex));
         int index = currIndex + 1;
@@ -1150,7 +1121,7 @@ public class GsmCdmaConnection extends Connection {
     // This function returns either PAUSE or WAIT character to append.
     // It is based on the next non PAUSE/WAIT character in the phoneNumber and the
     // index for the current PAUSE/WAIT character
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private static char findPOrWCharToAppend(String phoneNumber, int currPwIndex,
                                              int nextNonPwCharIndex) {
         char c = phoneNumber.charAt(currPwIndex);
@@ -1171,7 +1142,7 @@ public class GsmCdmaConnection extends Connection {
         return ret;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private String maskDialString(String dialString) {
         if (VDBG) {
             return dialString;
@@ -1180,7 +1151,7 @@ public class GsmCdmaConnection extends Connection {
         return "<MASKED>";
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void fetchDtmfToneDelay(GsmCdmaPhone phone) {
         CarrierConfigManager configMgr = (CarrierConfigManager)
                 phone.getContext().getSystemService(Context.CARRIER_CONFIG_SERVICE);
@@ -1190,12 +1161,12 @@ public class GsmCdmaConnection extends Connection {
         }
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private boolean isPhoneTypeGsm() {
         return mOwner.getPhone().getPhoneType() == PhoneConstants.PHONE_TYPE_GSM;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void log(String msg) {
         Rlog.d(LOG_TAG, "[GsmCdmaConn] " + msg);
     }

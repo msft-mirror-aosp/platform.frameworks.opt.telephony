@@ -28,7 +28,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
 import android.os.Registrant;
@@ -132,7 +131,7 @@ public class UiccController extends Handler {
     // NOTE: any new EVENT_* values must be added to eventToString.
 
     // this needs to be here, because on bootup we dont know which index maps to which UiccSlot
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private CommandsInterface[] mCis;
     @VisibleForTesting
     public UiccSlot[] mUiccSlots;
@@ -193,9 +192,6 @@ public class UiccController extends Handler {
     private UiccStateChangedLauncher mLauncher;
     private RadioConfig mRadioConfig;
 
-    /* The storage for the PIN codes. */
-    private final PinStorage mPinStorage;
-
     // LocalLog buffer to hold important SIM related events for debugging
     private static LocalLog sLocalLog = new LocalLog(TelephonyUtils.IS_DEBUGGABLE ? 250 : 100);
 
@@ -232,7 +228,7 @@ public class UiccController extends Handler {
         mPhoneIdToSlotId = new int[mCis.length];
         Arrays.fill(mPhoneIdToSlotId, INVALID_SLOT_ID);
         if (VDBG) logPhoneIdToSlotIdMapping();
-        mRadioConfig = RadioConfig.getInstance();
+        mRadioConfig = RadioConfig.getInstance(mContext);
         mRadioConfig.registerForSimSlotStatusChanged(this, EVENT_SLOT_STATUS_CHANGED, null);
         for (int i = 0; i < mCis.length; i++) {
             mCis[i].registerForIccStatusChanged(this, EVENT_ICC_STATUS_CHANGED, i);
@@ -257,8 +253,6 @@ public class UiccController extends Handler {
 
         PhoneConfigurationManager.registerForMultiSimConfigChange(
                 this, EVENT_MULTI_SIM_CONFIG_CHANGED, null);
-
-        mPinStorage = new PinStorage(mContext);
     }
 
     /**
@@ -427,7 +421,7 @@ public class UiccController extends Handler {
     }
 
     // Easy to use API
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public IccRecords getIccRecords(int phoneId, int family) {
         synchronized (mLock) {
             UiccCardApplication app = getUiccCardApplication(phoneId, family);
@@ -439,7 +433,7 @@ public class UiccController extends Handler {
     }
 
     // Easy to use API
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public IccFileHandler getIccFileHandler(int phoneId, int family) {
         synchronized (mLock) {
             UiccCardApplication app = getUiccCardApplication(phoneId, family);
@@ -618,7 +612,7 @@ public class UiccController extends Handler {
     }
 
     // Easy to use API
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public UiccCardApplication getUiccCardApplication(int phoneId, int family) {
         synchronized (mLock) {
             UiccCard uiccCard = getUiccCardForPhone(phoneId);
@@ -629,13 +623,7 @@ public class UiccController extends Handler {
         }
     }
 
-    /**
-     * Convert IccCardConstants.State enum values to corresponding IccCardConstants String
-     * constants
-     * @param state IccCardConstants.State enum value
-     * @return IccCardConstants String constant representing ICC state
-     */
-    public static String getIccStateIntentString(IccCardConstants.State state) {
+    static String getIccStateIntentString(IccCardConstants.State state) {
         switch (state) {
             case ABSENT: return IccCardConstants.INTENT_VALUE_ICC_ABSENT;
             case PIN_REQUIRED: return IccCardConstants.INTENT_VALUE_ICC_LOCKED;
@@ -692,13 +680,6 @@ public class UiccController extends Handler {
         }
         if (!isValidPhoneIndex(index)) {
             Rlog.e(LOG_TAG,"onGetIccCardStatusDone: invalid index : " + index);
-            return;
-        }
-        if (isShuttingDown()) {
-            // Do not process the SIM/SLOT events during device shutdown,
-            // as it may unnecessarily modify the persistent information
-            // like, SubscriptionManager.UICC_APPLICATIONS_ENABLED.
-            log("onGetIccCardStatusDone: shudown in progress ignore event");
             return;
         }
 
@@ -892,11 +873,6 @@ public class UiccController extends Handler {
         return mDefaultEuiccCardId;
     }
 
-    /** Get the {@link PinStorage}. */
-    public PinStorage getPinStorage() {
-        return mPinStorage;
-    }
-
     private ArrayList<String> loadCardStrings() {
         String cardStrings =
                 PreferenceManager.getDefaultSharedPreferences(mContext).getString(CARD_STRINGS, "");
@@ -934,13 +910,6 @@ public class UiccController extends Handler {
             }
             return;
         }
-        if (isShuttingDown()) {
-            // Do not process the SIM/SLOT events during device shutdown,
-            // as it may unnecessarily modify the persistent information
-            // like, SubscriptionManager.UICC_APPLICATIONS_ENABLED.
-            log("onGetSlotStatusDone: shudown in progress ignore event");
-            return;
-        }
 
         ArrayList<IccSlotStatus> status = (ArrayList<IccSlotStatus>) ar.result;
 
@@ -970,7 +939,7 @@ public class UiccController extends Handler {
             if (isActive) {
                 numActiveSlots++;
 
-                // Correctness check: logicalSlotIndex should be valid for an active slot
+                // sanity check: logicalSlotIndex should be valid for an active slot
                 if (!isValidPhoneIndex(iss.logicalSlotIndex)) {
                     Rlog.e(LOG_TAG, "Skipping slot " + i + " as phone " + iss.logicalSlotIndex
                                + " is not available to communicate with this slot");
@@ -1079,13 +1048,13 @@ public class UiccController extends Handler {
 
         if (VDBG) logPhoneIdToSlotIdMapping();
 
-        // Correctness check: number of active slots should be valid
+        // sanity check: number of active slots should be valid
         if (numActiveSlots != mPhoneIdToSlotId.length) {
             Rlog.e(LOG_TAG, "Number of active slots " + numActiveSlots
                        + " does not match the number of Phones" + mPhoneIdToSlotId.length);
         }
 
-        // Correctness check: slotIds should be unique in mPhoneIdToSlotId
+        // sanity check: slotIds should be unique in mPhoneIdToSlotId
         Set<Integer> slotIds = new HashSet<>();
         for (int slotId : mPhoneIdToSlotId) {
             if (slotIds.contains(slotId)) {
@@ -1103,16 +1072,12 @@ public class UiccController extends Handler {
                 options.toBundle());
     }
 
-    /**
-     * Check if slot status has changed from the last received one
-     */
-    @VisibleForTesting
-    public boolean slotStatusChanged(ArrayList<IccSlotStatus> slotStatusList) {
+    private boolean slotStatusChanged(ArrayList<IccSlotStatus> slotStatusList) {
         if (sLastSlotStatus == null || sLastSlotStatus.size() != slotStatusList.size()) {
             return true;
         }
-        for (int i = 0; i < slotStatusList.size(); i++) {
-            if (!sLastSlotStatus.get(i).equals(slotStatusList.get(i))) {
+        for (IccSlotStatus iccSlotStatus : slotStatusList) {
+            if (!sLastSlotStatus.contains(iccSlotStatus)) {
                 return true;
             }
         }
@@ -1172,6 +1137,12 @@ public class UiccController extends Handler {
             CarrierConfigManager configManager = (CarrierConfigManager)
                     mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
             configManager.updateConfigForPhoneId(index, IccCardConstants.INTENT_VALUE_ICC_UNKNOWN);
+
+            boolean requirePowerOffOnSimRefreshReset = mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_requireRadioPowerOffOnSimRefreshReset);
+            if (requirePowerOffOnSimRefreshReset) {
+                mCis[index].setRadioPower(false, null);
+            }
         }
 
         // The card status could have changed. Get the latest state.
@@ -1255,17 +1226,7 @@ public class UiccController extends Handler {
         return (index >= 0 && index < mUiccSlots.length);
     }
 
-    private boolean isShuttingDown() {
-        for (int i = 0; i < TelephonyManager.getDefault().getActiveModemCount(); i++) {
-            if (PhoneFactory.getPhone(i) != null &&
-                    PhoneFactory.getPhone(i).isShuttingDown()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     private void log(String string) {
         Rlog.d(LOG_TAG, string);
     }
@@ -1299,10 +1260,9 @@ public class UiccController extends Handler {
         pw.println(" mIsCdmaSupported=" + isCdmaSupported(mContext));
         pw.println(" mHasBuiltInEuicc=" + mHasBuiltInEuicc);
         pw.println(" mHasActiveBuiltInEuicc=" + mHasActiveBuiltInEuicc);
+        pw.println(" mUiccSlots: size=" + mUiccSlots.length);
         pw.println(" mCardStrings=" + mCardStrings);
         pw.println(" mDefaultEuiccCardId=" + mDefaultEuiccCardId);
-        pw.println(" mPhoneIdToSlotId=" + Arrays.toString(mPhoneIdToSlotId));
-        pw.println(" mUiccSlots: size=" + mUiccSlots.length);
         for (int i = 0; i < mUiccSlots.length; i++) {
             if (mUiccSlots[i] == null) {
                 pw.println("  mUiccSlots[" + i + "]=null");
@@ -1313,6 +1273,5 @@ public class UiccController extends Handler {
         }
         pw.println(" sLocalLog= ");
         sLocalLog.dump(fd, pw, args);
-        mPinStorage.dump(fd, pw, args);
     }
 }

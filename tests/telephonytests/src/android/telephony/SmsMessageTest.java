@@ -31,5 +31,6 @@ public class SmsMessageTest {
         assertEquals(null, SmsMessage.createFromPdu(null, SmsConstants.FORMAT_3GPP2));
         assertEquals(null, SmsMessage.createFromPdu(null, SmsConstants.FORMAT_3GPP));
         assertEquals(null, SmsMessage.createFromPdu(null));
+        assertEquals(null, SmsMessage.newFromCMT(null));
     }
 }

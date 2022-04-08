@@ -16,17 +16,14 @@
 
 package com.android.internal.telephony;
 
-import android.annotation.NonNull;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.telephony.DisconnectCause;
 import android.telephony.ServiceState;
 import android.telephony.ServiceState.RilRadioTechnology;
 import android.telephony.emergency.EmergencyNumber;
-import android.telephony.ims.RtpHeaderExtension;
 import android.util.Log;
 
 import com.android.ims.internal.ConferenceParticipant;
@@ -105,7 +102,6 @@ public abstract class Connection {
         public void onVideoProviderChanged(
                 android.telecom.Connection.VideoProvider videoProvider);
         public void onAudioQualityChanged(int audioQuality);
-        public void onMediaAttributesChanged();
         public void onConferenceParticipantsChanged(List<ConferenceParticipant> participants);
         public void onCallSubstateChanged(int callSubstate);
         public void onMultipartyStateChanged(boolean isMultiParty);
@@ -122,18 +118,6 @@ public abstract class Connection {
         public void onRttTerminated();
         public void onOriginalConnectionReplaced(Connection newConnection);
         public void onIsNetworkEmergencyCallChanged(boolean isEmergencyCall);
-
-        /**
-         * Indicates a DTMF digit has been received from the network.
-         * @param digit The DTMF digit.
-         */
-        public void onReceivedDtmfDigit(char digit);
-
-        /**
-         * Indicates data from an RTP header extension has been received from the network.
-         * @param extensionData The extension data.
-         */
-        public void onReceivedRtpHeaderExtensions(@NonNull Set<RtpHeaderExtension> extensionData);
     }
 
     /**
@@ -151,8 +135,6 @@ public abstract class Connection {
                 android.telecom.Connection.VideoProvider videoProvider) {}
         @Override
         public void onAudioQualityChanged(int audioQuality) {}
-        @Override
-        public void onMediaAttributesChanged() {}
         @Override
         public void onConferenceParticipantsChanged(List<ConferenceParticipant> participants) {}
         @Override
@@ -185,16 +167,10 @@ public abstract class Connection {
         public void onOriginalConnectionReplaced(Connection newConnection) {}
         @Override
         public void onIsNetworkEmergencyCallChanged(boolean isEmergencyCall) {}
-        @Override
-        public void onReceivedDtmfDigit(char digit) {}
-        @Override
-        public void onReceivedRtpHeaderExtensions(@NonNull Set<RtpHeaderExtension> extensionData) {}
     }
 
     public static final int AUDIO_QUALITY_STANDARD = 1;
     public static final int AUDIO_QUALITY_HIGH_DEFINITION = 2;
-    // the threshold used to compare mAudioCodecBitrateKbps and mAudioCodecBandwidth.
-    public static final float THRESHOLD = 0.01f;
 
     /**
      * The telecom internal call ID associated with this connection.  Only to be used for debugging
@@ -203,23 +179,23 @@ public abstract class Connection {
     private String mTelecomCallId;
 
     //Caller Name Display
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected String mCnapName;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected int mCnapNamePresentation  = PhoneConstants.PRESENTATION_ALLOWED;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected String mAddress;     // MAY BE NULL!!!
     // The VERSTAT number verification status; defaults to not verified.
     protected @android.telecom.Connection.VerificationStatus int mNumberVerificationStatus =
             android.telecom.Connection.VERIFICATION_STATUS_NOT_VERIFIED;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected String mDialString;          // outgoing calls only
     protected String[] mParticipantsToDial;// outgoing calls only
     protected boolean mIsAdhocConference;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected int mNumberPresentation = PhoneConstants.PRESENTATION_ALLOWED;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected boolean mIsIncoming;
     /*
      * These time/timespan values are based on System.currentTimeMillis(),
@@ -233,7 +209,7 @@ public abstract class Connection {
      * calculating deltas.
      */
     protected long mConnectTimeReal;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected long mDuration;
     protected long mHoldingStartTime;  // The time when the Connection last transitioned
                             // into HOLDING
@@ -244,8 +220,6 @@ public abstract class Connection {
     protected boolean mNumberConverted = false;
     protected String mConvertedNumber;
 
-    protected ArrayList<String> mForwardedNumber = null; //May be null. Incoming calls only.
-
     protected String mPostDialString;      // outgoing calls only
     protected int mNextPostDialChar;       // index into postDialString
 
@@ -254,10 +228,6 @@ public abstract class Connection {
 
     // Store the current audio code
     protected int mAudioCodec;
-    // audio codec bitrate in kbps
-    protected float mAudioCodecBitrateKbps;
-    // audio codec bandwidth in kHz
-    protected float mAudioCodecBandwidthKhz;
 
     @UnsupportedAppUsage
     private static String LOG_TAG = "Connection";
@@ -315,7 +285,7 @@ public abstract class Connection {
      */
     private int mPulledDialogId;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     protected Connection(int phoneType) {
         mPhoneType = phoneType;
     }
@@ -363,15 +333,6 @@ public abstract class Connection {
     // return whether connection is AdhocConference or not
     public boolean isAdhocConference() {
         return mIsAdhocConference;
-    }
-
-    /**
-     * Gets redirecting address (e.g. phone number) associated with connection.
-     *
-     * @return ArrayList of the forwarded number or null if unavailable
-     */
-    public ArrayList<String> getForwardedNumber() {
-        return mForwardedNumber;
     }
 
     /**
@@ -469,7 +430,7 @@ public abstract class Connection {
      * The time when this Connection makes a transition into ENDED or FAIL.
      * Returns 0 before then.
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public abstract long getDisconnectTime();
 
     /**
@@ -478,7 +439,7 @@ public abstract class Connection {
      * If the call is still connected, then returns the elapsed
      * time since connect.
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public long getDurationMillis() {
         if (mConnectTimeReal == 0) {
             return 0;
@@ -511,7 +472,7 @@ public abstract class Connection {
      * {@link android.telephony.DisconnectCause}. If the call is not yet
      * disconnected, NOT_DISCONNECTED is returned.
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public int getDisconnectCause() {
         return mCause;
     }
@@ -608,20 +569,6 @@ public abstract class Connection {
     }
 
     /**
-     * Set the non-detectable emergency number information.
-     */
-    public void setNonDetectableEmergencyCallInfo(int eccCategory) {
-        if (!mIsEmergencyCall) {
-            mIsEmergencyCall = true;
-            mEmergencyNumberInfo = new EmergencyNumber(mAddress, ""/*countryIso*/,
-                                    ""/*mnc*/, eccCategory,
-                                    new ArrayList<String>(),
-                                    EmergencyNumber.EMERGENCY_NUMBER_SOURCE_NETWORK_SIGNALING,
-                                    EmergencyNumber.EMERGENCY_CALL_ROUTING_UNKNOWN);
-        }
-    }
-
-    /**
      * Set if we have known the user's intent for the call is emergency.
      *
      * This is only used to specify when the dialed number is ambiguous, identified as both
@@ -685,7 +632,7 @@ public abstract class Connection {
      * @return true if the connection isn't disconnected
      * (could be active, holding, ringing, dialing, etc)
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public boolean
     isAlive() {
         return getState().isAlive();
@@ -735,7 +682,7 @@ public abstract class Connection {
     /**
      * Hangup individual Connection
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public abstract void hangup() throws CallStateException;
 
     /**
@@ -1042,7 +989,7 @@ public abstract class Connection {
      *
      * @return The video state.
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     public void setVideoState(int videoState) {
         mVideoState = videoState;
         for (Listener l : mListeners) {
@@ -1100,15 +1047,6 @@ public abstract class Connection {
         mAudioQuality = audioQuality;
         for (Listener l : mListeners) {
             l.onAudioQualityChanged(mAudioQuality);
-        }
-    }
-
-    /**
-     * Notifies interested parties of changes to the media attributes of the call.
-     */
-    public void notifyMediaAttributesChanged() {
-        for (Listener l: mListeners) {
-            l.onMediaAttributesChanged();
         }
     }
 
@@ -1448,7 +1386,6 @@ public abstract class Connection {
         StringBuilder str = new StringBuilder(128);
 
         str.append(" callId: " + getTelecomCallId());
-        str.append(" objId: " + System.identityHashCode(this));
         str.append(" isExternal: " + (((mConnectionCapabilities & Capability.IS_EXTERNAL_CONNECTION)
                 == Capability.IS_EXTERNAL_CONNECTION) ? "Y" : "N"));
         if (Rlog.isLoggable(LOG_TAG, Log.DEBUG)) {
@@ -1474,20 +1411,6 @@ public abstract class Connection {
     }
 
     /**
-     * @return the audio codec bitrate in kbps.
-     */
-    public float getAudioCodecBitrateKbps() {
-        return mAudioCodecBitrateKbps;
-    }
-
-    /**
-     * @return the audio codec bandwidth in kHz.
-     */
-    public float getAudioCodecBandwidthKhz() {
-        return mAudioCodecBandwidthKhz;
-    }
-
-    /**
      * @return The number verification status; only applicable for IMS calls.
      */
     public @android.telecom.Connection.VerificationStatus int getNumberVerificationStatus() {
@@ -1501,25 +1424,5 @@ public abstract class Connection {
     public void setNumberVerificationStatus(
             @android.telecom.Connection.VerificationStatus int verificationStatus) {
         mNumberVerificationStatus = verificationStatus;
-    }
-
-    /**
-     * Called to report a DTMF digit received from the network.
-     * @param digit the received digit.
-     */
-    public void receivedDtmfDigit(char digit) {
-        for (Listener l : mListeners) {
-            l.onReceivedDtmfDigit(digit);
-        }
-    }
-
-    /**
-     * Called to report RTP header extensions received from the network.
-     * @param extensionData the received extension data.
-     */
-    public void receivedRtpHeaderExtensions(@NonNull Set<RtpHeaderExtension> extensionData) {
-        for (Listener l : mListeners) {
-            l.onReceivedRtpHeaderExtensions(extensionData);
-        }
     }
 }

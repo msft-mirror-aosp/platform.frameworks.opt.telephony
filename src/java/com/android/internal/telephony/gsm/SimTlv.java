@@ -17,7 +17,6 @@
 package com.android.internal.telephony.gsm;
 
 import android.compat.annotation.UnsupportedAppUsage;
-import android.os.Build;
 
 /**
  * SIM Tag-Length-Value record
@@ -36,7 +35,7 @@ public class SimTlv
     int mCurOffset;
     int mCurDataOffset;
     int mCurDataLength;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     boolean mHasValidTlvObject;
 
     @UnsupportedAppUsage

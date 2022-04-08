@@ -22,20 +22,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteConstraintException;
-import android.os.PersistableBundle;
 import android.os.UserHandle;
 import android.provider.Telephony;
-import android.telephony.CarrierConfigManager;
 import android.telephony.ImsiEncryptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Log;
-import android.util.Pair;
 
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 
-import java.security.PublicKey;
 import java.util.Date;
 
 /**
@@ -51,10 +47,6 @@ public class CarrierInfoManager {
     */
     private static final int RESET_CARRIER_KEY_RATE_LIMIT = 12 * 60 * 60 * 1000;
 
-    // Key ID used with the backup key from carrier config
-    private static final String EPDG_BACKUP_KEY_ID = "backup_key_from_carrier_config_epdg";
-    private static final String WLAN_BACKUP_KEY_ID = "backup_key_from_carrier_config_wlan";
-
     // Last time the resetCarrierKeysForImsiEncryption API was called successfully.
     private long mLastAccessResetCarrierKey = 0;
 
@@ -62,21 +54,18 @@ public class CarrierInfoManager {
      * Returns Carrier specific information that will be used to encrypt the IMSI and IMPI.
      * @param keyType whether the key is being used for WLAN or ePDG.
      * @param context
-     * @param fallback whether to fallback to the IMSI key info stored in carrier config
      * @return ImsiEncryptionInfo which contains the information, including the public key, to be
      *         used for encryption.
      */
     public static ImsiEncryptionInfo getCarrierInfoForImsiEncryption(int keyType,
                                                                      Context context,
-                                                                     String operatorNumeric,
-                                                                     boolean fallback,
-                                                                     int subId) {
+                                                                     String operatorNumeric) {
         String mcc = "";
         String mnc = "";
         if (!TextUtils.isEmpty(operatorNumeric)) {
             mcc = operatorNumeric.substring(0, 3);
             mnc = operatorNumeric.substring(3);
-            Log.i(LOG_TAG, "using values for mcc, mnc: " + mcc + "," + mnc);
+            Log.i(LOG_TAG, "using values for mnc, mcc: " + mnc + "," + mcc);
         } else {
             Log.e(LOG_TAG, "Invalid networkOperator: " + operatorNumeric);
             return null;
@@ -94,54 +83,7 @@ public class CarrierInfoManager {
                     new String[]{mcc, mnc, String.valueOf(keyType)}, null);
             if (findCursor == null || !findCursor.moveToFirst()) {
                 Log.d(LOG_TAG, "No rows found for keyType: " + keyType);
-                if (!fallback) {
-                    Log.d(LOG_TAG, "Skipping fallback logic");
-                    return null;
-                }
-                // return carrier config key as fallback
-                CarrierConfigManager carrierConfigManager = (CarrierConfigManager)
-                        context.getSystemService(Context.CARRIER_CONFIG_SERVICE);
-                if (carrierConfigManager == null) {
-                    Log.d(LOG_TAG, "Could not get CarrierConfigManager for backup key");
-                    return null;
-                }
-                if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
-                    Log.d(LOG_TAG, "Could not get carrier config with invalid subId");
-                    return null;
-                }
-                PersistableBundle b = carrierConfigManager.getConfigForSubId(subId);
-                if (b == null) {
-                    Log.d(LOG_TAG, "Could not get carrier config bundle for backup key");
-                    return null;
-                }
-                int keyAvailabilityBitmask = b.getInt(
-                        CarrierConfigManager.IMSI_KEY_AVAILABILITY_INT);
-                if (!CarrierKeyDownloadManager.isKeyEnabled(keyType, keyAvailabilityBitmask)) {
-                    Log.d(LOG_TAG, "Backup key does not have matching keyType. keyType=" + keyType
-                            + " keyAvailability=" + keyAvailabilityBitmask);
-                    return null;
-                }
-                String keyString = null;
-                String keyId = null;
-                if (keyType == TelephonyManager.KEY_TYPE_EPDG) {
-                    keyString = b.getString(
-                            CarrierConfigManager.IMSI_CARRIER_PUBLIC_KEY_EPDG_STRING);
-                    keyId = EPDG_BACKUP_KEY_ID;
-                } else if (keyType == TelephonyManager.KEY_TYPE_WLAN) {
-                    keyString = b.getString(
-                            CarrierConfigManager.IMSI_CARRIER_PUBLIC_KEY_WLAN_STRING);
-                    keyId = WLAN_BACKUP_KEY_ID;
-                }
-                if (TextUtils.isEmpty(keyString)) {
-                    Log.d(LOG_TAG,
-                            "Could not get carrier config key string for backup key. keyType="
-                                    + keyType);
-                    return null;
-                }
-                Pair<PublicKey, Long> keyInfo =
-                        CarrierKeyDownloadManager.getKeyInformation(keyString.getBytes());
-                return new ImsiEncryptionInfo(mcc, mnc, keyType, keyId,
-                        keyInfo.first, new Date(keyInfo.second));
+                return null;
             }
             if (findCursor.getCount() > 1) {
                 Log.e(LOG_TAG, "More than 1 row found for the keyType: " + keyType);
@@ -254,13 +196,7 @@ public class CarrierInfoManager {
             return;
         }
         mLastAccessResetCarrierKey = now;
-        int[] subIds = context.getSystemService(SubscriptionManager.class)
-                .getSubscriptionIds(mPhoneId);
-        if (subIds == null || subIds.length < 1) {
-            Log.e(LOG_TAG, "Could not reset carrier keys, subscription for mPhoneId=" + mPhoneId);
-            return;
-        }
-        deleteCarrierInfoForImsiEncryption(context, subIds[0]);
+        deleteCarrierInfoForImsiEncryption(context);
         Intent resetIntent = new Intent(TelephonyIntents.ACTION_CARRIER_CERTIFICATE_DOWNLOAD);
         SubscriptionManager.putPhoneIdAndSubIdExtra(resetIntent, mPhoneId);
         context.sendBroadcastAsUser(resetIntent, UserHandle.ALL);
@@ -270,12 +206,12 @@ public class CarrierInfoManager {
      * Deletes all the keys for a given Carrier from the device keystore.
      * @param context Context
      */
-    public static void deleteCarrierInfoForImsiEncryption(Context context, int subId) {
-        Log.i(LOG_TAG, "deleting carrier key from db for subId=" + subId);
+    public static void deleteCarrierInfoForImsiEncryption(Context context) {
+        Log.i(LOG_TAG, "deleting carrier key from db");
         String mcc = "";
         String mnc = "";
-        final TelephonyManager telephonyManager = context.getSystemService(TelephonyManager.class)
-                .createForSubscriptionId(subId);
+        final TelephonyManager telephonyManager =
+                (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
         String simOperator = telephonyManager.getSimOperator();
         if (!TextUtils.isEmpty(simOperator)) {
             mcc = simOperator.substring(0, 3);

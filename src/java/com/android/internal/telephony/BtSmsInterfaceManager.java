@@ -18,9 +18,7 @@
 package com.android.internal.telephony;
 
 import android.app.PendingIntent;
-import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothMapClient;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.net.Uri;
@@ -42,6 +40,10 @@ public class BtSmsInterfaceManager {
      */
     public void sendText(Context context, String destAddr, String text, PendingIntent sentIntent,
             PendingIntent deliveryIntent, SubscriptionInfo info) {
+        /*
+        This is to remove the usage of hidden constant MAP_CLIENT and hidden API
+        BluetoothMapClient.sendMessage(). This code is currently not functional anyway; it will be
+        re-enabled in a later release.
         BluetoothAdapter btAdapter = BluetoothAdapter.getDefaultAdapter();
         if (btAdapter == null) {
             // No bluetooth service on this platform?
@@ -54,11 +56,10 @@ public class BtSmsInterfaceManager {
             sendErrorInPendingIntent(sentIntent, SmsManager.RESULT_INVALID_BLUETOOTH_ADDRESS);
             return;
         }
-        if (btAdapter.getProfileProxy(context.getApplicationContext(),
+        btAdapter.getProfileProxy(context.getApplicationContext(),
                 new MapMessageSender(destAddr, text, device, sentIntent, deliveryIntent),
-                BluetoothProfile.MAP_CLIENT)) {
-            return;
-        }
+                BluetoothProfile.MAP_CLIENT);
+        */
         throw new RuntimeException("Can't send message through BluetoothMapClient");
     }
 
@@ -99,6 +100,7 @@ public class BtSmsInterfaceManager {
         @Override
         public void onServiceConnected(int profile, BluetoothProfile proxy) {
             Log.d(LOG_TAG, "Service connected");
+            /*
             if (profile != BluetoothProfile.MAP_CLIENT) {
                 return;
             }
@@ -110,6 +112,8 @@ public class BtSmsInterfaceManager {
             }
             BluetoothAdapter.getDefaultAdapter()
                     .closeProfileProxy(BluetoothProfile.MAP_CLIENT, mapProfile);
+            */
+            throw new RuntimeException("Can't send message through BluetoothMapClient");
         }
 
         @Override

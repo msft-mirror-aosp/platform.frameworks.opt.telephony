@@ -104,7 +104,8 @@ public class RatRatcheterTest extends TelephonyTest {
                 false,  // isDcNrRestricted
                 false,  // isNrAvailable
                 false,  // isEndcAvailable
-                lteVopsSupportInfo);  // lteVopsSupportInfo
+                lteVopsSupportInfo,  // lteVopsSupportInfo
+                isUsingCarrierAggregation);  // isUsingCarrierAggregation
     }
 
     private void setNetworkRegistrationInfo(ServiceState ss, int accessNetworkTechnology) {
@@ -140,7 +141,7 @@ public class RatRatcheterTest extends TelephonyTest {
         setNetworkRegistrationInfo(newSS, TelephonyManager.NETWORK_TYPE_LTE);
 
         RatRatcheter ratRatcheter = new RatRatcheter(mPhone);
-        ratRatcheter.ratchet(oldSS, newSS);
+        ratRatcheter.ratchet(oldSS, newSS, false);
 
         assertTrue(newSS.isUsingCarrierAggregation());
     }
@@ -157,7 +158,7 @@ public class RatRatcheterTest extends TelephonyTest {
         setNetworkRegistrationInfo(newSS, TelephonyManager.NETWORK_TYPE_LTE);
 
         RatRatcheter ratRatcheter = new RatRatcheter(mPhone);
-        ratRatcheter.ratchet(oldSS, newSS);
+        ratRatcheter.ratchet(oldSS, newSS, false);
 
         assertFalse(newSS.isUsingCarrierAggregation());
     }

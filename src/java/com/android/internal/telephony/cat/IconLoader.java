@@ -20,7 +20,6 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -102,7 +101,7 @@ class IconLoader extends Handler {
         startLoadingIcon(recordNumbers[0]);
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage
     void loadIcon(int recordNumber, Message msg) {
         if (msg == null) {
             return;
