@@ -39,6 +39,7 @@ import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.WorkSource;
 import android.preference.PreferenceManager;
+import android.provider.DeviceConfig;
 import android.sysprop.TelephonyProperties;
 import android.telecom.VideoProfile;
 import android.telephony.AccessNetworkConstants;
@@ -470,6 +471,10 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
     protected LinkBandwidthEstimator mLinkBandwidthEstimator;
 
+    // TODO: Temp code. Use cl/399526916 for future canary process. After rolling out to 100%
+    //  dogfooders, the code below should be completely removed.
+    private final boolean mNewDataStackEnabled;
+
     public IccRecords getIccRecords() {
         return mIccRecords.get();
     }
@@ -610,6 +615,11 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
         // Initialize SMS stats
         mSmsStats = new SmsStats(this);
+
+        mNewDataStackEnabled = Boolean.parseBoolean(DeviceConfig.getProperty(
+                DeviceConfig.NAMESPACE_TELEPHONY, "enable_new_data_stack"))
+                || mContext.getResources().getBoolean(
+                        com.android.internal.R.bool.config_force_enable_telephony_new_data_stack);
 
         if (getPhoneType() == PhoneConstants.PHONE_TYPE_IMS) {
             return;
@@ -4914,13 +4924,10 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     /**
      * @return {@code true} if using the new telephony data stack. See go/atdr for the design.
      */
-    // TODO: Temp code. Use cl/399526916 for future canary process. After rolling out to 100%
-    //  dogfooders, the code below should be completely removed.
+    // TODO: Temp code. Use cl/421423121 for future canary process. After rolling out to 100%
+    //  dogfooders, the code below should be completely removed before T AOSP release.
     public boolean isUsingNewDataStack() {
-        return false;
-        /*String configValue = DeviceConfig.getProperty(DeviceConfig.NAMESPACE_TELEPHONY,
-                "new_telephony_data_enabled");
-        return Boolean.parseBoolean(configValue);*/
+        return mNewDataStackEnabled;
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {

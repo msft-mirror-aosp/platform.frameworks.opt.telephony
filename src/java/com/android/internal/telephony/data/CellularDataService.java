@@ -51,7 +51,7 @@ public class CellularDataService extends DataService {
     private static final boolean DBG = false;
 
     private static final int SETUP_DATA_CALL_COMPLETE               = 1;
-    private static final int DEACTIVATE_DATA_ALL_COMPLETE           = 2;
+    private static final int DEACTIVATE_DATA_CALL_COMPLETE          = 2;
     private static final int SET_INITIAL_ATTACH_APN_COMPLETE        = 3;
     private static final int SET_DATA_PROFILE_COMPLETE              = 4;
     private static final int REQUEST_DATA_CALL_LIST_COMPLETE        = 5;
@@ -87,7 +87,7 @@ public class CellularDataService extends DataService {
                                     : RESULT_SUCCESS,
                                     response);
                             break;
-                        case DEACTIVATE_DATA_ALL_COMPLETE:
+                        case DEACTIVATE_DATA_CALL_COMPLETE:
                             callback.onDeactivateDataCallComplete(ar.exception != null
                                     ? DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE
                                     : RESULT_SUCCESS);
@@ -189,7 +189,7 @@ public class CellularDataService extends DataService {
             // Only obtain the message when the caller wants a callback. If the caller doesn't care
             // the request completed or results, then no need to pass the message down.
             if (callback != null) {
-                message = Message.obtain(mHandler, DEACTIVATE_DATA_ALL_COMPLETE);
+                message = Message.obtain(mHandler, DEACTIVATE_DATA_CALL_COMPLETE);
                 mCallbackMap.put(message, callback);
             }
 
