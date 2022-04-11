@@ -437,7 +437,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 any(DataSettingsManager.DataSettingsManagerCallback.class))).thenCallRealMethod();
 
         initializeConfig();
-        doReturn(true).when(mPhone).isUsingNewDataStack();
         mMockedDataServiceManagers.put(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
                 mMockedWwanDataServiceManager);
         mMockedDataServiceManagers.put(AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
@@ -468,7 +467,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                                 transport).values()), null));
                 return null;
             }).when(mMockedDataServiceManagers.get(transport)).deactivateDataCall(
-                    anyInt(), anyInt(), eq(null));
+                    anyInt(), anyInt(), any(Message.class));
 
             doAnswer(invocation -> {
                 Handler h = (Handler) invocation.getArguments()[0];
