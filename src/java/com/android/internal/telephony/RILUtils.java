@@ -976,7 +976,10 @@ public class RILUtils {
         dpi.mtuV6 = dp.getMtuV6();
         dpi.persistent = dp.isPersistent();
         dpi.preferred = dp.isPreferred();
-        dpi.alwaysOn = dp.getApnSetting().isAlwaysOn();
+        dpi.alwaysOn = false;
+        if (dp.getApnSetting() != null) {
+            dpi.alwaysOn = dp.getApnSetting().isAlwaysOn();
+        }
         dpi.trafficDescriptor = convertToHalTrafficDescriptorAidl(dp.getTrafficDescriptor());
 
         // profile id is only meaningful when it's persistent on the modem.
@@ -5170,7 +5173,15 @@ public class RILUtils {
      * @return A string containing all public non-static local variables of a class
      */
     public static String convertToString(Object o) {
-        if (isPrimitiveOrWrapper(o.getClass()) || o.getClass() == String.class) return o.toString();
+        boolean toStringExists = false;
+        try {
+            toStringExists = o.getClass().getMethod("toString").getDeclaringClass() != Object.class;
+        } catch (NoSuchMethodException e) {
+            loge(e.toString());
+        }
+        if (toStringExists || isPrimitiveOrWrapper(o.getClass()) || o instanceof ArrayList) {
+            return o.toString();
+        }
         if (o.getClass().isArray()) {
             // Special handling for arrays
             StringBuilder sb = new StringBuilder("[");

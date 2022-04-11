@@ -241,6 +241,24 @@ public class UiccSlot extends Handler {
         }
     }
 
+    public boolean isIccIdMappedToPortIndex(String iccId) {
+        synchronized (mLock) {
+            return mIccIds.containsValue(iccId);
+        }
+    }
+
+    public int getPortIndexFromIccId(String iccId) {
+        synchronized (mLock) {
+            for (Map.Entry<Integer, String> entry : mIccIds.entrySet()) {
+                if (entry.getValue().equalsIgnoreCase(iccId)) {
+                    return entry.getKey();
+                }
+            }
+            // If iccId is not found, return invalid port index.
+            return TelephonyManager.INVALID_PORT_INDEX;
+        }
+    }
+
     public int getPhoneIdFromPortIndex(int portIndex) {
         synchronized (mLock) {
             return mPortIdxToPhoneId.getOrDefault(portIndex, INVALID_PHONE_ID);
@@ -394,11 +412,11 @@ public class UiccSlot extends Handler {
     private void promptForRestart(boolean isAdded) {
         synchronized (mLock) {
             final Resources res = mContext.getResources();
-            final String dialogComponent = res.getString(
-                    R.string.config_iccHotswapPromptForRestartDialogComponent);
+            final ComponentName dialogComponent = ComponentName.unflattenFromString(
+                    res.getString(R.string.config_iccHotswapPromptForRestartDialogComponent));
             if (dialogComponent != null) {
-                Intent intent = new Intent().setComponent(ComponentName.unflattenFromString(
-                        dialogComponent)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                Intent intent = new Intent().setComponent(dialogComponent)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         .putExtra(EXTRA_ICC_CARD_ADDED, isAdded);
                 try {
                     mContext.startActivityAsUser(intent, UserHandle.CURRENT);
