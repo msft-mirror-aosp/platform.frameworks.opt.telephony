@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony.metrics;
 
+import static android.text.format.DateUtils.DAY_IN_MILLIS;
+
 import android.annotation.Nullable;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -37,7 +39,7 @@ import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationServ
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationStats;
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationTermination;
 import com.android.internal.telephony.nano.PersistAtomsProto.IncomingSms;
-import com.android.internal.telephony.nano.PersistAtomsProto.NetworkRequests;
+import com.android.internal.telephony.nano.PersistAtomsProto.NetworkRequestsV2;
 import com.android.internal.telephony.nano.PersistAtomsProto.OutgoingSms;
 import com.android.internal.telephony.nano.PersistAtomsProto.PersistAtoms;
 import com.android.internal.telephony.nano.PersistAtomsProto.PresenceNotifyEvent;
@@ -410,16 +412,19 @@ public class PersistAtomsStorage {
         }
     }
 
-    /** Adds a new {@link NetworkRequests} to the storage. */
-    public synchronized void addNetworkRequests(NetworkRequests networkRequests) {
-        NetworkRequests existingMetrics = find(networkRequests);
+    /** Adds a new {@link NetworkRequestsV2} to the storage. */
+    public synchronized void addNetworkRequestsV2(NetworkRequestsV2 networkRequests) {
+        NetworkRequestsV2 existingMetrics = find(networkRequests);
         if (existingMetrics != null) {
-            existingMetrics.enterpriseRequestCount += networkRequests.enterpriseRequestCount;
-            existingMetrics.enterpriseReleaseCount += networkRequests.enterpriseReleaseCount;
+            existingMetrics.requestCount += networkRequests.requestCount;
         } else {
-            int newLength = mAtoms.networkRequests.length + 1;
-            mAtoms.networkRequests = Arrays.copyOf(mAtoms.networkRequests, newLength);
-            mAtoms.networkRequests[newLength - 1] = networkRequests;
+            NetworkRequestsV2 newMetrics = new NetworkRequestsV2();
+            newMetrics.capability = networkRequests.capability;
+            newMetrics.carrierId = networkRequests.carrierId;
+            newMetrics.requestCount = networkRequests.requestCount;
+            int newLength = mAtoms.networkRequestsV2.length + 1;
+            mAtoms.networkRequestsV2 = Arrays.copyOf(mAtoms.networkRequestsV2, newLength);
+            mAtoms.networkRequestsV2[newLength - 1] = newMetrics;
         }
         saveAtomsToFile(SAVE_TO_FILE_DELAY_FOR_UPDATE_MILLIS);
     }
@@ -676,6 +681,10 @@ public class PersistAtomsStorage {
             DataCallSession[] previousDataCallSession = mAtoms.dataCallSession;
             mAtoms.dataCallSession = new DataCallSession[0];
             saveAtomsToFile(SAVE_TO_FILE_DELAY_FOR_GET_MILLIS);
+            for (DataCallSession dataCallSession : previousDataCallSession) {
+                // sort to de-correlate any potential pattern for UII concern
+                Arrays.sort(dataCallSession.handoverFailureCauses);
+            }
             return previousDataCallSession;
         } else {
             return null;
@@ -723,19 +732,20 @@ public class PersistAtomsStorage {
     }
 
     /**
-     * Returns and clears the IMS registration statistics if last pulled longer than {@code
-     * minIntervalMillis} ago, otherwise returns {@code null}.
+     * Returns and clears the IMS registration statistics normalized to 24h cycle if last
+     * pulled longer than {@code minIntervalMillis} ago, otherwise returns {@code null}.
      */
     @Nullable
     public synchronized ImsRegistrationStats[] getImsRegistrationStats(long minIntervalMillis) {
-        if (getWallTimeMillis() - mAtoms.imsRegistrationStatsPullTimestampMillis
-                > minIntervalMillis) {
+        long intervalMillis =
+                getWallTimeMillis() - mAtoms.imsRegistrationStatsPullTimestampMillis;
+        if (intervalMillis > minIntervalMillis) {
             mAtoms.imsRegistrationStatsPullTimestampMillis = getWallTimeMillis();
             ImsRegistrationStats[] previousStats = mAtoms.imsRegistrationStats;
             Arrays.stream(previousStats).forEach(stats -> stats.lastUsedMillis = 0L);
             mAtoms.imsRegistrationStats = new ImsRegistrationStats[0];
             saveAtomsToFile(SAVE_TO_FILE_DELAY_FOR_GET_MILLIS);
-            return previousStats;
+            return normalizeData(previousStats, intervalMillis);
         } else {
             return null;
         }
@@ -767,11 +777,11 @@ public class PersistAtomsStorage {
      * minIntervalMillis} ago, otherwise returns {@code null}.
      */
     @Nullable
-    public synchronized NetworkRequests[] getNetworkRequests(long minIntervalMillis) {
-        if (getWallTimeMillis() - mAtoms.networkRequestsPullTimestampMillis > minIntervalMillis) {
-            mAtoms.networkRequestsPullTimestampMillis = getWallTimeMillis();
-            NetworkRequests[] previousNetworkRequests = mAtoms.networkRequests;
-            mAtoms.networkRequests = new NetworkRequests[0];
+    public synchronized NetworkRequestsV2[] getNetworkRequestsV2(long minIntervalMillis) {
+        if (getWallTimeMillis() - mAtoms.networkRequestsV2PullTimestampMillis > minIntervalMillis) {
+            mAtoms.networkRequestsV2PullTimestampMillis = getWallTimeMillis();
+            NetworkRequestsV2[] previousNetworkRequests = mAtoms.networkRequestsV2;
+            mAtoms.networkRequestsV2 = new NetworkRequestsV2[0];
             saveAtomsToFile(SAVE_TO_FILE_DELAY_FOR_GET_MILLIS);
             return previousNetworkRequests;
         } else {
@@ -1084,7 +1094,8 @@ public class PersistAtomsStorage {
                             atoms.imsRegistrationTermination,
                             ImsRegistrationTermination.class,
                             mMaxNumImsRegistrationTerminations);
-            atoms.networkRequests = sanitizeAtoms(atoms.networkRequests, NetworkRequests.class);
+            atoms.networkRequestsV2 =
+                    sanitizeAtoms(atoms.networkRequestsV2, NetworkRequestsV2.class);
             atoms.imsRegistrationFeatureTagStats =
                     sanitizeAtoms(
                             atoms.imsRegistrationFeatureTagStats,
@@ -1170,8 +1181,8 @@ public class PersistAtomsStorage {
                     sanitizeTimestamp(atoms.imsRegistrationStatsPullTimestampMillis);
             atoms.imsRegistrationTerminationPullTimestampMillis =
                     sanitizeTimestamp(atoms.imsRegistrationTerminationPullTimestampMillis);
-            atoms.networkRequestsPullTimestampMillis =
-                    sanitizeTimestamp(atoms.networkRequestsPullTimestampMillis);
+            atoms.networkRequestsV2PullTimestampMillis =
+                    sanitizeTimestamp(atoms.networkRequestsV2PullTimestampMillis);
             atoms.imsRegistrationFeatureTagStatsPullTimestampMillis =
                     sanitizeTimestamp(atoms.imsRegistrationFeatureTagStatsPullTimestampMillis);
             atoms.rcsClientProvisioningStatsPullTimestampMillis =
@@ -1322,12 +1333,12 @@ public class PersistAtomsStorage {
     }
 
     /**
-     * Returns the network requests event that has the same carrier id as the given one,
-     * or {@code null} if it does not exist.
+     * Returns the network requests event that has the same carrier id and capability as the given
+     * one, or {@code null} if it does not exist.
      */
-    private @Nullable NetworkRequests find(NetworkRequests key) {
-        for (NetworkRequests item : mAtoms.networkRequests) {
-            if (item.carrierId == key.carrierId) {
+    private @Nullable NetworkRequestsV2 find(NetworkRequestsV2 key) {
+        for (NetworkRequestsV2 item : mAtoms.networkRequestsV2) {
+            if (item.carrierId == key.carrierId && item.capability == key.capability) {
                 return item;
             }
         }
@@ -1578,6 +1589,7 @@ public class PersistAtomsStorage {
     /** Returns index of the item suitable for eviction when the array is full. */
     private static <T> int findItemToEvict(T[] array) {
         if (array instanceof CellularServiceState[]) {
+            // Evict the item that was used least recently
             CellularServiceState[] arr = (CellularServiceState[]) array;
             return IntStream.range(0, arr.length)
                     .reduce((i, j) -> arr[i].lastUsedMillis < arr[j].lastUsedMillis ? i : j)
@@ -1585,6 +1597,7 @@ public class PersistAtomsStorage {
         }
 
         if (array instanceof CellularDataServiceSwitch[]) {
+            // Evict the item that was used least recently
             CellularDataServiceSwitch[] arr = (CellularDataServiceSwitch[]) array;
             return IntStream.range(0, arr.length)
                     .reduce((i, j) -> arr[i].lastUsedMillis < arr[j].lastUsedMillis ? i : j)
@@ -1592,6 +1605,7 @@ public class PersistAtomsStorage {
         }
 
         if (array instanceof ImsRegistrationStats[]) {
+            // Evict the item that was used least recently
             ImsRegistrationStats[] arr = (ImsRegistrationStats[]) array;
             return IntStream.range(0, arr.length)
                     .reduce((i, j) -> arr[i].lastUsedMillis < arr[j].lastUsedMillis ? i : j)
@@ -1599,10 +1613,24 @@ public class PersistAtomsStorage {
         }
 
         if (array instanceof ImsRegistrationTermination[]) {
+            // Evict the item that was used least recently
             ImsRegistrationTermination[] arr = (ImsRegistrationTermination[]) array;
             return IntStream.range(0, arr.length)
                     .reduce((i, j) -> arr[i].lastUsedMillis < arr[j].lastUsedMillis ? i : j)
                     .getAsInt();
+        }
+
+        if (array instanceof VoiceCallSession[]) {
+            // For voice calls, try to keep emergency calls over regular calls.
+            VoiceCallSession[] arr = (VoiceCallSession[]) array;
+            int[] nonEmergencyCallIndexes = IntStream.range(0, arr.length)
+                    .filter(i -> !arr[i].isEmergency)
+                    .toArray();
+            if (nonEmergencyCallIndexes.length > 0) {
+                return nonEmergencyCallIndexes[sRandom.nextInt(nonEmergencyCallIndexes.length)];
+            }
+            // If all calls in the storage are emergency calls, proceed with default case
+            // even if the new call is not an emergency call.
         }
 
         return sRandom.nextInt(array.length);
@@ -1627,6 +1655,41 @@ public class PersistAtomsStorage {
         return timestamp <= 0L ? getWallTimeMillis() : timestamp;
     }
 
+    /**
+     * Returns {@link ImsRegistrationStats} array with durations normalized to 24 hours
+     * depending on the interval.
+     */
+    private ImsRegistrationStats[] normalizeData(ImsRegistrationStats[] stats,
+            long intervalMillis) {
+        for (int i = 0; i < stats.length; i++) {
+            stats[i].registeredMillis =
+                    normalizeDurationTo24H(stats[i].registeredMillis, intervalMillis);
+            stats[i].voiceCapableMillis =
+                    normalizeDurationTo24H(stats[i].voiceCapableMillis, intervalMillis);
+            stats[i].voiceAvailableMillis =
+                    normalizeDurationTo24H(stats[i].voiceAvailableMillis, intervalMillis);
+            stats[i].smsCapableMillis =
+                    normalizeDurationTo24H(stats[i].smsCapableMillis, intervalMillis);
+            stats[i].smsAvailableMillis =
+                    normalizeDurationTo24H(stats[i].smsAvailableMillis, intervalMillis);
+            stats[i].videoCapableMillis =
+                    normalizeDurationTo24H(stats[i].videoCapableMillis, intervalMillis);
+            stats[i].videoAvailableMillis =
+                    normalizeDurationTo24H(stats[i].videoAvailableMillis, intervalMillis);
+            stats[i].utCapableMillis =
+                    normalizeDurationTo24H(stats[i].utCapableMillis, intervalMillis);
+            stats[i].utAvailableMillis =
+                    normalizeDurationTo24H(stats[i].utAvailableMillis, intervalMillis);
+        }
+        return stats;
+    }
+
+    /** Returns a duration normalized to 24 hours. */
+    private long normalizeDurationTo24H(long timeInMillis, long intervalMillis) {
+        long interval = intervalMillis < 1000 ? 1 : intervalMillis / 1000;
+        return ((timeInMillis / 1000) * (DAY_IN_MILLIS / 1000) / interval) * 1000;
+    }
+
     /** Returns an empty PersistAtoms with pull timestamp set to current time. */
     private PersistAtoms makeNewPersistAtoms() {
         PersistAtoms atoms = new PersistAtoms();
@@ -1644,6 +1707,7 @@ public class PersistAtomsStorage {
         atoms.imsRegistrationStatsPullTimestampMillis = currentTime;
         atoms.imsRegistrationTerminationPullTimestampMillis = currentTime;
         atoms.networkRequestsPullTimestampMillis = currentTime;
+        atoms.networkRequestsV2PullTimestampMillis = currentTime;
         atoms.imsRegistrationFeatureTagStatsPullTimestampMillis = currentTime;
         atoms.rcsClientProvisioningStatsPullTimestampMillis = currentTime;
         atoms.rcsAcsProvisioningStatsPullTimestampMillis = currentTime;
