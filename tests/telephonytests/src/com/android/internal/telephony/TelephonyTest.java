@@ -76,6 +76,7 @@ import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager;
 import android.telephony.TelephonyRegistryManager;
 import android.telephony.emergency.EmergencyNumber;
@@ -105,7 +106,6 @@ import com.android.internal.telephony.data.LinkBandwidthEstimator;
 import com.android.internal.telephony.dataconnection.DataEnabledSettings;
 import com.android.internal.telephony.dataconnection.DataThrottler;
 import com.android.internal.telephony.dataconnection.DcTracker;
-import com.android.internal.telephony.dataconnection.TransportManager;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
 import com.android.internal.telephony.imsphone.ImsPhone;
@@ -233,7 +233,6 @@ public abstract class TelephonyTest {
     protected IccSmsInterfaceManager mIccSmsInterfaceManager;
     protected SmsDispatchersController mSmsDispatchersController;
     protected DeviceStateMonitor mDeviceStateMonitor;
-    protected TransportManager mTransportManager;
     protected AccessNetworksManager mAccessNetworksManager;
     protected IntentBroadcaster mIntentBroadcaster;
     protected NitzStateMachine mNitzStateMachine;
@@ -467,7 +466,6 @@ public abstract class TelephonyTest {
         mIccSmsInterfaceManager = Mockito.mock(IccSmsInterfaceManager.class);
         mSmsDispatchersController = Mockito.mock(SmsDispatchersController.class);
         mDeviceStateMonitor = Mockito.mock(DeviceStateMonitor.class);
-        mTransportManager = Mockito.mock(TransportManager.class);
         mAccessNetworksManager = Mockito.mock(AccessNetworksManager.class);
         mIntentBroadcaster = Mockito.mock(IntentBroadcaster.class);
         mNitzStateMachine = Mockito.mock(NitzStateMachine.class);
@@ -591,10 +589,8 @@ public abstract class TelephonyTest {
                 .makeCarrierActionAgent(nullable(Phone.class));
         doReturn(mDeviceStateMonitor).when(mTelephonyComponentFactory)
                 .makeDeviceStateMonitor(nullable(Phone.class));
-        doReturn(mTransportManager).when(mTelephonyComponentFactory)
-                .makeTransportManager(nullable(Phone.class));
         doReturn(mAccessNetworksManager).when(mTelephonyComponentFactory)
-                .makeAccessNetworksManager(nullable(Phone.class));
+                .makeAccessNetworksManager(nullable(Phone.class), any(Looper.class));
         doReturn(mNitzStateMachine).when(mTelephonyComponentFactory)
                 .makeNitzStateMachine(nullable(GsmCdmaPhone.class));
         doReturn(mLocaleTracker).when(mTelephonyComponentFactory)
@@ -630,7 +626,6 @@ public abstract class TelephonyTest {
         doReturn(mCarrierActionAgent).when(mPhone).getCarrierActionAgent();
         doReturn(mAppSmsManager).when(mPhone).getAppSmsManager();
         doReturn(mIccSmsInterfaceManager).when(mPhone).getIccSmsInterfaceManager();
-        doReturn(mTransportManager).when(mPhone).getTransportManager();
         doReturn(mAccessNetworksManager).when(mPhone).getAccessNetworksManager();
         doReturn(mDataEnabledSettings).when(mPhone).getDataEnabledSettings();
         doReturn(mDcTracker).when(mPhone).getDcTracker(anyInt());
@@ -652,6 +647,7 @@ public abstract class TelephonyTest {
         doReturn(mDataRetryManager).when(mDataNetworkController).getDataRetryManager();
         doReturn(mCarrierPrivilegesTracker).when(mPhone).getCarrierPrivilegesTracker();
         doReturn(true).when(mPhone).isUsingNewDataStack();
+        doReturn(0).when(mPhone).getPhoneId();
 
         //mUiccController
         doReturn(mUiccCardApplication3gpp).when(mUiccController).getUiccCardApplication(anyInt(),
@@ -710,8 +706,11 @@ public abstract class TelephonyTest {
                 anyInt(), anyBoolean());
 
         //Misc
-        doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_UMTS).when(mServiceState).
-                getRilDataRadioTechnology();
+        doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_LTE).when(mServiceState)
+                .getRilDataRadioTechnology();
+        doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE))
+                .when(mDisplayInfoController).getTelephonyDisplayInfo();
         doReturn(mPhone).when(mCT).getPhone();
         doReturn(mImsEcbm).when(mImsManager).getEcbmInterface();
         doReturn(mPhone).when(mInboundSmsHandler).getPhone();
@@ -734,15 +733,16 @@ public abstract class TelephonyTest {
         logd("mMockLegacyPermissionManager replaced");
         doReturn(new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN})
-                .when(mTransportManager).getAvailableTransports();
+                .when(mAccessNetworksManager).getAvailableTransports();
         doReturn(new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN})
                 .when(mAccessNetworksManager).getAvailableTransports();
-        doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WWAN).when(mTransportManager)
+        doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WWAN).when(mAccessNetworksManager)
                 .getCurrentTransport(anyInt());
         doReturn(true).when(mDataEnabledSettings).isDataEnabled();
         doReturn(true).when(mDataEnabledSettings).isDataEnabled(anyInt());
         doReturn(true).when(mDataEnabledSettings).isInternalDataEnabled();
+        doReturn(true).when(mDataSettingsManager).isDataEnabled();
         doReturn(mNetworkRegistrationInfo).when(mServiceState).getNetworkRegistrationInfo(
                 anyInt(), anyInt());
         doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion();
@@ -776,6 +776,7 @@ public abstract class TelephonyTest {
         Settings.Global.putInt(resolver, Settings.Global.DEVICE_PROVISIONED, 1);
         Settings.Global.putInt(resolver,
                 Settings.Global.DEVICE_PROVISIONING_MOBILE_DATA_ENABLED, 1);
+        Settings.Global.putInt(resolver, Settings.Global.DATA_ROAMING, 0);
         doReturn(mDataThrottler).when(mDcTracker).getDataThrottler();
         doReturn(-1L).when(mDataThrottler).getRetryTime(anyInt());
 
@@ -801,6 +802,16 @@ public abstract class TelephonyTest {
                 eq(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE));
         doReturn(20).when(mDataConfigManager).getNetworkCapabilityPriority(
                 eq(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        doReturn(60000).when(mDataConfigManager).getAnomalyNetworkConnectingTimeoutMs();
+        doReturn(60000).when(mDataConfigManager)
+                .getAnomalyNetworkDisconnectingTimeoutMs();
+        doReturn(60000).when(mDataConfigManager).getNetworkHandoverTimeoutMs();
+        doReturn(new DataConfigManager.EventFrequency(300000, 12))
+                .when(mDataConfigManager).getAnomalySetupDataCallThreshold();
+        doReturn(new DataConfigManager.EventFrequency(0, 2))
+                .when(mDataConfigManager).getAnomalyImsReleaseRequestThreshold();
+        doReturn(new DataConfigManager.EventFrequency(300000, 12))
+                .when(mDataConfigManager).getAnomalyNetworkUnwantedThreshold();
 
         // CellularNetworkValidator
         doReturn(SubscriptionManager.INVALID_PHONE_INDEX)
@@ -878,10 +889,13 @@ public abstract class TelephonyTest {
         }
         TestableLooper.remove(TelephonyTest.this);
 
-        mSimulatedCommands.dispose();
-        SharedPreferences sharedPreferences = mContext.getSharedPreferences((String) null, 0);
-        sharedPreferences.edit().clear().commit();
-
+        if (mSimulatedCommands != null) {
+            mSimulatedCommands.dispose();
+        }
+        if (mContext != null) {
+            SharedPreferences sharedPreferences = mContext.getSharedPreferences((String) null, 0);
+            sharedPreferences.edit().clear().commit();
+        }
         restoreInstances();
         TelephonyManager.enableServiceHandleCaching();
         SubscriptionController.enableCaching();

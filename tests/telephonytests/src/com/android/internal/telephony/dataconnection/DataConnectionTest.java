@@ -53,6 +53,7 @@ import android.net.LinkProperties;
 import android.net.NattKeepalivePacketData;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.vcn.VcnNetworkPolicyResult;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -785,6 +786,50 @@ public class DataConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testVcnNetworkCapability() throws Exception {
+        mContextFixture.getCarrierConfigBundle().putStringArray(
+                CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
+                new String[] { "default" });
+        doReturn(mApn2).when(mApnContext).getApnSetting();
+
+        doAnswer(invocation -> {
+            NetworkCapabilities nc = invocation.getArgument(0);
+            NetworkCapabilities policyNc = new NetworkCapabilities.Builder(nc)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                    .build();
+
+            return new VcnNetworkPolicyResult(
+                    false /* isTearDownRequested */, policyNc);
+        }).when(mVcnManager).applyVcnNetworkPolicy(any(), any());
+        connectEvent(true);
+
+        assertFalse("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED));
+        assertFalse("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED));
+
+        disconnectEvent();
+
+        doAnswer(invocation -> {
+            NetworkCapabilities nc = invocation.getArgument(0);
+            NetworkCapabilities policyNc = new NetworkCapabilities.Builder(nc)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
+                    .build();
+
+            return new VcnNetworkPolicyResult(
+                    false /* isTearDownRequested */, policyNc);
+        }).when(mVcnManager).applyVcnNetworkPolicy(any(), any());
+        connectEvent(true);
+
+        assertFalse("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED));
+        assertTrue("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED));
+    }
+
+    @Test
+    @SmallTest
     public void testEnterpriseNetworkCapability() throws Exception {
         mContextFixture.getCarrierConfigBundle().putStringArray(
                 CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
@@ -929,7 +974,7 @@ public class DataConnectionTest extends TelephonyTest {
         assertEquals(carrierConfigPkgUid, getNetworkCapabilities().getOwnerUid());
         assertEquals(
                 Collections.singleton(carrierConfigPkgUid),
-                getNetworkCapabilities().getAccessUids());
+                getNetworkCapabilities().getAllowedUids());
     }
 
     @Test
