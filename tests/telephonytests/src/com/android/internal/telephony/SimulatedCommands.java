@@ -2337,11 +2337,13 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void registerForPcoData(Handler h, int what, Object obj) {
+        SimulatedCommandsVerifier.getInstance().registerForPcoData(h, what, obj);
         mPcoDataRegistrants.addUnique(h, what, obj);
     }
 
     @Override
     public void unregisterForPcoData(Handler h) {
+        SimulatedCommandsVerifier.getInstance().unregisterForPcoData(h);
         mPcoDataRegistrants.remove(h);
     }
 
@@ -2364,8 +2366,8 @@ public class SimulatedCommands extends BaseCommands
     }
 
     @Override
-    public void setSignalStrengthReportingCriteria(SignalThresholdInfo signalThresholdInfo,
-            int ran, Message result) {
+    public void setSignalStrengthReportingCriteria(List<SignalThresholdInfo> signalThresholdInfos,
+            Message result) {
     }
 
     @Override
