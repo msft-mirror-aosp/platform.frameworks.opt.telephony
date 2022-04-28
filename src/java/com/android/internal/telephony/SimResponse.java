@@ -290,7 +290,7 @@ public class SimResponse extends IRadioSimResponse.Stub {
 
         if (rr != null) {
             IccIoResult ret = new IccIoResult(iccIo.sw1, iccIo.sw2,
-                    TextUtils.isEmpty(iccIo.simResponse) ? null : iccIo.simResponse);
+                    TextUtils.isEmpty(iccIo.simResponse) ? null : iccIo.simResponse.getBytes());
             if (responseInfo.error == RadioError.NONE) {
                 RadioResponse.sendMessageResponse(rr.mResult, ret);
             }
@@ -438,5 +438,15 @@ public class SimResponse extends IRadioSimResponse.Stub {
     public void updateSimPhonebookRecordsResponse(RadioResponseInfo responseInfo,
             int updatedRecordIndex) {
         RadioResponse.responseInts(RIL.SIM_SERVICE, mRil, responseInfo, updatedRecordIndex);
+    }
+
+    @Override
+    public String getInterfaceHash() {
+        return IRadioSimResponse.HASH;
+    }
+
+    @Override
+    public int getInterfaceVersion() {
+        return IRadioSimResponse.VERSION;
     }
 }

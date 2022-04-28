@@ -93,7 +93,6 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -104,25 +103,15 @@ import java.util.function.Consumer;
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class ImsPhoneTest extends TelephonyTest {
-    @Mock
+    // Mocked classes
     private ImsPhoneCall mForegroundCall;
-    @Mock
     private ImsPhoneCall mBackgroundCall;
-    @Mock
     private ImsPhoneCall mRingingCall;
-    @Mock
     private Handler mTestHandler;
-    @Mock
     Connection mConnection;
-    @Mock
     ImsUtInterface mImsUtInterface;
 
-    private Executor mExecutor = new Executor() {
-        @Override
-        public void execute(Runnable r) {
-            r.run();
-        }
-    };
+    private final Executor mExecutor = Runnable::run;
 
     private ImsPhone mImsPhoneUT;
     private PersistableBundle mBundle;
@@ -138,6 +127,12 @@ public class ImsPhoneTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mForegroundCall = mock(ImsPhoneCall.class);
+        mBackgroundCall = mock(ImsPhoneCall.class);
+        mRingingCall = mock(ImsPhoneCall.class);
+        mTestHandler = mock(Handler.class);
+        mConnection = mock(Connection.class);
+        mImsUtInterface = mock(ImsUtInterface.class);
 
         mImsCT.mForegroundCall = mForegroundCall;
         mImsCT.mBackgroundCall = mBackgroundCall;
@@ -180,6 +175,7 @@ public class ImsPhoneTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         mImsPhoneUT = null;
+        mBundle = null;
         super.tearDown();
     }
 
@@ -738,7 +734,7 @@ public class ImsPhoneTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testRoamingToAirplanModeIwlanInService() throws Exception {
-        doReturn(true).when(mTransportManager).isInLegacyMode();
+        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
         doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
         doReturn(true).when(mPhone).isRadioOn();
 
@@ -766,7 +762,7 @@ public class ImsPhoneTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testRoamingToOutOfService() throws Exception {
-        doReturn(true).when(mTransportManager).isInLegacyMode();
+        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
         doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
         doReturn(true).when(mPhone).isRadioOn();
 
@@ -792,7 +788,7 @@ public class ImsPhoneTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testRoamingChangeForLteInLegacyMode() throws Exception {
-        doReturn(true).when(mTransportManager).isInLegacyMode();
+        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
         doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
         doReturn(true).when(mPhone).isRadioOn();
 
@@ -817,7 +813,7 @@ public class ImsPhoneTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testDataOnlyRoamingCellToIWlanInLegacyMode() throws Exception {
-        doReturn(true).when(mTransportManager).isInLegacyMode();
+        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
         doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
         doReturn(true).when(mPhone).isRadioOn();
 
@@ -843,7 +839,7 @@ public class ImsPhoneTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testCellVoiceDataChangeToWlanInLegacyMode() throws Exception {
-        doReturn(true).when(mTransportManager).isInLegacyMode();
+        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
         doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
         doReturn(true).when(mPhone).isRadioOn();
 
