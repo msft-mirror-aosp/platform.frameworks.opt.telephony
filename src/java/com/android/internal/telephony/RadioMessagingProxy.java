@@ -58,14 +58,13 @@ public class RadioMessagingProxy extends RadioServiceProxy {
      */
     @Override
     public void clear() {
-        mHalVersion = RIL.RADIO_HAL_VERSION_UNKNOWN;
-        mRadioProxy = null;
+        super.clear();
         mMessagingProxy = null;
     }
 
     /**
      * Check whether a RadioMessaging implementation exists
-     * @return false if there is neither a HIDL nor AIDL implementation
+     * @return true if there is neither a HIDL nor AIDL implementation
      */
     @Override
     public boolean isEmpty() {
@@ -296,8 +295,10 @@ public class RadioMessagingProxy extends RadioServiceProxy {
             if (gsmPdu != null) {
                 msg.gsmMessage = new android.hardware.radio.messaging.GsmSmsMessage[]{
                         RILUtils.convertToHalGsmSmsMessageAidl(smscPdu, gsmPdu)};
+                msg.cdmaMessage = new android.hardware.radio.messaging.CdmaSmsMessage[0];
             }
             if (cdmaPdu != null) {
+                msg.gsmMessage = new android.hardware.radio.messaging.GsmSmsMessage[0];
                 msg.cdmaMessage = new android.hardware.radio.messaging.CdmaSmsMessage[]{
                         RILUtils.convertToHalCdmaSmsMessageAidl(cdmaPdu)};
             }

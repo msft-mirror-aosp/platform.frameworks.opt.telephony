@@ -313,6 +313,9 @@ import android.telephony.UiccSlotMapping;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataProfile;
+import android.telephony.data.DataService;
+import android.telephony.data.DataService.DeactivateDataReason;
+import android.telephony.data.DataService.SetupDataReason;
 import android.telephony.data.EpsQos;
 import android.telephony.data.NetworkSliceInfo;
 import android.telephony.data.NetworkSlicingConfig;
@@ -349,6 +352,11 @@ import com.android.telephony.Rlog;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
+import java.lang.reflect.Array;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.util.ArrayList;
@@ -356,6 +364,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -378,6 +387,10 @@ public class RILUtils {
             "316f3801-fa21-4954-a42f-0041eada3b32";
     public static final String RADIO_POWER_FAILURE_NO_RF_CALIBRATION_UUID =
             "316f3801-fa21-4954-a42f-0041eada3b33";
+
+    private static final Set<Class> WRAPPER_CLASSES = new HashSet(Arrays.asList(
+            Boolean.class, Character.class, Byte.class, Short.class, Integer.class, Long.class,
+            Float.class, Double.class));
 
     /**
      * Convert to PersoSubstate defined in radio/1.5/types.hal
@@ -966,7 +979,10 @@ public class RILUtils {
         dpi.mtuV6 = dp.getMtuV6();
         dpi.persistent = dp.isPersistent();
         dpi.preferred = dp.isPreferred();
-        dpi.alwaysOn = dp.getApnSetting().isAlwaysOn();
+        dpi.alwaysOn = false;
+        if (dp.getApnSetting() != null) {
+            dpi.alwaysOn = dp.getApnSetting().isAlwaysOn();
+        }
         dpi.trafficDescriptor = convertToHalTrafficDescriptorAidl(dp.getTrafficDescriptor());
 
         // profile id is only meaningful when it's persistent on the modem.
@@ -1106,7 +1122,7 @@ public class RILUtils {
     public static android.hardware.radio.data.TrafficDescriptor
             convertToHalTrafficDescriptorAidl(@Nullable TrafficDescriptor trafficDescriptor) {
         if (trafficDescriptor == null) {
-            return null;
+            return new android.hardware.radio.data.TrafficDescriptor();
         }
 
         android.hardware.radio.data.TrafficDescriptor td =
@@ -1365,7 +1381,7 @@ public class RILUtils {
         android.hardware.radio.network.RadioAccessSpecifierBands bandsInHalFormat =
                 new android.hardware.radio.network.RadioAccessSpecifierBands();
         rasInHalFormat.accessNetwork = convertToHalAccessNetworkAidl(ras.getRadioAccessNetwork());
-        int[] bands = null;
+        int[] bands;
         if (ras.getBands() != null) {
             bands = new int[ras.getBands().length];
             for (int i = 0; i < ras.getBands().length; i++) {
@@ -1376,29 +1392,32 @@ public class RILUtils {
         }
         switch (ras.getRadioAccessNetwork()) {
             case AccessNetworkConstants.AccessNetworkType.GERAN:
-                bandsInHalFormat.geranBands(bands);
+                bandsInHalFormat.setGeranBands(bands);
                 break;
             case AccessNetworkConstants.AccessNetworkType.UTRAN:
-                bandsInHalFormat.utranBands(bands);
+                bandsInHalFormat.setUtranBands(bands);
                 break;
             case AccessNetworkConstants.AccessNetworkType.EUTRAN:
-                bandsInHalFormat.eutranBands(bands);
+                bandsInHalFormat.setEutranBands(bands);
                 break;
             case AccessNetworkConstants.AccessNetworkType.NGRAN:
-                bandsInHalFormat.ngranBands(bands);
+                bandsInHalFormat.setNgranBands(bands);
                 break;
             default:
                 return null;
         }
         rasInHalFormat.bands = bandsInHalFormat;
 
+        int[] channels;
         if (ras.getChannels() != null) {
-            int[] channels = new int[ras.getChannels().length];
+            channels = new int[ras.getChannels().length];
             for (int i = 0; i < ras.getChannels().length; i++) {
                 channels[i] = ras.getChannels()[i];
             }
-            rasInHalFormat.channels = channels;
+        } else {
+            channels = new int[0];
         }
+        rasInHalFormat.channels = channels;
 
         return rasInHalFormat;
     }
@@ -2742,7 +2761,7 @@ public class RILUtils {
             android.hardware.radio.network.CellIdentityGsm cid) {
         return new CellIdentityGsm(cid.lac, cid.cid, cid.arfcn,
                 cid.bsic == (byte) 0xFF ? CellInfo.UNAVAILABLE : cid.bsic, cid.mcc, cid.mnc,
-                "", "", new ArraySet<>());
+                cid.operatorNames.alphaLong, cid.operatorNames.alphaShort, new ArraySet<>());
     }
 
     /**
@@ -4407,21 +4426,10 @@ public class RILUtils {
      */
     public static android.hardware.radio.V1_6.PhonebookRecordInfo convertToHalPhonebookRecordInfo(
             SimPhonebookRecord record) {
-        android.hardware.radio.V1_6.PhonebookRecordInfo pbRecordInfo =
-                new android.hardware.radio.V1_6.PhonebookRecordInfo();
-        pbRecordInfo.recordId = record.getRecordIndex();
-        pbRecordInfo.name = convertNullToEmptyString(record.getAlphaTag());
-        pbRecordInfo.number = convertNullToEmptyString(
-                convertToHalPhonebookRecordInfoNumber(record.getNumber()));
-        if (record.getEmails() != null) {
-            pbRecordInfo.emails = primitiveArrayToArrayList(record.getEmails());
+        if (record != null) {
+            return record.toPhonebookRecordInfo();
         }
-        if (record.getAdditionalNumbers() != null) {
-            for (String addNum : record.getAdditionalNumbers()) {
-                pbRecordInfo.additionalNumbers.add(convertToHalPhonebookRecordInfoNumber(addNum));
-            }
-        }
-        return pbRecordInfo;
+        return null;
     }
 
     /**
@@ -4431,34 +4439,10 @@ public class RILUtils {
      */
     public static android.hardware.radio.sim.PhonebookRecordInfo
             convertToHalPhonebookRecordInfoAidl(SimPhonebookRecord record) {
-        android.hardware.radio.sim.PhonebookRecordInfo pbRecordInfo =
-                new android.hardware.radio.sim.PhonebookRecordInfo();
-        pbRecordInfo.recordId = record.getRecordIndex();
-        pbRecordInfo.name = convertNullToEmptyString(record.getAlphaTag());
-        pbRecordInfo.number = convertNullToEmptyString(
-                convertToHalPhonebookRecordInfoNumber(record.getNumber()));
-        pbRecordInfo.emails = record.getEmails();
-        if (record.getAdditionalNumbers() != null) {
-            String[] additionalNumbers = new String[record.getAdditionalNumbers().length];
-            for (int i = 0; i < additionalNumbers.length; i++) {
-                additionalNumbers[i] =
-                        convertToHalPhonebookRecordInfoNumber(record.getAdditionalNumbers()[i]);
-            }
-            pbRecordInfo.additionalNumbers = additionalNumbers;
+        if (record != null) {
+            return record.toPhonebookRecordInfoAidl();
         }
-        return pbRecordInfo;
-    }
-
-    /**
-     * Convert the GSM pause/wild/wait character to the phone number in the SIM PhonebookRecordInfo
-     * number format
-     * @param input GSM pause/wild/wait character
-     * @return The converted PhonebookRecordInfo number
-     */
-    private static String convertToHalPhonebookRecordInfoNumber(String input) {
-        return input == null ? null : input.replace(PhoneNumberUtils.WAIT, 'e')
-                .replace(PhoneNumberUtils.PAUSE, 'T')
-                .replace(PhoneNumberUtils.WILD, '?');
+        return new android.hardware.radio.sim.PhonebookRecordInfo();
     }
 
     /**
@@ -4646,6 +4630,46 @@ public class RILUtils {
     /** Convert null to an empty String */
     public static String convertNullToEmptyString(String string) {
         return string != null ? string : "";
+    }
+
+    /**
+     * Convert setup data reason to string.
+     *
+     * @param reason The reason for setup data call.
+     * @return The reason in string format.
+     */
+    public static String setupDataReasonToString(@SetupDataReason int reason) {
+        switch (reason) {
+            case DataService.REQUEST_REASON_NORMAL:
+                return "NORMAL";
+            case DataService.REQUEST_REASON_HANDOVER:
+                return "HANDOVER";
+            case DataService.REQUEST_REASON_UNKNOWN:
+                return "UNKNOWN";
+            default:
+                return "UNKNOWN(" + reason + ")";
+        }
+    }
+
+    /**
+     * Convert deactivate data reason to string.
+     *
+     * @param reason The reason for deactivate data call.
+     * @return The reason in string format.
+     */
+    public static String deactivateDataReasonToString(@DeactivateDataReason int reason) {
+        switch (reason) {
+            case DataService.REQUEST_REASON_NORMAL:
+                return "NORMAL";
+            case DataService.REQUEST_REASON_HANDOVER:
+                return "HANDOVER";
+            case DataService.REQUEST_REASON_SHUTDOWN:
+                return "SHUTDOWN";
+            case DataService.REQUEST_REASON_UNKNOWN:
+                return "UNKNOWN";
+            default:
+                return "UNKNOWN(" + reason + ")";
+        }
     }
 
     /**
@@ -5189,6 +5213,110 @@ public class RILUtils {
             }
         }
         return caps;
+    }
+
+    private static boolean isPrimitiveOrWrapper(Class c) {
+        return c.isPrimitive() || WRAPPER_CLASSES.contains(c);
+    }
+
+    /**
+     * Return a general String representation of a class
+     * @param o The object to convert to String
+     * @return A string containing all public non-static local variables of a class
+     */
+    public static String convertToString(Object o) {
+        boolean toStringExists = false;
+        try {
+            toStringExists = o.getClass().getMethod("toString").getDeclaringClass() != Object.class;
+        } catch (NoSuchMethodException e) {
+            loge(e.toString());
+        }
+        if (toStringExists || isPrimitiveOrWrapper(o.getClass()) || o instanceof ArrayList) {
+            return o.toString();
+        }
+        if (o.getClass().isArray()) {
+            // Special handling for arrays
+            StringBuilder sb = new StringBuilder("[");
+            boolean added = false;
+            if (isPrimitiveOrWrapper(o.getClass().getComponentType())) {
+                for (int i = 0; i < Array.getLength(o); i++) {
+                    sb.append(convertToString(Array.get(o, i))).append(", ");
+                    added = true;
+                }
+            } else {
+                for (Object element : (Object[]) o) {
+                    sb.append(convertToString(element)).append(", ");
+                    added = true;
+                }
+            }
+            if (added) {
+                // Remove extra ,
+                sb.delete(sb.length() - 2, sb.length());
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+        StringBuilder sb = new StringBuilder(o.getClass().getSimpleName());
+        sb.append("{");
+        Field[] fields = o.getClass().getDeclaredFields();
+        int tag = -1;
+        try {
+            tag = (int) o.getClass().getDeclaredMethod("getTag").invoke(o);
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            loge(e.toString());
+        } catch (NoSuchMethodException ignored) {
+            // Ignored since only unions have the getTag method
+        }
+        if (tag != -1) {
+            // Special handling for unions
+            String tagName = null;
+            try {
+                Method method = o.getClass().getDeclaredMethod("_tagString", int.class);
+                method.setAccessible(true);
+                tagName = (String) method.invoke(o, tag);
+            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                loge(e.toString());
+            }
+            if (tagName != null) {
+                sb.append(tagName);
+                sb.append("=");
+                // From tag, create method name getTag
+                String getTagMethod = "get" + tagName.substring(0, 1).toUpperCase(Locale.ROOT)
+                        + tagName.substring(1);
+                Object val = null;
+                try {
+                    val = o.getClass().getDeclaredMethod(getTagMethod).invoke(o);
+                } catch (NoSuchMethodException | IllegalAccessException
+                        | InvocationTargetException e) {
+                    loge(e.toString());
+                }
+                if (val != null) {
+                    sb.append(convertToString(val));
+                }
+            }
+        } else {
+            boolean added = false;
+            for (Field field : fields) {
+                // Ignore static variables
+                if (Modifier.isStatic(field.getModifiers())) continue;
+                sb.append(field.getName()).append("=");
+                Object val = null;
+                try {
+                    val = field.get(o);
+                } catch (IllegalAccessException e) {
+                    loge(e.toString());
+                }
+                if (val == null) continue;
+                sb.append(convertToString(val)).append(", ");
+                added = true;
+            }
+            if (added) {
+                // Remove extra ,
+                sb.delete(sb.length() - 2, sb.length());
+            }
+        }
+        sb.append("}");
+        return sb.toString();
     }
 
     private static void logd(String log) {

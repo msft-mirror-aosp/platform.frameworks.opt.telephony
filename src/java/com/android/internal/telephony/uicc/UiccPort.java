@@ -18,16 +18,10 @@ package com.android.internal.telephony.uicc;
 
 import android.annotation.NonNull;
 import android.content.Context;
-import android.content.Intent;
-import android.content.pm.PackageInfo;
-import android.content.pm.PackageManager;
-import android.content.pm.Signature;
-import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.os.RemoteException;
 import android.telephony.SubscriptionInfo;
-import android.telephony.TelephonyManager;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -108,37 +102,6 @@ public class UiccPort {
     @Override
     protected void finalize() {
         if (DBG) log("UiccPort finalized");
-    }
-
-    /**
-     * Notifies handler when carrier privilege rules are loaded.
-     * @deprecated Please use
-     * {@link UiccProfile#registerForCarrierPrivilegeRulesLoaded(Handler, int, Object)} instead.
-     */
-    @Deprecated
-    public void registerForCarrierPrivilegeRulesLoaded(Handler h, int what, Object obj) {
-        synchronized (mLock) {
-            if (mUiccProfile != null) {
-                mUiccProfile.registerForCarrierPrivilegeRulesLoaded(h, what, obj);
-            } else {
-                loge("registerForCarrierPrivilegeRulesLoaded Failed!");
-            }
-        }
-    }
-
-    /**
-     * @deprecated Please use
-     * {@link UiccProfile#unregisterForCarrierPrivilegeRulesLoaded(Handler)} instead.
-     */
-    @Deprecated
-    public void unregisterForCarrierPrivilegeRulesLoaded(Handler h) {
-        synchronized (mLock) {
-            if (mUiccProfile != null) {
-                mUiccProfile.unregisterForCarrierPrivilegeRulesLoaded(h);
-            } else {
-                loge("unregisterForCarrierPrivilegeRulesLoaded Failed!");
-            }
-        }
     }
 
     /**
@@ -348,102 +311,6 @@ public class UiccPort {
 
     public UiccProfile getUiccProfile() {
         return mUiccProfile;
-    }
-
-    /**
-     * Returns true iff carrier privileges rules are null (dont need to be loaded) or loaded.
-     * @deprecated Please use {@link UiccProfile#areCarrierPrivilegeRulesLoaded()} instead.
-     */
-    @Deprecated
-    public boolean areCarrierPrivilegeRulesLoaded() {
-        if (mUiccProfile != null) {
-            return mUiccProfile.areCarrierPrivilegeRulesLoaded();
-        } else {
-            return false;
-        }
-    }
-
-    /**
-     * Returns true if there are some carrier privilege rules loaded and specified.
-     * @deprecated Please use {@link UiccProfile#hasCarrierPrivilegeRules()} instead.
-     */
-    @Deprecated
-    public boolean hasCarrierPrivilegeRules() {
-        if (mUiccProfile != null) {
-            return mUiccProfile.hasCarrierPrivilegeRules();
-        } else {
-            return false;
-        }
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPrivilegeStatus}.
-     * @deprecated Please use
-     * {@link UiccProfile#getCarrierPrivilegeStatus(Signature, String)} instead.
-     */
-    @Deprecated
-    public int getCarrierPrivilegeStatus(Signature signature, String packageName) {
-        if (mUiccProfile != null) {
-            return mUiccProfile.getCarrierPrivilegeStatus(signature, packageName);
-        } else {
-            return TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED;
-        }
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPrivilegeStatus}.
-     * @deprecated Please use
-     * {@link UiccProfile#getCarrierPrivilegeStatus(PackageManager, String)} instead.
-     */
-    @Deprecated
-    public int getCarrierPrivilegeStatus(PackageManager packageManager, String packageName) {
-        if (mUiccProfile != null) {
-            return mUiccProfile.getCarrierPrivilegeStatus(packageManager, packageName);
-        } else {
-            return TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED;
-        }
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPrivilegeStatus}.
-     * @deprecated Please use {@link UiccProfile#getCarrierPrivilegeStatus(PackageInfo)} instead.
-     */
-    @Deprecated
-    public int getCarrierPrivilegeStatus(PackageInfo packageInfo) {
-        if (mUiccProfile != null) {
-            return mUiccProfile.getCarrierPrivilegeStatus(packageInfo);
-        } else {
-            return TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED;
-        }
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPrivilegeStatusForCurrentTransaction}.
-     * @deprecated Please use
-     * {@link UiccProfile#getCarrierPrivilegeStatusForCurrentTransaction(PackageManager)} instead.
-     */
-    @Deprecated
-    public int getCarrierPrivilegeStatusForCurrentTransaction(PackageManager packageManager) {
-        if (mUiccProfile != null) {
-            return mUiccProfile.getCarrierPrivilegeStatusForCurrentTransaction(packageManager);
-        } else {
-            return TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED;
-        }
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPackageNamesForIntent}.
-     * @deprecated Please use
-     * {@link UiccProfile#getCarrierPackageNamesForIntent(PackageManager, Intent)} instead.
-     */
-    @Deprecated
-    public List<String> getCarrierPackageNamesForIntent(
-            PackageManager packageManager, Intent intent) {
-        if (mUiccProfile != null) {
-            return mUiccProfile.getCarrierPackageNamesForIntent(packageManager, intent);
-        } else {
-            return null;
-        }
     }
 
     /**
