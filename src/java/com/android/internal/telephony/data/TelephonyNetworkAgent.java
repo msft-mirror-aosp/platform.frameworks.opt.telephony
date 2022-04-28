@@ -54,6 +54,9 @@ public class TelephonyNetworkAgent extends NetworkAgent implements NotifyQosSess
     /** The parent data network. */
     private final @NonNull DataNetwork mDataNetwork;
 
+    /** Network agent config. For unit test use only. */
+    private final @NonNull NetworkAgentConfig mNetworkAgentConfig;
+
     /** This is the id from {@link NetworkAgent#register()}. */
     private final int mId;
 
@@ -154,6 +157,7 @@ public class TelephonyNetworkAgent extends NetworkAgent implements NotifyQosSess
                 config, provider);
         register();
         mDataNetwork = dataNetwork;
+        mNetworkAgentConfig = config;
         mTelephonyNetworkAgentCallbacks.add(callback);
         mPhone = phone;
         mId = getNetwork().getNetId();
@@ -172,6 +176,7 @@ public class TelephonyNetworkAgent extends NetworkAgent implements NotifyQosSess
             log("The agent is already abandoned. Ignored onNetworkUnwanted.");
             return;
         }
+
         mDataNetwork.tearDown(DataNetwork.TEAR_DOWN_REASON_CONNECTIVITY_SERVICE_UNWANTED);
     }
 

@@ -19,7 +19,6 @@ package com.android.internal.telephony.data;
 import static android.telephony.data.DataServiceCallback.RESULT_SUCCESS;
 
 import android.annotation.Nullable;
-import android.hardware.radio.RadioError;
 import android.net.LinkProperties;
 import android.os.AsyncResult;
 import android.os.Handler;
@@ -38,6 +37,7 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.telephony.Rlog;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -89,12 +89,9 @@ public class CellularDataService extends DataService {
                                     response);
                             break;
                         case DEACTIVATE_DATA_CALL_COMPLETE:
-                            int error = (int) ar.result;
                             callback.onDeactivateDataCallComplete(ar.exception != null
                                     ? DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE
-                                    : error == RadioError.RADIO_NOT_AVAILABLE
-                                            ? DataServiceCallback.RESULT_ERROR_RADIO_NOT_AVAILABLE
-                                            : RESULT_SUCCESS);
+                                    : RESULT_SUCCESS);
                             break;
                         case SET_INITIAL_ATTACH_APN_COMPLETE:
                             callback.onSetInitialAttachApnComplete(ar.exception != null
@@ -111,8 +108,8 @@ public class CellularDataService extends DataService {
                                     ar.exception != null
                                             ? DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE
                                             : RESULT_SUCCESS,
-                                    ar.exception != null
-                                            ? null : (List<DataCallResponse>) ar.result
+                                    ar.result != null ? (List<DataCallResponse>) ar.result
+                                            : Collections.EMPTY_LIST
                                     );
                             break;
                         case DATA_CALL_LIST_CHANGED:

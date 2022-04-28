@@ -564,6 +564,13 @@ public class PhoneSwitcher extends Handler {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_MCX)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_1)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_2)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_3)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_4)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_5)
                 .setNetworkSpecifier(new MatchAllNetworkSpecifier());
 
         NetworkFactory networkFactory = new PhoneSwitcherNetworkRequestListener(looper, context,
@@ -1641,7 +1648,7 @@ public class PhoneSwitcher extends Handler {
         // in network (DIALING -> ALERTING).
         return (phone.getForegroundCall().getState() == Call.State.ACTIVE
                 || phone.getForegroundCall().getState() == Call.State.ALERTING
-                || phone.getBackgroundCall().getState() == Call.State.HOLDING);
+                || !phone.getBackgroundCall().isIdle());
     }
 
     private void updateHalCommandToUse() {

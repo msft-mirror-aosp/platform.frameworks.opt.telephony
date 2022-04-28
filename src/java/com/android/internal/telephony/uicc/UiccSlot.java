@@ -16,6 +16,7 @@
 
 package com.android.internal.telephony.uicc;
 
+import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
@@ -41,11 +42,15 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.uicc.IccCardStatus.CardState;
 import com.android.internal.telephony.uicc.euicc.EuiccCard;
+import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -60,6 +65,17 @@ public class UiccSlot extends Handler {
             "com.android.internal.telephony.uicc.ICC_CARD_ADDED";
     public static final int INVALID_PHONE_ID = -1;
 
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(
+            prefix = {"VOLTAGE_CLASS_"},
+            value = {VOLTAGE_CLASS_UNKNOWN, VOLTAGE_CLASS_A, VOLTAGE_CLASS_B, VOLTAGE_CLASS_C})
+    public @interface VoltageClass {}
+
+    public static final int VOLTAGE_CLASS_UNKNOWN = 0;
+    public static final int VOLTAGE_CLASS_A = 1;
+    public static final int VOLTAGE_CLASS_B = 2;
+    public static final int VOLTAGE_CLASS_C = 3;
+
     private final Object mLock = new Object();
     private boolean mActive;
     private boolean mStateIsUnknown = true;
@@ -67,6 +83,7 @@ public class UiccSlot extends Handler {
     private Context mContext;
     private UiccCard mUiccCard;
     private boolean mIsEuicc;
+    private @VoltageClass int mMinimumVoltageClass;
     private String mEid;
     private AnswerToReset mAtr;
     private boolean mIsRemovable;
@@ -136,7 +153,8 @@ public class UiccSlot extends Handler {
                     // The EID should be reported with the card status, but in case it's not we want
                     // to catch that here
                     if (TextUtils.isEmpty(ics.eid)) {
-                        loge("update: eid is missing. ics.eid=" + ics.eid);
+                        loge("update: eid is missing. ics.eid="
+                                + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, ics.eid));
                     }
                     mUiccCard = new EuiccCard(mContext, ci, ics, phoneId, mLock,
                             isMultipleEnabledProfileSupported());
@@ -357,13 +375,49 @@ public class UiccSlot extends Handler {
         log(" checkIsEuiccSupported : " + mIsEuicc);
     }
 
+    private void checkMinimumVoltageClass() {
+        mMinimumVoltageClass = VOLTAGE_CLASS_UNKNOWN;
+        if (mAtr == null) {
+            return;
+        }
+        // Supported voltage classes are stored in the 5 least significant bits of the TA byte for
+        // global interface.
+        List<AnswerToReset.InterfaceByte> interfaceBytes = mAtr.getInterfaceBytes();
+        for (int i = 0; i < interfaceBytes.size() - 1; i++) {
+            if (interfaceBytes.get(i).getTD() != null
+                    && (interfaceBytes.get(i).getTD() & AnswerToReset.T_MASK)
+                            == AnswerToReset.T_VALUE_FOR_GLOBAL_INTERFACE
+                    && interfaceBytes.get(i + 1).getTA() != null) {
+                byte ta = interfaceBytes.get(i + 1).getTA();
+                if ((ta & 0x01) != 0) {
+                    mMinimumVoltageClass = VOLTAGE_CLASS_A;
+                }
+                if ((ta & 0x02) != 0) {
+                    mMinimumVoltageClass = VOLTAGE_CLASS_B;
+                }
+                if ((ta & 0x04) != 0) {
+                    mMinimumVoltageClass = VOLTAGE_CLASS_C;
+                }
+                return;
+            }
+        }
+        // Use default value - only class A
+        mMinimumVoltageClass = VOLTAGE_CLASS_A;
+    }
+
     private void parseAtr(String atr) {
         mAtr = AnswerToReset.parseAtr(atr);
         checkIsEuiccSupported();
+        checkMinimumVoltageClass();
     }
 
     public boolean isEuicc() {
         return mIsEuicc;
+    }
+
+    @VoltageClass
+    public int getMinimumVoltageClass() {
+        return mMinimumVoltageClass;
     }
 
     public boolean isActive() {
@@ -420,11 +474,11 @@ public class UiccSlot extends Handler {
     private void promptForRestart(boolean isAdded) {
         synchronized (mLock) {
             final Resources res = mContext.getResources();
-            final String dialogComponent = res.getString(
-                    R.string.config_iccHotswapPromptForRestartDialogComponent);
+            final ComponentName dialogComponent = ComponentName.unflattenFromString(
+                    res.getString(R.string.config_iccHotswapPromptForRestartDialogComponent));
             if (dialogComponent != null) {
-                Intent intent = new Intent().setComponent(ComponentName.unflattenFromString(
-                        dialogComponent)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                Intent intent = new Intent().setComponent(dialogComponent)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         .putExtra(EXTRA_ICC_CARD_ADDED, isAdded);
                 try {
                     mContext.startActivityAsUser(intent, UserHandle.CURRENT);
@@ -558,7 +612,7 @@ public class UiccSlot extends Handler {
         pw.println(" mLastRadioState=" + mLastRadioState);
         pw.println(" mIccIds=" + getPrintableIccIds());
         pw.println(" mPortIdxToPhoneId=" + mPortIdxToPhoneId);
-        pw.println(" mEid=" + mEid);
+        pw.println(" mEid=" + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, mEid));
         pw.println(" mCardState=" + mCardState);
         if (mUiccCard != null) {
             pw.println(" mUiccCard=" + mUiccCard);
