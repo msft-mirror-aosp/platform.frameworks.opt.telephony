@@ -21,12 +21,17 @@ import static android.telephony.CarrierConfigManager.EXTRA_SUBSCRIPTION_INDEX;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_CERTIFICATE_STRING_ARRAY;
 import static android.telephony.SubscriptionManager.INVALID_SIM_SLOT_INDEX;
 import static android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+import static android.telephony.TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS;
+import static android.telephony.TelephonyManager.CARRIER_PRIVILEGE_STATUS_NO_ACCESS;
+import static android.telephony.TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED;
 import static android.telephony.TelephonyManager.EXTRA_SIM_STATE;
 import static android.telephony.TelephonyManager.SIM_STATE_ABSENT;
 import static android.telephony.TelephonyManager.SIM_STATE_LOADED;
 import static android.telephony.TelephonyManager.SIM_STATE_NOT_READY;
+import static android.telephony.TelephonyManager.SIM_STATE_READY;
 import static android.telephony.TelephonyManager.SIM_STATE_UNKNOWN;
 
+import android.annotation.ElapsedRealtimeLong;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
@@ -46,10 +51,13 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
+import android.os.Process;
 import android.os.Registrant;
 import android.os.RegistrantList;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.os.UserManager;
+import android.service.carrier.CarrierService;
 import android.telephony.Annotation.CarrierPrivilegeStatus;
 import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionManager;
@@ -61,12 +69,12 @@ import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.IntArray;
 import android.util.LocalLog;
+import android.util.Pair;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccProfile;
-import com.android.internal.util.ArrayUtils;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
@@ -77,8 +85,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
@@ -95,6 +105,12 @@ public class CarrierPrivilegesTracker extends Handler {
 
     private static final String SHA_1 = "SHA-1";
     private static final String SHA_256 = "SHA-256";
+
+    /**
+     * Time delay to clear UICC rules after UICC is gone.
+     * This introduces the grace period to retain carrier privileges when SIM is removed.
+     */
+    private static final long CLEAR_UICC_RULES_DELAY_MILLIS = TimeUnit.SECONDS.toMillis(30);
 
     /**
      * Action to register a Registrant with this Tracker.
@@ -123,16 +139,17 @@ public class CarrierPrivilegesTracker extends Handler {
     private static final int ACTION_SIM_STATE_UPDATED = 4;
 
     /**
-     * Action for tracking when a package is installed or replaced on the device.
-     * obj: String package name that was installed or replaced on the device.
+     * Action for tracking when a package is installed, replaced or changed (exclude the case
+     * disabled by user) on the device.
+     * obj: String package name that was installed, replaced or changed on the device.
      */
-    private static final int ACTION_PACKAGE_ADDED_OR_REPLACED = 5;
+    private static final int ACTION_PACKAGE_ADDED_REPLACED_OR_CHANGED = 5;
 
     /**
-     * Action for tracking when a package is uninstalled on the device.
-     * obj: String package name that was installed on the device.
+     * Action for tracking when a package is uninstalled or disabled by user on the device.
+     * obj: String package name that was installed or disabled by user on the device.
      */
-    private static final int ACTION_PACKAGE_REMOVED = 6;
+    private static final int ACTION_PACKAGE_REMOVED_OR_DISABLED_BY_USER = 6;
 
     /**
      * Action used to initialize the state of the Tracker.
@@ -145,6 +162,11 @@ public class CarrierPrivilegesTracker extends Handler {
      */
     private static final int ACTION_SET_TEST_OVERRIDE_RULE = 8;
 
+    /**
+     * Action to clear UICC rules.
+     */
+    private static final int ACTION_CLEAR_UICC_RULES = 9;
+
     private final Context mContext;
     private final Phone mPhone;
     private final PackageManager mPackageManager;
@@ -153,43 +175,64 @@ public class CarrierPrivilegesTracker extends Handler {
     private final TelephonyManager mTelephonyManager;
     private final TelephonyRegistryManager mTelephonyRegistryManager;
 
-    private final LocalLog mLocalLog = new LocalLog(64);
-    private final RegistrantList mRegistrantList = new RegistrantList();
+    @NonNull private final LocalLog mLocalLog = new LocalLog(64);
+    @NonNull private final RegistrantList mRegistrantList = new RegistrantList();
     // Stores rules for Carrier Config-loaded rules
-    private final List<UiccAccessRule> mCarrierConfigRules = new ArrayList<>();
+    @NonNull private final List<UiccAccessRule> mCarrierConfigRules = new ArrayList<>();
     // Stores rules for SIM-loaded rules.
-    private final List<UiccAccessRule> mUiccRules = new ArrayList<>();
+    @NonNull private final List<UiccAccessRule> mUiccRules = new ArrayList<>();
     // Stores rule from test override (through TelephonyManager#setCarrierTestOverride).
     // - Null list indicates no test override (CC and UICC rules are respected)
     // - Empty list indicates test override to simulate no rules (CC and UICC rules are ignored)
     // - Non-empty list indicates test override with specific rules (CC and UICC rules are ignored)
     @Nullable private List<UiccAccessRule> mTestOverrideRules = null;
     // Map of PackageName -> Certificate hashes for that Package
-    private final Map<String, Set<String>> mInstalledPackageCerts = new ArrayMap<>();
+    @NonNull private final Map<String, Set<String>> mInstalledPackageCerts = new ArrayMap<>();
     // Map of PackageName -> UIDs for that Package
-    private final Map<String, Set<Integer>> mCachedUids = new ArrayMap<>();
+    @NonNull private final Map<String, Set<Integer>> mCachedUids = new ArrayMap<>();
 
-    private final ReadWriteLock mPrivilegedPackageInfoLock = new ReentrantReadWriteLock();
+    // This should be used to guard critical section either with
+    // mPrivilegedPackageInfoLock.readLock() or mPrivilegedPackageInfoLock.writeLock(), but never
+    // with the mPrivilegedPackageInfoLock object itself.
+    @NonNull private final ReadWriteLock mPrivilegedPackageInfoLock = new ReentrantReadWriteLock();
     // Package names and UIDs of apps that currently hold carrier privileges.
-    @GuardedBy({"mPrivilegedPackageInfoLock.readLock()", "mPrivilegedPackageInfoLock.writeLock()"})
-    private PrivilegedPackageInfo mPrivilegedPackageInfo = new PrivilegedPackageInfo();
+    @GuardedBy(anyOf = {"mPrivilegedPackageInfoLock.readLock()",
+            "mPrivilegedPackageInfoLock.writeLock()"})
+    @NonNull private PrivilegedPackageInfo mPrivilegedPackageInfo = new PrivilegedPackageInfo();
+
+    // Uptime in millis on when the NEXT clear-up of UiccRules are scheduled
+    @ElapsedRealtimeLong
+    private long mClearUiccRulesUptimeMillis = CLEAR_UICC_RULE_NOT_SCHEDULED;
+    // Constant indicates no schedule to clear UiccRules
+    private static final long CLEAR_UICC_RULE_NOT_SCHEDULED = -1;
+
+    // Indicates SIM has reached SIM_STATE_READY but not SIM_STATE_LOADED yet. During this transient
+    // state, all the information previously loaded from SIM may be updated soon later and thus
+    // unreliable. For security's concern, any carrier privileges check should return
+    // CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED (instead of neither HAS_ACCESS nor NO_ACCESS) until
+    // SIM becomes LOADED again, or grace period specified by CLEAR_UICC_RULES_DELAY_MILLIS expires.
+    @GuardedBy(anyOf = {"mPrivilegedPackageInfoLock.readLock()",
+            "mPrivilegedPackageInfoLock.writeLock()"})
+    private boolean mSimIsReadyButNotLoaded = false;
 
     /** Small snapshot to hold package names and UIDs of privileged packages. */
     private static final class PrivilegedPackageInfo {
-        final Set<String> mPackageNames;
-        final int[] mUids; // Note: must be kept sorted for equality purposes
+        @NonNull final Set<String> mPackageNames;
+        @NonNull final Set<Integer> mUids;
+        // The carrier service (packageName, UID) pair
+        @NonNull final Pair<String, Integer> mCarrierService;
 
         PrivilegedPackageInfo() {
             mPackageNames = Collections.emptySet();
-            mUids = new int[0];
+            mUids = Collections.emptySet();
+            mCarrierService = new Pair<>(null, Process.INVALID_UID);
         }
 
-        PrivilegedPackageInfo(Set<String> packageNames, Set<Integer> uids) {
+        PrivilegedPackageInfo(@NonNull Set<String> packageNames, @NonNull Set<Integer> uids,
+                @NonNull Pair<String, Integer> carrierService) {
             mPackageNames = packageNames;
-            IntArray converter = new IntArray(uids.size());
-            uids.forEach(converter::add);
-            mUids = converter.toArray();
-            Arrays.sort(mUids); // for equality purposes
+            mUids = uids;
+            mCarrierService = carrierService;
         }
 
         @Override
@@ -197,7 +240,11 @@ public class CarrierPrivilegesTracker extends Handler {
             return "{packageNames="
                     + getObfuscatedPackages(mPackageNames, pkg -> Rlog.pii(TAG, pkg))
                     + ", uids="
-                    + Arrays.toString(mUids)
+                    + mUids
+                    + ", carrierServicePackageName="
+                    + Rlog.pii(TAG, mCarrierService.first)
+                    + ", carrierServiceUid="
+                    + mCarrierService.second
                     + "}";
         }
 
@@ -210,13 +257,13 @@ public class CarrierPrivilegesTracker extends Handler {
                 return false;
             }
             PrivilegedPackageInfo other = (PrivilegedPackageInfo) o;
-            return mPackageNames.equals(other.mPackageNames) && Arrays.equals(mUids, other.mUids);
+            return mPackageNames.equals(other.mPackageNames) && mUids.equals(other.mUids)
+                    && mCarrierService.equals(other.mCarrierService);
         }
 
         @Override
         public int hashCode() {
-            // Since we have an array, we have to use deepHashCode instead of "regular" Objects.hash
-            return Arrays.deepHashCode(new Object[] {mPackageNames, mUids});
+            return Objects.hash(mPackageNames, mUids, mCarrierService);
         }
     }
 
@@ -250,24 +297,34 @@ public class CarrierPrivilegesTracker extends Handler {
 
                             if (simState != SIM_STATE_ABSENT
                                     && simState != SIM_STATE_NOT_READY
-                                    && simState != SIM_STATE_LOADED) return;
+                                    && simState != SIM_STATE_READY
+                                    && simState != SIM_STATE_LOADED) {
+                                return;
+                            }
 
                             sendMessage(obtainMessage(ACTION_SIM_STATE_UPDATED, slotId, simState));
                             break;
                         }
                         case Intent.ACTION_PACKAGE_ADDED: // fall through
                         case Intent.ACTION_PACKAGE_REPLACED: // fall through
-                        case Intent.ACTION_PACKAGE_REMOVED: {
-                            int what =
-                                    (action.equals(Intent.ACTION_PACKAGE_REMOVED))
-                                            ? ACTION_PACKAGE_REMOVED
-                                            : ACTION_PACKAGE_ADDED_OR_REPLACED;
+                        case Intent.ACTION_PACKAGE_REMOVED: // fall through
+                        case Intent.ACTION_PACKAGE_CHANGED: {
                             Uri uri = intent.getData();
                             String pkgName = (uri != null) ? uri.getSchemeSpecificPart() : null;
                             if (TextUtils.isEmpty(pkgName)) {
                                 Rlog.e(TAG, "Failed to get package from Intent");
                                 return;
                             }
+
+                            boolean removed = action.equals(Intent.ACTION_PACKAGE_REMOVED);
+                            // When a package is explicitly disabled by the user, we take the
+                            // same action as if it was removed: clear it from the cache
+                            boolean disabledByUser = action.equals(Intent.ACTION_PACKAGE_CHANGED)
+                                    && mPackageManager.getApplicationEnabledSetting(pkgName)
+                                    == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER;
+                            int what = (removed || disabledByUser)
+                                    ? ACTION_PACKAGE_REMOVED_OR_DISABLED_BY_USER
+                                    : ACTION_PACKAGE_ADDED_REPLACED_OR_CHANGED;
 
                             sendMessage(obtainMessage(what, pkgName));
                             break;
@@ -300,6 +357,7 @@ public class CarrierPrivilegesTracker extends Handler {
         packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REPLACED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_CHANGED);
 
         // For package-related broadcasts, specify the data scheme for "package" to receive the
         // package name along with the broadcast
@@ -330,14 +388,14 @@ public class CarrierPrivilegesTracker extends Handler {
                 handleSimStateChanged(msg.arg1, msg.arg2);
                 break;
             }
-            case ACTION_PACKAGE_ADDED_OR_REPLACED: {
+            case ACTION_PACKAGE_ADDED_REPLACED_OR_CHANGED: {
                 String pkgName = (String) msg.obj;
-                handlePackageAddedOrReplaced(pkgName);
+                handlePackageAddedReplacedOrChanged(pkgName);
                 break;
             }
-            case ACTION_PACKAGE_REMOVED: {
+            case ACTION_PACKAGE_REMOVED_OR_DISABLED_BY_USER: {
                 String pkgName = (String) msg.obj;
-                handlePackageRemoved(pkgName);
+                handlePackageRemovedOrDisabledByUser(pkgName);
                 break;
             }
             case ACTION_INITIALIZE_TRACKER: {
@@ -349,6 +407,10 @@ public class CarrierPrivilegesTracker extends Handler {
                 handleSetTestOverrideRules(carrierPrivilegeRules);
                 break;
             }
+            case ACTION_CLEAR_UICC_RULES: {
+                handleClearUiccRules();
+                break;
+            }
             default: {
                 Rlog.e(TAG, "Received unknown msg type: " + msg.what);
                 break;
@@ -356,19 +418,20 @@ public class CarrierPrivilegesTracker extends Handler {
         }
     }
 
-    private void handleRegisterListener(Registrant registrant) {
+    private void handleRegisterListener(@NonNull Registrant registrant) {
         mRegistrantList.add(registrant);
         mPrivilegedPackageInfoLock.readLock().lock();
         try {
+            // Old registrant callback still takes int[] as parameter, need conversion here
+            int[] uids = intSetToArray(mPrivilegedPackageInfo.mUids);
             registrant.notifyResult(
-                    Arrays.copyOf(
-                            mPrivilegedPackageInfo.mUids, mPrivilegedPackageInfo.mUids.length));
+                    Arrays.copyOf(uids, uids.length));
         } finally {
             mPrivilegedPackageInfoLock.readLock().unlock();
         }
     }
 
-    private void handleUnregisterListener(Handler handler) {
+    private void handleUnregisterListener(@NonNull Handler handler) {
         mRegistrantList.remove(handler);
     }
 
@@ -391,6 +454,7 @@ public class CarrierPrivilegesTracker extends Handler {
         maybeUpdateRulesAndNotifyRegistrants(mCarrierConfigRules, updatedCarrierConfigRules);
     }
 
+    @NonNull
     private List<UiccAccessRule> getCarrierConfigRules(int subId) {
         PersistableBundle carrierConfigs = mCarrierConfigManager.getConfigForSubId(subId);
         if (!mCarrierConfigManager.isConfigForIdentifiedCarrier(carrierConfigs)) {
@@ -410,18 +474,48 @@ public class CarrierPrivilegesTracker extends Handler {
 
         List<UiccAccessRule> updatedUiccRules = Collections.EMPTY_LIST;
 
-        // Only include the UICC rules if the SIM is fully loaded
-        if (simState == SIM_STATE_LOADED) {
-            updatedUiccRules = getSimRules();
+        mPrivilegedPackageInfoLock.writeLock().lock();
+        try {
+            mSimIsReadyButNotLoaded = simState == SIM_STATE_READY;
+        } finally {
+            mPrivilegedPackageInfoLock.writeLock().unlock();
         }
 
-        mLocalLog.log("SIM State Changed:"
-                + " slotId=" + slotId
-                + " simState=" + simState
-                + " updated SIM-loaded rules=" + updatedUiccRules);
-        maybeUpdateRulesAndNotifyRegistrants(mUiccRules, updatedUiccRules);
+        // Only include the UICC rules if the SIM is fully loaded
+        if (simState == SIM_STATE_LOADED) {
+            mClearUiccRulesUptimeMillis = CLEAR_UICC_RULE_NOT_SCHEDULED;
+            removeMessages(ACTION_CLEAR_UICC_RULES);
+
+            updatedUiccRules = getSimRules();
+
+            mLocalLog.log("SIM fully loaded:"
+                    + " slotId=" + slotId
+                    + " simState=" + simState
+                    + " updated SIM-loaded rules=" + updatedUiccRules);
+            maybeUpdateRulesAndNotifyRegistrants(mUiccRules, updatedUiccRules);
+        } else {
+            if (!mUiccRules.isEmpty()
+                    && mClearUiccRulesUptimeMillis == CLEAR_UICC_RULE_NOT_SCHEDULED) {
+                mClearUiccRulesUptimeMillis =
+                        SystemClock.uptimeMillis() + CLEAR_UICC_RULES_DELAY_MILLIS;
+                sendMessageAtTime(obtainMessage(ACTION_CLEAR_UICC_RULES),
+                        mClearUiccRulesUptimeMillis);
+                mLocalLog.log("SIM is gone. Delay " + TimeUnit.MILLISECONDS.toSeconds(
+                        CLEAR_UICC_RULES_DELAY_MILLIS) + " seconds to clear UICC rules.");
+            } else {
+                mLocalLog.log(
+                        "Ignore SIM gone event while UiccRules is empty or waiting to be emptied.");
+            }
+        }
     }
 
+    private void handleClearUiccRules() {
+        mClearUiccRulesUptimeMillis = CLEAR_UICC_RULE_NOT_SCHEDULED;
+        removeMessages(ACTION_CLEAR_UICC_RULES);
+        maybeUpdateRulesAndNotifyRegistrants(mUiccRules, Collections.EMPTY_LIST);
+    }
+
+    @NonNull
     private List<UiccAccessRule> getSimRules() {
         if (!mTelephonyManager.hasIccCard(mPhone.getPhoneId())) {
             return Collections.EMPTY_LIST;
@@ -445,7 +539,9 @@ public class CarrierPrivilegesTracker extends Handler {
         return uiccProfile.getCarrierPrivilegeAccessRules();
     }
 
-    private void handlePackageAddedOrReplaced(String pkgName) {
+    private void handlePackageAddedReplacedOrChanged(@Nullable String pkgName) {
+        if (pkgName == null) return;
+
         PackageInfo pkg;
         try {
             pkg = mPackageManager.getPackageInfo(pkgName, PackageManager.GET_SIGNING_CERTIFICATES);
@@ -459,14 +555,14 @@ public class CarrierPrivilegesTracker extends Handler {
         // installed for a user it wasn't installed in before, which means there will be an
         // additional UID.
         getUidsForPackage(pkg.packageName, /* invalidateCache= */ true);
-        mLocalLog.log("Package added/replaced:"
+        mLocalLog.log("Package added/replaced/changed:"
                 + " pkg=" + Rlog.pii(TAG, pkgName)
                 + " cert hashes=" + mInstalledPackageCerts.get(pkgName));
 
         maybeUpdatePrivilegedPackagesAndNotifyRegistrants();
     }
 
-    private void updateCertsForPackage(PackageInfo pkg) {
+    private void updateCertsForPackage(@NonNull PackageInfo pkg) {
         Set<String> certs = new ArraySet<>();
         List<Signature> signatures = UiccAccessRule.getSignatures(pkg);
         for (Signature signature : signatures) {
@@ -480,13 +576,15 @@ public class CarrierPrivilegesTracker extends Handler {
         mInstalledPackageCerts.put(pkg.packageName, certs);
     }
 
-    private void handlePackageRemoved(String pkgName) {
+    private void handlePackageRemovedOrDisabledByUser(@Nullable String pkgName) {
+        if (pkgName == null) return;
+
         if (mInstalledPackageCerts.remove(pkgName) == null || mCachedUids.remove(pkgName) == null) {
-            Rlog.e(TAG, "Unknown package was uninstalled: " + pkgName);
+            Rlog.e(TAG, "Unknown package was uninstalled or disabled by user: " + pkgName);
             return;
         }
 
-        mLocalLog.log("Package removed: pkg=" + Rlog.pii(TAG, pkgName));
+        mLocalLog.log("Package removed or disabled by user: pkg=" + Rlog.pii(TAG, pkgName));
 
         maybeUpdatePrivilegedPackagesAndNotifyRegistrants();
     }
@@ -536,8 +634,9 @@ public class CarrierPrivilegesTracker extends Handler {
         }
     }
 
+    @NonNull
     private static <T> String getObfuscatedPackages(
-            Collection<T> packageNames, Function<T, String> obfuscator) {
+            @NonNull Collection<T> packageNames, @NonNull Function<T, String> obfuscator) {
         StringJoiner obfuscated = new StringJoiner(", ", "{", "}");
         for (T packageName : packageNames) {
             obfuscated.add(obfuscator.apply(packageName));
@@ -545,8 +644,8 @@ public class CarrierPrivilegesTracker extends Handler {
         return obfuscated.toString();
     }
 
-    private void maybeUpdateRulesAndNotifyRegistrants(
-            List<UiccAccessRule> currentRules, List<UiccAccessRule> updatedRules) {
+    private void maybeUpdateRulesAndNotifyRegistrants(@NonNull List<UiccAccessRule> currentRules,
+            @NonNull List<UiccAccessRule> updatedRules) {
         if (currentRules.equals(updatedRules)) return;
 
         currentRules.clear();
@@ -559,9 +658,24 @@ public class CarrierPrivilegesTracker extends Handler {
         PrivilegedPackageInfo currentPrivilegedPackageInfo =
                 getCurrentPrivilegedPackagesForAllUsers();
 
+        boolean carrierPrivilegesPackageNamesChanged;
+        boolean carrierPrivilegesUidsChanged;
+        boolean carrierServiceChanged;
+
         mPrivilegedPackageInfoLock.readLock().lock();
         try {
             if (mPrivilegedPackageInfo.equals(currentPrivilegedPackageInfo)) return;
+
+            mLocalLog.log("Privileged packages info changed. New state = "
+                    + currentPrivilegedPackageInfo);
+
+            carrierPrivilegesPackageNamesChanged =
+                    !currentPrivilegedPackageInfo.mPackageNames.equals(
+                            mPrivilegedPackageInfo.mPackageNames);
+            carrierPrivilegesUidsChanged =
+                    !currentPrivilegedPackageInfo.mUids.equals(mPrivilegedPackageInfo.mUids);
+            carrierServiceChanged = !currentPrivilegedPackageInfo.mCarrierService.equals(
+                    mPrivilegedPackageInfo.mCarrierService);
         } finally {
             mPrivilegedPackageInfoLock.readLock().unlock();
         }
@@ -575,16 +689,24 @@ public class CarrierPrivilegesTracker extends Handler {
 
         mPrivilegedPackageInfoLock.readLock().lock();
         try {
-            mLocalLog.log("Privileged packages changed. New state = " + mPrivilegedPackageInfo);
-            mRegistrantList.notifyResult(
-                    Arrays.copyOf(
-                            mPrivilegedPackageInfo.mUids, mPrivilegedPackageInfo.mUids.length));
-            mTelephonyRegistryManager.notifyCarrierPrivilegesChanged(
-                    mPhone.getPhoneId(),
-                    Collections.unmodifiableList(
-                            new ArrayList<>(mPrivilegedPackageInfo.mPackageNames)),
-                    Arrays.copyOf(
-                            mPrivilegedPackageInfo.mUids, mPrivilegedPackageInfo.mUids.length));
+            // The obsoleted callback only care about UIDs
+            if (carrierPrivilegesUidsChanged) {
+                int[] uids = intSetToArray(mPrivilegedPackageInfo.mUids);
+                mRegistrantList.notifyResult(Arrays.copyOf(uids, uids.length));
+            }
+
+            if (carrierPrivilegesPackageNamesChanged || carrierPrivilegesUidsChanged) {
+                mTelephonyRegistryManager.notifyCarrierPrivilegesChanged(
+                        mPhone.getPhoneId(),
+                        Collections.unmodifiableSet(mPrivilegedPackageInfo.mPackageNames),
+                        Collections.unmodifiableSet(mPrivilegedPackageInfo.mUids));
+            }
+
+            if (carrierServiceChanged) {
+                mTelephonyRegistryManager.notifyCarrierServiceChanged(mPhone.getPhoneId(),
+                        mPrivilegedPackageInfo.mCarrierService.first,
+                        mPrivilegedPackageInfo.mCarrierService.second);
+            }
         } finally {
             mPrivilegedPackageInfoLock.readLock().unlock();
         }
@@ -595,6 +717,7 @@ public class CarrierPrivilegesTracker extends Handler {
                 mTelephonyManager, am.getCurrentUser(), mContext);
     }
 
+    @NonNull
     private PrivilegedPackageInfo getCurrentPrivilegedPackagesForAllUsers() {
         Set<String> privilegedPackageNames = new ArraySet<>();
         Set<Integer> privilegedUids = new ArraySet<>();
@@ -604,14 +727,15 @@ public class CarrierPrivilegesTracker extends Handler {
                 privilegedUids.addAll(getUidsForPackage(e.getKey(), /* invalidateCache= */ false));
             }
         }
-        return new PrivilegedPackageInfo(privilegedPackageNames, privilegedUids);
+        return new PrivilegedPackageInfo(privilegedPackageNames, privilegedUids,
+                getCarrierService(privilegedPackageNames));
     }
 
     /**
      * Returns true iff there is an overlap between the provided certificate hashes and the
      * certificate hashes stored in mTestOverrideRules, mCarrierConfigRules and mUiccRules.
      */
-    private boolean isPackagePrivileged(String pkgName, Set<String> certs) {
+    private boolean isPackagePrivileged(@NonNull String pkgName, @NonNull Set<String> certs) {
         // Double-nested for loops, but each collection should contain at most 2 elements in nearly
         // every case.
         // TODO(b/184382310) find a way to speed this up
@@ -639,7 +763,8 @@ public class CarrierPrivilegesTracker extends Handler {
         return false;
     }
 
-    private Set<Integer> getUidsForPackage(String pkgName, boolean invalidateCache) {
+    @NonNull
+    private Set<Integer> getUidsForPackage(@NonNull String pkgName, boolean invalidateCache) {
         if (invalidateCache) {
             mCachedUids.remove(pkgName);
         }
@@ -662,10 +787,21 @@ public class CarrierPrivilegesTracker extends Handler {
         return uids;
     }
 
+    private int getPackageUid(@Nullable String pkgName) {
+        int uid = Process.INVALID_UID;
+        try {
+            uid = mPackageManager.getPackageUid(pkgName, /* flags= */0);
+        } catch (NameNotFoundException e) {
+            Rlog.e(TAG, "Unable to find uid for package " + pkgName);
+        }
+        return uid;
+    }
+
     /**
      * Dump the local log buffer and other internal state of CarrierPrivilegesTracker.
      */
-    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+    public void dump(@NonNull FileDescriptor fd, @NonNull PrintWriter pw, @NonNull String[] args) {
+        pw.println("CarrierPrivilegesTracker - phoneId: " + mPhone.getPhoneId());
         pw.println("CarrierPrivilegesTracker - Log Begin ----");
         mLocalLog.dump(fd, pw, args);
         pw.println("CarrierPrivilegesTracker - Log End ----");
@@ -674,6 +810,7 @@ public class CarrierPrivilegesTracker extends Handler {
             pw.println(
                     "CarrierPrivilegesTracker - Privileged package info: "
                             + mPrivilegedPackageInfo);
+            pw.println("mSimIsReadyButNotLoaded: " + mSimIsReadyButNotLoaded);
         } finally {
             mPrivilegedPackageInfoLock.readLock().unlock();
         }
@@ -687,6 +824,7 @@ public class CarrierPrivilegesTracker extends Handler {
                                     mInstalledPackageCerts.entrySet(),
                                     e -> "pkg(" + Rlog.pii(TAG, e.getKey()) + ")=" + e.getValue()));
         }
+        pw.println("mClearUiccRulesUptimeMillis: " + mClearUiccRulesUptimeMillis);
     }
 
     /**
@@ -700,7 +838,8 @@ public class CarrierPrivilegesTracker extends Handler {
      *     <p>TODO(b/211658797) migrate callers, then delete all Registrant logic from CPT
      */
     @Deprecated
-    public void registerCarrierPrivilegesListener(Handler h, int what, Object obj) {
+    public void registerCarrierPrivilegesListener(@NonNull Handler h, int what,
+            @Nullable Object obj) {
         sendMessage(obtainMessage(ACTION_REGISTER_LISTENER, new Registrant(h, what, obj)));
     }
 
@@ -711,7 +850,7 @@ public class CarrierPrivilegesTracker extends Handler {
      *     <p>TODO(b/211658797) migrate callers, then delete all Registrant logic from CPT
      */
     @Deprecated
-    public void unregisterCarrierPrivilegesListener(Handler handler) {
+    public void unregisterCarrierPrivilegesListener(@NonNull Handler handler) {
         sendMessage(obtainMessage(ACTION_UNREGISTER_LISTENER, handler));
     }
 
@@ -746,26 +885,35 @@ public class CarrierPrivilegesTracker extends Handler {
     }
 
     /** Backing of {@link TelephonyManager#checkCarrierPrivilegesForPackage}. */
-    public @CarrierPrivilegeStatus int getCarrierPrivilegeStatusForPackage(String packageName) {
+    public @CarrierPrivilegeStatus int getCarrierPrivilegeStatusForPackage(
+            @Nullable String packageName) {
+        if (packageName == null) return TelephonyManager.CARRIER_PRIVILEGE_STATUS_NO_ACCESS;
+
         // TODO(b/205736323) consider if/how we want to account for the RULES_NOT_LOADED and
         // ERROR_LOADING_RULES constants. Technically those will never be returned today since those
         // results are only from the SIM rules, but the CC rules' result (which never has these
         // errors) always supersede them unless something goes super wrong when getting CC.
         mPrivilegedPackageInfoLock.readLock().lock();
         try {
-            return mPrivilegedPackageInfo.mPackageNames.contains(packageName)
-                    ? TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS
-                    : TelephonyManager.CARRIER_PRIVILEGE_STATUS_NO_ACCESS;
+            if (mSimIsReadyButNotLoaded) {
+                return CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED;
+            } else if (mPrivilegedPackageInfo.mPackageNames.contains(packageName)) {
+                return CARRIER_PRIVILEGE_STATUS_HAS_ACCESS;
+            } else {
+                return CARRIER_PRIVILEGE_STATUS_NO_ACCESS;
+            }
         } finally {
             mPrivilegedPackageInfoLock.readLock().unlock();
         }
     }
 
     /** Backing of {@link TelephonyManager#getPackagesWithCarrierPrivileges}. */
+    @NonNull
     public Set<String> getPackagesWithCarrierPrivileges() {
         mPrivilegedPackageInfoLock.readLock().lock();
         try {
-            return Collections.unmodifiableSet(mPrivilegedPackageInfo.mPackageNames);
+            return mSimIsReadyButNotLoaded ? Collections.emptySet() :
+                    Collections.unmodifiableSet(mPrivilegedPackageInfo.mPackageNames);
         } finally {
             mPrivilegedPackageInfoLock.readLock().unlock();
         }
@@ -782,9 +930,48 @@ public class CarrierPrivilegesTracker extends Handler {
         // errors) always supersede them unless something goes super wrong when getting CC.
         mPrivilegedPackageInfoLock.readLock().lock();
         try {
-            return ArrayUtils.contains(mPrivilegedPackageInfo.mUids, uid)
-                    ? TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS
-                    : TelephonyManager.CARRIER_PRIVILEGE_STATUS_NO_ACCESS;
+            if (mSimIsReadyButNotLoaded) {
+                return CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED;
+            } else if (mPrivilegedPackageInfo.mUids.contains(uid)) {
+                return CARRIER_PRIVILEGE_STATUS_HAS_ACCESS;
+            } else {
+                return CARRIER_PRIVILEGE_STATUS_NO_ACCESS;
+            }
+        } finally {
+            mPrivilegedPackageInfoLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Backing of {@link TelephonyManager#getCarrierServicePackageName()} and
+     * {@link TelephonyManager#getCarrierServicePackageNameForLogicalSlot(int)}
+     */
+    @Nullable
+    public String getCarrierServicePackageName() {
+        // Return the cached one if present, it is fast and safe (no IPC call to PackageManager)
+        mPrivilegedPackageInfoLock.readLock().lock();
+        try {
+            // If SIM is READY but not LOADED, neither the cache nor the queries below are reliable,
+            // we should return null for this transient state for security/privacy's concern.
+            if (mSimIsReadyButNotLoaded) return null;
+
+            return mPrivilegedPackageInfo.mCarrierService.first;
+        } finally {
+            mPrivilegedPackageInfoLock.readLock().unlock();
+        }
+        // Do NOT query package manager, mPrivilegedPackageInfo.mCarrierService has maintained the
+        // latest CarrierService info. Querying PM will not get better result.
+    }
+
+    /**
+     * @return The UID of carrier service package. {@link Process#INVALID_UID} if not found.
+     */
+    public int getCarrierServicePackageUid() {
+        mPrivilegedPackageInfoLock.readLock().lock();
+        try {
+            if (mSimIsReadyButNotLoaded) return Process.INVALID_UID;
+
+            return mPrivilegedPackageInfo.mCarrierService.second;
         } finally {
             mPrivilegedPackageInfoLock.readLock().unlock();
         }
@@ -794,7 +981,15 @@ public class CarrierPrivilegesTracker extends Handler {
      * Backing of {@link TelephonyManager#getCarrierPackageNamesForIntent} and {@link
      * TelephonyManager#getCarrierPackageNamesForIntentAndPhone}.
      */
-    public List<String> getCarrierPackageNamesForIntent(Intent intent) {
+    @NonNull
+    public List<String> getCarrierPackageNamesForIntent(@NonNull Intent intent) {
+        mPrivilegedPackageInfoLock.readLock().lock();
+        try {
+            if (mSimIsReadyButNotLoaded) return Collections.emptyList();
+        } finally {
+            mPrivilegedPackageInfoLock.readLock().unlock();
+        }
+
         // Do the PackageManager queries before we take the lock, as these are the longest-running
         // pieces of this method and don't depend on the set of carrier apps.
         List<ResolveInfo> resolveInfos = new ArrayList<>();
@@ -806,19 +1001,16 @@ public class CarrierPrivilegesTracker extends Handler {
         // Now actually check which of the resolved packages have carrier privileges.
         mPrivilegedPackageInfoLock.readLock().lock();
         try {
+            // Check mSimIsReadyButNotLoaded again here since the PackageManager queries above are
+            // pretty time-consuming, mSimIsReadyButNotLoaded state may change since last check
+            if (mSimIsReadyButNotLoaded) return Collections.emptyList();
+
             Set<String> packageNames = new ArraySet<>(); // For deduping purposes
             for (ResolveInfo resolveInfo : resolveInfos) {
                 String packageName = getPackageName(resolveInfo);
-                if (packageName == null) continue;
-                switch (getCarrierPrivilegeStatusForPackage(packageName)) {
-                    case TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS:
-                        packageNames.add(packageName);
-                        break;
-                    case TelephonyManager.CARRIER_PRIVILEGE_STATUS_NO_ACCESS:
-                        continue;
-                    default:
-                        // Any other status is considered an error.
-                        return Collections.emptyList();
+                if (packageName != null && CARRIER_PRIVILEGE_STATUS_HAS_ACCESS
+                        == getCarrierPrivilegeStatusForPackage(packageName)) {
+                    packageNames.add(packageName);
                 }
             }
             return new ArrayList<>(packageNames);
@@ -827,11 +1019,36 @@ public class CarrierPrivilegesTracker extends Handler {
         }
     }
 
-    private static @Nullable String getPackageName(ResolveInfo resolveInfo) {
+    @Nullable
+    private static String getPackageName(@NonNull ResolveInfo resolveInfo) {
         // Note: activityInfo covers both activities + broadcast receivers
         if (resolveInfo.activityInfo != null) return resolveInfo.activityInfo.packageName;
         if (resolveInfo.serviceInfo != null) return resolveInfo.serviceInfo.packageName;
         if (resolveInfo.providerInfo != null) return resolveInfo.providerInfo.packageName;
         return null;
+    }
+
+    @NonNull
+    private Pair<String, Integer> getCarrierService(@NonNull Set<String> privilegedPackageNames) {
+        List<ResolveInfo> carrierServiceResolveInfos = mPackageManager.queryIntentServices(
+                new Intent(CarrierService.CARRIER_SERVICE_INTERFACE), /* flags= */ 0);
+        String carrierServicePackageName = null;
+        for (ResolveInfo resolveInfo : carrierServiceResolveInfos) {
+            String packageName = getPackageName(resolveInfo);
+            if (privilegedPackageNames.contains(packageName)) {
+                carrierServicePackageName = packageName;
+                break;
+            }
+        }
+        return carrierServicePackageName == null
+                ? new Pair<>(null, Process.INVALID_UID)
+                : new Pair<>(carrierServicePackageName, getPackageUid(carrierServicePackageName));
+    }
+
+    @NonNull
+    private static int[] intSetToArray(@NonNull Set<Integer> intSet) {
+        IntArray converter = new IntArray(intSet.size());
+        intSet.forEach(converter::add);
+        return converter.toArray();
     }
 }
