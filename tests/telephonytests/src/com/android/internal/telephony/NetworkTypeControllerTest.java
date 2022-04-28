@@ -21,12 +21,17 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 
+import android.content.Context;
 import android.content.Intent;
 import android.os.AsyncResult;
 import android.os.Handler;
+import android.os.IPowerManager;
+import android.os.IThermalService;
 import android.os.Looper;
 import android.os.PersistableBundle;
+import android.os.PowerManager;
 import android.telephony.CarrierConfigManager;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PcoData;
@@ -48,7 +53,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -74,9 +78,9 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
     private NetworkTypeController mNetworkTypeController;
     private PersistableBundle mBundle;
-    @Mock
+
+    // Mocked classes
     DataConnection mDataConnection;
-    @Mock
     ApnSetting mApnSetting;
 
     private IState getCurrentState() throws Exception {
@@ -102,6 +106,8 @@ public class NetworkTypeControllerTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mDataConnection = mock(DataConnection.class);
+        mApnSetting = mock(ApnSetting.class);
         mBundle = mContextFixture.getCarrierConfigBundle();
         mBundle.putString(CarrierConfigManager.KEY_5G_ICON_CONFIGURATION_STRING,
                 "connected_mmwave:5G_Plus,connected:5G,not_restricted_rrc_idle:5G,"
@@ -123,6 +129,7 @@ public class NetworkTypeControllerTest extends TelephonyTest {
     public void tearDown() throws Exception {
         mNetworkTypeController.getHandler().removeCallbacksAndMessages(null);
         mNetworkTypeController = null;
+        mBundle = null;
         super.tearDown();
     }
 
@@ -873,6 +880,36 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
         // timer expires
         moveTimeForward(10 * 1000);
+        processAllMessages();
+
+        assertEquals("legacy", getCurrentState().getName());
+        assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE,
+                mNetworkTypeController.getOverrideNetworkType());
+        assertFalse(mNetworkTypeController.is5GHysteresisActive());
+    }
+
+    @Test
+    public void testPrimaryTimerDeviceIdleMode() throws Exception {
+        doReturn(TelephonyManager.NETWORK_TYPE_LTE).when(mServiceState).getDataNetworkType();
+        doReturn(NetworkRegistrationInfo.NR_STATE_CONNECTED).when(mServiceState).getNrState();
+        mBundle.putString(CarrierConfigManager.KEY_5G_ICON_DISPLAY_GRACE_PERIOD_STRING,
+                "connected_mmwave,any,10;connected,any,10;not_restricted_rrc_con,any,10");
+        broadcastCarrierConfigs();
+
+        IPowerManager powerManager = mock(IPowerManager.class);
+        PowerManager pm = new PowerManager(mContext, powerManager, mock(IThermalService.class),
+                new Handler(Looper.myLooper()));
+        doReturn(pm).when(mContext).getSystemService(Context.POWER_SERVICE);
+        doReturn(true).when(powerManager).isDeviceIdleMode();
+        mNetworkTypeController.sendMessage(17 /*EVENT_DEVICE_IDLE_MODE_CHANGED*/);
+
+        assertEquals("connected", getCurrentState().getName());
+        assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA,
+                mNetworkTypeController.getOverrideNetworkType());
+
+        // should not trigger timer
+        doReturn(NetworkRegistrationInfo.NR_STATE_NONE).when(mServiceState).getNrState();
+        mNetworkTypeController.sendMessage(EVENT_NR_STATE_CHANGED);
         processAllMessages();
 
         assertEquals("legacy", getCurrentState().getName());
