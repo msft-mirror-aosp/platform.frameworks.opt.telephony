@@ -76,6 +76,7 @@ import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager;
 import android.telephony.TelephonyRegistryManager;
 import android.telephony.emergency.EmergencyNumber;
@@ -589,7 +590,7 @@ public abstract class TelephonyTest {
         doReturn(mDeviceStateMonitor).when(mTelephonyComponentFactory)
                 .makeDeviceStateMonitor(nullable(Phone.class));
         doReturn(mAccessNetworksManager).when(mTelephonyComponentFactory)
-                .makeAccessNetworksManager(nullable(Phone.class));
+                .makeAccessNetworksManager(nullable(Phone.class), any(Looper.class));
         doReturn(mNitzStateMachine).when(mTelephonyComponentFactory)
                 .makeNitzStateMachine(nullable(GsmCdmaPhone.class));
         doReturn(mLocaleTracker).when(mTelephonyComponentFactory)
@@ -646,6 +647,7 @@ public abstract class TelephonyTest {
         doReturn(mDataRetryManager).when(mDataNetworkController).getDataRetryManager();
         doReturn(mCarrierPrivilegesTracker).when(mPhone).getCarrierPrivilegesTracker();
         doReturn(true).when(mPhone).isUsingNewDataStack();
+        doReturn(0).when(mPhone).getPhoneId();
 
         //mUiccController
         doReturn(mUiccCardApplication3gpp).when(mUiccController).getUiccCardApplication(anyInt(),
@@ -704,8 +706,11 @@ public abstract class TelephonyTest {
                 anyInt(), anyBoolean());
 
         //Misc
-        doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_UMTS).when(mServiceState).
-                getRilDataRadioTechnology();
+        doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_LTE).when(mServiceState)
+                .getRilDataRadioTechnology();
+        doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE))
+                .when(mDisplayInfoController).getTelephonyDisplayInfo();
         doReturn(mPhone).when(mCT).getPhone();
         doReturn(mImsEcbm).when(mImsManager).getEcbmInterface();
         doReturn(mPhone).when(mInboundSmsHandler).getPhone();
@@ -740,7 +745,7 @@ public abstract class TelephonyTest {
         doReturn(true).when(mDataSettingsManager).isDataEnabled();
         doReturn(mNetworkRegistrationInfo).when(mServiceState).getNetworkRegistrationInfo(
                 anyInt(), anyInt());
-        doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion();
+        doReturn(RIL.RADIO_HAL_VERSION_2_0).when(mPhone).getHalVersion();
         doReturn(2).when(mSignalStrength).getLevel();
 
         // WiFi
@@ -771,6 +776,7 @@ public abstract class TelephonyTest {
         Settings.Global.putInt(resolver, Settings.Global.DEVICE_PROVISIONED, 1);
         Settings.Global.putInt(resolver,
                 Settings.Global.DEVICE_PROVISIONING_MOBILE_DATA_ENABLED, 1);
+        Settings.Global.putInt(resolver, Settings.Global.DATA_ROAMING, 0);
         doReturn(mDataThrottler).when(mDcTracker).getDataThrottler();
         doReturn(-1L).when(mDataThrottler).getRetryTime(anyInt());
 
@@ -796,6 +802,16 @@ public abstract class TelephonyTest {
                 eq(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE));
         doReturn(20).when(mDataConfigManager).getNetworkCapabilityPriority(
                 eq(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        doReturn(60000).when(mDataConfigManager).getAnomalyNetworkConnectingTimeoutMs();
+        doReturn(60000).when(mDataConfigManager)
+                .getAnomalyNetworkDisconnectingTimeoutMs();
+        doReturn(60000).when(mDataConfigManager).getNetworkHandoverTimeoutMs();
+        doReturn(new DataConfigManager.EventFrequency(300000, 12))
+                .when(mDataConfigManager).getAnomalySetupDataCallThreshold();
+        doReturn(new DataConfigManager.EventFrequency(0, 2))
+                .when(mDataConfigManager).getAnomalyImsReleaseRequestThreshold();
+        doReturn(new DataConfigManager.EventFrequency(300000, 12))
+                .when(mDataConfigManager).getAnomalyNetworkUnwantedThreshold();
 
         // CellularNetworkValidator
         doReturn(SubscriptionManager.INVALID_PHONE_INDEX)
@@ -873,10 +889,13 @@ public abstract class TelephonyTest {
         }
         TestableLooper.remove(TelephonyTest.this);
 
-        mSimulatedCommands.dispose();
-        SharedPreferences sharedPreferences = mContext.getSharedPreferences((String) null, 0);
-        sharedPreferences.edit().clear().commit();
-
+        if (mSimulatedCommands != null) {
+            mSimulatedCommands.dispose();
+        }
+        if (mContext != null) {
+            SharedPreferences sharedPreferences = mContext.getSharedPreferences((String) null, 0);
+            sharedPreferences.edit().clear().commit();
+        }
         restoreInstances();
         TelephonyManager.enableServiceHandleCaching();
         SubscriptionController.enableCaching();
