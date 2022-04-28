@@ -35,14 +35,15 @@ import android.telephony.Annotation.ApnType;
 import android.telephony.Annotation.NetCapability;
 import android.telephony.Annotation.NetworkType;
 import android.telephony.CarrierConfigManager;
-import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
 import android.text.TextUtils;
 import android.util.IndentingPrintWriter;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.data.DataNetworkController.HandoverRule;
 import com.android.internal.telephony.data.DataRetryManager.DataHandoverRetryRule;
@@ -71,6 +72,9 @@ import java.util.stream.Collectors;
 public class DataConfigManager extends Handler {
     /** Event for carrier config changed. */
     private static final int EVENT_CARRIER_CONFIG_CHANGED = 1;
+
+    /** Event for device config changed. */
+    private static final int EVENT_DEVICE_CONFIG_CHANGED = 2;
 
     /** Indicates the bandwidth estimation source is from the modem. */
     private static final String BANDWIDTH_SOURCE_MODEM_STRING_VALUE = "modem";
@@ -185,13 +189,52 @@ public class DataConfigManager extends Handler {
     @Retention(RetentionPolicy.SOURCE)
     private @interface DataConfigNetworkType {}
 
+    /** DeviceConfig key of anomaly report threshold for back to back ims release-request. */
+    private static final String KEY_ANOMALY_IMS_RELEASE_REQUEST = "anomaly_ims_release_request";
+    /** DeviceConfig key of anomaly report threshold for frequent setup data failure. */
+    private static final String KEY_ANOMALY_SETUP_DATA_CALL_FAILURE =
+            "anomaly_setup_data_call_failure";
+    /** DeviceConfig key of anomaly report threshold for frequent network-unwanted call. */
+    private static final String KEY_ANOMALY_NETWORK_UNWANTED = "anomaly_network_unwanted";
+    /** DeviceConfig key of anomaly report threshold for DataNetwork stuck in connecting state. */
+    private static final String KEY_ANOMALY_NETWORK_CONNECTING_TIMEOUT =
+            "anomaly_network_connecting_timeout";
+    /** DeviceConfig key of anomaly report threshold for DataNetwork stuck in disconnecting state.*/
+    private static final String KEY_ANOMALY_NETWORK_DISCONNECTING_TIMEOUT =
+            "anomaly_network_disconnecting_timeout";
+    /** DeviceConfig key of anomaly report threshold for DataNetwork stuck in handover state. */
+    private static final String KEY_ANOMALY_NETWORK_HANDOVER_TIMEOUT =
+            "anomaly_network_handover_timeout";
+
+    /** Anomaly report thresholds for frequent setup data call failure. */
+    private EventFrequency mSetupDataCallAnomalyReportThreshold;
+
+    /** Anomaly report thresholds for back to back release-request of IMS. */
+    private EventFrequency mImsReleaseRequestAnomalyReportThreshold;
+
     /**
-     * The minimal time window for duplicate release-request for IMS, the violation of which
-     * triggers anomaly report in {@link DataNetworkController}.
+     * Anomaly report thresholds for frequent network unwanted call
+     * at {@link TelephonyNetworkAgent#onNetworkUnwanted}
      */
-    private final long mImsRequestReleaseThrottleAnomalyWindowMs =
-            DeviceConfig.getInt(DeviceConfig.NAMESPACE_TELEPHONY,
-                    "ims_release_request_window", 0);
+    private EventFrequency mNetworkUnwantedAnomalyReportThreshold;
+
+    /**
+     * Timeout in ms before creating an anomaly report for a DataNetwork stuck in
+     * {@link DataNetwork.ConnectingState}.
+     */
+    private int mNetworkConnectingTimeout;
+
+    /**
+     * Timeout in ms before creating an anomaly report for a DataNetwork stuck in
+     * {@link DataNetwork.DisconnectingState}.
+     */
+    private int mNetworkDisconnectingTimeout;
+
+    /**
+     * Timeout in ms before creating an anomaly report for a DataNetwork stuck in
+     * {@link DataNetwork.HandoverState}.
+     */
+    private int mNetworkHandoverTimeout;
 
     private @NonNull final Phone mPhone;
     private @NonNull final String mLogTag;
@@ -247,6 +290,7 @@ public class DataConfigManager extends Handler {
 
         mCarrierConfigManager = mPhone.getContext().getSystemService(CarrierConfigManager.class);
 
+        // Register for carrier configs update
         IntentFilter filter = new IntentFilter();
         filter.addAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
         mPhone.getContext().registerReceiver(new BroadcastReceiver() {
@@ -262,8 +306,20 @@ public class DataConfigManager extends Handler {
             }
         }, filter, null, mPhone);
 
+        // Register for device config update
+        DeviceConfig.addOnPropertiesChangedListener(
+                DeviceConfig.NAMESPACE_TELEPHONY, this::post,
+                properties -> {
+                    if (TextUtils.equals(DeviceConfig.NAMESPACE_TELEPHONY,
+                            properties.getNamespace())) {
+                        sendEmptyMessage(EVENT_DEVICE_CONFIG_CHANGED);
+                    }
+                });
+
         // Must be called to set mCarrierConfig and mResources to non-null values
-        updateConfig();
+        updateCarrierConfig();
+        updateDeviceConfig();
+        mConfigUpdateRegistrants.notifyRegistrants();
     }
 
     @Override
@@ -271,11 +327,42 @@ public class DataConfigManager extends Handler {
         switch (msg.what) {
             case EVENT_CARRIER_CONFIG_CHANGED:
                 log("EVENT_CARRIER_CONFIG_CHANGED");
-                updateConfig();
+                updateCarrierConfig();
+                mConfigUpdateRegistrants.notifyRegistrants();
+                break;
+            case EVENT_DEVICE_CONFIG_CHANGED:
+                log("EVENT_DEVICE_CONFIG_CHANGED");
+                updateDeviceConfig();
+                mConfigUpdateRegistrants.notifyRegistrants();
                 break;
             default:
                 loge("Unexpected message " + msg.what);
         }
+    }
+
+    /** Update local properties from {@link DeviceConfig} */
+    private void updateDeviceConfig() {
+        DeviceConfig.Properties properties = //read all telephony properties
+                DeviceConfig.getProperties(DeviceConfig.NAMESPACE_TELEPHONY);
+
+        mImsReleaseRequestAnomalyReportThreshold = parseSlidingWindowCounterThreshold(
+                properties.getString(KEY_ANOMALY_IMS_RELEASE_REQUEST, null),
+                300000,
+                12);
+        mNetworkUnwantedAnomalyReportThreshold = parseSlidingWindowCounterThreshold(
+                properties.getString(KEY_ANOMALY_NETWORK_UNWANTED, null),
+                300000,
+                12);
+        mSetupDataCallAnomalyReportThreshold = parseSlidingWindowCounterThreshold(
+                properties.getString(KEY_ANOMALY_SETUP_DATA_CALL_FAILURE, null),
+                0,
+                2);
+        mNetworkConnectingTimeout = properties.getInt(
+                KEY_ANOMALY_NETWORK_CONNECTING_TIMEOUT, 86400000);
+        mNetworkDisconnectingTimeout = properties.getInt(
+                KEY_ANOMALY_NETWORK_DISCONNECTING_TIMEOUT, 86400000);
+        mNetworkHandoverTimeout = properties.getInt(
+                KEY_ANOMALY_NETWORK_HANDOVER_TIMEOUT, 86400000);
     }
 
     /**
@@ -287,9 +374,9 @@ public class DataConfigManager extends Handler {
     }
 
     /**
-     * Update the configuration.
+     * Update the configuration from carrier configs and resources.
      */
-    private void updateConfig() {
+    private void updateCarrierConfig() {
         if (mCarrierConfigManager != null) {
             mCarrierConfig = mCarrierConfigManager.getConfigForSubId(mPhone.getSubId());
         }
@@ -310,8 +397,6 @@ public class DataConfigManager extends Handler {
 
         log("Data config updated. Config is " + (isConfigCarrierSpecific() ? "" : "not ")
                 + "carrier specific.");
-
-        mConfigUpdateRegistrants.notifyRegistrants();
     }
 
     /**
@@ -538,13 +623,13 @@ public class DataConfigManager extends Handler {
     /**
      * Get whether the network type is unmetered from the carrier configs.
      *
-     * @param networkType The network type to check meteredness for
-     * @param serviceState The service state, used to determine NR state
-     * @return Whether the carrier considers the given network type unmetered
+     * @param displayInfo The {@link TelephonyDisplayInfo} to check meteredness for.
+     * @param serviceState The {@link ServiceState}, used to determine roaming state.
+     * @return Whether the carrier considers the given display info unmetered.
      */
-    public boolean isNetworkTypeUnmetered(@NetworkType int networkType,
+    public boolean isNetworkTypeUnmetered(@NonNull TelephonyDisplayInfo displayInfo,
             @NonNull ServiceState serviceState) {
-        String dataConfigNetworkType = getDataConfigNetworkType(networkType, serviceState);
+        String dataConfigNetworkType = getDataConfigNetworkType(displayInfo);
         return serviceState.getDataRoaming()
                 ? mRoamingUnmeteredNetworkTypes.contains(dataConfigNetworkType)
                 : mUnmeteredNetworkTypes.contains(dataConfigNetworkType);
@@ -601,14 +686,13 @@ public class DataConfigManager extends Handler {
     /**
      * Get the bandwidth estimate from the carrier config.
      *
-     * @param networkType The network type to get the bandwidth for
-     * @param serviceState The service state, used to determine NR state
+     * @param displayInfo The {@link TelephonyDisplayInfo} to get the bandwidth for.
      * @return The pre-configured bandwidth estimate from carrier config.
      */
     public @NonNull DataNetwork.NetworkBandwidth getBandwidthForNetworkType(
-            @NetworkType int networkType, @NonNull ServiceState serviceState) {
+            @NonNull TelephonyDisplayInfo displayInfo) {
         DataNetwork.NetworkBandwidth bandwidth = mBandwidthMap.get(
-                getDataConfigNetworkType(networkType, serviceState));
+                getDataConfigNetworkType(displayInfo));
         if (bandwidth != null) {
             return bandwidth;
         }
@@ -665,11 +749,53 @@ public class DataConfigManager extends Handler {
         }
     }
 
-     /**
-     * @return The IMS back to back request/release minimal interval.
+    /**
+     * Anomaly report thresholds for frequent setup data call failure.
+     * @return EventFrequency to trigger the anomaly report
      */
-    public long getImsRequestReleaseThrottleAnomalyWindowMs() {
-        return mImsRequestReleaseThrottleAnomalyWindowMs;
+    public @NonNull EventFrequency getAnomalySetupDataCallThreshold() {
+        return mSetupDataCallAnomalyReportThreshold;
+    }
+
+    /**
+     * Anomaly report thresholds for frequent network unwanted call
+     * at {@link TelephonyNetworkAgent#onNetworkUnwanted}
+     * @return EventFrequency to trigger the anomaly report
+     */
+    public @NonNull EventFrequency getAnomalyNetworkUnwantedThreshold() {
+        return mNetworkUnwantedAnomalyReportThreshold;
+    }
+
+    /**
+     * Anomaly report thresholds for back to back release-request of IMS.
+     * @return EventFrequency to trigger the anomaly report
+     */
+    public @NonNull EventFrequency getAnomalyImsReleaseRequestThreshold() {
+        return mImsReleaseRequestAnomalyReportThreshold;
+    }
+
+    /**
+     * @return Timeout in ms before creating an anomaly report for a DataNetwork stuck in
+     * {@link DataNetwork.ConnectingState}.
+     */
+    public int getAnomalyNetworkConnectingTimeoutMs() {
+        return mNetworkConnectingTimeout;
+    }
+
+    /**
+     * @return Timeout in ms before creating an anomaly report for a DataNetwork stuck in
+     * {@link DataNetwork.DisconnectingState}.
+     */
+    public int getAnomalyNetworkDisconnectingTimeoutMs() {
+        return mNetworkDisconnectingTimeout;
+    }
+
+    /**
+     * @return Timeout in ms before creating an anomaly report for a DataNetwork stuck in
+     * {@link DataNetwork.HandoverState}.
+     */
+    public int getNetworkHandoverTimeoutMs() {
+        return mNetworkHandoverTimeout;
     }
 
     /**
@@ -677,15 +803,12 @@ public class DataConfigManager extends Handler {
      * The config string will have the following form, with values in bytes:
      * "read_min,read_default,read_max,write_min,write_default,write_max"
      *
-     * @param networkType The network type. Note that {@link TelephonyManager#NETWORK_TYPE_LTE_CA}
-     *                    can be used for LTE CA even though it's not a radio access technology.
-     * @param serviceState The service state, used to determine NR state.
-     * @return The TCP configuration string for the given network type or the default value from
-     *         config_tcp_buffers if unavailable.
+     * @param displayInfo The {@link TelephonyDisplayInfo} to get the TCP config string for.
+     * @return The TCP configuration string for the given display info or the default value from
+     *         {@code config_tcp_buffers} if unavailable.
      */
-    public @NonNull String getTcpConfigString(@NetworkType int networkType,
-            @NonNull ServiceState serviceState) {
-        String config = mTcpBufferSizeMap.get(getDataConfigNetworkType(networkType, serviceState));
+    public @NonNull String getTcpConfigString(@NonNull TelephonyDisplayInfo displayInfo) {
+        String config = mTcpBufferSizeMap.get(getDataConfigNetworkType(displayInfo));
         if (TextUtils.isEmpty(config)) {
             config = getDefaultTcpConfigString();
         }
@@ -755,25 +878,31 @@ public class DataConfigManager extends Handler {
     }
 
     /**
-     * Get the data config network type based on the given network type and service state
+     * Get the {@link DataConfigNetworkType} based on the given {@link TelephonyDisplayInfo}.
      *
-     * @param networkType The network type
-     * @param serviceState The service state, used to determine NR state
-     * @return The equivalent data config network type
+     * @param displayInfo The {@link TelephonyDisplayInfo} used to determine the type.
+     * @return The equivalent {@link DataConfigNetworkType}.
      */
     public static @NonNull @DataConfigNetworkType String getDataConfigNetworkType(
-            @NetworkType int networkType, @NonNull ServiceState serviceState) {
+            @NonNull TelephonyDisplayInfo displayInfo) {
         // TODO: Make method private once DataConnection is removed
-        if ((networkType == TelephonyManager.NETWORK_TYPE_LTE
-                || networkType == TelephonyManager.NETWORK_TYPE_LTE_CA)
-                && (serviceState.getNrState() == NetworkRegistrationInfo.NR_STATE_CONNECTED)) {
-            return serviceState.getNrFrequencyRange() == ServiceState.FREQUENCY_RANGE_MMWAVE
-                    ? DATA_CONFIG_NETWORK_TYPE_NR_NSA_MMWAVE : DATA_CONFIG_NETWORK_TYPE_NR_NSA;
-        } else if (networkType == TelephonyManager.NETWORK_TYPE_NR
-                && serviceState.getNrFrequencyRange() == ServiceState.FREQUENCY_RANGE_MMWAVE) {
-            return DATA_CONFIG_NETWORK_TYPE_NR_SA_MMWAVE;
+        int networkType = displayInfo.getNetworkType();
+        switch (displayInfo.getOverrideNetworkType()) {
+            case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED:
+                if (networkType == TelephonyManager.NETWORK_TYPE_NR) {
+                    return DATA_CONFIG_NETWORK_TYPE_NR_SA_MMWAVE;
+                } else {
+                    return DATA_CONFIG_NETWORK_TYPE_NR_NSA_MMWAVE;
+                }
+            case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA:
+                return DATA_CONFIG_NETWORK_TYPE_NR_NSA;
+            case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_ADVANCED_PRO:
+            case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_CA:
+                return DATA_CONFIG_NETWORK_TYPE_LTE_CA;
+            case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE:
+            default:
+                return networkTypeToDataConfigNetworkType(networkType);
         }
-        return networkTypeToDataConfigNetworkType(networkType);
     }
 
     /** Update handover rules from carrier config. */
@@ -792,6 +921,72 @@ public class DataConfigManager extends Handler {
                 }
             }
         }
+    }
+
+    /**
+     * Describe an event occurs eventNumOccurrence within a time span timeWindow
+     */
+    public static class EventFrequency {
+        /** The time window in ms within which event occurs. */
+        public final long timeWindow;
+
+        /** The number of time the event occurs. */
+        public final int eventNumOccurrence;
+
+        /**
+         * Constructor
+         *
+         * @param timeWindow The time window in ms within which event occurs.
+         * @param eventNumOccurrence The number of time the event occurs.
+         */
+        public EventFrequency(long timeWindow, int eventNumOccurrence) {
+            this.timeWindow = timeWindow;
+            this.eventNumOccurrence = eventNumOccurrence;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("EventFrequency=[timeWindow=%d, eventNumOccurrence=%d]",
+                    timeWindow, eventNumOccurrence);
+        }
+    }
+
+    /**
+     * Parse a pair of event throttle thresholds of the form "time window in ms,occurrences"
+     * into {@link EventFrequency}
+     * @param s String to be parsed in the form of "time window in ms,occurrences"
+     * @param defaultTimeWindow The time window to return if parsing failed.
+     * @param defaultOccurrences The occurrence to return if parsing failed.
+     * @return timeWindow and occurrence wrapped in EventFrequency
+     */
+    @VisibleForTesting
+    public EventFrequency parseSlidingWindowCounterThreshold(String s,
+            long defaultTimeWindow, int defaultOccurrences) {
+        EventFrequency defaultValue = new EventFrequency(defaultTimeWindow, defaultOccurrences);
+        if (TextUtils.isEmpty(s)) return defaultValue;
+
+        final String[] pair = s.split(",");
+        if (pair.length != 2) {
+            loge("Invalid format: " + s
+                    + "Format should be in \"time window in ms,occurrences\". "
+                    + "Using default instead.");
+            return defaultValue;
+        }
+        long windowSpan;
+        int occurrence;
+        try {
+            windowSpan = Long.parseLong(pair[0].trim());
+        } catch (NumberFormatException e) {
+            loge("Exception parsing SlidingWindow window span " + pair[0] + ": " + e);
+            return defaultValue;
+        }
+        try {
+            occurrence = Integer.parseInt(pair[1].trim());
+        } catch (NumberFormatException e) {
+            loge("Exception parsing SlidingWindow occurrence as integer " + pair[1] + ": " + e);
+            return defaultValue;
+        }
+        return new EventFrequency(windowSpan, occurrence);
     }
 
     /**
@@ -921,10 +1116,22 @@ public class DataConfigManager extends Handler {
     }
 
     /**
-     * Registration point for subscription info ready
+     * @return {@code true} if enhanced IWLAN handover check is enabled. If enabled, telephony
+     * frameworks will not perform handover if the target transport is out of service, or VoPS not
+     * supported. The network will be torn down on the source transport, and will be
+     * re-established on the target transport when condition is allowed for bringing up a new
+     * network.
+     */
+    public boolean isEnhancedIwlanHandoverCheckEnabled() {
+        return mResources.getBoolean(
+                com.android.internal.R.bool.config_enhanced_iwlan_handover_check);
+    }
+
+    /**
+     * Registration point for subscription info ready.
      *
-     * @param h handler to notify
-     * @param what what code of message when delivered
+     * @param h handler to notify.
+     * @param what what code of message when delivered.
      */
     public void registerForConfigUpdate(Handler h, int what) {
         mConfigUpdateRegistrants.addUnique(h, what, null);
@@ -981,8 +1188,12 @@ public class DataConfigManager extends Handler {
         pw.increaseIndent();
         mDataHandoverRetryRules.forEach(pw::println);
         pw.decreaseIndent();
-        pw.println("IMS request release throttle anomaly window in ms="
-                + mImsRequestReleaseThrottleAnomalyWindowMs);
+        pw.println("mSetupDataCallAnomalyReport=" + mSetupDataCallAnomalyReportThreshold);
+        pw.println("mNetworkUnwantedAnomalyReport=" + mNetworkUnwantedAnomalyReportThreshold);
+        pw.println("mImsReleaseRequestAnomalyReport=" + mImsReleaseRequestAnomalyReportThreshold);
+        pw.println("mNetworkConnectingTimeout=" + mNetworkConnectingTimeout);
+        pw.println("mNetworkDisconnectingTimeout=" + mNetworkDisconnectingTimeout);
+        pw.println("mNetworkHandoverTimeout=" + mNetworkHandoverTimeout);
         pw.println("Metered APN types=" + mMeteredApnTypes.stream()
                 .map(ApnSetting::getApnTypeString).collect(Collectors.joining(",")));
         pw.println("Roaming metered APN types=" + mRoamingMeteredApnTypes.stream()
@@ -1014,6 +1225,7 @@ public class DataConfigManager extends Handler {
         pw.println("Bandwidth estimation source=" + mResources.getString(
                 com.android.internal.R.string.config_bandwidthEstimateSource));
         pw.println("isDelayTearDownImsEnabled=" + isImsDelayTearDownEnabled());
+        pw.println("isEnhancedIwlanHandoverCheckEnabled=" + isEnhancedIwlanHandoverCheckEnabled());
         pw.decreaseIndent();
     }
 }
