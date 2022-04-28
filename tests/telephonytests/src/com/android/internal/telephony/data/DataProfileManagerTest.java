@@ -55,7 +55,6 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 import org.mockito.Mockito;
 
 import java.lang.reflect.Method;
@@ -73,7 +72,7 @@ public class DataProfileManagerTest extends TelephonyTest {
     private static final String TETHERING_APN = "DUN_APN";
     private static final String PLMN = "330123";
 
-    @Mock
+    // Mocked classes
     private DataProfileManagerCallback mDataProfileManagerCallback;
 
     private DataProfileManager mDataProfileManagerUT;
@@ -142,7 +141,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                         0,                      // max_conns
                         0,                      // wait_time
                         0,                      // max_conns_time
-                        -1,                     // mtu
+                        0,                      // mtu
                         1280,                   // mtu_v4
                         1280,                   // mtu_v6
                         "",                     // mvno_type
@@ -281,9 +280,9 @@ public class DataProfileManagerTest extends TelephonyTest {
                         0,                      // max_conns
                         0,                      // wait_time
                         0,                      // max_conns_time
-                        -1,                     // mtu
-                        -1,                     // mtu_v4
-                        -1,                     // mtu_v6
+                        0,                      // mtu
+                        0,                      // mtu_v4
+                        0,                      // mtu_v6
                         "",                     // mvno_type
                         "",                     // mnvo_match_data
                         TelephonyManager.NETWORK_TYPE_BITMASK_LTE
@@ -403,7 +402,7 @@ public class DataProfileManagerTest extends TelephonyTest {
     public void setUp() throws Exception {
         logd("DataProfileManagerTest +Setup!");
         super.setUp(getClass().getSimpleName());
-        doReturn(true).when(mPhone).isUsingNewDataStack();
+        mDataProfileManagerCallback = Mockito.mock(DataProfileManagerCallback.class);
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 Telephony.Carriers.CONTENT_URI.getAuthority(), mApnSettingContentProvider);
 
@@ -429,6 +428,8 @@ public class DataProfileManagerTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
+        mDataProfileManagerUT = null;
+        mDataNetworkControllerCallback = null;
         super.tearDown();
     }
 
@@ -485,6 +486,18 @@ public class DataProfileManagerTest extends TelephonyTest {
                 TelephonyManager.NETWORK_TYPE_NR);
         assertThat(dp.canSatisfy(tnr.getCapabilities())).isTrue();
         assertThat(dp.getApnSetting().getApnName()).isEqualTo(TETHERING_APN);
+    }
+
+    @Test
+    public void testGetDataProfileForNetworkRequestNoCompatibleRat() {
+        NetworkRequest request = new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build();
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone);
+        DataProfile dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
+                TelephonyManager.NETWORK_TYPE_GSM);
+        // Should not find data profile due to RAT incompatible.
+        assertThat(dp).isNull();
     }
 
     @Test
@@ -677,7 +690,6 @@ public class DataProfileManagerTest extends TelephonyTest {
 
     @Test
     public void testDedupeDataProfiles2() throws Exception {
-
         DataProfile dataProfile1 = new DataProfile.Builder()
                 .setApnSetting(new ApnSetting.Builder()
                         .setEntryName("general")
@@ -743,5 +755,90 @@ public class DataProfileManagerTest extends TelephonyTest {
         assertThat(dataProfile.getApnSetting().getProtocol()).isEqualTo(ApnSetting.PROTOCOL_IPV4V6);
         assertThat(dataProfile.getApnSetting().getRoamingProtocol())
                 .isEqualTo(ApnSetting.PROTOCOL_IPV4V6);
+    }
+
+    @Test
+    public void testDedupeDataProfiles3() throws Exception {
+        DataProfile dataProfile1 = new DataProfile.Builder()
+                .setApnSetting(new ApnSetting.Builder()
+                        .setEntryName("BTT Lastgenphone")
+                        .setId(1)
+                        .setOperatorNumeric("123456")
+                        .setApnName("lastgenphone")
+                        .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS
+                                | ApnSetting.TYPE_SUPL | ApnSetting.TYPE_FOTA)
+                        .setMmsc(Uri.parse("http://mmsc.mobile.btt.net"))
+                        .setMmsProxyAddress("proxy.mobile.btt.net")
+                        .setMmsProxyPort(80)
+                        .setMtuV4(1410)
+                        .setProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setRoamingProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setCarrierEnabled(true)
+                        .build())
+                .build();
+
+        DataProfile dataProfile2 = new DataProfile.Builder()
+                .setApnSetting(new ApnSetting.Builder()
+                        .setEntryName("BTT XCAP")
+                        .setId(5)
+                        .setOperatorNumeric("123456")
+                        .setApnName("lastgenphone")
+                        .setApnTypeBitmask(ApnSetting.TYPE_XCAP)
+                        .setProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setRoamingProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setCarrierEnabled(true)
+                        .build())
+                .build();
+
+        List<DataProfile> dataProfiles = new ArrayList<>(Arrays.asList(dataProfile2, dataProfile1));
+
+        logd("dp1.apnSetting, dp2.apnSetting similar="
+                + dataProfile1.getApnSetting().similar(dataProfile2.getApnSetting()));
+
+        dedupeDataProfiles(dataProfiles);
+        // After deduping, there should be only one.
+        assertThat(dataProfiles).hasSize(1);
+
+        DataProfile dataProfile = dataProfiles.get(0);
+        assertThat(dataProfile.getApnSetting()).isNotNull();
+
+
+        logd("After merged: " + dataProfile);
+        assertThat(dataProfile.getApnSetting().getApnTypeBitmask()).isEqualTo(
+                ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS | ApnSetting.TYPE_SUPL
+                        | ApnSetting.TYPE_FOTA | ApnSetting.TYPE_XCAP);
+    }
+
+    @Test
+    public void testIsDataProfileValid() {
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build(), mPhone);
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE);
+        assertThat(dataProfile.getApnSetting().getApnSetId()).isEqualTo(
+                Telephony.Carriers.NO_APN_SET_ID);
+        assertThat(mDataProfileManagerUT.isDataProfileValid(dataProfile)).isTrue();
+
+        tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)
+                .build(), mPhone);
+        dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE);
+        assertThat(dataProfile.getApnSetting().getApnSetId()).isEqualTo(
+                Telephony.Carriers.MATCH_ALL_APN_SET_ID);
+        assertThat(mDataProfileManagerUT.isDataProfileValid(dataProfile)).isTrue();
+    }
+
+    @Test
+    public void testDefaultEmergencyDataProfileValid() {
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)
+                .build(), mPhone);
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE);
+
+        assertThat(dataProfile.getApn()).isEqualTo("sos");
+        assertThat(dataProfile.getTrafficDescriptor().getDataNetworkName()).isEqualTo("sos");
     }
 }
