@@ -133,9 +133,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
@@ -205,7 +209,6 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
 
         private void processIncomingCall(IImsCallSession c, Bundle extras) {
             if (DBG) log("processIncomingCall: incoming call intent");
-            mOperationLocalLog.log("onIncomingCall Received");
 
             if (extras == null) extras = new Bundle();
             if (mImsManager == null) return;
@@ -275,6 +278,9 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     }
                 }
 
+                mOperationLocalLog.log("onIncomingCall: isUnknown=" + isUnknown + ", connId="
+                        + System.identityHashCode(conn));
+
                 addConnection(conn);
 
                 setVideoCallProvider(conn, imsCall);
@@ -284,6 +290,13 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 mPhone.getVoiceCallSessionStats().onImsCallReceived(conn);
 
                 if (isUnknown) {
+                    // Check for condition where an unknown connection replaces a pending
+                    // MO call.  This will cause problems later in all likelihood.
+                    if (mPendingMO != null
+                            && Objects.equals(mPendingMO.getAddress(), conn.getAddress())) {
+                        mOperationLocalLog.log("onIncomingCall: unknown call " + conn
+                                + " replaces " + mPendingMO);
+                    }
                     mPhone.notifyUnknownConnection(conn);
                 } else {
                     if ((mForegroundCall.getState() != ImsPhoneCall.State.IDLE)
@@ -305,8 +318,10 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
 
         @Override
         public void onIncomingCall(IImsCallSession c, Bundle extras) {
-            TelephonyUtils.runWithCleanCallingIdentity(()-> processIncomingCall(c, extras),
-                    mExecutor);
+            // we want to ensure we block this binder thread until incoming call setup completes
+            // as to avoid race conditions where the ImsService tries to update the state of the
+            // call before the listeners have been attached.
+            executeAndWait(()-> processIncomingCall(c, extras));
         }
 
         @Override
@@ -319,6 +334,19 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     loge("onVoiceMessageCountUpdate: null phone");
                 }
             }, mExecutor);
+        }
+
+        /**
+         * Schedule the given Runnable on mExecutor and block this thread until it finishes.
+         * @param r The Runnable to run.
+         */
+        private void executeAndWait(Runnable r) {
+            try {
+                CompletableFuture.runAsync(
+                        () -> TelephonyUtils.runWithCleanCallingIdentity(r), mExecutor).join();
+            } catch (CancellationException | CompletionException e) {
+                logw("Binder - exception: " + e.getMessage());
+            }
         }
     }
 
@@ -1193,7 +1221,19 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
     @VisibleForTesting
     public void hangupAllOrphanedConnections(int disconnectCause) {
         Log.w(LOG_TAG, "hangupAllOngoingConnections called for cause " + disconnectCause);
-
+        // Send a call terminate request to all available connections.
+        // In the ImsPhoneCallTrackerTest, when the hangup() of the connection call,
+        // onCallTerminated() is called immediately and the connection is removed.
+        // As a result, an IndexOutOfBoundsException is thrown.
+        // This is why it counts backwards.
+        int size = getConnections().size();
+        for (int index = size - 1; index > -1; index--) {
+            try {
+                getConnections().get(index).hangup();
+            } catch (CallStateException e) {
+                loge("Failed to disconnet call...");
+            }
+        }
         // Move connections to disconnected and notify the reason why.
         for (ImsPhoneConnection connection : mConnections) {
             connection.update(connection.getImsCall(), ImsPhoneCall.State.DISCONNECTED);
@@ -2246,6 +2286,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         return !isImsAudioCallActiveOrHolding || !VideoProfile.isVideo(videoState);
     }
 
+
     /**
      * Determines if there are issues which would preclude dialing an outgoing call.  Throws a
      * {@link CallStateException} if there is an issue.
@@ -2313,9 +2354,14 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
 
         if (DBG) {
             log("updatePhoneState pendingMo = " + (mPendingMO == null ? "null"
-                    : mPendingMO.getState()) + ", fg= " + mForegroundCall.getState() + "("
-                    + mForegroundCall.getConnectionsCount() + "), bg= " + mBackgroundCall
-                    .getState() + "(" + mBackgroundCall.getConnectionsCount() + ")");
+                    : mPendingMO.getState() + "(" + mPendingMO.getTelecomCallId() + "/objId:"
+                            + System.identityHashCode(mPendingMO) + ")")
+                    + ", rng= " + mRingingCall.getState() + "("
+                    + mRingingCall.getConnectionSummary()
+                    + "), fg= " + mForegroundCall.getState() + "("
+                    + mForegroundCall.getConnectionSummary()
+                    + "), bg= " + mBackgroundCall.getState()
+                    + "(" + mBackgroundCall.getConnectionSummary() + ")");
             log("updatePhoneState oldState=" + oldState + ", newState=" + mState);
         }
 
@@ -2606,9 +2652,32 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         return null;
     }
 
+    /**
+     * Given a connection, detach it from any {@link ImsPhoneCall} it is associated with, remove it
+     * from the connections lists, and ensure if it was the pending MO connection it gets removed
+     * from there as well.
+     * @param conn The connection to cleanup and remove.
+     */
+    public synchronized void cleanupAndRemoveConnection(ImsPhoneConnection conn) {
+        mOperationLocalLog.log("cleanupAndRemoveConnection: " + conn);
+        // If the connection is attached to a call, detach it.
+        if (conn.getCall() != null) {
+            conn.getCall().detach(conn);
+        }
+        // Remove it from the connection list.
+        removeConnection(conn);
+
+        // Finally, if it was the pending MO, then ensure that connection gets cleaned up as well.
+        if (conn == mPendingMO) {
+            mPendingMO.finalize();
+            mPendingMO = null;
+        }
+    }
+
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-    private synchronized void removeConnection(ImsPhoneConnection conn) {
+    public synchronized void removeConnection(ImsPhoneConnection conn) {
         mConnections.remove(conn);
+
         // If not emergency call is remaining, notify emergency call registrants
         if (mIsInEmergencyCall) {
             boolean isEmergencyCallInList = false;
@@ -3208,12 +3277,16 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
 
                 } else if (conn.isIncoming() && conn.getConnectTime() == 0
                         && cause != DisconnectCause.ANSWERED_ELSEWHERE) {
-                    // Missed
-                    if (cause == DisconnectCause.NORMAL
-                            || cause == DisconnectCause.INCOMING_AUTO_REJECTED) {
-                        cause = DisconnectCause.INCOMING_MISSED;
-                    } else {
+
+                    if (conn.getDisconnectCause() == DisconnectCause.LOCAL) {
+                        // If the user initiated a disconnect of this connection, then we will treat
+                        // this is a rejected call.
+                        // Note; the record the fact that this is a local disconnect in
+                        // ImsPhoneConnection#onHangupLocal
                         cause = DisconnectCause.INCOMING_REJECTED;
+                    } else {
+                        // Otherwise in all other cases consider it missed.
+                        cause = DisconnectCause.INCOMING_MISSED;
                     }
                     if (DBG) log("Incoming connection of 0 connect time detected - translated " +
                             "cause = " + cause);
@@ -5307,6 +5380,11 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
     @VisibleForTesting
     public ArrayList<ImsPhoneConnection> getConnections() {
         return mConnections;
+    }
+
+    @VisibleForTesting
+    public ImsPhoneConnection getPendingMO() {
+        return mPendingMO;
     }
 
     /**
