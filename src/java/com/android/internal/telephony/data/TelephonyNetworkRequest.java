@@ -157,7 +157,8 @@ public class TelephonyNetworkRequest {
     /**
      * Data config manager for retrieving data config.
      */
-    private final @NonNull DataConfigManager mDataConfigManager;
+    // TODO: Make this @NonNull after old data stack removed.
+    private final @Nullable DataConfigManager mDataConfigManager;
 
     /**
      * The attached data network. Note that the data network could be in any state. {@code null}
@@ -279,6 +280,7 @@ public class TelephonyNetworkRequest {
             // Fallback to the legacy APN type matching.
             List<Integer> apnTypes = Arrays.stream(getCapabilities()).boxed()
                     .map(DataUtils::networkCapabilityToApnType)
+                    .filter(apnType -> apnType != ApnSetting.TYPE_NONE)
                     .collect(Collectors.toList());
             return apnTypes.stream().allMatch(dataProfile.getApnSetting()::canHandleType);
         }
@@ -387,8 +389,9 @@ public class TelephonyNetworkRequest {
      * @return {@code true} if this network request can result in bringing up a metered network.
      */
     public boolean isMeteredRequest() {
-        return mDataConfigManager.isAnyMeteredCapability(getCapabilities(),
-                mPhone.getServiceState().getDataRoaming());
+        // TODO: Remove null check after old data stack removed.
+        return mDataConfigManager != null && mDataConfigManager.isAnyMeteredCapability(
+                getCapabilities(), mPhone.getServiceState().getDataRoaming());
     }
 
     /**
@@ -442,8 +445,8 @@ public class TelephonyNetworkRequest {
         return "[" + mNativeNetworkRequest.toString() + ", mPriority=" + mPriority
                 + ", state=" + requestStateToString(mState)
                 + ", mAttachedDataNetwork=" + (mAttachedDataNetwork != null
-                ? mAttachedDataNetwork.name() : null) + ", created time="
-                + DataUtils.elapsedTimeToString(mCreatedTimeMillis)
+                ? mAttachedDataNetwork.name() : null) + ", isMetered=" + isMeteredRequest()
+                + ", created time=" + DataUtils.elapsedTimeToString(mCreatedTimeMillis)
                 + ", evaluation result=" + mEvaluation + "]";
     }
 

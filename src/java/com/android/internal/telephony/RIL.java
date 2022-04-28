@@ -186,6 +186,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     int mLastRadioPowerResult = RadioError.NONE;
 
+    boolean mHidlSetResponseFunctionsCalled = false;
+
     // When we are testing emergency calls using ril.test.emergencynumber, this will trigger test
     // ECbM when the call is ended.
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
@@ -352,6 +354,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                             + ", service = " + serviceToString(service) + ", service cookie = "
                             + mServiceCookies.get(service));
                     if ((long) msg.obj == mServiceCookies.get(service).get()) {
+                        mHidlSetResponseFunctionsCalled = false;
                         resetProxyAndRequestList(service);
                     }
                     break;
@@ -363,6 +366,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                             + ", service = " + serviceToString(aidlService) + ", cookie = "
                             + mServiceCookies.get(aidlService));
                     if (obj.get() == mServiceCookies.get(aidlService).get()) {
+                        mHidlSetResponseFunctionsCalled = false;
                         resetProxyAndRequestList(aidlService);
                     }
                     break;
@@ -522,6 +526,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
 
             if (serviceBound) {
+                mHidlSetResponseFunctionsCalled = false;
                 for (int service = MIN_SERVICE_IDX; service <= MAX_SERVICE_IDX; service++) {
                     resetProxyAndRequestList(service);
                 }
@@ -537,11 +542,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
             if (mMockModem != null) {
                 mRadioVersion = RADIO_HAL_VERSION_UNKNOWN;
+                mMockModem = null;
                 for (int service = MIN_SERVICE_IDX; service <= MAX_SERVICE_IDX; service++) {
-                    mMockModem.unbindMockModemService(service);
                     resetProxyAndRequestList(service);
                 }
-                mMockModem = null;
             }
         }
 
@@ -666,11 +670,14 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 if (mRadioProxy != null) {
                     mRadioProxy.linkToDeath(mRadioProxyDeathRecipient,
                             mServiceCookies.get(RADIO_SERVICE).incrementAndGet());
-                    mRadioProxy.setResponseFunctions(mRadioResponse, mRadioIndication);
+                    if (!mHidlSetResponseFunctionsCalled) {
+                        mHidlSetResponseFunctionsCalled = true;
+                        mRadioProxy.setResponseFunctions(mRadioResponse, mRadioIndication);
+                    }
                 } else {
                     mDisabledRadioServices.get(RADIO_SERVICE).add(mPhoneId);
-                    riljLoge("getRadioProxy: mRadioProxy for "
-                            + HIDL_SERVICE_NAME[mPhoneId] + " is disabled");
+                    riljLoge("getRadioProxy: set mRadioProxy for "
+                            + HIDL_SERVICE_NAME[mPhoneId] + " as disabled");
                 }
             }
         } catch (RemoteException e) {
@@ -693,9 +700,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     /**
      * Returns a {@link RadioDataProxy}, {@link RadioMessagingProxy}, {@link RadioModemProxy},
-     * {@link RadioNetworkProxy}, {@link RadioSimProxy}, {@link RadioVoiceProxy}, or null if the
-     * service is not available.
+     * {@link RadioNetworkProxy}, {@link RadioSimProxy}, {@link RadioVoiceProxy}, or an empty {@link RadioServiceProxy}
+     * if the service is not available.
      */
+    @NonNull
     public <T extends RadioServiceProxy> T getRadioServiceProxy(Class<T> serviceClass,
             Message result) {
         if (serviceClass == RadioDataProxy.class) {
@@ -716,16 +724,18 @@ public class RIL extends BaseCommands implements CommandsInterface {
         if (serviceClass == RadioVoiceProxy.class) {
             return (T) getRadioServiceProxy(VOICE_SERVICE, result);
         }
+        riljLoge("getRadioServiceProxy: unrecognized " + serviceClass);
         return null;
     }
 
     /**
-     * Returns a {@link RadioServiceProxy} or null if the service is not available.
+     * Returns a {@link RadioServiceProxy}, which is empty if the service is not available.
      * For RADIO_SERVICE, use {@link #getRadioProxy} instead, as this will always return null.
      */
     @VisibleForTesting
+    @NonNull
     public synchronized RadioServiceProxy getRadioServiceProxy(int service, Message result) {
-        if (!SubscriptionManager.isValidPhoneId(mPhoneId)) return null;
+        if (!SubscriptionManager.isValidPhoneId(mPhoneId)) return mServiceProxies.get(service);
         if (!mIsCellularSupported) {
             if (RILJ_LOGV) riljLog("getRadioServiceProxy: Not calling getService(): wifi-only");
             if (result != null) {
@@ -733,7 +743,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                         CommandException.fromRilErrno(RADIO_NOT_AVAILABLE));
                 result.sendToTarget();
             }
-            return null;
+            return mServiceProxies.get(service);
         }
 
         RadioServiceProxy serviceProxy = mServiceProxies.get(service);
@@ -956,13 +966,16 @@ public class RIL extends BaseCommands implements CommandsInterface {
                         }
                         serviceProxy.getHidl().linkToDeath(mRadioProxyDeathRecipient,
                                 mServiceCookies.get(service).incrementAndGet());
-                        serviceProxy.getHidl().setResponseFunctions(
-                                mRadioResponse, mRadioIndication);
+                        if (!mHidlSetResponseFunctionsCalled) {
+                            mHidlSetResponseFunctionsCalled = true;
+                            serviceProxy.getHidl().setResponseFunctions(
+                                    mRadioResponse, mRadioIndication);
+                        }
                     }
                 } else {
                     mDisabledRadioServices.get(service).add(mPhoneId);
-                    riljLoge("getRadioServiceProxy: " + serviceToString(service) + " for "
-                            + HIDL_SERVICE_NAME[mPhoneId] + " is disabled");
+                    riljLoge("getRadioServiceProxy: set " + serviceToString(service) + " for "
+                            + HIDL_SERVICE_NAME[mPhoneId] + " as disabled");
                 }
             }
         } catch (RemoteException e) {
@@ -985,6 +998,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     @Override
     public synchronized void onSlotActiveStatusChange(boolean active) {
+        mHidlSetResponseFunctionsCalled = false;
         for (int service = MIN_SERVICE_IDX; service <= MAX_SERVICE_IDX; service++) {
             if (active) {
                 // Try to connect to RIL services and set response functions.
@@ -1170,6 +1184,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     private void handleRadioProxyExceptionForRR(int service, String caller, Exception e) {
         riljLoge(caller + ": " + e);
         e.printStackTrace();
+        mHidlSetResponseFunctionsCalled = false;
         resetProxyAndRequestList(service);
     }
 
@@ -1979,10 +1994,11 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
             if (RILJ_LOGD) {
                 riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
+                        + ",reason=" + RILUtils.setupDataReasonToString(reason)
                         + ",accessNetworkType=" + AccessNetworkType.toString(accessNetworkType)
                         + ",dataProfile=" + dataProfile + ",isRoaming=" + isRoaming
-                        + ",allowRoaming=" + allowRoaming + ",reason" + reason
-                        + ",linkProerties=" + linkProperties + ",pduSessionId=" + pduSessionId
+                        + ",allowRoaming=" + allowRoaming
+                        + ",linkProperties=" + linkProperties + ",pduSessionId=" + pduSessionId
                         + ",sliceInfo=" + sliceInfo + ",trafficDescriptor=" + trafficDescriptor
                         + ",matchAllRuleAllowed=" + matchAllRuleAllowed);
             }
@@ -2246,7 +2262,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
             if (RILJ_LOGD) {
                 riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
-                        + " cid = " + cid + " reason = " + reason);
+                        + " cid = " + cid + " reason = "
+                        + RILUtils.deactivateDataReasonToString(reason));
             }
 
             try {
@@ -4456,8 +4473,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
     }
 
     @Override
-    public void setSignalStrengthReportingCriteria(SignalThresholdInfo signalThresholdInfo,
-            int ran, Message result) {
+    public void setSignalStrengthReportingCriteria(
+            @NonNull List<SignalThresholdInfo> signalThresholdInfos, @Nullable Message result) {
         RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class, result);
         if (networkProxy.isEmpty()) return;
         if (mRadioVersion.greaterOrEqual(RADIO_HAL_VERSION_1_2)) {
@@ -4469,8 +4486,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
 
             try {
-                networkProxy.setSignalStrengthReportingCriteria(rr.mSerial, signalThresholdInfo,
-                        ran);
+                networkProxy.setSignalStrengthReportingCriteria(rr.mSerial, signalThresholdInfos);
             } catch (RemoteException | RuntimeException e) {
                 handleRadioProxyExceptionForRR(NETWORK_SERVICE,
                         "setSignalStrengthReportingCriteria", e);
@@ -5659,7 +5675,22 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
             s = sb.toString();
         } else {
-            s = ret.toString();
+            // Check if toString() was overridden. Java classes created from HIDL have a built-in
+            // toString() method, but AIDL classes only have it if the parcelable contains a
+            // @JavaDerive annotation. Manually convert to String as a backup for AIDL parcelables
+            // missing the annotation.
+            boolean toStringExists = false;
+            try {
+                toStringExists = ret.getClass().getMethod("toString").getDeclaringClass()
+                        != Object.class;
+            } catch (NoSuchMethodException e) {
+                Rlog.e(RILJ_LOG_TAG, e.getMessage());
+            }
+            if (toStringExists) {
+                s = ret.toString();
+            } else {
+                s = RILUtils.convertToString(ret) + " [convertToString]";
+            }
         }
         return s;
     }
