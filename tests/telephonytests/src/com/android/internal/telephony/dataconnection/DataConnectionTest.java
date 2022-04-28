@@ -53,6 +53,7 @@ import android.net.LinkProperties;
 import android.net.NattKeepalivePacketData;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.vcn.VcnNetworkPolicyResult;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -90,7 +91,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -103,30 +103,22 @@ public class DataConnectionTest extends TelephonyTest {
     private static final int DEFAULT_DC_CID = 10;
     private static final ArrayList<TrafficDescriptor> DEFAULT_TD_LIST = new ArrayList<>();
 
-    @Mock
+    // Mocked classes
     DcTesterFailBringUpAll mDcTesterFailBringUpAll;
-    @Mock
     ConnectionParams mCp;
-    @Mock
     DisconnectParams mDcp;
-    @Mock
     ApnContext mApnContext;
-    @Mock
     ApnContext mEnterpriseApnContext;
-    @Mock
     DcFailBringUp mDcFailBringUp;
-    @Mock
     DataCallSessionStats mDataCallSessionStats;
-    @Mock
     DataConnection mDefaultDc;
-    @Mock
     DataServiceManager mDataServiceManager;
 
     private DataConnection mDc;
     private DataConnectionTestHandler mDataConnectionTestHandler;
     private DcController mDcc;
 
-    private ApnSetting mApn1 = new ApnSetting.Builder()
+    private final ApnSetting mApn1 = new ApnSetting.Builder()
             .setId(2163)
             .setOperatorNumeric("44010")
             .setEntryName("sp-mode")
@@ -137,7 +129,7 @@ public class DataConnectionTest extends TelephonyTest {
             .setCarrierEnabled(true)
             .build();
 
-    private ApnSetting mApn2 = new ApnSetting.Builder()
+    private final ApnSetting mApn2 = new ApnSetting.Builder()
             .setId(2164)
             .setOperatorNumeric("44010")
             .setEntryName("sp-mode")
@@ -148,7 +140,7 @@ public class DataConnectionTest extends TelephonyTest {
             .setCarrierEnabled(true)
             .build();
 
-    private ApnSetting mApn3 = new ApnSetting.Builder()
+    private final ApnSetting mApn3 = new ApnSetting.Builder()
             .setId(2165)
             .setOperatorNumeric("44010")
             .setEntryName("sp-mode")
@@ -162,7 +154,7 @@ public class DataConnectionTest extends TelephonyTest {
             .setSkip464Xlat(1)
             .build();
 
-    private ApnSetting mApn4 = new ApnSetting.Builder()
+    private final ApnSetting mApn4 = new ApnSetting.Builder()
             .setId(2166)
             .setOperatorNumeric("44010")
             .setEntryName("sp-mode")
@@ -173,7 +165,7 @@ public class DataConnectionTest extends TelephonyTest {
             .setCarrierEnabled(true)
             .build();
 
-    private ApnSetting mApn5 = new ApnSetting.Builder()
+    private final ApnSetting mApn5 = new ApnSetting.Builder()
             .setId(2167)
             .setOperatorNumeric("44010")
             .setEntryName("sp-mode")
@@ -185,7 +177,7 @@ public class DataConnectionTest extends TelephonyTest {
             .setSkip464Xlat(Telephony.Carriers.SKIP_464XLAT_DISABLE)
             .build();
 
-    private ApnSetting mApn6 = new ApnSetting.Builder()
+    private final ApnSetting mApn6 = new ApnSetting.Builder()
             .setId(2168)
             .setOperatorNumeric("44010")
             .setEntryName("sp-mode")
@@ -264,8 +256,18 @@ public class DataConnectionTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mDcTesterFailBringUpAll = mock(DcTesterFailBringUpAll.class);
+        mCp = mock(ConnectionParams.class);
+        mDcp = mock(DisconnectParams.class);
+        mApnContext = mock(ApnContext.class);
+        mEnterpriseApnContext = mock(ApnContext.class);
+        mDcFailBringUp = mock(DcFailBringUp.class);
+        mDataCallSessionStats = mock(DataCallSessionStats.class);
+        mDefaultDc = mock(DataConnection.class);
+        mDataServiceManager = mock(DataServiceManager.class);
         logd("+Setup!");
         doReturn("fake.action_detached").when(mPhone).getActionDetached();
+        doReturn(false).when(mPhone).isUsingNewDataStack();
         replaceInstance(ConnectionParams.class, "mApnContext", mCp, mApnContext);
         replaceInstance(ConnectionParams.class, "mRilRat", mCp,
                 ServiceState.RIL_RADIO_TECHNOLOGY_UMTS);
@@ -318,10 +320,15 @@ public class DataConnectionTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         logd("tearDown");
+        mDc.quitNow();
         mDc = null;
-        mDcc = null;
         mDataConnectionTestHandler.quit();
         mDataConnectionTestHandler.join();
+        mDataConnectionTestHandler = null;
+        mDcc.removeCallbacksAndMessages(null);
+        mDcc = null;
+        DEFAULT_TD_LIST.clear();
+        waitForMs(100);
         super.tearDown();
     }
 
@@ -779,6 +786,50 @@ public class DataConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testVcnNetworkCapability() throws Exception {
+        mContextFixture.getCarrierConfigBundle().putStringArray(
+                CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
+                new String[] { "default" });
+        doReturn(mApn2).when(mApnContext).getApnSetting();
+
+        doAnswer(invocation -> {
+            NetworkCapabilities nc = invocation.getArgument(0);
+            NetworkCapabilities policyNc = new NetworkCapabilities.Builder(nc)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                    .build();
+
+            return new VcnNetworkPolicyResult(
+                    false /* isTearDownRequested */, policyNc);
+        }).when(mVcnManager).applyVcnNetworkPolicy(any(), any());
+        connectEvent(true);
+
+        assertFalse("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED));
+        assertFalse("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED));
+
+        disconnectEvent();
+
+        doAnswer(invocation -> {
+            NetworkCapabilities nc = invocation.getArgument(0);
+            NetworkCapabilities policyNc = new NetworkCapabilities.Builder(nc)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
+                    .build();
+
+            return new VcnNetworkPolicyResult(
+                    false /* isTearDownRequested */, policyNc);
+        }).when(mVcnManager).applyVcnNetworkPolicy(any(), any());
+        connectEvent(true);
+
+        assertFalse("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED));
+        assertTrue("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED));
+    }
+
+    @Test
+    @SmallTest
     public void testEnterpriseNetworkCapability() throws Exception {
         mContextFixture.getCarrierConfigBundle().putStringArray(
                 CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
@@ -923,7 +974,7 @@ public class DataConnectionTest extends TelephonyTest {
         assertEquals(carrierConfigPkgUid, getNetworkCapabilities().getOwnerUid());
         assertEquals(
                 Collections.singleton(carrierConfigPkgUid),
-                getNetworkCapabilities().getAccessUids());
+                getNetworkCapabilities().getAllowedUids());
     }
 
     @Test
