@@ -27,6 +27,7 @@ import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -66,20 +67,17 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class SubscriptionInfoUpdaterTest extends TelephonyTest {
-
     private static final int FAKE_SUB_ID_1 = 0;
     private static final int FAKE_SUB_ID_2 = 1;
     private static final int FAKE_CARD_ID = 0;
@@ -91,23 +89,16 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
 
     private SubscriptionInfoUpdater mUpdater;
     private IccRecords mIccRecord;
-    @Mock
+
+    // Mocked classes
     private UserInfo mUserInfo;
-    @Mock
     private SubscriptionInfo mSubInfo;
-    @Mock
     private ContentProvider mContentProvider;
-    @Mock
     private HashMap<String, Object> mSubscriptionContent;
-    @Mock
     private IccFileHandler mIccFileHandler;
-    @Mock
     private EuiccController mEuiccController;
-    @Mock
     private IntentBroadcaster mIntentBroadcaster;
-    @Mock
     private IPackageManager mPackageManager;
-    @Mock
     private UiccSlot mUiccSlot;
 
     /*Custom ContentProvider */
@@ -120,7 +111,16 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(this.getClass().getSimpleName());
+        super.setUp(getClass().getSimpleName());
+        mUserInfo = mock(UserInfo.class);
+        mSubInfo = mock(SubscriptionInfo.class);
+        mContentProvider = mock(ContentProvider.class);
+        mSubscriptionContent = mock(HashMap.class);
+        mIccFileHandler = mock(IccFileHandler.class);
+        mEuiccController = mock(EuiccController.class);
+        mIntentBroadcaster = mock(IntentBroadcaster.class);
+        mPackageManager = mock(IPackageManager.class);
+        mUiccSlot = mock(UiccSlot.class);
 
         replaceInstance(SubscriptionInfoUpdater.class, "sIccId", null, new String[1]);
         replaceInstance(SubscriptionInfoUpdater.class, "sContext", null, null);
@@ -169,6 +169,8 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
+        mIccRecord = null;
+        mUpdater = null;
         super.tearDown();
     }
 
@@ -743,8 +745,8 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
 
         doReturn(FAKE_SUB_ID_1).when(mSubscriptionController).getSubIdUsingPhoneId(phoneId);
         doReturn(mSubInfo).when(mSubscriptionController).getSubscriptionInfo(eq(FAKE_SUB_ID_1));
-        doReturn(Collections.singletonList(carrierPackageName)).when(mTelephonyManager)
-                .getCarrierPackageNamesForIntentAndPhone(any(), eq(phoneId));
+        doReturn(carrierPackageName).when(mTelephonyManager)
+                .getCarrierServicePackageNameForLogicalSlot(eq(phoneId));
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 SubscriptionManager.CONTENT_URI.getAuthority(),
                 new FakeSubscriptionContentProvider());
@@ -769,8 +771,8 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
         doReturn(FAKE_SUB_ID_1).when(mSubscriptionController).getSubIdUsingPhoneId(phoneId);
         doReturn(mSubInfo).when(mSubscriptionController).getSubscriptionInfo(eq(FAKE_SUB_ID_1));
         doReturn(false).when(mSubInfo).isOpportunistic();
-        doReturn(Collections.singletonList(carrierPackageName)).when(mTelephonyManager)
-                .getCarrierPackageNamesForIntentAndPhone(any(), eq(phoneId));
+        doReturn(carrierPackageName).when(mTelephonyManager)
+                .getCarrierServicePackageNameForLogicalSlot(eq(phoneId));
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 SubscriptionManager.CONTENT_URI.getAuthority(),
                 new FakeSubscriptionContentProvider());
@@ -802,8 +804,8 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
                 ParcelUuid.fromString("11111111-2222-3333-4444-555555555555"), carrierPackageName);
         doReturn(FAKE_SUB_ID_1).when(mSubscriptionController).getSubIdUsingPhoneId(phoneId);
         doReturn(mSubInfo).when(mSubscriptionController).getSubscriptionInfo(eq(FAKE_SUB_ID_1));
-        doReturn(Collections.singletonList(carrierPackageName)).when(mTelephonyManager)
-                .getCarrierPackageNamesForIntentAndPhone(any(), eq(phoneId));
+        doReturn(carrierPackageName).when(mTelephonyManager)
+                .getCarrierServicePackageNameForLogicalSlot(eq(phoneId));
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 SubscriptionManager.CONTENT_URI.getAuthority(),
                 new FakeSubscriptionContentProvider());
@@ -839,8 +841,8 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
         doReturn(mSubInfo).when(mSubscriptionController).getSubscriptionInfo(eq(FAKE_SUB_ID_1));
         doReturn(ParcelUuid.fromString("11111111-2222-3333-4444-555555555555"))
             .when(mSubInfo).getGroupUuid();
-        doReturn(Collections.singletonList(carrierPackageName)).when(mTelephonyManager)
-                .getCarrierPackageNamesForIntentAndPhone(any(), eq(phoneId));
+        doReturn(carrierPackageName).when(mTelephonyManager)
+                .getCarrierServicePackageNameForLogicalSlot(eq(phoneId));
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 SubscriptionManager.CONTENT_URI.getAuthority(),
                 new FakeSubscriptionContentProvider());
@@ -919,8 +921,8 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
         final int phoneId = mPhone.getPhoneId();
 
         // Install fixtures, ensure the test will hit the right code path
-        doReturn(Collections.singletonList(carrierPackageName)).when(mTelephonyManager)
-                .getCarrierPackageNamesForIntentAndPhone(any(), eq(phoneId));
+        doReturn(carrierPackageName).when(mTelephonyManager)
+                .getCarrierServicePackageNameForLogicalSlot(eq(phoneId));
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 SubscriptionManager.CONTENT_URI.getAuthority(),
                 new FakeSubscriptionContentProvider());
@@ -979,8 +981,8 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
         doReturn(FAKE_SUB_ID_1).when(mSubscriptionController).getSubIdUsingPhoneId(phoneId);
         doReturn(mSubInfo).when(mSubscriptionController).getSubscriptionInfo(eq(FAKE_SUB_ID_1));
         doReturn(false).when(mSubInfo).isOpportunistic();
-        doReturn(Collections.singletonList(carrierPackageName)).when(mTelephonyManager)
-                .getCarrierPackageNamesForIntentAndPhone(any(), eq(phoneId));
+        doReturn(carrierPackageName).when(mTelephonyManager)
+                .getCarrierServicePackageNameForLogicalSlot(eq(phoneId));
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 SubscriptionManager.CONTENT_URI.getAuthority(),
                 new FakeSubscriptionContentProvider());
