@@ -237,6 +237,7 @@ public class DataProfileManager extends Handler {
             profiles.add(new DataProfile.Builder()
                     .setApnSetting(buildDefaultApnSetting("DEFAULT IMS", "ims",
                             ApnSetting.TYPE_IMS))
+                    .setTrafficDescriptor(new TrafficDescriptor("ims", null))
                     .build());
             log("Added default IMS data profile.");
         }
@@ -250,6 +251,7 @@ public class DataProfileManager extends Handler {
             profiles.add(new DataProfile.Builder()
                     .setApnSetting(buildDefaultApnSetting("DEFAULT EIMS", "sos",
                             ApnSetting.TYPE_EMERGENCY))
+                    .setTrafficDescriptor(new TrafficDescriptor("sos", null))
                     .build());
             log("Added default EIMS data profile.");
         }
@@ -577,6 +579,7 @@ public class DataProfileManager extends Handler {
             @NonNull TelephonyNetworkRequest networkRequest, @NetworkType int networkType) {
         if (!networkRequest.hasAttribute(
                 TelephonyNetworkRequest.CAPABILITY_ATTRIBUTE_APN_SETTING)) {
+            loge("Network request does not have APN setting attribute.");
             return null;
         }
 
@@ -759,8 +762,10 @@ public class DataProfileManager extends Handler {
         apnBuilder.setAuthType(apn2.getAuthType() == -1
                 ? apn1.getAuthType() : apn2.getAuthType());
         apnBuilder.setApnTypeBitmask(apn1.getApnTypeBitmask() | apn2.getApnTypeBitmask());
-        apnBuilder.setMtuV4(apn2.getMtuV4() == -1 ? apn1.getMtuV4() : apn2.getMtuV4());
-        apnBuilder.setMtuV6(apn2.getMtuV6() == -1 ? apn1.getMtuV6() : apn2.getMtuV6());
+        apnBuilder.setMtuV4(apn2.getMtuV4() <= ApnSetting.UNSET_MTU
+                ? apn1.getMtuV4() : apn2.getMtuV4());
+        apnBuilder.setMtuV6(apn2.getMtuV6() <= ApnSetting.UNSET_MTU
+                ? apn1.getMtuV6() : apn2.getMtuV6());
 
         // The following fields in apn1 and apn2 should be the same, otherwise ApnSetting.similar()
         // should fail earlier.

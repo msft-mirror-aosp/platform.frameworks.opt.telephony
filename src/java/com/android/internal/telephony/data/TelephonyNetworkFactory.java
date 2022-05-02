@@ -167,6 +167,11 @@ public class TelephonyNetworkFactory extends NetworkFactory {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_MCX)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_1)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_2)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_3)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_4)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_5)
                 .setNetworkSpecifier(new TelephonyNetworkSpecifier.Builder()
                 .setSubscriptionId(subscriptionId).build());
         return builder.build();
@@ -267,11 +272,14 @@ public class TelephonyNetworkFactory extends NetworkFactory {
         }
     }
 
+    private void releaseNetworkInternal(TelephonyNetworkRequest networkRequest) {
+        mPhone.getDataNetworkController().removeNetworkRequest(networkRequest);
+    }
+
+    // TODO: Clean this up after old data stack removed.
     private void releaseNetworkInternal(TelephonyNetworkRequest networkRequest,
                                         @ReleaseNetworkType int releaseType,
                                         int transport) {
-        NetworkRequestsStats.addNetworkRelease(networkRequest.getNativeNetworkRequest(),
-                mSubscriptionId);
         if (mPhone.isUsingNewDataStack()) {
             mPhone.getDataNetworkController().removeNetworkRequest(networkRequest);
         } else {
@@ -311,8 +319,12 @@ public class TelephonyNetworkFactory extends NetworkFactory {
                 requestNetworkInternal(networkRequest, DcTracker.REQUEST_TYPE_NORMAL,
                         getTransportTypeFromNetworkRequest(networkRequest), null);
             } else if (action == ACTION_RELEASE) {
-                releaseNetworkInternal(networkRequest, DcTracker.RELEASE_TYPE_DETACH,
-                        getTransportTypeFromNetworkRequest(networkRequest));
+                if (mPhone.isUsingNewDataStack()) {
+                    releaseNetworkInternal(networkRequest);
+                } else {
+                    releaseNetworkInternal(networkRequest, DcTracker.RELEASE_TYPE_DETACH,
+                            getTransportTypeFromNetworkRequest(networkRequest));
+                }
             }
 
             mNetworkRequests.put(networkRequest,
@@ -375,16 +387,20 @@ public class TelephonyNetworkFactory extends NetworkFactory {
         logl("onReleaseNetworkFor " + networkRequest + " applied " + applied);
 
         if (applied) {
-            // Most of the time, the network request only exists in one of the DcTracker, but in the
-            // middle of handover, the network request temporarily exists in both DcTrackers. If
-            // connectivity service releases the network request while handover is ongoing, we need
-            // to remove network requests from both DcTrackers.
-            // Note that this part will be refactored in T, where we won't even have DcTracker at
-            // all.
-            releaseNetworkInternal(networkRequest, DcTracker.RELEASE_TYPE_NORMAL,
-                    AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
-            releaseNetworkInternal(networkRequest, DcTracker.RELEASE_TYPE_NORMAL,
-                    AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+            if (mPhone.isUsingNewDataStack()) {
+                releaseNetworkInternal(networkRequest);
+            } else {
+                // Most of the time, the network request only exists in one of the DcTracker, but in
+                // the middle of handover, the network request temporarily exists in both
+                // DcTrackers. If connectivity service releases the network request while handover
+                // is ongoing, we need to remove network requests from both DcTrackers.
+                // Note that this part will be refactored in T, where we won't even have DcTracker
+                // at all.
+                releaseNetworkInternal(networkRequest, DcTracker.RELEASE_TYPE_NORMAL,
+                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+                releaseNetworkInternal(networkRequest, DcTracker.RELEASE_TYPE_NORMAL,
+                        AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+            }
         }
     }
 
