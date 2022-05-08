@@ -62,6 +62,7 @@ import android.telephony.TelephonyRegistryManager;
 import android.telephony.UiccAccessRule;
 import android.telephony.UiccPortInfo;
 import android.telephony.UiccSlotInfo;
+import android.telephony.UiccSlotMapping;
 import android.telephony.euicc.EuiccManager;
 import android.text.TextUtils;
 import android.util.EventLog;
@@ -71,7 +72,8 @@ import android.util.Log;
 import com.android.ims.ImsManager;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.IccCardConstants.State;
-import com.android.internal.telephony.dataconnection.DataEnabledOverride;
+import com.android.internal.telephony.data.DataEnabledOverride;
+import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.UiccCard;
@@ -587,6 +589,8 @@ public class SubscriptionController extends ISub.Stub {
                 SubscriptionManager.GROUP_UUID));
         int profileClass = cursor.getInt(cursor.getColumnIndexOrThrow(
                 SubscriptionManager.PROFILE_CLASS));
+        int portIndex = cursor.getInt(cursor.getColumnIndexOrThrow(
+                SubscriptionManager.PORT_INDEX));
         int subType = cursor.getInt(cursor.getColumnIndexOrThrow(
                 SubscriptionManager.SUBSCRIPTION_TYPE));
         String groupOwner = getOptionalStringFromCursor(cursor, SubscriptionManager.GROUP_OWNER,
@@ -604,7 +608,8 @@ public class SubscriptionController extends ISub.Stub {
                     + " countIso:" + countryIso + " isEmbedded:"
                     + isEmbedded + " accessRules:" + Arrays.toString(accessRules)
                     + " carrierConfigAccessRules: " + Arrays.toString(carrierConfigAccessRules)
-                    + " cardId:" + cardIdToPrint + " publicCardId:" + publicCardId
+                    + " cardId:" + cardIdToPrint + " portIndex:" + portIndex
+                    + " publicCardId:" + publicCardId
                     + " isOpportunistic:" + isOpportunistic + " groupUUID:" + groupUUID
                     + " profileClass:" + profileClass + " subscriptionType: " + subType
                     + " carrierConfigAccessRules:" + carrierConfigAccessRules
@@ -620,7 +625,8 @@ public class SubscriptionController extends ISub.Stub {
                 carrierName, nameSource, iconTint, number, dataRoaming, /* icon= */ null,
                 mcc, mnc, countryIso, isEmbedded, accessRules, cardId, publicCardId,
                 isOpportunistic, groupUUID, /* isGroupDisabled= */ false , carrierId, profileClass,
-                subType, groupOwner, carrierConfigAccessRules, areUiccApplicationsEnabled);
+                subType, groupOwner, carrierConfigAccessRules, areUiccApplicationsEnabled,
+                portIndex);
         info.setAssociatedPlmns(ehplmns, hplmns);
         return info;
     }
@@ -1162,9 +1168,12 @@ public class SubscriptionController extends ISub.Stub {
         for (UiccSlot uiccSlot : uiccSlots) {
             if (uiccSlot != null && uiccSlot.getCardState() != null
                     && uiccSlot.getCardState().isCardPresent()
-                    && !uiccSlot.isEuicc()
-                    && !TextUtils.isEmpty(uiccSlot.getIccId())) {
-                ret.add(IccUtils.stripTrailingFs(uiccSlot.getIccId()));
+                    && !uiccSlot.isEuicc()) {
+                // Non euicc slots will have single port, so use default port index.
+                String iccId = uiccSlot.getIccId(TelephonyManager.DEFAULT_PORT_INDEX);
+                if (!TextUtils.isEmpty(iccId)) {
+                    ret.add(IccUtils.stripTrailingFs(iccId));
+                }
             }
         }
 
@@ -1362,7 +1371,8 @@ public class SubscriptionController extends ISub.Stub {
             Cursor cursor = resolver.query(SubscriptionManager.CONTENT_URI,
                     new String[]{SubscriptionManager.UNIQUE_KEY_SUBSCRIPTION_ID,
                             SubscriptionManager.SIM_SLOT_INDEX, SubscriptionManager.NAME_SOURCE,
-                            SubscriptionManager.ICC_ID, SubscriptionManager.CARD_ID},
+                            SubscriptionManager.ICC_ID, SubscriptionManager.CARD_ID,
+                            SubscriptionManager.PORT_INDEX},
                     selection, args, null);
 
             boolean setDisplayName = false;
@@ -1389,6 +1399,7 @@ public class SubscriptionController extends ISub.Stub {
                         int nameSource = cursor.getInt(2);
                         String oldIccId = cursor.getString(3);
                         String oldCardId = cursor.getString(4);
+                        int oldPortIndex = cursor.getInt(5);
                         ContentValues value = new ContentValues();
 
                         if (slotIndex != oldSimInfoId) {
@@ -1405,6 +1416,15 @@ public class SubscriptionController extends ISub.Stub {
                             String cardId = card.getCardId();
                             if (cardId != null && cardId != oldCardId) {
                                 value.put(SubscriptionManager.CARD_ID, cardId);
+                            }
+                        }
+
+                        //update portIndex for pSim
+                        UiccSlot slot = mUiccController.getUiccSlotForPhone(slotIndex);
+                        if (slot != null && !slot.isEuicc()) {
+                            int portIndex = slot.getPortIndexFromIccId(uniqueId);
+                            if (portIndex != oldPortIndex) {
+                                value.put(SubscriptionManager.PORT_INDEX, portIndex);
                             }
                         }
 
@@ -1724,6 +1744,10 @@ public class SubscriptionController extends ISub.Stub {
                 if (cardId != null) {
                     value.put(SubscriptionManager.CARD_ID, cardId);
                 }
+            }
+            UiccSlot slot = mUiccController.getUiccSlotForPhone(slotIndex);
+            if (slot != null) {
+                value.put(SubscriptionManager.PORT_INDEX, slot.getPortIndexFromIccId(uniqueId));
             }
         }
         value.put(SubscriptionManager.ALLOWED_NETWORK_TYPES,
@@ -4092,7 +4116,11 @@ public class SubscriptionController extends ISub.Stub {
                     PhoneConfigurationManager.getInstance().switchMultiSimConfig(
                             mTelephonyManager.getSupportedModemCount());
                 } else {
-                    UiccController.getInstance().switchSlots(new int[]{physicalSlotIndex}, null);
+                    List<UiccSlotMapping> slotMapping = new ArrayList<>();
+                    // As this is single sim mode, set port index to 0 and logical slot index is 0
+                    slotMapping.add(new UiccSlotMapping(TelephonyManager.DEFAULT_PORT_INDEX,
+                            physicalSlotIndex, 0));
+                    UiccController.getInstance().switchSlots(slotMapping, null);
                 }
             }
             return true;
@@ -4586,12 +4614,9 @@ public class SubscriptionController extends ISub.Stub {
         }
     }
 
-    /**
-     * Implements getPhoneNumber() APIs, w/o permission check.
-     * Can be used by other phone internal components.
-     */
+    // Internal helper method for implementing getPhoneNumber() API.
     @Nullable
-    public String getPhoneNumber(int subId, int source) {
+    private String getPhoneNumber(int subId, int source) {
         if (source == SubscriptionManager.PHONE_NUMBER_SOURCE_UICC) {
             Phone phone = PhoneFactory.getPhone(getPhoneId(subId));
             return phone != null ? phone.getLine1Number() : null;
@@ -4680,7 +4705,7 @@ public class SubscriptionController extends ISub.Stub {
     /**
      * @hide
      */
-    protected static void invalidateActiveDataSubIdCaches() {
+    public static void invalidateActiveDataSubIdCaches() {
         if (sCachingEnabled) {
             SubscriptionManager.invalidateActiveDataSubIdCaches();
         }

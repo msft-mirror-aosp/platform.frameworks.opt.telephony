@@ -17,6 +17,7 @@
 package com.android.internal.telephony.test;
 
 import android.compat.annotation.UnsupportedAppUsage;
+import android.hardware.radio.RadioError;
 import android.hardware.radio.V1_0.DataRegStateResult;
 import android.hardware.radio.V1_0.SetupDataCallResult;
 import android.hardware.radio.V1_0.VoiceRegStateResult;
@@ -43,6 +44,7 @@ import android.telephony.IccOpenLogicalChannelResponse;
 import android.telephony.ImsiEncryptionInfo;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.NetworkScanRequest;
+import android.telephony.PcoData;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.telephony.SignalThresholdInfo;
@@ -1238,7 +1240,7 @@ public class SimulatedCommands extends BaseCommands
     @Override
     public void deactivateDataCall(int cid, int reason, Message result) {
         SimulatedCommandsVerifier.getInstance().deactivateDataCall(cid, reason, result);
-        resultSuccess(result, null);
+        resultSuccess(result, RadioError.NONE);
     }
 
     @Override
@@ -2335,10 +2337,12 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void registerForPcoData(Handler h, int what, Object obj) {
+        mPcoDataRegistrants.addUnique(h, what, obj);
     }
 
     @Override
     public void unregisterForPcoData(Handler h) {
+        mPcoDataRegistrants.remove(h);
     }
 
     @Override
@@ -2360,8 +2364,8 @@ public class SimulatedCommands extends BaseCommands
     }
 
     @Override
-    public void setSignalStrengthReportingCriteria(SignalThresholdInfo signalThresholdInfo,
-            int ran, Message result) {
+    public void setSignalStrengthReportingCriteria(List<SignalThresholdInfo> signalThresholdInfos,
+            Message result) {
     }
 
     @Override
@@ -2505,5 +2509,10 @@ public class SimulatedCommands extends BaseCommands
     @VisibleForTesting
     public void notifySimPhonebookChanged() {
         mSimPhonebookChangedRegistrants.notifyRegistrants();
+    }
+
+    public void triggerPcoData(int cid, String bearerProto, int pcoId, byte[] contents) {
+        PcoData response = new PcoData(cid, bearerProto, pcoId, contents);
+        mPcoDataRegistrants.notifyRegistrants(new AsyncResult(null, response, null));
     }
 }

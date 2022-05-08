@@ -666,43 +666,54 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                     Optional.ofNullable(subscriptionController.getSubscriptionInfo(subId))
                             .map(SubscriptionInfo::getCountryIso)
                             .orElse("");
-            // number[]- hone numbers from each sources:
-            // numberState[] - int representation for each number source used in the atom
+            // numbersFromAllSources[]- Phone numbers from each sources
+            // numberIds[] - Array of integer ids representing phone numbers.
+            // If number is empty then id will be 0. Two same numbers will have same id, and
+            // different numbers will have different ids.
+            // For example, [1, 0, 1] means that uicc and ims numbers are the same while carrier
+            // number is empty and [1, 2, 3] means all numbers are different.
             // index 0 - PHONE_NUMBER_SOURCE_UICC
             // index 1 - PHONE_NUMBER_SOURCE_CARRIER
             // index 2 - PHONE_NUMBER_SOURCE_IMS
-            String[] number = new String[] {
-                subscriptionController.getPhoneNumber(subId, PHONE_NUMBER_SOURCE_UICC),  // 0
-                subscriptionController.getPhoneNumber(subId, PHONE_NUMBER_SOURCE_CARRIER),  // 1
-                subscriptionController.getPhoneNumber(subId, PHONE_NUMBER_SOURCE_IMS),  // 2
-            };
-            int[] numberState = new int[number.length];  // default value 0
-            for (int i = 0, stateForNextUniqueNumber = 1; i < numberState.length; i++) {
-                if (TextUtils.isEmpty(number[i])) {
-                    // keep state 0 if number not available
+            String[] numbersFromAllSources =
+                    new String[] {
+                        subscriptionController.getPhoneNumber(
+                                subId, PHONE_NUMBER_SOURCE_UICC, null, null), // 0
+                        subscriptionController.getPhoneNumber(
+                                subId, PHONE_NUMBER_SOURCE_CARRIER, null, null), // 1
+                        subscriptionController.getPhoneNumber(
+                                subId, PHONE_NUMBER_SOURCE_IMS, null, null), // 2
+                    };
+            int[] numberIds = new int[numbersFromAllSources.length]; // default value 0
+            for (int i = 0, idForNextUniqueNumber = 1; i < numberIds.length; i++) {
+                if (TextUtils.isEmpty(numbersFromAllSources[i])) {
+                    // keep id 0 if number not available
                     continue;
                 }
                 // the number is available:
-                // try to find the same number from other sources and reuse the state
+                // try to find the same number from other sources and reuse the id
                 for (int j = 0; j < i; j++) {
-                    if (!TextUtils.isEmpty(number[j])
-                            && areSamePhoneNumber(number[i], number[j], countryIso)) {
-                        numberState[i] = numberState[j];
+                    if (!TextUtils.isEmpty(numbersFromAllSources[j])
+                            && areSamePhoneNumber(
+                                    numbersFromAllSources[i],
+                                    numbersFromAllSources[j],
+                                    countryIso)) {
+                        numberIds[i] = numberIds[j];
                     }
                 }
-                // didn't find same number (otherwise should not be state 0), assign a new state
-                if (numberState[i] == 0) {
-                    numberState[i] = stateForNextUniqueNumber;
-                    stateForNextUniqueNumber++;
+                // didn't find same number (otherwise should not be id 0), assign a new id
+                if (numberIds[i] == 0) {
+                    numberIds[i] = idForNextUniqueNumber;
+                    idForNextUniqueNumber++;
                 }
             }
             StatsEvent statsEvent = mTelephonyStatsLog.buildStatsEvent(
                     PER_SIM_STATUS,
                     phone.getPhoneId(), // simSlotIndex
                     phone.getCarrierId(), // carrierId
-                    numberState[0], // phoneNumberSourceUicc
-                    numberState[1], // phoneNumberSourceCarrier
-                    numberState[2]); // phoneNumberSourceIms
+                    numberIds[0], // phoneNumberSourceUicc
+                    numberIds[1], // phoneNumberSourceCarrier
+                    numberIds[2]); // phoneNumberSourceIms
             data.add(statsEvent);
         }
         return StatsManager.PULL_SUCCESS;
@@ -783,7 +794,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 session.mainCodecQuality,
                 session.videoEnabled,
                 session.ratAtConnected,
-                session.isMultiparty);
+                session.isMultiparty,
+                session.callDuration);
     }
 
     private static StatsEvent buildStatsEvent(IncomingSms sms) {

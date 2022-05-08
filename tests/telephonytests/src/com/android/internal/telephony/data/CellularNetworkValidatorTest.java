@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.android.internal.telephony;
+package com.android.internal.telephony.data;
 
 import static com.android.internal.telephony.TelephonyTestUtils.waitForMs;
 
@@ -27,6 +27,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -46,11 +47,12 @@ import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
+import com.android.internal.telephony.TelephonyTest;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
@@ -62,12 +64,14 @@ public class CellularNetworkValidatorTest extends TelephonyTest {
             new PhoneCapability(1, 1, null, false, new int[0]);
     private final CellIdentityLte mCellIdentityLte1 = new CellIdentityLte(123, 456, 0, 0, 111);
     private final CellIdentityLte mCellIdentityLte2 = new CellIdentityLte(321, 654, 0, 0, 222);
-    @Mock
+
+    // Mocked classes
     CellularNetworkValidator.ValidationCallback mCallback;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mCallback = mock(CellularNetworkValidator.ValidationCallback.class);
 
         doReturn(CAPABILITY_WITH_VALIDATION_SUPPORTED).when(mPhoneConfigurationManager)
                 .getCurrentPhoneCapability();
@@ -80,6 +84,7 @@ public class CellularNetworkValidatorTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         mValidatorUT.stopValidation();
+        mValidatorUT = null;
         super.tearDown();
     }
 

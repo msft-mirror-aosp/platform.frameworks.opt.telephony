@@ -4458,8 +4458,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
     }
 
     @Override
-    public void setSignalStrengthReportingCriteria(SignalThresholdInfo signalThresholdInfo,
-            int ran, Message result) {
+    public void setSignalStrengthReportingCriteria(
+            @NonNull List<SignalThresholdInfo> signalThresholdInfos, @Nullable Message result) {
         RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class, result);
         if (networkProxy.isEmpty()) return;
         if (mRadioVersion.greaterOrEqual(RADIO_HAL_VERSION_1_2)) {
@@ -4471,8 +4471,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
 
             try {
-                networkProxy.setSignalStrengthReportingCriteria(rr.mSerial, signalThresholdInfo,
-                        ran);
+                networkProxy.setSignalStrengthReportingCriteria(rr.mSerial, signalThresholdInfos);
             } catch (RemoteException | RuntimeException e) {
                 handleRadioProxyExceptionForRR(NETWORK_SERVICE,
                         "setSignalStrengthReportingCriteria", e);
@@ -5661,7 +5660,22 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
             s = sb.toString();
         } else {
-            s = ret.toString();
+            // Check if toString() was overridden. Java classes created from HIDL have a built-in
+            // toString() method, but AIDL classes only have it if the parcelable contains a
+            // @JavaDerive annotation. Manually convert to String as a backup for AIDL parcelables
+            // missing the annotation.
+            boolean toStringExists = false;
+            try {
+                toStringExists = ret.getClass().getMethod("toString").getDeclaringClass()
+                        != Object.class;
+            } catch (NoSuchMethodException e) {
+                Rlog.e(RILJ_LOG_TAG, e.getMessage());
+            }
+            if (toStringExists) {
+                s = ret.toString();
+            } else {
+                s = RILUtils.convertToString(ret) + " [convertToString]";
+            }
         }
         return s;
     }

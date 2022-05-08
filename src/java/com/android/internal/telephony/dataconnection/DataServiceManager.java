@@ -184,7 +184,7 @@ public class DataServiceManager extends Handler {
     private void revokePermissionsFromUnusedDataServices() {
         // Except the current data services from having their permissions removed.
         Set<String> dataServices = getAllDataServicePackageNames();
-        for (int transportType : mPhone.getTransportManager().getAvailableTransports()) {
+        for (int transportType : mPhone.getAccessNetworksManager().getAvailableTransports()) {
             dataServices.remove(getDataServicePackageName(transportType));
         }
 
@@ -381,6 +381,7 @@ public class DataServiceManager extends Handler {
         } catch (PackageManager.NameNotFoundException e) {
             loge("Package name not found: " + e.getMessage());
         }
+
         PhoneConfigurationManager.registerForMultiSimConfigChange(
                 this, EVENT_BIND_DATA_SERVICE, null);
 
