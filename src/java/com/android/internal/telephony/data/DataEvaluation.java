@@ -21,22 +21,27 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.telephony.data.DataProfile;
 
+import com.android.internal.annotations.VisibleForTesting;
+
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
- * The class to describe a data evaluation for whether allowing or disallowing
- * establishing a data network.
+ * The class to describe a data evaluation for whether allowing or disallowing certain operations
+ * like setup a data network, sustaining existing data networks, or handover between IWLAN and
+ * cellular.
  */
 public class DataEvaluation {
     /** The reason for this evaluation */
-    private final DataEvaluationReason mDataEvaluationReason;
+    private final @NonNull DataEvaluationReason mDataEvaluationReason;
 
     /** Data disallowed reasons. There could be multiple reasons for not allowing data. */
     private final @NonNull Set<DataDisallowedReason> mDataDisallowedReasons = new HashSet<>();
 
     /** Data allowed reason. It is intended to only have one allowed reason. */
-    private DataAllowedReason mDataAllowedReason = DataAllowedReason.NONE;
+    private @NonNull DataAllowedReason mDataAllowedReason = DataAllowedReason.NONE;
 
     private @Nullable DataProfile mCandidateDataProfile = null;
 
@@ -65,6 +70,16 @@ public class DataEvaluation {
     }
 
     /**
+     * Remove a data disallowed reason if one exists.
+     *
+     * @param reason Disallowed reason.
+     */
+    public void removeDataDisallowedReason(DataDisallowedReason reason) {
+        mDataDisallowedReasons.remove(reason);
+        mEvaluatedTime = System.currentTimeMillis();
+    }
+
+    /**
      * Add a data allowed reason. Note that adding an allowed reason will clean up the disallowed
      * reasons because they are mutual exclusive.
      *
@@ -79,6 +94,20 @@ public class DataEvaluation {
             mDataAllowedReason = reason;
         }
         mEvaluatedTime = System.currentTimeMillis();
+    }
+
+    /**
+     * @return List of data disallowed reasons.
+     */
+    public @NonNull List<DataDisallowedReason> getDataDisallowedReasons() {
+        return new ArrayList<>(mDataDisallowedReasons);
+    }
+
+    /**
+     * @return The data allowed reason.
+     */
+    public @NonNull DataAllowedReason getDataAllowedReason() {
+        return mDataAllowedReason;
     }
 
     /**
@@ -98,10 +127,10 @@ public class DataEvaluation {
     }
 
     /**
-     * @return {@code true} if data is allowed.
+     * @return {@code true} if the evaluation contains disallowed reasons.
      */
-    public boolean isDataAllowed() {
-        return mDataDisallowedReasons.size() == 0;
+    public boolean containsDisallowedReasons() {
+        return mDataDisallowedReasons.size() != 0;
     }
 
     /**
@@ -146,39 +175,56 @@ public class DataEvaluation {
         return false;
     }
 
-    /** The reason for evaluating unsatisfied network requests. */
-    enum DataEvaluationReason {
+    /**
+     * The reason for evaluating unsatisfied network requests, existing data networks, and handover.
+     */
+    @VisibleForTesting
+    public enum DataEvaluationReason {
         /** New request from the apps. */
         NEW_REQUEST,
         /** Data config changed. */
         DATA_CONFIG_CHANGED,
         /** SIM is loaded. */
         SIM_LOADED,
+        /** SIM is removed. */
+        SIM_REMOVAL,
         /** Data profiles changed. */
         DATA_PROFILES_CHANGED,
-        /** Airplane mode off. */
-        AIRPLANE_MODE_OFF,
-        /** When data RAT changes, some unsatisfied network requests might fit with the new RAT. */
-        DATA_RAT_CHANGED,
-        /** When service state changes from out of service to in service. */
-        DATA_IN_SERVICE,
-        /** When data is enabled (by user, carrier, thermal, etc...) */
-        DATA_ENABLED,
-        /** When data roaming is enabled. */
-        ROAMING_ENABLED,
+        /** When service state changes.(For now only considering data RAT and data registration). */
+        DATA_SERVICE_STATE_CHANGED,
+        /** When data is enabled or disabled (by user, carrier, thermal, etc...) */
+        DATA_ENABLED_CHANGED,
+        /** When data roaming is enabled or disabled. */
+        ROAMING_ENABLED_CHANGED,
         /** When voice call ended (for concurrent voice/data not supported RAT). */
         VOICE_CALL_ENDED,
-        /** When network no longer restricts mobile data. */
-        DATA_RESTRICTED_LIFTED,
+        /** When network restricts or no longer restricts mobile data. */
+        DATA_RESTRICTED_CHANGED,
         /** Network capabilities changed. The unsatisfied requests might have chances to attach. */
         DATA_NETWORK_CAPABILITIES_CHANGED,
+        /** When emergency call started or ended. */
+        EMERGENCY_CALL_CHANGED,
+        /** When data disconnected, re-evaluate later to see if data could be brought up again. */
+        RETRY_AFTER_DISCONNECTED,
+        /** Data setup retry. */
+        DATA_RETRY,
+        /** Handover between IWLAN and cellular. */
+        DATA_HANDOVER,
+        /** Preferred transport changed. */
+        PREFERRED_TRANSPORT_CHANGED,
+        /** Slice config changed. */
+        SLICE_CONFIG_CHANGED,
+        /**
+         * Single data network arbitration. On certain RATs, only one data network is allowed at the
+         * same time.
+         */
+        SINGLE_DATA_NETWORK_ARBITRATION,
     }
 
-    /** Disallowed reasons. There could be multiple reasons if data connection is not allowed. */
+    /** Disallowed reasons. There could be multiple reasons if it is not allowed. */
     public enum DataDisallowedReason {
         // Soft failure reasons. A soft reason means that in certain conditions, data is still
         // allowed. Normally those reasons are due to users settings.
-
         /** Data is disabled by the user or policy. */
         DATA_DISABLED(false),
         /** Data roaming is disabled by the user. */
@@ -200,12 +246,36 @@ public class DataEvaluation {
         DATA_RESTRICTED_BY_NETWORK(true),
         /** Radio power is off (i.e. airplane mode on) */
         RADIO_POWER_OFF(true),
-        /** Data disabled by telephony in some scenarios, for example, emergency call. */
-        INTERNAL_DATA_DISABLED(true),
+        /** Data setup now allowed due to pending tear down all networks. */
+        PENDING_TEAR_DOWN_ALL(true),
         /** Airplane mode is forcibly turned on by the carrier. */
         RADIO_DISABLED_BY_CARRIER(true),
         /** Underlying data service is not bound. */
-        DATA_SERVICE_NOT_READY(true);
+        DATA_SERVICE_NOT_READY(true),
+        /** Unable to find a suitable data profile. */
+        NO_SUITABLE_DATA_PROFILE(true),
+        /** Current data network type not allowed. */
+        DATA_NETWORK_TYPE_NOT_ALLOWED(true),
+        /** Device is currently in an emergency call. */
+        EMERGENCY_CALL(true),
+        /** There is already a retry setup/handover scheduled. */
+        RETRY_SCHEDULED(true),
+        /** Network has explicitly request to throttle setup attempt. */
+        DATA_THROTTLED(true),
+        /** Data profile becomes invalid. (could be removed by the user, or SIM refresh, etc..) */
+        DATA_PROFILE_INVALID(true),
+        /** Data profile not preferred (i.e. users switch preferred profile in APN editor.) */
+        DATA_PROFILE_NOT_PREFERRED(true),
+        /** Handover is not allowed by policy. */
+        NOT_ALLOWED_BY_POLICY(true),
+        /** Data network is not in the right state. */
+        ILLEGAL_STATE(true),
+        /** VoPS is not supported by the network. */
+        VOPS_NOT_SUPPORTED(true),
+        /** Only one data network is allowed at one time. */
+        ONLY_ALLOWED_SINGLE_NETWORK(true),
+        /** Data enabled settings are not ready. */
+        DATA_SETTINGS_NOT_READY(true);
 
         private final boolean mIsHardReason;
 
@@ -249,6 +319,10 @@ public class DataEvaluation {
          */
         UNMETERED_USAGE,
         /**
+         * The network request supports MMS and MMS is always allowed.
+         */
+        MMS_REQUEST,
+        /**
          * The network request is restricted (i.e. Only privilege apps can access the network.)
          */
         RESTRICTED_REQUEST,
@@ -273,7 +347,7 @@ public class DataEvaluation {
             evaluationStr.append(" ").append(mDataAllowedReason);
         }
         evaluationStr.append(", candidate profile=" + mCandidateDataProfile);
-        evaluationStr.append(", time=" + DataUtils.getReadableSystemTime(mEvaluatedTime));
+        evaluationStr.append(", time=" + DataUtils.systemTimeToString(mEvaluatedTime));
         return evaluationStr.toString();
     }
 

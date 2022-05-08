@@ -65,7 +65,10 @@ import com.android.telephony.Rlog;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.stream.Collectors;
 
 /**
  *@hide
@@ -120,6 +123,28 @@ public class SubscriptionInfoUpdater extends Handler {
     private int mCurrentlyActiveUserId;
     private CarrierServiceBindHelper mCarrierServiceBindHelper;
 
+    private volatile boolean shouldRetryUpdateEmbeddedSubscriptions = false;
+    private final CopyOnWriteArraySet<Integer> retryUpdateEmbeddedSubscriptionCards =
+        new CopyOnWriteArraySet<>();
+    private final BroadcastReceiver mUserUnlockedReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_USER_UNLOCKED.equals(intent.getAction())) {
+                // The LPA may not have been ready before user unlock, and so previous attempts
+                // to refresh the list of embedded subscriptions may have failed. This retries
+                // the refresh operation after user unlock.
+                if (shouldRetryUpdateEmbeddedSubscriptions) {
+                    logd("Retrying refresh embedded subscriptions after user unlock.");
+                    for (int cardId : retryUpdateEmbeddedSubscriptionCards){
+                        requestEmbeddedSubscriptionInfoListRefresh(cardId, null);
+                    }
+                    retryUpdateEmbeddedSubscriptionCards.clear();
+                    sContext.unregisterReceiver(mUserUnlockedReceiver);
+                }
+            }
+        }
+    };
+
     /**
      * Runnable with a boolean parameter. This is used in
      * updateEmbeddedSubscriptions(List<Integer> cardIds, @Nullable UpdateEmbeddedSubsCallback).
@@ -144,6 +169,10 @@ public class SubscriptionInfoUpdater extends Handler {
         mEuiccManager = (EuiccManager) sContext.getSystemService(Context.EUICC_SERVICE);
 
         mCarrierServiceBindHelper = new CarrierServiceBindHelper(sContext);
+
+        sContext.registerReceiver(
+                mUserUnlockedReceiver, new IntentFilter(Intent.ACTION_USER_UNLOCKED));
+
         initializeCarrierApps();
 
         PhoneConfigurationManager.registerForMultiSimConfigChange(
@@ -416,9 +445,10 @@ public class SubscriptionInfoUpdater extends Handler {
         }
 
         // ICCID is not available in IccRecords by the time SIM Ready event received
-        // hence get ICCID from UiccSlot.
-        UiccSlot uiccSlot = UiccController.getInstance().getUiccSlotForPhone(phoneId);
-        String iccId = (uiccSlot != null) ? IccUtils.stripTrailingFs(uiccSlot.getIccId()) : null;
+        // hence get ICCID from UiccPort.
+        UiccPort port = UiccController.getInstance().getUiccPort(phoneId);
+        String iccId = (port == null) ? null : IccUtils.stripTrailingFs(port.getIccId());
+
         if (!TextUtils.isEmpty(iccId)) {
             sIccId[phoneId] = iccId;
             updateSubscriptionInfoByIccId(phoneId, true /* updateEmbeddedSubs */);
@@ -443,8 +473,9 @@ public class SubscriptionInfoUpdater extends Handler {
         boolean uiccAppsDisabled = areUiccAppsDisabledOnCard(phoneId);
         if (iccCard.isEmptyProfile() || uiccAppsDisabled) {
             if (uiccAppsDisabled) {
-                UiccSlot slot = UiccController.getInstance().getUiccSlotForPhone(phoneId);
-                sInactiveIccIds[phoneId] = IccUtils.stripTrailingFs(slot.getIccId());
+                UiccPort port = UiccController.getInstance().getUiccPort(phoneId);
+                String iccId = (port == null) ? null : port.getIccId();
+                sInactiveIccIds[phoneId] = IccUtils.stripTrailingFs(iccId);
             }
             isFinalState = true;
             // ICC_NOT_READY is a terminal state for
@@ -472,10 +503,15 @@ public class SubscriptionInfoUpdater extends Handler {
         // cardStatus (since IRadio 1.2). Amd upon cardStatus change we'll receive another
         // handleSimNotReady so this will be evaluated again.
         UiccSlot slot = UiccController.getInstance().getUiccSlotForPhone(phoneId);
-        if (slot == null || slot.getIccId() == null) return false;
+        if (slot == null) return false;
+        UiccPort port = UiccController.getInstance().getUiccPort(phoneId);
+        String iccId = (port == null) ? null : port.getIccId();
+        if (iccId == null) {
+            return false;
+        }
         SubscriptionInfo info =
                 mSubscriptionController.getSubInfoForIccId(
-                        IccUtils.stripTrailingFs(slot.getIccId()));
+                        IccUtils.stripTrailingFs(iccId));
         return info != null && !info.areUiccApplicationsEnabled();
     }
 
@@ -664,8 +700,12 @@ public class SubscriptionInfoUpdater extends Handler {
             }
             String iccId = sInactiveIccIds[phoneId] != null
                     ? sInactiveIccIds[phoneId] : sIccId[phoneId];
-            ContentValues value = new ContentValues(1);
+            ContentValues value = new ContentValues();
             value.put(SubscriptionManager.UICC_APPLICATIONS_ENABLED, true);
+            if (isSimAbsent) {
+                // When sim is absent, set the port index to invalid port index -1;
+                value.put(SubscriptionManager.PORT_INDEX, TelephonyManager.INVALID_PORT_INDEX);
+            }
             sContext.getContentResolver().update(SubscriptionManager.CONTENT_URI, value,
                     SubscriptionManager.ICC_ID + "=\'" + iccId + "\'", null);
             sInactiveIccIds[phoneId] = null;
@@ -815,6 +855,7 @@ public class SubscriptionInfoUpdater extends Handler {
         // Do nothing if eUICCs are disabled. (Previous entries may remain in the cache, but they
         // are filtered out of list calls as long as EuiccManager.isEnabled returns false).
         if (!mEuiccManager.isEnabled()) {
+            if (DBG) logd("updateEmbeddedSubscriptions: eUICC not enabled");
             callback.run(false /* hasChanges */);
             return;
         }
@@ -859,7 +900,9 @@ public class SubscriptionInfoUpdater extends Handler {
         if (DBG) logd("updateEmbeddedSubscriptionsCache");
 
         if (result == null) {
-            // IPC to the eUICC controller failed.
+            if (DBG) logd("updateEmbeddedSubscriptionsCache: IPC to the eUICC controller failed");
+            retryUpdateEmbeddedSubscriptionCards.add(cardId);
+            shouldRetryUpdateEmbeddedSubscriptions = true;
             return false;
         }
 
@@ -945,6 +988,8 @@ public class SubscriptionInfoUpdater extends Handler {
                         SubscriptionManager.NAME_SOURCE_CARRIER);
             }
             values.put(SubscriptionManager.PROFILE_CLASS, embeddedProfile.getProfileClass());
+            values.put(SubscriptionManager.PORT_INDEX,
+                    getEmbeddedProfilePortIndex(embeddedProfile.getIccid()));
             CarrierIdentifier cid = embeddedProfile.getCarrierIdentifier();
             if (cid != null) {
                 // Due to the limited subscription information, carrier id identified here might
@@ -1009,6 +1054,15 @@ public class SubscriptionInfoUpdater extends Handler {
         return hasChanges;
     }
 
+    private int getEmbeddedProfilePortIndex(String iccId) {
+        UiccSlot[] slots = UiccController.getInstance().getUiccSlots();
+        for (UiccSlot slot : slots) {
+            if (slot != null && slot.isEuicc() && slot.isIccIdMappedToPortIndex(iccId)) {
+                return slot.getPortIndexFromIccId(iccId);
+            }
+        }
+        return TelephonyManager.INVALID_PORT_INDEX;
+    }
     /**
      * Called by CarrierConfigLoader to update the subscription before sending a broadcast.
      */

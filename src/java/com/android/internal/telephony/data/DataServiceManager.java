@@ -175,7 +175,7 @@ public class DataServiceManager extends Handler {
     private void revokePermissionsFromUnusedDataServices() {
         // Except the current data services from having their permissions removed.
         Set<String> dataServices = getAllDataServicePackageNames();
-        for (int transportType : mPhone.getTransportManager().getAvailableTransports()) {
+        for (int transportType : mPhone.getAccessNetworksManager().getAvailableTransports()) {
             dataServices.remove(getDataServicePackageName(transportType));
         }
 
@@ -208,7 +208,7 @@ public class DataServiceManager extends Handler {
     private final class CellularDataServiceConnection implements ServiceConnection {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
-            if (DBG) log("onServiceConnected");
+            if (DBG) log("onServiceConnected: " + name);
             mIDataService = IDataService.Stub.asInterface(service);
             mDeathRecipient = new DataServiceManagerDeathRecipient();
             mBound = true;
@@ -353,8 +353,8 @@ public class DataServiceManager extends Handler {
         super(looper);
         mPhone = phone;
         mTransportType = transportType;
-        mTag = "DSM-" + (mTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WWAN ? "C-" : "I-")
-                + mPhone.getPhoneId();
+        mTag = "DSM-" + (mTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WWAN ? "C-"
+                : "I-") + mPhone.getPhoneId();
         mBound = false;
         mCarrierConfigManager = (CarrierConfigManager) phone.getContext().getSystemService(
                 Context.CARRIER_CONFIG_SERVICE);
@@ -378,7 +378,7 @@ public class DataServiceManager extends Handler {
         PhoneConfigurationManager.registerForMultiSimConfigChange(
                 this, EVENT_BIND_DATA_SERVICE, null);
 
-        sendEmptyMessage(EVENT_BIND_DATA_SERVICE);
+        rebindDataService();
     }
 
     /**

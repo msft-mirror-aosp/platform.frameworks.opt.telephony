@@ -94,6 +94,8 @@ import com.android.internal.telephony.RIL;
 import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.RetryManager;
 import com.android.internal.telephony.TelephonyStatsLog;
+import com.android.internal.telephony.data.DataConfigManager;
+import com.android.internal.telephony.data.KeepaliveStatus;
 import com.android.internal.telephony.dataconnection.DcTracker.ReleaseNetworkType;
 import com.android.internal.telephony.dataconnection.DcTracker.RequestNetworkType;
 import com.android.internal.telephony.metrics.DataCallSessionStats;
@@ -1581,12 +1583,8 @@ public class DataConnection extends StateMachine {
     }
 
     private void updateLinkBandwidthsFromCarrierConfig(int rilRat) {
-        String ratName = ServiceState.rilRadioTechnologyToString(rilRat);
-        if (rilRat == ServiceState.RIL_RADIO_TECHNOLOGY_LTE && isNRConnected()) {
-            ratName = mPhone.getServiceState().getNrFrequencyRange()
-                    == ServiceState.FREQUENCY_RANGE_MMWAVE
-                    ? DctConstants.RAT_NAME_NR_NSA_MMWAVE : DctConstants.RAT_NAME_NR_NSA;
-        }
+        String ratName = DataConfigManager.getDataConfigNetworkType(
+                mPhone.getDisplayInfoController().getTelephonyDisplayInfo());
 
         if (DBG) log("updateLinkBandwidthsFromCarrierConfig: " + ratName);
 
@@ -1969,7 +1967,7 @@ public class DataConnection extends StateMachine {
         if (carrierServicePackageUid != Process.INVALID_UID
                 && ArrayUtils.contains(mAdministratorUids, carrierServicePackageUid)) {
             builder.setOwnerUid(carrierServicePackageUid);
-            builder.setAccessUids(Collections.singleton(carrierServicePackageUid));
+            builder.setAllowedUids(Collections.singleton(carrierServicePackageUid));
         }
         builder.setAdministratorUids(mAdministratorUids);
 
@@ -2705,6 +2703,12 @@ public class DataConnection extends StateMachine {
                     if (cp.mApnContext != null) {
                         cp.mApnContext.requestLog("onSetupConnectionCompleted result=" + result);
                     }
+
+                    if (result != SetupResult.SUCCESS) {
+                        releasePduSessionId(() -> DataConnection.this
+                                .setPduSessionId(PDU_SESSION_ID_NOT_SET));
+                    }
+
                     switch (result) {
                         case SUCCESS:
                             // All is well
@@ -2796,7 +2800,8 @@ public class DataConnection extends StateMachine {
                     }
                     retVal = HANDLED;
                     mDataCallSessionStats
-                            .onSetupDataCallResponse(dataCallResponse, cp.mRilRat,
+                            .onSetupDataCallResponse(dataCallResponse,
+                                    ServiceState.rilRadioTechnologyToNetworkType(cp.mRilRat),
                                     getApnTypeBitmask(), mApnSetting.getProtocol(),
                                     result.mFailCause);
                     break;
@@ -3292,7 +3297,8 @@ public class DataConnection extends StateMachine {
                     } else {
                         log("Keepalive Stop Requested for handle=" + handle);
                         mNetworkAgent.keepaliveTracker.handleKeepaliveStatus(
-                                new KeepaliveStatus(handle, KeepaliveStatus.STATUS_INACTIVE));
+                                new KeepaliveStatus(
+                                        handle, KeepaliveStatus.STATUS_INACTIVE));
                     }
                     retVal = HANDLED;
                     break;

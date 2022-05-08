@@ -92,9 +92,10 @@ import com.android.internal.telephony.cdma.EriInfo;
 import com.android.internal.telephony.cdma.EriManager;
 import com.android.internal.telephony.cdnr.CarrierDisplayNameData;
 import com.android.internal.telephony.cdnr.CarrierDisplayNameResolver;
+import com.android.internal.telephony.data.AccessNetworksManager;
+import com.android.internal.telephony.data.DataNetwork;
+import com.android.internal.telephony.data.DataNetworkController.DataNetworkControllerCallback;
 import com.android.internal.telephony.dataconnection.DataConnection;
-import com.android.internal.telephony.dataconnection.DcTracker;
-import com.android.internal.telephony.dataconnection.TransportManager;
 import com.android.internal.telephony.metrics.ServiceStateStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppState;
@@ -123,6 +124,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -208,6 +210,7 @@ public class ServiceStateTracker extends Handler {
     @UnsupportedAppUsage
     private RegistrantList mNetworkAttachedRegistrants = new RegistrantList();
     private RegistrantList mNetworkDetachedRegistrants = new RegistrantList();
+    private RegistrantList mServiceStateChangedRegistrants = new RegistrantList();
     private RegistrantList mPsRestrictEnabledRegistrants = new RegistrantList();
     private RegistrantList mPsRestrictDisabledRegistrants = new RegistrantList();
     private RegistrantList mImsCapabilityChangedRegistrants = new RegistrantList();
@@ -224,6 +227,12 @@ public class ServiceStateTracker extends Handler {
 
     /** Waiting period before recheck gprs and voice registration. */
     public static final int DEFAULT_GPRS_CHECK_PERIOD_MILLIS = 60 * 1000;
+
+    /**
+     * The timer value to wait for all data networks to be torn down.
+     */
+    private static final long POWER_OFF_ALL_DATA_NETWORKS_DISCONNECTED_TIMEOUT =
+            TimeUnit.SECONDS.toMillis(10);
 
     /** GSM events */
     protected static final int EVENT_RADIO_STATE_CHANGED                    = 1;
@@ -276,6 +285,7 @@ public class ServiceStateTracker extends Handler {
     // Timeout event used when delaying radio power off to wait for IMS deregistration to happen.
     private static final int EVENT_POWER_OFF_RADIO_IMS_DEREG_TIMEOUT   = 62;
     protected static final int EVENT_RESET_LAST_KNOWN_CELL_IDENTITY    = 63;
+    private static final int EVENT_REGISTER_DATA_NETWORK_EXISTING_CHANGED = 64;
 
     /**
      * The current service state.
@@ -600,11 +610,18 @@ public class ServiceStateTracker extends Handler {
     private String mRegistrationDeniedReason;
     private String mCurrentCarrier = null;
 
-    private final TransportManager mTransportManager;
+    private final AccessNetworksManager mAccessNetworksManager;
     private final SparseArray<NetworkRegistrationManager> mRegStateManagers = new SparseArray<>();
 
     /* Last known TAC/LAC */
     private int mLastKnownAreaCode = CellInfo.UNAVAILABLE;
+
+    /**
+     * Indicating if there is any data network existing. This is used in airplane mode turning on
+     * scenario, where service state tracker should wait all data disconnected before powering
+     * down the modem.
+     */
+    private boolean mAnyDataExisting = false;
 
     public ServiceStateTracker(GsmCdmaPhone phone, CommandsInterface ci) {
         mNitzState = TelephonyComponentFactory.getInstance()
@@ -631,9 +648,6 @@ public class ServiceStateTracker extends Handler {
                 .isVoiceCapable();
         mUiccController = UiccController.getInstance();
 
-        mOutOfServiceSS = new ServiceState();
-        mOutOfServiceSS.setStateOutOfService();
-
         mUiccController.registerForIccChanged(this, EVENT_ICC_CHANGED, null);
         mCi.registerForCellInfoList(this, EVENT_UNSOL_CELL_INFO_LIST, null);
         mCi.registerForPhysicalChannelConfiguration(this, EVENT_PHYSICAL_CHANNEL_CONFIG, null);
@@ -644,9 +658,11 @@ public class ServiceStateTracker extends Handler {
                 new android.os.HandlerExecutor(this), mOnSubscriptionsChangedListener);
         mRestrictedState = new RestrictedState();
 
-        mTransportManager = mPhone.getTransportManager();
+        mAccessNetworksManager = mPhone.getAccessNetworksManager();
+        mOutOfServiceSS = new ServiceState();
+        mOutOfServiceSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), false);
 
-        for (int transportType : mTransportManager.getAvailableTransports()) {
+        for (int transportType : mAccessNetworksManager.getAvailableTransports()) {
             mRegStateManagers.append(transportType, new NetworkRegistrationManager(
                     transportType, phone));
             mRegStateManagers.get(transportType).registerForNetworkRegistrationInfoChanged(
@@ -701,6 +717,10 @@ public class ServiceStateTracker extends Handler {
                 CarrierServiceStateTracker.CARRIER_EVENT_DATA_DEREGISTRATION, null);
         registerForImsCapabilityChanged(mCSST,
                 CarrierServiceStateTracker.CARRIER_EVENT_IMS_CAPABILITIES_CHANGED, null);
+
+        if (mPhone.isUsingNewDataStack()) {
+            sendEmptyMessage(EVENT_REGISTER_DATA_NETWORK_EXISTING_CHANGED);
+        }
     }
 
     @VisibleForTesting
@@ -724,7 +744,7 @@ public class ServiceStateTracker extends Handler {
         }
 
         // If we are previously in service, we need to notify that we are out of service now.
-        for (int transport : mTransportManager.getAvailableTransports()) {
+        for (int transport : mAccessNetworksManager.getAvailableTransports()) {
             if (mSS != null) {
                 NetworkRegistrationInfo nrs = mSS.getNetworkRegistrationInfo(
                         NetworkRegistrationInfo.DOMAIN_PS, transport);
@@ -736,9 +756,9 @@ public class ServiceStateTracker extends Handler {
         }
 
         mSS = new ServiceState();
-        mSS.setStateOutOfService();
+        mSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), false);
         mNewSS = new ServiceState();
-        mNewSS.setStateOutOfService();
+        mNewSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), false);
         mLastCellInfoReqTime = 0;
         mLastCellInfoList = null;
         mStartedGprsRegCheck = false;
@@ -797,7 +817,7 @@ public class ServiceStateTracker extends Handler {
 
         // Tell everybody that the registration state and RAT have changed.
         notifyVoiceRegStateRilRadioTechnologyChanged();
-        for (int transport : mTransportManager.getAvailableTransports()) {
+        for (int transport : mAccessNetworksManager.getAvailableTransports()) {
             notifyDataRegStateRilRadioTechnologyChanged(transport);
         }
     }
@@ -1166,6 +1186,12 @@ public class ServiceStateTracker extends Handler {
         switch (msg.what) {
             case EVENT_SET_RADIO_POWER_OFF:
                 synchronized(this) {
+                    if (mPhone.isUsingNewDataStack()) {
+                        mPendingRadioPowerOffAfterDataOff = false;
+                        log("Wait for all data networks torn down timed out. Power off now.");
+                        hangupAndPowerOff();
+                        return;
+                    }
                     if (mPendingRadioPowerOffAfterDataOff &&
                             (msg.arg1 == mPendingRadioPowerOffAfterDataOffTag)) {
                         if (DBG) log("EVENT_SET_RADIO_OFF, turn radio off now.");
@@ -1442,7 +1468,34 @@ public class ServiceStateTracker extends Handler {
                 }
                 break;
 
+            case EVENT_REGISTER_DATA_NETWORK_EXISTING_CHANGED: {
+                mPhone.getDataNetworkController().registerDataNetworkControllerCallback(
+                        new DataNetworkControllerCallback(this::post) {
+                        @Override
+                        public void onAnyDataNetworkExistingChanged(boolean anyDataExisting) {
+                            if (mAnyDataExisting != anyDataExisting) {
+                                mAnyDataExisting = anyDataExisting;
+                                log("onAnyDataNetworkExistingChanged: anyDataExisting="
+                                        + anyDataExisting);
+                                if (!mAnyDataExisting) {
+                                    sendEmptyMessage(EVENT_ALL_DATA_DISCONNECTED);
+                                }
+                            }
+                        }
+                        });
+                break;
+            }
             case EVENT_ALL_DATA_DISCONNECTED:
+                if (mPhone.isUsingNewDataStack()) {
+                    log("EVENT_ALL_DATA_DISCONNECTED");
+                    if (mPendingRadioPowerOffAfterDataOff) {
+                        mPendingRadioPowerOffAfterDataOff = false;
+                        removeMessages(EVENT_SET_RADIO_POWER_OFF);
+                        if (DBG) log("EVENT_ALL_DATA_DISCONNECTED, turn radio off now.");
+                        hangupAndPowerOff();
+                    }
+                    return;
+                }
                 int dds = SubscriptionManager.getDefaultDataSubscriptionId();
                 ProxyController.getInstance().unregisterForAllDataDisconnected(dds, this);
                 synchronized(this) {
@@ -2031,23 +2084,14 @@ public class ServiceStateTracker extends Handler {
     private boolean updateNrFrequencyRangeFromPhysicalChannelConfigs(
             List<PhysicalChannelConfig> physicalChannelConfigs, ServiceState ss) {
         int newFrequencyRange = ServiceState.FREQUENCY_RANGE_UNKNOWN;
-
         if (physicalChannelConfigs != null) {
-            DcTracker dcTracker = mPhone.getDcTracker(AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
             for (PhysicalChannelConfig config : physicalChannelConfigs) {
-                if (isNrPhysicalChannelConfig(config)) {
-                    // Update the frequency range of the NR parameters if there is an internet data
-                    // connection associate to this NR physical channel channel config.
-                    int[] contextIds = config.getContextIds();
-                    for (int cid : contextIds) {
-                        DataConnection dc = dcTracker.getDataConnectionByContextId(cid);
-                        if (dc != null && dc.getNetworkCapabilities().hasCapability(
-                                NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                            newFrequencyRange = ServiceState.getBetterNRFrequencyRange(
-                                    newFrequencyRange, config.getFrequencyRange());
-                            break;
-                        }
-                    }
+                if (isNrPhysicalChannelConfig(config) && isInternetPhysicalChannelConfig(config)) {
+                    // Update the NR frequency range if there is an internet data connection
+                    // associated with this NR physical channel channel config.
+                    newFrequencyRange = ServiceState.getBetterNRFrequencyRange(
+                            newFrequencyRange, config.getFrequencyRange());
+                    break;
                 }
             }
         }
@@ -2065,7 +2109,8 @@ public class ServiceStateTracker extends Handler {
 
         boolean hasNrSecondaryServingCell = false;
         for (PhysicalChannelConfig config : configs) {
-            if (isNrPhysicalChannelConfig(config) && config.getConnectionStatus()
+            if (isNrPhysicalChannelConfig(config) && isInternetPhysicalChannelConfig(config)
+                    && config.getConnectionStatus()
                     == PhysicalChannelConfig.CONNECTION_SECONDARY_SERVING) {
                 hasNrSecondaryServingCell = true;
                 break;
@@ -2073,7 +2118,7 @@ public class ServiceStateTracker extends Handler {
         }
 
         int oldNrState = regInfo.getNrState();
-        int newNrState = oldNrState;
+        int newNrState;
         if (hasNrSecondaryServingCell) {
             newNrState = NetworkRegistrationInfo.NR_STATE_CONNECTED;
         } else {
@@ -2089,6 +2134,25 @@ public class ServiceStateTracker extends Handler {
 
     private boolean isNrPhysicalChannelConfig(PhysicalChannelConfig config) {
         return config.getNetworkType() == TelephonyManager.NETWORK_TYPE_NR;
+    }
+
+    private boolean isInternetPhysicalChannelConfig(PhysicalChannelConfig config) {
+        for (int cid : config.getContextIds()) {
+            if (mPhone.isUsingNewDataStack()) {
+                if (mPhone.getDataNetworkController().isInternetNetwork(cid)) {
+                    return true;
+                }
+            } else {
+                DataConnection dc = mPhone.getDcTracker(
+                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
+                        .getDataConnectionByContextId(cid);
+                if (dc != null && dc.getNetworkCapabilities().hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -2107,7 +2171,7 @@ public class ServiceStateTracker extends Handler {
                 NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
 
         // Check if any APN is preferred on IWLAN.
-        boolean isIwlanPreferred = mTransportManager.isAnyApnOnIwlan();
+        boolean isIwlanPreferred = mAccessNetworksManager.isAnyApnOnIwlan();
         serviceState.setIwlanPreferred(isIwlanPreferred);
         if (wlanPsRegState != null
                 && wlanPsRegState.getAccessNetworkTechnology()
@@ -3045,13 +3109,14 @@ public class ServiceStateTracker extends Handler {
         } else if ((!mDesiredPowerState || mRadioDisabledByCarrier) && mCi.getRadioState()
                 == TelephonyManager.RADIO_POWER_ON) {
             // If it's on and available and we want it off gracefully
-            if (mImsRegistrationOnOff && getRadioPowerOffDelayTimeoutForImsRegistration() > 0) {
+            if (!mPhone.isUsingNewDataStack() && mImsRegistrationOnOff
+                    && getRadioPowerOffDelayTimeoutForImsRegistration() > 0) {
                 if (DBG) log("setPowerStateToDesired: delaying power off until IMS dereg.");
                 startDelayRadioOffWaitingForImsDeregTimeout();
                 // Return early here as we do not want to hit the cancel timeout code below.
                 return;
             } else {
-                if (DBG) log("setPowerStateToDesired: powering off");
+                if (DBG) log("setPowerStateToDesired: powerOffRadioSafely()");
                 powerOffRadioSafely();
             }
         } else if (mDeviceShuttingDown
@@ -3257,7 +3322,7 @@ public class ServiceStateTracker extends Handler {
 
         switch (mCi.getRadioState()) {
             case TelephonyManager.RADIO_POWER_UNAVAILABLE:
-                mNewSS.setStateOutOfService();
+                mNewSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), false);
                 mPhone.getSignalStrengthController().setSignalStrengthDefaultValues();
                 mLastNitzData = null;
                 mNitzState.handleNetworkUnavailable();
@@ -3265,7 +3330,7 @@ public class ServiceStateTracker extends Handler {
                 break;
 
             case TelephonyManager.RADIO_POWER_OFF:
-                mNewSS.setStateOff();
+                mNewSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), true);
                 mPhone.getSignalStrengthController().setSignalStrengthDefaultValues();
                 mLastNitzData = null;
                 mNitzState.handleNetworkUnavailable();
@@ -3388,13 +3453,13 @@ public class ServiceStateTracker extends Handler {
                         && mNewSS.getState() != ServiceState.STATE_POWER_OFF;
 
         SparseBooleanArray hasDataAttached = new SparseBooleanArray(
-                mTransportManager.getAvailableTransports().length);
+                mAccessNetworksManager.getAvailableTransports().length);
         SparseBooleanArray hasDataDetached = new SparseBooleanArray(
-                mTransportManager.getAvailableTransports().length);
+                mAccessNetworksManager.getAvailableTransports().length);
         SparseBooleanArray hasRilDataRadioTechnologyChanged = new SparseBooleanArray(
-                mTransportManager.getAvailableTransports().length);
+                mAccessNetworksManager.getAvailableTransports().length);
         SparseBooleanArray hasDataRegStateChanged = new SparseBooleanArray(
-                mTransportManager.getAvailableTransports().length);
+                mAccessNetworksManager.getAvailableTransports().length);
         boolean anyDataRegChanged = false;
         boolean anyDataRatChanged = false;
         boolean hasAlphaRawChanged =
@@ -3402,7 +3467,7 @@ public class ServiceStateTracker extends Handler {
                         || !TextUtils.equals(mSS.getOperatorAlphaShortRaw(),
                         mNewSS.getOperatorAlphaShortRaw());
 
-        for (int transport : mTransportManager.getAvailableTransports()) {
+        for (int transport : mAccessNetworksManager.getAvailableTransports()) {
             NetworkRegistrationInfo oldNrs = mSS.getNetworkRegistrationInfo(
                     NetworkRegistrationInfo.DOMAIN_PS, transport);
             NetworkRegistrationInfo newNrs = mNewSS.getNetworkRegistrationInfo(
@@ -3581,9 +3646,14 @@ public class ServiceStateTracker extends Handler {
             mRejectCode = mNewRejectCode;
         }
 
+        if (!Objects.equals(mSS, mNewSS)) {
+            mServiceStateChangedRegistrants.notifyRegistrants();
+        }
+
         ServiceState oldMergedSS = new ServiceState(mPhone.getServiceState());
         mSS = new ServiceState(mNewSS);
-        mNewSS.setStateOutOfService();
+
+        mNewSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), false);
 
         mCellIdentity = primaryCellIdentity;
         if (mSS.getState() == ServiceState.STATE_IN_SERVICE && primaryCellIdentity != null) {
@@ -3733,7 +3803,7 @@ public class ServiceStateTracker extends Handler {
             mPhone.getSignalStrengthController().notifySignalStrength();
         }
 
-        for (int transport : mTransportManager.getAvailableTransports()) {
+        for (int transport : mAccessNetworksManager.getAvailableTransports()) {
             if (hasRilDataRadioTechnologyChanged.get(transport)) {
                 shouldLogRatChange = true;
                 mPhone.getSignalStrengthController().notifySignalStrength();
@@ -4876,6 +4946,25 @@ public class ServiceStateTracker extends Handler {
     }
 
     /**
+     * Register for service state changed event.
+     *
+     * @param h handler to notify
+     * @param what what code of message when delivered
+     */
+    public void registerForServiceStateChanged(Handler h, int what) {
+        mServiceStateChangedRegistrants.addUnique(h, what, null);
+    }
+
+    /**
+     * Unregister for service state changed event.
+     *
+     * @param h The handler.
+     */
+    public void unregisterForServiceStateChanged(Handler h) {
+        mServiceStateChangedRegistrants.remove(h);
+    }
+
+    /**
      * Clean up existing voice and data connection then turn off radio power.
      *
      * Hang up the existing voice calls to decrease call drop rate.
@@ -4883,6 +4972,20 @@ public class ServiceStateTracker extends Handler {
     public void powerOffRadioSafely() {
         synchronized (this) {
             if (!mPendingRadioPowerOffAfterDataOff) {
+                if (mPhone.isUsingNewDataStack()) {
+                    if (mAnyDataExisting) {
+                        log("powerOffRadioSafely: Tear down all data networks.");
+                        mPhone.getDataNetworkController().tearDownAllDataNetworks(
+                                DataNetwork.TEAR_DOWN_REASON_AIRPLANE_MODE_ON);
+                        sendEmptyMessageDelayed(EVENT_SET_RADIO_POWER_OFF,
+                                POWER_OFF_ALL_DATA_NETWORKS_DISCONNECTED_TIMEOUT);
+                    } else {
+                        log("powerOffRadioSafely: No data is connected.");
+                        sendEmptyMessage(EVENT_ALL_DATA_DISCONNECTED);
+                    }
+                    mPendingRadioPowerOffAfterDataOff = true;
+                    return;
+                }
                 int dds = SubscriptionManager.getDefaultDataSubscriptionId();
                 // To minimize race conditions we call cleanUpAllConnections on
                 // both if else paths instead of before this isDisconnected test.
@@ -4891,7 +4994,7 @@ public class ServiceStateTracker extends Handler {
                         || (dds != mPhone.getSubId()
                         && ProxyController.getInstance().areAllDataDisconnected(dds)))) {
                     // To minimize race conditions we do this after isDisconnected
-                    for (int transport : mTransportManager.getAvailableTransports()) {
+                    for (int transport : mAccessNetworksManager.getAvailableTransports()) {
                         if (mPhone.getDcTracker(transport) != null) {
                             mPhone.getDcTracker(transport).cleanUpAllConnections(
                                     Phone.REASON_RADIO_TURNED_OFF);
@@ -4908,7 +5011,7 @@ public class ServiceStateTracker extends Handler {
                         mPhone.mCT.mBackgroundCall.hangupIfAlive();
                         mPhone.mCT.mForegroundCall.hangupIfAlive();
                     }
-                    for (int transport : mTransportManager.getAvailableTransports()) {
+                    for (int transport : mAccessNetworksManager.getAvailableTransports()) {
                         if (mPhone.getDcTracker(transport) != null) {
                             mPhone.getDcTracker(transport).cleanUpAllConnections(
                                     Phone.REASON_RADIO_TURNED_OFF);
@@ -4989,6 +5092,7 @@ public class ServiceStateTracker extends Handler {
      * Hang up all voice call and turn off radio. Implemented by derived class.
      */
     protected void hangupAndPowerOff() {
+        if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_OFF) return;
         // hang up all active voice calls
         if (!mPhone.isPhoneTypeGsm() || mPhone.isInCall()) {
             mPhone.mCT.mRingingCall.hangupIfAlive();
@@ -5191,6 +5295,7 @@ public class ServiceStateTracker extends Handler {
         dumpCellInfoList(pw);
         pw.flush();
         pw.println(" mAllowedNetworkTypes=" + mAllowedNetworkTypes);
+        pw.println(" mAnyDataExisting=" + mAnyDataExisting);
         pw.println(" mMaxDataCalls=" + mMaxDataCalls);
         pw.println(" mNewMaxDataCalls=" + mNewMaxDataCalls);
         pw.println(" mReasonDataDenied=" + mReasonDataDenied);
@@ -5472,7 +5577,7 @@ public class ServiceStateTracker extends Handler {
             }
             // operator info should be kept in SS
             String operator = mNewSS.getOperatorAlphaLong();
-            mNewSS.setStateOff();
+            mNewSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), true);
             if (resetIwlanRatVal) {
                 mNewSS.setDataRegState(ServiceState.STATE_IN_SERVICE);
                 NetworkRegistrationInfo nri = new NetworkRegistrationInfo.Builder()
@@ -5482,7 +5587,7 @@ public class ServiceStateTracker extends Handler {
                         .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_HOME)
                         .build();
                 mNewSS.addNetworkRegistrationInfo(nri);
-                if (mTransportManager.isInLegacyMode()) {
+                if (mAccessNetworksManager.isInLegacyMode()) {
                     // If in legacy mode, simulate the behavior that IWLAN registration info
                     // is reported through WWAN transport.
                     nri = new NetworkRegistrationInfo.Builder()
@@ -5510,7 +5615,7 @@ public class ServiceStateTracker extends Handler {
         // unfortunate limitation we have when the device operates in legacy mode. In AP-assisted
         // mode, the WWAN registration will correctly report the actual cellular registration info
         // when the device camps on IWLAN.
-        if (mTransportManager.isInLegacyMode()) {
+        if (mAccessNetworksManager.isInLegacyMode()) {
             NetworkRegistrationInfo wwanNri = mNewSS.getNetworkRegistrationInfo(
                     NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
             if (wwanNri != null && wwanNri.getAccessNetworkTechnology()

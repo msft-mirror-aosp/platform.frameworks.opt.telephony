@@ -176,7 +176,6 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
@@ -199,17 +198,12 @@ public class RILTest extends TelephonyTest {
     // refer to RIL#DEFAULT_WAKE_LOCK_TIMEOUT_MS
     private static final int DEFAULT_WAKE_LOCK_TIMEOUT_MS = 60000;
 
-    @Mock
+    // Mocked classes
     private ConnectivityManager mConnectionManager;
-    @Mock
     private TelephonyManager mTelephonyManager;
-    @Mock
     private IRadio mRadioProxy;
-    @Mock
     private RadioDataProxy mDataProxy;
-    @Mock
     private RadioNetworkProxy mNetworkProxy;
-    @Mock
     private RadioSimProxy mSimProxy;
 
     private HalVersion mRadioVersionV10 = new HalVersion(1, 0);
@@ -299,7 +293,13 @@ public class RILTest extends TelephonyTest {
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(RILTest.class.getSimpleName());
+        super.setUp(getClass().getSimpleName());
+        mConnectionManager = mock(ConnectivityManager.class);
+        mTelephonyManager = mock(TelephonyManager.class);
+        mRadioProxy = mock(IRadio.class);
+        mDataProxy = mock(RadioDataProxy.class);
+        mNetworkProxy = mock(RadioNetworkProxy.class);
+        mSimProxy = mock(RadioSimProxy.class);
         try {
             TelephonyDevController.create();
         } catch (RuntimeException e) {
@@ -345,7 +345,9 @@ public class RILTest extends TelephonyTest {
         if (mRILUnderTest != null) {
             mRILUnderTest.mWakeLock.release();
             mRILUnderTest.mAckWakeLock.release();
+            mRILUnderTest = null;
         }
+        mRILInstance = null;
         super.tearDown();
     }
 
@@ -2426,7 +2428,11 @@ public class RILTest extends TelephonyTest {
         android.hardware.radio.V1_6.OptionalOsAppId halOsAppId =
                 new android.hardware.radio.V1_6.OptionalOsAppId();
         android.hardware.radio.V1_6.OsAppId osAppId = new android.hardware.radio.V1_6.OsAppId();
-        byte[] osAppIdArray = {1, 2, 3, 4};
+        // 97a498e3fc925c9489860333d06e4e470a454e5445525052495345.
+        // [OsAppId.ANDROID_OS_ID, "ENTERPRISE", 1]
+        byte[] osAppIdArray = {-105, -92, -104, -29, -4, -110, 92,
+                -108, -119, -122, 3, 51, -48, 110, 78, 71, 10, 69, 78, 84, 69,
+                82, 80, 82, 73, 83, 69};
         osAppId.osAppId = RILUtils.primitiveArrayToArrayList(osAppIdArray);
         halOsAppId.value(osAppId);
 

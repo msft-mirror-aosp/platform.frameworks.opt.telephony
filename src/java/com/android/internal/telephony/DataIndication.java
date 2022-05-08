@@ -30,7 +30,7 @@ import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataProfile;
 import android.telephony.data.NetworkSlicingConfig;
 
-import com.android.internal.telephony.dataconnection.KeepaliveStatus;
+import com.android.internal.telephony.data.KeepaliveStatus;
 
 import java.util.ArrayList;
 
@@ -75,7 +75,8 @@ public class DataIndication extends IRadioDataIndication.Stub {
                     + " code=" +  halStatus.code);
         }
 
-        KeepaliveStatus ks = new KeepaliveStatus(halStatus.sessionHandle, halStatus.code);
+        KeepaliveStatus ks = new KeepaliveStatus(
+                halStatus.sessionHandle, halStatus.code);
         mRil.mNattKeepaliveStatusRegistrants.notifyRegistrants(new AsyncResult(null, ks, null));
     }
 
@@ -121,6 +122,17 @@ public class DataIndication extends IRadioDataIndication.Stub {
         mRil.processIndication(RIL.DATA_SERVICE, indicationType);
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_SLICING_CONFIG_CHANGED, slicingConfig);
         NetworkSlicingConfig ret = RILUtils.convertHalSlicingConfig(slicingConfig);
-        mRil.mApnUnthrottledRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+        mRil.mSlicingConfigChangedRegistrants.notifyRegistrants(
+                new AsyncResult(null, ret, null));
+    }
+
+    @Override
+    public String getInterfaceHash() {
+        return IRadioDataIndication.HASH;
+    }
+
+    @Override
+    public int getInterfaceVersion() {
+        return IRadioDataIndication.VERSION;
     }
 }
