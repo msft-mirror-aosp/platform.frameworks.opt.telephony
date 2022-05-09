@@ -42,6 +42,7 @@ import android.telephony.SignalStrengthUpdateRequest;
 import android.telephony.SignalThresholdInfo;
 import android.telephony.SubscriptionInfo;
 import android.telephony.TelephonyManager;
+import android.util.LocalLog;
 import android.util.Pair;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -73,6 +74,19 @@ public class SignalStrengthController extends Handler {
     private static final long POLL_PERIOD_MILLIS = TimeUnit.SECONDS.toMillis(20);
     private static final int INVALID_ARFCN = -1;
 
+    /** Required magnitude change between unsolicited SignalStrength reports. */
+    private static final int REPORTING_HYSTERESIS_DB = 2;
+    /** Minimum time between unsolicited SignalStrength reports. */
+    private static final int REPORTING_HYSTERESIS_MILLIS = 3000;
+    /**
+     * A threshold within which (inclusive) the application requested signal strength
+     * thresholds will be aligned with threholds set in advance (by system or other apps).
+     * Since the alignment applies to both directions, the value is set to halt of
+     * REPORTING_HYSTERESIS_DB to respect it while without introducing additional gaps for
+     * thresholds set by apps.
+     */
+    private static final int ALIGNMENT_HYSTERESIS_DB = 1;
+
     private static final int EVENT_SET_SIGNAL_STRENGTH_UPDATE_REQUEST       = 1;
     private static final int EVENT_CLEAR_SIGNAL_STRENGTH_UPDATE_REQUEST     = 2;
     private static final int EVENT_ON_DEVICE_IDLE_STATE_CHANGED             = 3;
@@ -84,12 +98,15 @@ public class SignalStrengthController extends Handler {
     private static final int EVENT_POLL_SIGNAL_STRENGTH_DONE                = 9;
     private static final int EVENT_CARRIER_CONFIG_CHANGED                   = 10;
 
+    @NonNull
     private final Phone mPhone;
+    @NonNull
     private final CommandsInterface mCi;
 
     @NonNull
     private SignalStrength mSignalStrength;
     private long mSignalStrengthUpdatedTime;
+    @Nullable
     private SignalStrength mLastSignalStrength = null;
 
     /**
@@ -97,6 +114,7 @@ public class SignalStrengthController extends Handler {
      * Reference: 3GPP TS 36.104 5.4.3)
      * inclusive ranges for which the lte rsrp boost is applied
      */
+    @Nullable
     private ArrayList<Pair<Integer, Integer>> mEarfcnPairListForRsrpBoost = null;
     /**
      * Offset which is reduced from the rsrp threshold while calculating signal strength level.
@@ -107,15 +125,21 @@ public class SignalStrengthController extends Handler {
      * Reference: 3GPP TS 38.104)
      * inclusive ranges for which the corresponding nr rsrp boost is applied
      */
+    @Nullable
     private ArrayList<Pair<Integer, Integer>> mNrarfcnRangeListForRsrpBoost = null;
     @Nullable
     private int[] mNrRsrpBoost = null;
+    @NonNull
     private final Object mRsrpBoostLock = new Object();
 
+    @NonNull
     private final List<SignalRequestRecord> mSignalRequestRecords = new ArrayList<>();
 
     @NonNull
     private PersistableBundle mCarrierConfig;
+
+    @NonNull
+    private final LocalLog mLocalLog = new LocalLog(64);
 
     private BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
@@ -131,7 +155,7 @@ public class SignalStrengthController extends Handler {
         }
     };
 
-    public SignalStrengthController(Phone phone) {
+    public SignalStrengthController(@NonNull Phone phone) {
         mPhone = phone;
         mCi = mPhone.mCi;
 
@@ -284,7 +308,7 @@ public class SignalStrengthController extends Handler {
      *
      * @return true if the signal strength changed and a notification was sent.
      */
-    private boolean onSignalStrengthResult(AsyncResult ar) {
+    private boolean onSignalStrengthResult(@NonNull AsyncResult ar) {
 
         // This signal is used for both voice and data radio signal so parse
         // all fields
@@ -309,6 +333,7 @@ public class SignalStrengthController extends Handler {
     /**
      * @return signal strength
      */
+    @NonNull
     public SignalStrength getSignalStrength() {
         if (shouldRefreshSignalStrength()) {
             log("getSignalStrength() refreshing signal strength.");
@@ -355,94 +380,207 @@ public class SignalStrengthController extends Handler {
      */
     @VisibleForTesting
     public void updateReportingCriteria() {
+        List<SignalThresholdInfo> signalThresholdInfos = new ArrayList<>();
+
+        int[] gsmRssiThresholds = mCarrierConfig.getIntArray(
+                CarrierConfigManager.KEY_GSM_RSSI_THRESHOLDS_INT_ARRAY);
+        if (gsmRssiThresholds != null) {
+            signalThresholdInfos.add(
+                    createSignalThresholdsInfo(
+                            SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSI,
+                            gsmRssiThresholds,
+                            AccessNetworkConstants.AccessNetworkType.GERAN,
+                            true));
+        }
+
+        int[] wcdmaRscpThresholds = mCarrierConfig.getIntArray(
+                CarrierConfigManager.KEY_WCDMA_RSCP_THRESHOLDS_INT_ARRAY);
+        if (wcdmaRscpThresholds != null) {
+            signalThresholdInfos.add(
+                    createSignalThresholdsInfo(
+                            SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSCP,
+                            wcdmaRscpThresholds,
+                            AccessNetworkConstants.AccessNetworkType.UTRAN,
+                            true));
+        }
+
         int lteMeasurementEnabled = mCarrierConfig.getInt(CarrierConfigManager
                 .KEY_PARAMETERS_USED_FOR_LTE_SIGNAL_BAR_INT, CellSignalStrengthLte.USE_RSRP);
-        mPhone.setSignalStrengthReportingCriteria(SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRP,
-                mCarrierConfig.getIntArray(CarrierConfigManager.KEY_LTE_RSRP_THRESHOLDS_INT_ARRAY),
-                AccessNetworkConstants.AccessNetworkType.EUTRAN,
-                (lteMeasurementEnabled & CellSignalStrengthLte.USE_RSRP) != 0);
-        mPhone.setSignalStrengthReportingCriteria(SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSCP,
-                mCarrierConfig.getIntArray(
-                        CarrierConfigManager.KEY_WCDMA_RSCP_THRESHOLDS_INT_ARRAY),
-                AccessNetworkConstants.AccessNetworkType.UTRAN, true);
-        mPhone.setSignalStrengthReportingCriteria(SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSI,
-                mCarrierConfig.getIntArray(CarrierConfigManager.KEY_GSM_RSSI_THRESHOLDS_INT_ARRAY),
-                AccessNetworkConstants.AccessNetworkType.GERAN, true);
+        int[] lteRsrpThresholds = mCarrierConfig.getIntArray(
+                CarrierConfigManager.KEY_LTE_RSRP_THRESHOLDS_INT_ARRAY);
+        if (lteRsrpThresholds != null) {
+            signalThresholdInfos.add(
+                    createSignalThresholdsInfo(
+                            SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRP,
+                            lteRsrpThresholds,
+                            AccessNetworkConstants.AccessNetworkType.EUTRAN,
+                            (lteMeasurementEnabled & CellSignalStrengthLte.USE_RSRP) != 0));
+        }
 
         if (mPhone.getHalVersion().greaterOrEqual(RIL.RADIO_HAL_VERSION_1_5)) {
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRQ,
-                    mCarrierConfig.getIntArray(
-                            CarrierConfigManager.KEY_LTE_RSRQ_THRESHOLDS_INT_ARRAY),
-                    AccessNetworkConstants.AccessNetworkType.EUTRAN,
-                    (lteMeasurementEnabled & CellSignalStrengthLte.USE_RSRQ) != 0);
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSNR,
-                    mCarrierConfig.getIntArray(
-                            CarrierConfigManager.KEY_LTE_RSSNR_THRESHOLDS_INT_ARRAY),
-                    AccessNetworkConstants.AccessNetworkType.EUTRAN,
-                    (lteMeasurementEnabled & CellSignalStrengthLte.USE_RSSNR) != 0);
+            int[] lteRsrqThresholds = mCarrierConfig.getIntArray(
+                    CarrierConfigManager.KEY_LTE_RSRQ_THRESHOLDS_INT_ARRAY);
+            if (lteRsrqThresholds != null) {
+                signalThresholdInfos.add(
+                        createSignalThresholdsInfo(
+                                SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRQ,
+                                lteRsrqThresholds,
+                                AccessNetworkConstants.AccessNetworkType.EUTRAN,
+                                (lteMeasurementEnabled & CellSignalStrengthLte.USE_RSRQ) != 0));
+            }
 
-            int measurementEnabled = mCarrierConfig.getInt(CarrierConfigManager
+            int[] lteRssnrThresholds = mCarrierConfig.getIntArray(
+                    CarrierConfigManager.KEY_LTE_RSSNR_THRESHOLDS_INT_ARRAY);
+            if (lteRssnrThresholds != null) {
+                signalThresholdInfos.add(
+                        createSignalThresholdsInfo(
+                                SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSNR,
+                                lteRssnrThresholds,
+                                AccessNetworkConstants.AccessNetworkType.EUTRAN,
+                                (lteMeasurementEnabled & CellSignalStrengthLte.USE_RSSNR) != 0));
+            }
+
+            int nrMeasurementEnabled = mCarrierConfig.getInt(CarrierConfigManager
                     .KEY_PARAMETERS_USE_FOR_5G_NR_SIGNAL_BAR_INT, CellSignalStrengthNr.USE_SSRSRP);
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRP,
-                    mCarrierConfig.getIntArray(
-                            CarrierConfigManager.KEY_5G_NR_SSRSRP_THRESHOLDS_INT_ARRAY),
-                    AccessNetworkConstants.AccessNetworkType.NGRAN,
-                    (measurementEnabled & CellSignalStrengthNr.USE_SSRSRP) != 0);
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRQ,
-                    mCarrierConfig.getIntArray(
-                            CarrierConfigManager.KEY_5G_NR_SSRSRQ_THRESHOLDS_INT_ARRAY),
-                    AccessNetworkConstants.AccessNetworkType.NGRAN,
-                    (measurementEnabled & CellSignalStrengthNr.USE_SSRSRQ) != 0);
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSSINR,
-                    mCarrierConfig.getIntArray(
-                            CarrierConfigManager.KEY_5G_NR_SSSINR_THRESHOLDS_INT_ARRAY),
-                    AccessNetworkConstants.AccessNetworkType.NGRAN,
-                    (measurementEnabled & CellSignalStrengthNr.USE_SSSINR) != 0);
+            int[] nrSsrsrpThresholds = mCarrierConfig.getIntArray(
+                    CarrierConfigManager.KEY_5G_NR_SSRSRP_THRESHOLDS_INT_ARRAY);
+            if (nrSsrsrpThresholds != null) {
+                signalThresholdInfos.add(
+                        createSignalThresholdsInfo(
+                                SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRP,
+                                nrSsrsrpThresholds,
+                                AccessNetworkConstants.AccessNetworkType.NGRAN,
+                                (nrMeasurementEnabled & CellSignalStrengthNr.USE_SSRSRP) != 0));
+            }
+
+            int[] nrSsrsrqThresholds = mCarrierConfig.getIntArray(
+                    CarrierConfigManager.KEY_5G_NR_SSRSRQ_THRESHOLDS_INT_ARRAY);
+            if (nrSsrsrqThresholds != null) {
+                signalThresholdInfos.add(
+                        createSignalThresholdsInfo(
+                                SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRQ,
+                                nrSsrsrqThresholds,
+                                AccessNetworkConstants.AccessNetworkType.NGRAN,
+                                (nrMeasurementEnabled & CellSignalStrengthNr.USE_SSRSRQ) != 0));
+            }
+
+            int[] nrSssinrThresholds = mCarrierConfig.getIntArray(
+                    CarrierConfigManager.KEY_5G_NR_SSSINR_THRESHOLDS_INT_ARRAY);
+            if (nrSssinrThresholds != null) {
+                signalThresholdInfos.add(
+                        createSignalThresholdsInfo(
+                                SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSSINR,
+                                nrSssinrThresholds,
+                                AccessNetworkConstants.AccessNetworkType.NGRAN,
+                                (nrMeasurementEnabled & CellSignalStrengthNr.USE_SSSINR) != 0));
+            }
         }
+
+        consolidatedAndSetReportingCriteria(signalThresholdInfos);
     }
 
     private void setDefaultSignalStrengthReportingCriteria() {
-        mPhone.setSignalStrengthReportingCriteria(SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSI,
-                AccessNetworkThresholds.GERAN, AccessNetworkConstants.AccessNetworkType.GERAN,
-                true);
-        mPhone.setSignalStrengthReportingCriteria(SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSCP,
-                AccessNetworkThresholds.UTRAN, AccessNetworkConstants.AccessNetworkType.UTRAN,
-                true);
-        mPhone.setSignalStrengthReportingCriteria(SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRP,
-                AccessNetworkThresholds.EUTRAN_RSRP,
-                AccessNetworkConstants.AccessNetworkType.EUTRAN, true);
-        mPhone.setSignalStrengthReportingCriteria(SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSI,
-                AccessNetworkThresholds.CDMA2000, AccessNetworkConstants.AccessNetworkType.CDMA2000,
-                true);
+        List<SignalThresholdInfo> signalThresholdInfos = new ArrayList<>();
+
+        signalThresholdInfos.add(
+                createSignalThresholdsInfo(
+                        SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSI,
+                        AccessNetworkThresholds.GERAN,
+                        AccessNetworkConstants.AccessNetworkType.GERAN,
+                        true));
+        signalThresholdInfos.add(
+                createSignalThresholdsInfo(
+                        SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSCP,
+                        AccessNetworkThresholds.UTRAN,
+                        AccessNetworkConstants.AccessNetworkType.UTRAN,
+                        true));
+        signalThresholdInfos.add(
+                createSignalThresholdsInfo(
+                        SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRP,
+                        AccessNetworkThresholds.EUTRAN_RSRP,
+                        AccessNetworkConstants.AccessNetworkType.EUTRAN,
+                        true));
+        signalThresholdInfos.add(
+                createSignalThresholdsInfo(
+                        SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSI,
+                        AccessNetworkThresholds.CDMA2000,
+                        AccessNetworkConstants.AccessNetworkType.CDMA2000,
+                        true));
+
         if (mPhone.getHalVersion().greaterOrEqual(RIL.RADIO_HAL_VERSION_1_5)) {
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRQ,
-                    AccessNetworkThresholds.EUTRAN_RSRQ,
-                    AccessNetworkConstants.AccessNetworkType.EUTRAN, false);
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSNR,
-                    AccessNetworkThresholds.EUTRAN_RSSNR,
-                    AccessNetworkConstants.AccessNetworkType.EUTRAN, true);
+            signalThresholdInfos.add(
+                    createSignalThresholdsInfo(
+                            SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRQ,
+                            AccessNetworkThresholds.EUTRAN_RSRQ,
+                            AccessNetworkConstants.AccessNetworkType.EUTRAN,
+                            false));
+            signalThresholdInfos.add(
+                    createSignalThresholdsInfo(
+                            SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSNR,
+                            AccessNetworkThresholds.EUTRAN_RSSNR,
+                            AccessNetworkConstants.AccessNetworkType.EUTRAN,
+                            true));
 
             // Defaultly we only need SSRSRP for NGRAN signal criteria reporting
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRP,
-                    AccessNetworkThresholds.NGRAN_RSRSRP,
-                    AccessNetworkConstants.AccessNetworkType.NGRAN, true);
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRQ,
-                    AccessNetworkThresholds.NGRAN_RSRSRQ,
-                    AccessNetworkConstants.AccessNetworkType.NGRAN, false);
-            mPhone.setSignalStrengthReportingCriteria(
-                    SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSSINR,
-                    AccessNetworkThresholds.NGRAN_SSSINR,
-                    AccessNetworkConstants.AccessNetworkType.NGRAN, false);
+            signalThresholdInfos.add(
+                    createSignalThresholdsInfo(
+                            SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRP,
+                            AccessNetworkThresholds.NGRAN_SSRSRP,
+                            AccessNetworkConstants.AccessNetworkType.NGRAN,
+                            true));
+            signalThresholdInfos.add(
+                    createSignalThresholdsInfo(
+                            SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRQ,
+                            AccessNetworkThresholds.NGRAN_SSRSRQ,
+                            AccessNetworkConstants.AccessNetworkType.NGRAN,
+                            false));
+            signalThresholdInfos.add(
+                    createSignalThresholdsInfo(
+                            SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSSINR,
+                            AccessNetworkThresholds.NGRAN_SSSINR,
+                            AccessNetworkConstants.AccessNetworkType.NGRAN,
+                            false));
         }
+
+        consolidatedAndSetReportingCriteria(signalThresholdInfos);
+    }
+
+    private void consolidatedAndSetReportingCriteria(
+            @NonNull List<SignalThresholdInfo> signalThresholdInfos) {
+        List<SignalThresholdInfo> consolidatedSignalThresholdInfos = new ArrayList<>(
+                signalThresholdInfos.size());
+        for (SignalThresholdInfo signalThresholdInfo : signalThresholdInfos) {
+            final int ran = signalThresholdInfo.getRadioAccessNetworkType();
+            final int measurementType = signalThresholdInfo.getSignalMeasurementType();
+            final boolean isEnabledForSystem = signalThresholdInfo.isEnabled();
+            int[] consolidatedThresholds =
+                    getConsolidatedSignalThresholds(
+                            ran,
+                            measurementType,
+                            isEnabledForSystem && shouldHonorSystemThresholds()
+                                    ? signalThresholdInfo.getThresholds()
+                                    : new int[]{},
+                            ALIGNMENT_HYSTERESIS_DB);
+            boolean isEnabledForAppRequest =
+                    shouldEnableSignalThresholdForAppRequest(
+                            ran,
+                            measurementType,
+                            mPhone.getSubId(),
+                            mPhone.isDeviceIdle());
+            consolidatedSignalThresholdInfos.add(
+                    new SignalThresholdInfo.Builder()
+                            .setRadioAccessNetworkType(ran)
+                            .setSignalMeasurementType(measurementType)
+                            .setHysteresisMs(REPORTING_HYSTERESIS_MILLIS)
+                            .setHysteresisDb(REPORTING_HYSTERESIS_DB)
+                            .setThresholds(consolidatedThresholds, true /*isSystem*/)
+                            .setIsEnabled(isEnabledForSystem || isEnabledForAppRequest)
+                            .build());
+        }
+        mCi.setSignalStrengthReportingCriteria(consolidatedSignalThresholdInfos, null);
+
+        localLog("setSignalStrengthReportingCriteria consolidatedSignalThresholdInfos="
+                        + consolidatedSignalThresholdInfos);
     }
 
     void setSignalStrengthDefaultValues() {
@@ -473,6 +611,11 @@ public class SignalStrengthController extends Handler {
      * @param args Additional arguments to the dump request.
      */
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println("SignalStrengthController - phoneId: " + mPhone.getPhoneId());
+        pw.println("SignalStrengthController - Log Begin ----");
+        mLocalLog.dump(fd, pw, args);
+        pw.println("SignalStrengthController - Log End ----");
+
         final IndentingPrintWriter ipw = new IndentingPrintWriter(pw, "  ");
         ipw.increaseIndent();
         pw.println("mSignalRequestRecords=" + mSignalRequestRecords);
@@ -490,20 +633,30 @@ public class SignalStrengthController extends Handler {
      * Set a new request to update the signal strength thresholds.
      */
     public void setSignalStrengthUpdateRequest(int subId, int callingUid,
-            SignalStrengthUpdateRequest request, @NonNull Message onCompleted) {
+            @NonNull SignalStrengthUpdateRequest request, @NonNull Message onCompleted) {
         SignalRequestRecord record = new SignalRequestRecord(subId, callingUid, request);
         sendMessage(obtainMessage(EVENT_SET_SIGNAL_STRENGTH_UPDATE_REQUEST,
                 new Pair<SignalRequestRecord, Message>(record, onCompleted)));
+
+        localLog("setSignalStrengthUpdateRequest"
+                + " subId=" + subId
+                + " callingUid=" + callingUid
+                + " request=" + request);
     }
 
     /**
      * Clear the previously set request.
      */
     public void clearSignalStrengthUpdateRequest(int subId, int callingUid,
-            SignalStrengthUpdateRequest request, @Nullable Message onCompleted) {
+            @NonNull SignalStrengthUpdateRequest request, @Nullable Message onCompleted) {
         SignalRequestRecord record = new SignalRequestRecord(subId, callingUid, request);
         sendMessage(obtainMessage(EVENT_CLEAR_SIGNAL_STRENGTH_UPDATE_REQUEST,
                 new Pair<SignalRequestRecord, Message>(record, onCompleted)));
+
+        localLog("clearSignalStrengthUpdateRequest"
+                + " subId=" + subId
+                + " callingUid=" + callingUid
+                + " request=" + request);
     }
 
     /**
@@ -517,8 +670,9 @@ public class SignalStrengthController extends Handler {
      *    apps, sorted in ascending order.
      */
     @VisibleForTesting
+    @NonNull
     public int[] getConsolidatedSignalThresholds(int ran, int measurement,
-            int[] systemThresholds, int hysteresis) {
+            @Nullable int[] systemThresholds, int hysteresis) {
 
         // TreeSet with comparator that will filter element with interval less than hysteresis
         // from any current element
@@ -529,8 +683,10 @@ public class SignalStrengthController extends Handler {
             return Integer.compare(x, y);
         });
 
-        for (int systemThreshold : systemThresholds) {
-            target.add(systemThreshold);
+        if (systemThresholds != null) {
+            for (int systemThreshold : systemThresholds) {
+                target.add(systemThreshold);
+            }
         }
 
         final boolean isDeviceIdle = mPhone.isDeviceIdle();
@@ -577,6 +733,8 @@ public class SignalStrengthController extends Handler {
 
     void onDeviceIdleStateChanged(boolean isDeviceIdle) {
         sendMessage(obtainMessage(EVENT_ON_DEVICE_IDLE_STATE_CHANGED, isDeviceIdle));
+
+        localLog("onDeviceIdleStateChanged isDeviceIdle=" + isDeviceIdle);
     }
 
     /**
@@ -605,12 +763,13 @@ public class SignalStrengthController extends Handler {
     private static boolean isRanAndSignalMeasurementTypeMatch(
             @AccessNetworkConstants.RadioAccessNetworkType int ran,
             @SignalThresholdInfo.SignalMeasurementType int measurement,
-            SignalThresholdInfo info) {
+            @NonNull SignalThresholdInfo info) {
         return ran == info.getRadioAccessNetworkType()
                 && measurement == info.getSignalMeasurementType();
     }
 
-    private static boolean isSignalReportRequestedWhileIdle(SignalStrengthUpdateRequest request) {
+    private static boolean isSignalReportRequestedWhileIdle(
+            @NonNull SignalStrengthUpdateRequest request) {
         return request.isSystemThresholdReportingRequestedWhileIdle()
                 || request.isReportingRequestedWhileIdle();
     }
@@ -639,6 +798,7 @@ public class SignalStrengthController extends Handler {
     private class SignalRequestRecord implements IBinder.DeathRecipient {
         final int mSubId; // subId the request originally applied to
         final int mCallingUid;
+        @NonNull
         final SignalStrengthUpdateRequest mRequest;
 
         SignalRequestRecord(int subId, int uid, @NonNull SignalStrengthUpdateRequest request) {
@@ -649,6 +809,7 @@ public class SignalStrengthController extends Handler {
 
         @Override
         public void binderDied() {
+            localLog("binderDied record=" + this);
             clearSignalStrengthUpdateRequest(mSubId, mCallingUid, mRequest, null /*onCompleted*/);
         }
 
@@ -699,8 +860,12 @@ public class SignalStrengthController extends Handler {
         }
     }
 
-    void updateServiceStateArfcnRsrpBoost(ServiceState serviceState,
-            CellIdentity cellIdentity) {
+    // package private access from ServiceStateTracker
+    // TODO(b/219572311): Maintains ArfcnRsrpBoost here only without forwarding by ServiceState
+    void updateServiceStateArfcnRsrpBoost(@NonNull ServiceState serviceState,
+            @Nullable CellIdentity cellIdentity) {
+        if (cellIdentity == null) return;
+
         int rsrpBoost = 0;
         int arfcn;
 
@@ -719,7 +884,7 @@ public class SignalStrengthController extends Handler {
                     if (arfcn != INVALID_ARFCN) {
                         int index = containsEarfcnInEarfcnRange(mNrarfcnRangeListForRsrpBoost,
                                 arfcn);
-                        if (index != -1) {
+                        if (index != -1 && mNrRsrpBoost != null) {
                             rsrpBoost = mNrRsrpBoost[index];
                         }
                     }
@@ -736,8 +901,8 @@ public class SignalStrengthController extends Handler {
      *
      * return int index in earfcnPairList if earfcn falls within the provided range; -1 otherwise.
      */
-    private static int containsEarfcnInEarfcnRange(ArrayList<Pair<Integer, Integer>> earfcnPairList,
-            int earfcn) {
+    private static int containsEarfcnInEarfcnRange(
+            @Nullable ArrayList<Pair<Integer, Integer>> earfcnPairList, int earfcn) {
         int index = 0;
         if (earfcnPairList != null) {
             for (Pair<Integer, Integer> earfcnPair : earfcnPairList) {
@@ -757,8 +922,9 @@ public class SignalStrengthController extends Handler {
      * Format of the earfcnsList is expected to be {"erafcn1_start-earfcn1_end",
      * "earfcn2_start-earfcn2_end" ... }
      */
+    @Nullable
     private static ArrayList<Pair<Integer, Integer>> convertEarfcnStringArrayToPairList(
-            String[] earfcnsList) {
+            @Nullable String[] earfcnsList) {
         ArrayList<Pair<Integer, Integer>> earfcnPairList = new ArrayList<Pair<Integer, Integer>>();
 
         if (earfcnsList != null) {
@@ -808,6 +974,16 @@ public class SignalStrengthController extends Handler {
 
         updateArfcnLists();
         updateReportingCriteria();
+    }
+
+    private static SignalThresholdInfo createSignalThresholdsInfo(
+            int measurementType, @NonNull int[] thresholds, int ran, boolean isEnabled) {
+        return new SignalThresholdInfo.Builder()
+                .setSignalMeasurementType(measurementType)
+                .setThresholds(thresholds)
+                .setRadioAccessNetworkType(ran)
+                .setIsEnabled(isEnabled)
+                .build();
     }
 
     /**
@@ -893,9 +1069,9 @@ public class SignalStrengthController extends Handler {
         };
 
         /**
-         * List of dB thresholds for NGRAN {@link AccessNetworkConstants.AccessNetworkType} RSRSRP
+         * List of dB thresholds for NGRAN {@link AccessNetworkConstants.AccessNetworkType} SSRSRP
          */
-        public static final int[] NGRAN_RSRSRP = new int[]{
+        public static final int[] NGRAN_SSRSRP = new int[]{
                 -110, /* SIGNAL_STRENGTH_POOR */
                 -90, /* SIGNAL_STRENGTH_MODERATE */
                 -80, /* SIGNAL_STRENGTH_GOOD */
@@ -903,9 +1079,9 @@ public class SignalStrengthController extends Handler {
         };
 
         /**
-         * List of dB thresholds for NGRAN {@link AccessNetworkConstants.AccessNetworkType} RSRSRP
+         * List of dB thresholds for NGRAN {@link AccessNetworkConstants.AccessNetworkType} SSRSRQ
          */
-        public static final int[] NGRAN_RSRSRQ = new int[]{
+        public static final int[] NGRAN_SSRSRQ = new int[]{
                 -31, /* SIGNAL_STRENGTH_POOR */
                 -19, /* SIGNAL_STRENGTH_MODERATE */
                 -7, /* SIGNAL_STRENGTH_GOOD */
@@ -929,5 +1105,11 @@ public class SignalStrengthController extends Handler {
 
     private static void loge(String msg) {
         Rlog.e(TAG, msg);
+    }
+
+    /** Print to both Radio log and LocalLog, used only for critical but non-sensitive msg. */
+    private void localLog(String msg) {
+        Rlog.d(TAG, msg);
+        mLocalLog.log(TAG + ": " + msg);
     }
 }

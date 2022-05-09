@@ -52,7 +52,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
@@ -82,7 +81,7 @@ public class SignalStrengthControllerTest extends TelephonyTest {
             String.format("%s,%s", HOME_PNN, "short"), "f2,s2"
     };
 
-    @Mock
+    // Mocked classes
     private Handler mHandler;
 
     private SignalStrengthController mSsc;
@@ -90,8 +89,8 @@ public class SignalStrengthControllerTest extends TelephonyTest {
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(TAG);
-
+        super.setUp(this.getClass().getSimpleName());
+        mHandler = Mockito.mock(Handler.class);
         when(mPhone.getSubId()).thenReturn(ACTIVE_SUB_ID);
         mSsc = new SignalStrengthController(mPhone);
         replaceInstance(Handler.class, "mLooper", mHandler, mSsc.getLooper());
@@ -125,6 +124,7 @@ public class SignalStrengthControllerTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         mSsc = null;
+        mBundle = null;
         super.tearDown();
     }
 
@@ -589,7 +589,7 @@ public class SignalStrengthControllerTest extends TelephonyTest {
                         -139, /** csiRsrp NONE */
                         -20, /** csiRsrq NONE */
                         -23, /** CsiSinr NONE */
-                        -44, /** SsRsrp SIGNAL_STRENGTH_GREAT */
+                        -64, /** SsRsrp SIGNAL_STRENGTH_GREAT */
                         -20, /** SsRsrq NONE */
                         -23) /** SsSinr NONE */
         );
@@ -604,10 +604,10 @@ public class SignalStrengthControllerTest extends TelephonyTest {
         assertEquals(CellSignalStrength.SIGNAL_STRENGTH_GREAT, mSsc.getSignalStrength().getLevel());
 
         int[] nrSsRsrpThresholds = {
-                -45, // SIGNAL_STRENGTH_POOR
-                -40, // SIGNAL_STRENGTH_MODERATE
-                -37, // SIGNAL_STRENGTH_GOOD
-                -34,  // SIGNAL_STRENGTH_GREAT
+                -110, /* SIGNAL_STRENGTH_POOR */
+                -60, /* SIGNAL_STRENGTH_MODERATE */
+                -55, /* SIGNAL_STRENGTH_GOOD */
+                -45,  /* SIGNAL_STRENGTH_GREAT */
         };
         mBundle.putIntArray(CarrierConfigManager.KEY_5G_NR_SSRSRP_THRESHOLDS_INT_ARRAY,
                 nrSsRsrpThresholds);
