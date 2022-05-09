@@ -109,9 +109,7 @@ import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
 import java.lang.reflect.Field;
@@ -156,19 +154,13 @@ public class DcTrackerTest extends TelephonyTest {
     private static final String FAKE_PLMN = "44010";
     private static final long TEST_TIMEOUT = 1000;
 
-    @Mock
+    // Mocked classes
     ISub mIsub;
-    @Mock
     IBinder mBinder;
-    @Mock
     SubscriptionInfo mSubscriptionInfo;
-    @Mock
     ApnContext mApnContext;
-    @Mock
     DataConnection mDataConnection;
-    @Mock
     Handler mHandler;
-    @Mock
     NetworkPolicyManager mNetworkPolicyManager;
 
     private DcTracker mDct;
@@ -703,14 +695,19 @@ public class DcTrackerTest extends TelephonyTest {
     public void setUp() throws Exception {
         logd("DcTrackerTest +Setup!");
         super.setUp(getClass().getSimpleName());
+        mIsub = Mockito.mock(ISub.class);
+        mBinder = Mockito.mock(IBinder.class);
+        mSubscriptionInfo = Mockito.mock(SubscriptionInfo.class);
+        mApnContext = Mockito.mock(ApnContext.class);
+        mDataConnection = Mockito.mock(DataConnection.class);
+        mHandler = Mockito.mock(Handler.class);
+        mNetworkPolicyManager = Mockito.mock(NetworkPolicyManager.class);
 
         doReturn("fake.action_detached").when(mPhone).getActionDetached();
         doReturn("fake.action_attached").when(mPhone).getActionAttached();
+        doReturn(false).when(mPhone).isUsingNewDataStack();
         doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_LTE).when(mServiceState)
                 .getRilDataRadioTechnology();
-        doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
-                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE))
-                .when(mDisplayInfoController).getTelephonyDisplayInfo();
 
         mContextFixture.putStringArrayResource(com.android.internal.R.array
                 .config_mobile_tcp_buffers, new String[]{
@@ -733,20 +730,17 @@ public class DcTrackerTest extends TelephonyTest {
         Settings.Global.putInt(mContext.getContentResolver(),
                 Settings.Global.DATA_STALL_RECOVERY_ON_BAD_NETWORK, 0);
 
-        doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WWAN).when(mTransportManager)
+        doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WWAN).when(mAccessNetworksManager)
                 .getPreferredTransport(anyInt());
         doReturn(PhoneConstants.State.IDLE).when(mCT).getState();
         doReturn(true).when(mSST).getDesiredPowerState();
         doReturn(true).when(mSST).getPowerStateFromCarrier();
         doAnswer(
-                new Answer<Void>() {
-                    @Override
-                    public Void answer(InvocationOnMock invocation) throws Throwable {
-                        mOnSubscriptionsChangedListener =
-                                (SubscriptionManager.OnSubscriptionsChangedListener)
-                                        invocation.getArguments()[0];
-                        return null;
-                    }
+                (Answer<Void>) invocation -> {
+                    mOnSubscriptionsChangedListener =
+                            (SubscriptionManager.OnSubscriptionsChangedListener)
+                                    invocation.getArguments()[0];
+                    return null;
                 }
         ).when(mSubscriptionManager).addOnSubscriptionsChangedListener(any());
         doReturn(mSubscriptionInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
@@ -789,7 +783,12 @@ public class DcTrackerTest extends TelephonyTest {
         mDct = null;
         mDcTrackerTestHandler.quit();
         mDcTrackerTestHandler.join();
+        mDcTrackerTestHandler = null;
         mCellularDataService.onDestroy();
+        mCellularDataService = null;
+        mAlarmManager = null;
+        mBundle = null;
+        mCellularDataService = null;
         waitForMs(100);
         super.tearDown();
     }
@@ -1700,7 +1699,7 @@ public class DcTrackerTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testTrySetupDefaultOnIWLAN() {
-        doReturn(true).when(mTransportManager).isInLegacyMode();
+        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
         initApns(ApnSetting.TYPE_DEFAULT_STRING, new String[]{ApnSetting.TYPE_ALL_STRING});
         mNetworkRegistrationInfo = new NetworkRegistrationInfo.Builder()
                 .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_IWLAN)
@@ -2970,7 +2969,7 @@ public class DcTrackerTest extends TelephonyTest {
     @Test
     public void testPreferenceChangedFallback() {
         Handler handler = Mockito.mock(Handler.class);
-        doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WLAN).when(mTransportManager)
+        doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WLAN).when(mAccessNetworksManager)
                 .getPreferredTransport(anyInt());
         Message handoverCompleteMessage = Message.obtain(handler);
         addHandoverCompleteMsg(handoverCompleteMessage, ApnSetting.TYPE_IMS);
