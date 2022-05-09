@@ -16,10 +16,6 @@
 
 package com.android.internal.telephony.metrics;
 
-import static android.telephony.PhoneNumberUtils.areSamePhoneNumber;
-import static android.telephony.SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER;
-import static android.telephony.SubscriptionManager.PHONE_NUMBER_SOURCE_IMS;
-import static android.telephony.SubscriptionManager.PHONE_NUMBER_SOURCE_UICC;
 import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 import static android.text.format.DateUtils.MINUTE_IN_MILLIS;
 import static android.text.format.DateUtils.SECOND_IN_MILLIS;
@@ -28,6 +24,7 @@ import static com.android.internal.telephony.TelephonyStatsLog.CARRIER_ID_TABLE_
 import static com.android.internal.telephony.TelephonyStatsLog.CELLULAR_DATA_SERVICE_SWITCH;
 import static com.android.internal.telephony.TelephonyStatsLog.CELLULAR_SERVICE_STATE;
 import static com.android.internal.telephony.TelephonyStatsLog.DATA_CALL_SESSION;
+import static com.android.internal.telephony.TelephonyStatsLog.DEVICE_TELEPHONY_PROPERTIES;
 import static com.android.internal.telephony.TelephonyStatsLog.GBA_EVENT;
 import static com.android.internal.telephony.TelephonyStatsLog.IMS_DEDICATED_BEARER_EVENT;
 import static com.android.internal.telephony.TelephonyStatsLog.IMS_DEDICATED_BEARER_LISTENER_EVENT;
@@ -47,7 +44,7 @@ import static com.android.internal.telephony.TelephonyStatsLog.SIP_MESSAGE_RESPO
 import static com.android.internal.telephony.TelephonyStatsLog.SIP_TRANSPORT_FEATURE_TAG_STATS;
 import static com.android.internal.telephony.TelephonyStatsLog.SIP_TRANSPORT_SESSION;
 import static com.android.internal.telephony.TelephonyStatsLog.SUPPORTED_RADIO_ACCESS_FAMILY;
-import static com.android.internal.telephony.TelephonyStatsLog.TELEPHONY_NETWORK_REQUESTS;
+import static com.android.internal.telephony.TelephonyStatsLog.TELEPHONY_NETWORK_REQUESTS_V2;
 import static com.android.internal.telephony.TelephonyStatsLog.UCE_EVENT_STATS;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_RAT_USAGE;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION;
@@ -55,14 +52,11 @@ import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSIO
 import android.annotation.Nullable;
 import android.app.StatsManager;
 import android.content.Context;
-import android.telephony.SubscriptionInfo;
-import android.text.TextUtils;
 import android.util.StatsEvent;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyStatsLog;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularDataServiceSwitch;
@@ -76,7 +70,7 @@ import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationServ
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationStats;
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationTermination;
 import com.android.internal.telephony.nano.PersistAtomsProto.IncomingSms;
-import com.android.internal.telephony.nano.PersistAtomsProto.NetworkRequests;
+import com.android.internal.telephony.nano.PersistAtomsProto.NetworkRequestsV2;
 import com.android.internal.telephony.nano.PersistAtomsProto.OutgoingSms;
 import com.android.internal.telephony.nano.PersistAtomsProto.PresenceNotifyEvent;
 import com.android.internal.telephony.nano.PersistAtomsProto.RcsAcsProvisioningStats;
@@ -94,7 +88,6 @@ import com.android.telephony.Rlog;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -137,23 +130,20 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                     .build();
 
     private final PersistAtomsStorage mStorage;
-    private final TelephonyStatsLogHelper mTelephonyStatsLog;
     private final StatsManager mStatsManager;
     private final AirplaneModeStats mAirplaneModeStats;
     private final Set<DataCallSessionStats> mOngoingDataCallStats = ConcurrentHashMap.newKeySet();
     private static final Random sRandom = new Random();
 
     public MetricsCollector(Context context) {
-        this(context, new PersistAtomsStorage(context), new TelephonyStatsLogHelper());
+        this(context, new PersistAtomsStorage(context));
     }
 
     /** Allows dependency injection. Used during unit tests. */
     @VisibleForTesting
     public MetricsCollector(Context context,
-                            PersistAtomsStorage storage,
-                            TelephonyStatsLogHelper telephonyStatsLog) {
+                            PersistAtomsStorage storage) {
         mStorage = storage;
-        mTelephonyStatsLog = telephonyStatsLog;
         mStatsManager = (StatsManager) context.getSystemService(Context.STATS_MANAGER);
         if (mStatsManager != null) {
             registerAtom(CELLULAR_DATA_SERVICE_SWITCH, POLICY_PULL_DAILY);
@@ -168,7 +158,7 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
             registerAtom(DATA_CALL_SESSION, POLICY_PULL_DAILY);
             registerAtom(IMS_REGISTRATION_STATS, POLICY_PULL_DAILY);
             registerAtom(IMS_REGISTRATION_TERMINATION, POLICY_PULL_DAILY);
-            registerAtom(TELEPHONY_NETWORK_REQUESTS, POLICY_PULL_DAILY);
+            registerAtom(TELEPHONY_NETWORK_REQUESTS_V2, POLICY_PULL_DAILY);
             registerAtom(IMS_REGISTRATION_FEATURE_TAG_STATS, POLICY_PULL_DAILY);
             registerAtom(RCS_CLIENT_PROVISIONING_STATS, POLICY_PULL_DAILY);
             registerAtom(RCS_ACS_PROVISIONING_STATS, POLICY_PULL_DAILY);
@@ -176,6 +166,7 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
             registerAtom(SIP_TRANSPORT_FEATURE_TAG_STATS, POLICY_PULL_DAILY);
             registerAtom(SIP_MESSAGE_RESPONSE, POLICY_PULL_DAILY);
             registerAtom(SIP_TRANSPORT_SESSION, POLICY_PULL_DAILY);
+            registerAtom(DEVICE_TELEPHONY_PROPERTIES, null);
             registerAtom(IMS_DEDICATED_BEARER_LISTENER_EVENT, POLICY_PULL_DAILY);
             registerAtom(IMS_DEDICATED_BEARER_EVENT, POLICY_PULL_DAILY);
             registerAtom(IMS_REGISTRATION_SERVICE_DESC_STATS, POLICY_PULL_DAILY);
@@ -226,8 +217,10 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 return pullImsRegistrationStats(data);
             case IMS_REGISTRATION_TERMINATION:
                 return pullImsRegistrationTermination(data);
-            case TELEPHONY_NETWORK_REQUESTS:
-                return pullTelephonyNetworkRequests(data);
+            case TELEPHONY_NETWORK_REQUESTS_V2:
+                return pullTelephonyNetworkRequestsV2(data);
+            case DEVICE_TELEPHONY_PROPERTIES:
+                return pullDeviceTelephonyProperties(data);
             case IMS_REGISTRATION_FEATURE_TAG_STATS:
                 return pullImsRegistrationFeatureTagStats(data);
             case RCS_CLIENT_PROVISIONING_STATS:
@@ -470,16 +463,27 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
         }
     }
 
-    private int pullTelephonyNetworkRequests(List<StatsEvent> data) {
-        NetworkRequests[] persistAtoms = mStorage.getNetworkRequests(MIN_COOLDOWN_MILLIS);
+    private int pullTelephonyNetworkRequestsV2(List<StatsEvent> data) {
+        NetworkRequestsV2[] persistAtoms = mStorage.getNetworkRequestsV2(MIN_COOLDOWN_MILLIS);
         if (persistAtoms != null) {
             Arrays.stream(persistAtoms)
                     .forEach(persistAtom -> data.add(buildStatsEvent(persistAtom)));
             return StatsManager.PULL_SUCCESS;
         } else {
-            Rlog.w(TAG, "TELEPHONY_NETWORK_REQUESTS pull too frequent, skipping");
+            Rlog.w(TAG, "TELEPHONY_NETWORK_REQUESTS_V2 pull too frequent, skipping");
             return StatsManager.PULL_SKIP;
         }
+    }
+
+    private static int pullDeviceTelephonyProperties(List<StatsEvent> data) {
+        Phone[] phones = getPhonesIfAny();
+        if (phones.length == 0) {
+            return StatsManager.PULL_SKIP;
+        }
+
+        data.add(TelephonyStatsLog.buildStatsEvent(DEVICE_TELEPHONY_PROPERTIES,
+                phones[0].isUsingNewDataStack()));
+        return StatsManager.PULL_SUCCESS;
     }
 
     private int pullImsRegistrationFeatureTagStats(List<StatsEvent> data) {
@@ -656,56 +660,34 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
     }
 
     private int pullPerSimStatus(List<StatsEvent> data) {
-        SubscriptionController subscriptionController = SubscriptionController.getInstance();
-        if (subscriptionController == null) {
-            return StatsManager.PULL_SKIP;
-        }
+        int result = StatsManager.PULL_SKIP;
         for (Phone phone : getPhonesIfAny()) {
-            int subId = phone.getSubId();
-            String countryIso =
-                    Optional.ofNullable(subscriptionController.getSubscriptionInfo(subId))
-                            .map(SubscriptionInfo::getCountryIso)
-                            .orElse("");
-            // number[]- hone numbers from each sources:
-            // numberState[] - int representation for each number source used in the atom
-            // index 0 - PHONE_NUMBER_SOURCE_UICC
-            // index 1 - PHONE_NUMBER_SOURCE_CARRIER
-            // index 2 - PHONE_NUMBER_SOURCE_IMS
-            String[] number = new String[] {
-                subscriptionController.getPhoneNumber(subId, PHONE_NUMBER_SOURCE_UICC),  // 0
-                subscriptionController.getPhoneNumber(subId, PHONE_NUMBER_SOURCE_CARRIER),  // 1
-                subscriptionController.getPhoneNumber(subId, PHONE_NUMBER_SOURCE_IMS),  // 2
-            };
-            int[] numberState = new int[number.length];  // default value 0
-            for (int i = 0, stateForNextUniqueNumber = 1; i < numberState.length; i++) {
-                if (TextUtils.isEmpty(number[i])) {
-                    // keep state 0 if number not available
-                    continue;
-                }
-                // the number is available:
-                // try to find the same number from other sources and reuse the state
-                for (int j = 0; j < i; j++) {
-                    if (!TextUtils.isEmpty(number[j])
-                            && areSamePhoneNumber(number[i], number[j], countryIso)) {
-                        numberState[i] = numberState[j];
-                    }
-                }
-                // didn't find same number (otherwise should not be state 0), assign a new state
-                if (numberState[i] == 0) {
-                    numberState[i] = stateForNextUniqueNumber;
-                    stateForNextUniqueNumber++;
-                }
+            PerSimStatus perSimStatus = PerSimStatus.getCurrentState(phone);
+            if (perSimStatus == null) {
+                continue;
             }
-            StatsEvent statsEvent = mTelephonyStatsLog.buildStatsEvent(
+            StatsEvent statsEvent = TelephonyStatsLog.buildStatsEvent(
                     PER_SIM_STATUS,
                     phone.getPhoneId(), // simSlotIndex
-                    phone.getCarrierId(), // carrierId
-                    numberState[0], // phoneNumberSourceUicc
-                    numberState[1], // phoneNumberSourceCarrier
-                    numberState[2]); // phoneNumberSourceIms
+                    perSimStatus.carrierId, // carrierId
+                    perSimStatus.phoneNumberSourceUicc, // phoneNumberSourceUicc
+                    perSimStatus.phoneNumberSourceCarrier, // phoneNumberSourceCarrier
+                    perSimStatus.phoneNumberSourceIms, // phoneNumberSourceIms
+                    perSimStatus.advancedCallingSettingEnabled, // volteEnabled
+                    perSimStatus.voWiFiSettingEnabled, // wfcEnabled
+                    perSimStatus.voWiFiModeSetting, // wfcMode
+                    perSimStatus.voWiFiRoamingModeSetting, // wfcRoamingMode
+                    perSimStatus.vtSettingEnabled, // videoCallingEnabled
+                    perSimStatus.dataRoamingEnabled, // dataRoamingEnabled
+                    perSimStatus.preferredNetworkType, // allowedNetworksByUser
+                    perSimStatus.disabled2g, // is2gDisabled
+                    perSimStatus.pin1Enabled, // isPin1Enabled
+                    perSimStatus.minimumVoltageClass, // simVoltageClass
+                    perSimStatus.userModifiedApnTypes); // userModifiedApnTypeBitmask
             data.add(statsEvent);
+            result = StatsManager.PULL_SUCCESS;
         }
-        return StatsManager.PULL_SUCCESS;
+        return result;
     }
 
     /** Registers a pulled atom ID {@code atomId} with optional {@code policy} for pulling. */
@@ -783,7 +765,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 session.mainCodecQuality,
                 session.videoEnabled,
                 session.ratAtConnected,
-                session.isMultiparty);
+                session.isMultiparty,
+                session.callDuration);
     }
 
     private static StatsEvent buildStatsEvent(IncomingSms sms) {
@@ -844,7 +827,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 dataCallSession.deactivateReason,
                 round(dataCallSession.durationMinutes, DURATION_BUCKET_MILLIS / MINUTE_IN_MILLIS),
                 dataCallSession.ongoing,
-                dataCallSession.bandAtEnd);
+                dataCallSession.bandAtEnd,
+                dataCallSession.handoverFailureCauses);
     }
 
     private static StatsEvent buildStatsEvent(ImsRegistrationStats stats) {
@@ -881,12 +865,12 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 termination.count);
     }
 
-    private static StatsEvent buildStatsEvent(NetworkRequests networkRequests) {
+    private static StatsEvent buildStatsEvent(NetworkRequestsV2 networkRequests) {
         return TelephonyStatsLog.buildStatsEvent(
-                TELEPHONY_NETWORK_REQUESTS,
+                TELEPHONY_NETWORK_REQUESTS_V2,
                 networkRequests.carrierId,
-                networkRequests.enterpriseRequestCount,
-                networkRequests.enterpriseReleaseCount);
+                networkRequests.capability,
+                networkRequests.requestCount);
     }
 
     private static StatsEvent buildStatsEvent(ImsRegistrationFeatureTagStats stats) {
