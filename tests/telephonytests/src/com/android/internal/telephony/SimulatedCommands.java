@@ -17,6 +17,7 @@
 package com.android.internal.telephony.test;
 
 import android.compat.annotation.UnsupportedAppUsage;
+import android.hardware.radio.RadioError;
 import android.hardware.radio.V1_0.DataRegStateResult;
 import android.hardware.radio.V1_0.SetupDataCallResult;
 import android.hardware.radio.V1_0.VoiceRegStateResult;
@@ -1239,7 +1240,7 @@ public class SimulatedCommands extends BaseCommands
     @Override
     public void deactivateDataCall(int cid, int reason, Message result) {
         SimulatedCommandsVerifier.getInstance().deactivateDataCall(cid, reason, result);
-        resultSuccess(result, null);
+        resultSuccess(result, RadioError.NONE);
     }
 
     @Override
@@ -2336,11 +2337,13 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void registerForPcoData(Handler h, int what, Object obj) {
+        SimulatedCommandsVerifier.getInstance().registerForPcoData(h, what, obj);
         mPcoDataRegistrants.addUnique(h, what, obj);
     }
 
     @Override
     public void unregisterForPcoData(Handler h) {
+        SimulatedCommandsVerifier.getInstance().unregisterForPcoData(h);
         mPcoDataRegistrants.remove(h);
     }
 
@@ -2363,8 +2366,8 @@ public class SimulatedCommands extends BaseCommands
     }
 
     @Override
-    public void setSignalStrengthReportingCriteria(SignalThresholdInfo signalThresholdInfo,
-            int ran, Message result) {
+    public void setSignalStrengthReportingCriteria(List<SignalThresholdInfo> signalThresholdInfos,
+            Message result) {
     }
 
     @Override
