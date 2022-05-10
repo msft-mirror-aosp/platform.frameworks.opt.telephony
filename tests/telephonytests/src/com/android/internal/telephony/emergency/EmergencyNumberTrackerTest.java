@@ -20,10 +20,13 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
 
 import android.os.AsyncResult;
 import android.os.Environment;
 import android.os.ParcelFileDescriptor;
+import android.telephony.SubscriptionManager;
 import android.telephony.emergency.EmergencyNumber;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
@@ -33,17 +36,18 @@ import androidx.test.InstrumentationRegistry;
 import com.android.internal.telephony.HalVersion;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
+import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyTest;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
 
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -84,8 +88,14 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
                                             EmergencyNumber.EMERGENCY_CALL_ROUTING_UNKNOWN);
     private static final int OTA_UNIT_TEST_EMERGENCY_NUMBER_DB_VERSION = 999999;
     private static final String OTA_EMERGENCY_NUMBER_ADDRESS = "98765";
-
-    @Mock
+    private static final int SUB_ID_PHONE_1 = 1;
+    private static final int SUB_ID_PHONE_2 = 2;
+    private static final int VALID_SLOT_INDEX_VALID_1 = 1;
+    private static final int VALID_SLOT_INDEX_VALID_2 = 2;
+    private static final int INVALID_SLOT_INDEX_VALID = SubscriptionManager.INVALID_SIM_SLOT_INDEX;
+    private ParcelFileDescriptor mOtaPracelFileDescriptor = null;
+    // Mocked classes
+    private SubscriptionController mSubControllerMock;
     private Phone mPhone2; // mPhone as phone 1 is already defined in TelephonyTest.
 
     // mEmergencyNumberTrackerMock for mPhone
@@ -102,14 +112,18 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         logd("EmergencyNumberTrackerTest +Setup!");
-        super.setUp("EmergencyNumberTrackerTest");
+        super.setUp(getClass().getSimpleName());
+        mSubControllerMock = mock(SubscriptionController.class);
+        mPhone2 = mock(Phone.class);
         mContext = InstrumentationRegistry.getTargetContext();
 
         doReturn(mContext).when(mPhone).getContext();
         doReturn(0).when(mPhone).getPhoneId();
+        doReturn(SUB_ID_PHONE_1).when(mPhone).getSubId();
 
         doReturn(mContext).when(mPhone2).getContext();
         doReturn(1).when(mPhone2).getPhoneId();
+        doReturn(SUB_ID_PHONE_2).when(mPhone2).getSubId();
 
         initializeEmergencyNumberListTestSamples();
         mEmergencyNumberTrackerMock = new EmergencyNumberTracker(mPhone, mSimulatedCommands);
@@ -131,6 +145,19 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         Path target = Paths.get(mLocalDownloadDirectory.getPath(), EMERGENCY_NUMBER_DB_OTA_FILE);
         Files.deleteIfExists(target);
         mLocalDownloadDirectory.delete();
+        mLocalDownloadDirectory = null;
+        mEmergencyNumberTrackerMock = null;
+        mEmergencyNumberTrackerMock2 = null;
+        mEmergencyNumberListTestSample.clear();
+        mEmergencyNumberListTestSample = null;
+        if (mOtaPracelFileDescriptor != null) {
+            try {
+                mOtaPracelFileDescriptor.close();
+                mOtaPracelFileDescriptor = null;
+            } catch (IOException e) {
+                logd("Failed to close emergency number db file folder for testing " + e.toString());
+            }
+        }
         super.tearDown();
     }
 
@@ -175,11 +202,11 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         File file = new File(Environment.getExternalStorageDirectory(), LOCAL_DOWNLOAD_DIRECTORY
                 + "/" + EMERGENCY_NUMBER_DB_OTA_FILE);
         try {
-            final ParcelFileDescriptor otaParcelFileDescriptor = ParcelFileDescriptor.open(
+            mOtaPracelFileDescriptor = ParcelFileDescriptor.open(
                     file, ParcelFileDescriptor.MODE_READ_ONLY);
             emergencyNumberTrackerMock.obtainMessage(
                 EmergencyNumberTracker.EVENT_OVERRIDE_OTA_EMERGENCY_NUMBER_DB_FILE_PATH,
-                otaParcelFileDescriptor).sendToTarget();
+                    mOtaPracelFileDescriptor).sendToTarget();
             logd("Changed emergency number db file folder for testing ");
         } catch (FileNotFoundException e) {
             logd("Failed to open emergency number db file folder for testing " + e.toString());
@@ -246,6 +273,36 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
     private void setSinglePhone() throws Exception {
         mPhones = new Phone[] {mPhone};
         replaceInstance(PhoneFactory.class, "sPhones", null, mPhones);
+    }
+
+    /**
+     * Test EmergencyNumberTracker.isSimAbsent().
+     */
+    @Test
+    public void testIsSimAbsent() throws Exception {
+        setDsdsPhones();
+        replaceInstance(SubscriptionController.class, "sInstance", null, mSubControllerMock);
+
+        // Both sim slots are active
+        doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubControllerMock).getSlotIndex(
+                eq(SUB_ID_PHONE_1));
+        doReturn(VALID_SLOT_INDEX_VALID_2).when(mSubControllerMock).getSlotIndex(
+                eq(SUB_ID_PHONE_2));
+        assertFalse(mEmergencyNumberTrackerMock.isSimAbsent());
+
+        // One sim slot is active; the other one is not active
+        doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubControllerMock).getSlotIndex(
+                eq(SUB_ID_PHONE_1));
+        doReturn(INVALID_SLOT_INDEX_VALID).when(mSubControllerMock).getSlotIndex(
+                eq(SUB_ID_PHONE_2));
+        assertFalse(mEmergencyNumberTrackerMock.isSimAbsent());
+
+        // Both sim slots are not active
+        doReturn(INVALID_SLOT_INDEX_VALID).when(mSubControllerMock).getSlotIndex(
+                eq(SUB_ID_PHONE_1));
+        doReturn(INVALID_SLOT_INDEX_VALID).when(mSubControllerMock).getSlotIndex(
+                eq(SUB_ID_PHONE_2));
+        assertTrue(mEmergencyNumberTrackerMock.isSimAbsent());
     }
 
     @Test
