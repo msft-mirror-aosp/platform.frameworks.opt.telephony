@@ -23,6 +23,7 @@ import static android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.AppOpsManager;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -35,10 +36,11 @@ import android.telephony.ImsiEncryptionInfo;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyFrameworkInitializer;
+import android.util.EventLog;
 
 import com.android.internal.telephony.uicc.IsimRecords;
-import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccCardApplication;
+import com.android.internal.telephony.uicc.UiccPort;
 import com.android.telephony.Rlog;
 
 public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
@@ -48,6 +50,7 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private final Context mContext;
+    private AppOpsManager mAppOps;
 
     public PhoneSubInfoController(Context context) {
         ServiceRegisterer phoneSubServiceRegisterer = TelephonyFrameworkInitializer
@@ -56,6 +59,7 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
         if (phoneSubServiceRegisterer.get() == null) {
             phoneSubServiceRegisterer.register(this);
         }
+        mAppOps = context.getSystemService(AppOpsManager.class);
         mContext = context;
     }
 
@@ -71,6 +75,7 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
 
     public String getDeviceIdForPhone(int phoneId, String callingPackage,
             String callingFeatureId) {
+        enforceCallingPackageUidMatched(callingPackage);
         return callPhoneMethodForPhoneIdWithReadDeviceIdentifiersCheck(phoneId, callingPackage,
                 callingFeatureId, "getDeviceId", (phone) -> phone.getDeviceId());
     }
@@ -265,6 +270,15 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
         return PhoneFactory.getPhone(phoneId);
     }
 
+    private void enforceCallingPackageUidMatched(String callingPackage) {
+        try {
+            mAppOps.checkPackage(Binder.getCallingUid(), callingPackage);
+        } catch (SecurityException se) {
+            EventLog.writeEvent(0x534e4554, "188677422", Binder.getCallingUid());
+            throw se;
+        }
+    }
+
     private boolean enforceIccSimChallengeResponsePermission(Context context, int subId,
             String callingPackage, String callingFeatureId, String message) {
         if (TelephonyPermissions.checkCallingOrSelfUseIccAuthWithDeviceIdentifier(context,
@@ -408,13 +422,13 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
     public String getIccSimChallengeResponse(int subId, int appType, int authType, String data,
             String callingPackage, String callingFeatureId) throws RemoteException {
         CallPhoneMethodHelper<String> toExecute = (phone)-> {
-            UiccCard uiccCard = phone.getUiccCard();
-            if (uiccCard == null) {
-                loge("getIccSimChallengeResponse() UiccCard is null");
+            UiccPort uiccPort = phone.getUiccPort();
+            if (uiccPort == null) {
+                loge("getIccSimChallengeResponse() uiccPort is null");
                 return null;
             }
 
-            UiccCardApplication uiccApp = uiccCard.getApplicationByType(appType);
+            UiccCardApplication uiccApp = uiccPort.getApplicationByType(appType);
             if (uiccApp == null) {
                 loge("getIccSimChallengeResponse() no app with specified type -- " + appType);
                 return null;
