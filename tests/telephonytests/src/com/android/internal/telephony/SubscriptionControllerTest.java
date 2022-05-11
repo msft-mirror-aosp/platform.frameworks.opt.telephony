@@ -17,6 +17,7 @@ package com.android.internal.telephony;
 
 import static android.telephony.TelephonyManager.SET_OPPORTUNISTIC_SUB_REMOTE_SERVICE_EXCEPTION;
 
+import static com.android.internal.telephony.SubscriptionController.REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID;
 import static com.android.internal.telephony.uicc.IccCardStatus.CardState.CARDSTATE_PRESENT;
 
 import static org.junit.Assert.assertEquals;
@@ -25,6 +26,7 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
@@ -32,13 +34,17 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.Manifest;
+import android.compat.testing.PlatformCompatChangeRule;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
@@ -54,24 +60,31 @@ import android.provider.Settings;
 import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
+import android.telephony.UiccPortInfo;
 import android.telephony.UiccSlotInfo;
 import android.test.mock.MockContentResolver;
 
 import androidx.test.filters.FlakyTest;
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.uicc.UiccSlot;
 
+import libcore.junit.util.compat.CoreCompatChangeRule.DisableCompatChanges;
+import libcore.junit.util.compat.CoreCompatChangeRule.EnableCompatChanges;
+
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestRule;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -86,19 +99,15 @@ public class SubscriptionControllerTest extends TelephonyTest {
     private SubscriptionController mSubscriptionControllerUT;
     private MockContentResolver mMockContentResolver;
     private FakeTelephonyProvider mFakeTelephonyProvider;
-    @Mock
-    private UiccSlot mUiccSlot;
-    @Mock
-    private ITelephonyRegistry.Stub mTelephonyRegisteryMock;
-    @Mock
-    private MultiSimSettingController mMultiSimSettingControllerMock;
-    @Mock
-    private ISetOpportunisticDataCallback mSetOpptDataCallback;
-    @Mock
-    private Handler mHandler;
-    @Mock
-    private SubscriptionInfo mMockSubscriptionInfo;
     private PersistableBundle mCarrierConfigs;
+
+    // Mocked classes
+    private UiccSlot mUiccSlot;
+    private ITelephonyRegistry.Stub mTelephonyRegistryMock;
+    private MultiSimSettingController mMultiSimSettingControllerMock;
+    private ISetOpportunisticDataCallback mSetOpptDataCallback;
+    private Handler mHandler;
+    private SubscriptionInfo mMockSubscriptionInfo;
 
     private static final String MAC_ADDRESS_PREFIX = "mac_";
     private static final String DISPLAY_NAME_PREFIX = "my_phone_";
@@ -108,10 +117,18 @@ public class SubscriptionControllerTest extends TelephonyTest {
     private static final String DISPLAY_NUMBER = "123456";
     private static final String DISPLAY_NAME = "testing_display_name";
 
+    @Rule
+    public TestRule mCompatChangeRule = new PlatformCompatChangeRule();
+
     @Before
     public void setUp() throws Exception {
-        super.setUp("SubscriptionControllerTest");
-
+        super.setUp(getClass().getSimpleName());
+        mUiccSlot = mock(UiccSlot.class);
+        mTelephonyRegistryMock = mock(ITelephonyRegistry.Stub.class);
+        mMultiSimSettingControllerMock = mock(MultiSimSettingController.class);
+        mSetOpptDataCallback = mock(ISetOpportunisticDataCallback.class);
+        mHandler = mock(Handler.class);
+        mMockSubscriptionInfo = mock(SubscriptionInfo.class);
         if (Looper.myLooper() == null) {
             Looper.prepare();
         }
@@ -136,24 +153,24 @@ public class SubscriptionControllerTest extends TelephonyTest {
         mCarrierConfigs = mContextFixture.getCarrierConfigBundle();
 
         mContextFixture.putIntArrayResource(com.android.internal.R.array.sim_colors, new int[]{5});
-
         setupMocksForTelephonyPermissions(Build.VERSION_CODES.R);
     }
 
     @After
     public void tearDown() throws Exception {
         mContextFixture.addCallingOrSelfPermission(ContextFixture.PERMISSION_ENABLE_ALL);
-        /* should clear fake content provider and resolver here */
+        /* Should clear fake content provider and resolver here */
         mContext.getContentResolver().delete(SubscriptionManager.CONTENT_URI, null, null);
 
-        /*clear sub info in mSubscriptionControllerUT since they will otherwise be persistent
+        /* Clear sub info in mSubscriptionControllerUT since they will otherwise be persistent
          * between each test case. */
         if (mSubscriptionControllerUT != null) {
             mSubscriptionControllerUT.clearSubInfo();
             mSubscriptionControllerUT.resetStaticMembers();
+            mSubscriptionControllerUT = null;
         }
 
-        /* clear settings for default voice/data/sms sub ID */
+        /* Clear settings for default voice/data/sms sub ID */
         Settings.Global.putInt(mContext.getContentResolver(),
                 Settings.Global.MULTI_SIM_VOICE_CALL_SUBSCRIPTION,
                 SubscriptionManager.INVALID_SUBSCRIPTION_ID);
@@ -164,7 +181,11 @@ public class SubscriptionControllerTest extends TelephonyTest {
                 Settings.Global.MULTI_SIM_SMS_SUBSCRIPTION,
                 SubscriptionManager.INVALID_SUBSCRIPTION_ID);
 
-        mSubscriptionControllerUT = null;
+        mCallingPackage = null;
+        mCallingFeature = null;
+        mMockContentResolver = null;
+        mFakeTelephonyProvider = null;
+        mCarrierConfigs = null;
         super.tearDown();
     }
 
@@ -191,6 +212,42 @@ public class SubscriptionControllerTest extends TelephonyTest {
                     mSubList.get(i).getSubscriptionId()));
             assertTrue(SubscriptionManager.isValidSlotIndex(mSubList.get(i).getSimSlotIndex()));
         }
+    }
+
+    @Test @SmallTest
+    public void testUsageSettingProperty() {
+        testInsertSim();
+        /* Get SUB ID */
+        int[] subIds = mSubscriptionControllerUT.getActiveSubIdList(/*visibleOnly*/false);
+        assertTrue(subIds != null && subIds.length != 0);
+        final int subId = subIds[0];
+
+        /* Getting, there is no direct getter function for each fields of property */
+        SubscriptionInfo subInfo = mSubscriptionControllerUT
+                .getActiveSubscriptionInfo(subId, mCallingPackage, mCallingFeature);
+
+        // assertEquals(SubscriptionManager.USAGE_SETTING_UNKNOWN, subInfo.getUsageSetting());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> mSubscriptionControllerUT.setUsageSetting(
+                        SubscriptionManager.USAGE_SETTING_UNKNOWN,
+                        subId,
+                        mCallingPackage));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> mSubscriptionControllerUT.setUsageSetting(
+                        SubscriptionManager.USAGE_SETTING_DEFAULT,
+                        SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                        mCallingPackage));
+
+        mSubscriptionControllerUT.setUsageSetting(
+                SubscriptionManager.USAGE_SETTING_DATA_CENTRIC,
+                subId,
+                mCallingPackage);
+
+        subInfo = mSubscriptionControllerUT
+                .getActiveSubscriptionInfo(subId, mCallingPackage, mCallingFeature);
+        assertEquals(SubscriptionManager.USAGE_SETTING_DATA_CENTRIC, subInfo.getUsageSetting());
     }
 
     @Test @SmallTest
@@ -765,6 +822,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
     @Test @SmallTest
     public void testInsertRemoteSim() {
         makeThisDeviceMultiSimCapable();
+        mContextFixture.addSystemFeature(PackageManager.FEATURE_AUTOMOTIVE);
 
         // verify there are no sim's in the system.
         assertEquals(0, mSubscriptionControllerUT.getAllSubInfoCount(mCallingPackage,
@@ -853,6 +911,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
     @Test @SmallTest
     public void testInsertMultipleRemoteSims() {
         makeThisDeviceMultiSimCapable();
+        mContextFixture.addSystemFeature(PackageManager.FEATURE_AUTOMOTIVE);
 
         // verify that there are no subscription info records
         assertEquals(0, mSubscriptionControllerUT.getAllSubInfoCount(mCallingPackage,
@@ -960,6 +1019,37 @@ public class SubscriptionControllerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testGetSubscriptionProperty() throws Exception {
+        testInsertSim();
+        ContentValues values = new ContentValues();
+        values.put(SubscriptionManager.GROUP_UUID, 1);
+        mFakeTelephonyProvider.update(SubscriptionManager.CONTENT_URI, values,
+                SubscriptionManager.UNIQUE_KEY_SUBSCRIPTION_ID + "=" + 1, null);
+
+        mContextFixture.removeCallingOrSelfPermission(ContextFixture.PERMISSION_ENABLE_ALL);
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PHONE_STATE);
+
+        // should succeed with read phone state permission
+        String prop = mSubscriptionControllerUT.getSubscriptionProperty(1,
+                SubscriptionManager.CB_EXTREME_THREAT_ALERT, mContext.getOpPackageName(),
+                mContext.getAttributionTag());
+
+        assertNotEquals(null, prop);
+
+        // group UUID requires privileged phone state permission
+        prop = mSubscriptionControllerUT.getSubscriptionProperty(1, SubscriptionManager.GROUP_UUID,
+                    mContext.getOpPackageName(), mContext.getAttributionTag());
+        assertEquals(null, prop);
+
+        // group UUID should succeed once privileged phone state permission is granted
+        setupReadPrivilegePermission();
+        prop = mSubscriptionControllerUT.getSubscriptionProperty(1, SubscriptionManager.GROUP_UUID,
+                mContext.getOpPackageName(), mContext.getAttributionTag());
+        assertNotEquals(null, prop);
+    }
+
+    @Test
+    @SmallTest
     public void testCreateSubscriptionGroupWithCarrierPrivilegePermission() throws Exception {
         testInsertSim();
         // Adding a second profile and mark as embedded.
@@ -1021,6 +1111,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @EnableCompatChanges({REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID})
     public void testAddSubscriptionIntoGroupWithCarrierPrivilegePermission() throws Exception {
         testInsertSim();
         // Adding a second profile and mark as embedded.
@@ -1072,6 +1163,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @EnableCompatChanges({REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID})
     public void testUpdateSubscriptionGroupWithCarrierPrivilegePermission() throws Exception {
         testInsertSim();
         // Adding a second profile and mark as embedded.
@@ -1193,6 +1285,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @EnableCompatChanges({REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID})
     public void testSetSubscriptionGroup() throws Exception {
         testInsertSim();
         // Adding a second profile and mark as embedded.
@@ -1250,8 +1343,8 @@ public class SubscriptionControllerTest extends TelephonyTest {
     }
 
     private void registerMockTelephonyRegistry() {
-        mServiceManagerMockedServices.put("telephony.registry", mTelephonyRegisteryMock);
-        doReturn(mTelephonyRegisteryMock).when(mTelephonyRegisteryMock)
+        mServiceManagerMockedServices.put("telephony.registry", mTelephonyRegistryMock);
+        doReturn(mTelephonyRegistryMock).when(mTelephonyRegistryMock)
                 .queryLocalInterface(anyString());
     }
 
@@ -1296,8 +1389,10 @@ public class SubscriptionControllerTest extends TelephonyTest {
         // If the calling package does not have the READ_PHONE_STATE permission or carrier
         // privileges then getActiveSubscriptionInfo should throw a SecurityException;
         testInsertSim();
-        mContextFixture.removeCallingOrSelfPermission(ContextFixture.PERMISSION_ENABLE_ALL);
+        setupReadPrivilegePermission();
         int subId = getFirstSubId();
+        removeReadPrivilegePermission();
+        mContextFixture.removeCallingOrSelfPermission(ContextFixture.PERMISSION_ENABLE_ALL);
 
         try {
             mSubscriptionControllerUT.getActiveSubscriptionInfo(subId, mCallingPackage,
@@ -1315,6 +1410,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
         testInsertSim();
         setupReadPhoneNumbersTest();
         setIdentifierAccess(false);
+        setupReadPrivilegePermission();
         int subId = getFirstSubId();
 
         SubscriptionInfo subscriptionInfo = mSubscriptionControllerUT.getActiveSubscriptionInfo(
@@ -1334,6 +1430,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
         testInsertSim();
         setupReadPhoneNumbersTest();
         setPhoneNumberAccess(PackageManager.PERMISSION_GRANTED);
+        setupReadPrivilegePermission();
         int subId = getFirstSubId();
 
         SubscriptionInfo subscriptionInfo = mSubscriptionControllerUT.getActiveSubscriptionInfo(
@@ -1349,6 +1446,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
         // privileges the ICC ID should be available in the SubscriptionInfo.
         testInsertSim();
         setupIdentifierCarrierPrivilegesTest();
+        setupReadPrivilegePermission();
         int subId = getFirstSubId();
 
         SubscriptionInfo subscriptionInfo = mSubscriptionControllerUT.getActiveSubscriptionInfo(
@@ -1622,26 +1720,9 @@ public class SubscriptionControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testGetSubscriptionsInGroupWithNoPermission() throws Exception {
-        // If the calling package does not have the READ_PHONE_STATE permission or carrier
-        // privileges then getSubscriptionsInGroup should throw a SecurityException when the
-        // READ_PHONE_STATE permission check is performed.
-        ParcelUuid groupUuid = setupGetSubscriptionsInGroupTest();
-        mContextFixture.removeCallingOrSelfPermission(ContextFixture.PERMISSION_ENABLE_ALL);
-
-        try {
-            mSubscriptionControllerUT.getSubscriptionsInGroup(groupUuid, mCallingPackage,
-                    mCallingFeature);
-            fail("getSubscriptionsInGroup should fail when invoked with no permissions");
-        } catch (SecurityException expected) {
-        }
-    }
-
-    @Test
+    @DisableCompatChanges({REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID})
     public void testGetSubscriptionsInGroupWithReadPhoneState() throws Exception {
-        // If the calling package only has the READ_PHONE_STATE permission then
-        // getSubscriptionsInGroup should still return the list of SubscriptionInfo objects
-        // but the ICC ID should not be available via getIccId or getCardString.
+        // For backward compatibility test
         ParcelUuid groupUuid = setupGetSubscriptionsInGroupTest();
         setupReadPhoneNumbersTest();
         setIdentifierAccess(false);
@@ -1658,6 +1739,62 @@ public class SubscriptionControllerTest extends TelephonyTest {
     }
 
     @Test
+    @EnableCompatChanges({REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID})
+    public void testGetSubscriptionsInGroupWithoutAppropriatePermission() throws Exception {
+        ParcelUuid groupUuid = setupGetSubscriptionsInGroupTest();
+
+        // no permission
+        setNoPermission();
+        try {
+            mSubscriptionControllerUT.getSubscriptionsInGroup(groupUuid, mCallingPackage,
+                    mCallingFeature);
+            fail("getSubscriptionsInGroup should fail when invoked with no permissions");
+        } catch (SecurityException expected) {
+        }
+
+        // only has the USE_ICC_AUTH_WITH_DEVICE_IDENTIFIER permission
+        setIdentifierAccess(true);
+        try {
+            mSubscriptionControllerUT.getSubscriptionsInGroup(groupUuid, mCallingPackage,
+                    mCallingFeature);
+            fail("getSubscriptionsInGroup should fail when invoked with no"
+                    + "READ_PHONE_STATE permissions");
+        } catch (SecurityException expected) {
+        }
+
+        // only has the READ_PHONE_STATE permission
+        setIdentifierAccess(false);
+        setReadPhoneState();
+        try {
+            mSubscriptionControllerUT.getSubscriptionsInGroup(groupUuid, mCallingPackage,
+                    mCallingFeature);
+            fail("getSubscriptionsInGroup should fail when invoked with no "
+                    + "USE_ICC_AUTH_WITH_DEVICE_IDENTIFIER permissions");
+        } catch (SecurityException expected) {
+        }
+    }
+
+    @Test
+    @EnableCompatChanges({REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID})
+    public void testGetSubscriptionsInGroupWithReadDeviceIdentifier() throws Exception {
+        ParcelUuid groupUuid = setupGetSubscriptionsInGroupTest();
+        setNoPermission();
+        setCarrierPrivileges(false);
+        setIdentifierAccess(true);
+        setReadPhoneState();
+
+        List<SubscriptionInfo> subInfoList = mSubscriptionControllerUT.getSubscriptionsInGroup(
+                groupUuid, mCallingPackage, mCallingFeature);
+
+        assertTrue(subInfoList.size() > 0);
+        for (SubscriptionInfo info : subInfoList) {
+            assertTrue(info.getIccId().length() > 0);
+            assertTrue(info.getCardString().length() > 0);
+        }
+    }
+
+    @Test
+    @EnableCompatChanges({REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID})
     public void testGetSubscriptionInGroupWithPhoneNumberAccess() throws Exception {
         // If the calling package meets any of the requirements for the
         // LegacyPermissionManager#checkPhoneNumberAccess test then the number should be available
@@ -1675,6 +1812,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
     }
 
     @Test
+    @EnableCompatChanges({REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID})
     public void testGetSubscriptionsInGroupWithCarrierPrivileges() throws Exception {
         // If the calling package has the READ_PRIVILEGED_PHONE_STATE permission or carrier
         // privileges the ICC ID should be available in the SubscriptionInfo objects in the List.
@@ -1692,6 +1830,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
     }
 
     @Test
+    @EnableCompatChanges({REQUIRE_ICC_AUTH_DEVICE_IDENTIFIERS_FOR_GROUP_UUID})
     public void testGetSubscriptionsInGroupWithPrivilegedPermission() throws Exception {
         // If the calling package has the READ_PRIVILEGED_PHONE_STATE permission or carrier
         // privileges the ICC ID should be available in the SubscriptionInfo objects in the List.
@@ -1732,6 +1871,15 @@ public class SubscriptionControllerTest extends TelephonyTest {
         setCarrierPrivileges(true);
     }
 
+    private void setupReadPrivilegePermission() throws Exception {
+        mContextFixture.addCallingOrSelfPermissionToCurrentPermissions(
+                Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+    }
+    private void removeReadPrivilegePermission() throws Exception {
+        mContextFixture.removeCallingOrSelfPermission(
+                Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+    }
+
     private int getFirstSubId() throws Exception {
         return getSubIdAtIndex(0);
     }
@@ -1746,8 +1894,8 @@ public class SubscriptionControllerTest extends TelephonyTest {
     public void testGetEnabledSubscriptionIdSingleSIM() {
         // A single SIM device may have logical slot 0 mapped to physical slot 1
         // (i.e. logical slot -1 mapped to physical slot 0)
-        UiccSlotInfo slot0 = getFakeUiccSlotInfo(false, -1);
-        UiccSlotInfo slot1 = getFakeUiccSlotInfo(true, 0);
+        UiccSlotInfo slot0 = getFakeUiccSlotInfo(false, -1, null);
+        UiccSlotInfo slot1 = getFakeUiccSlotInfo(true, 0, null);
         UiccSlotInfo [] uiccSlotInfos = {slot0, slot1};
         UiccSlot [] uiccSlots = {mUiccSlot, mUiccSlot};
 
@@ -1770,8 +1918,8 @@ public class SubscriptionControllerTest extends TelephonyTest {
         doReturn(SINGLE_SIM).when(mTelephonyManager).getActiveModemCount();
         // A dual SIM device may have logical slot 0 mapped to physical slot 0
         // (i.e. logical slot 1 mapped to physical slot 1)
-        UiccSlotInfo slot0 = getFakeUiccSlotInfo(true, 0);
-        UiccSlotInfo slot1 = getFakeUiccSlotInfo(true, 1);
+        UiccSlotInfo slot0 = getFakeUiccSlotInfo(true, 0, null);
+        UiccSlotInfo slot1 = getFakeUiccSlotInfo(true, 1, null);
         UiccSlotInfo [] uiccSlotInfos = {slot0, slot1};
         UiccSlot [] uiccSlots = {mUiccSlot, mUiccSlot};
 
@@ -1793,13 +1941,17 @@ public class SubscriptionControllerTest extends TelephonyTest {
     }
 
 
-    private UiccSlotInfo getFakeUiccSlotInfo(boolean active, int logicalSlotIndex) {
-        return getFakeUiccSlotInfo(active, logicalSlotIndex, "fake card Id");
+    private UiccSlotInfo getFakeUiccSlotInfo(boolean active, int logicalSlotIndex, String iccId) {
+        return getFakeUiccSlotInfo(active, logicalSlotIndex, "fake card Id", iccId);
     }
 
-    private UiccSlotInfo getFakeUiccSlotInfo(boolean active, int logicalSlotIndex, String cardId) {
-        return new UiccSlotInfo(active, false, cardId,
-                UiccSlotInfo.CARD_STATE_INFO_PRESENT, logicalSlotIndex, true, true);
+    private UiccSlotInfo getFakeUiccSlotInfo(
+            boolean active, int logicalSlotIndex, String cardId, String iccId) {
+        return new UiccSlotInfo(false, cardId,
+                UiccSlotInfo.CARD_STATE_INFO_PRESENT, true, true,
+                Collections.singletonList(
+                        new UiccPortInfo(iccId, 0, logicalSlotIndex, active)
+                ));
     }
 
     @Test
@@ -1844,7 +1996,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
         IccCardStatus.CardState cardState = CARDSTATE_PRESENT;
         doReturn(uiccSlots).when(mUiccController).getUiccSlots();
         doReturn(cardState).when(mUiccSlot).getCardState();
-        doReturn("123").when(mUiccSlot).getIccId();
+        doReturn("123").when(mUiccSlot).getIccId(0); // default port index
         mSubscriptionControllerUT.clearSubInfoRecord(1);
 
         // Active sub list should return 1 now.
@@ -1874,7 +2026,8 @@ public class SubscriptionControllerTest extends TelephonyTest {
         doReturn(uiccSlots).when(mUiccController).getUiccSlots();
         doReturn(cardState).when(mUiccSlot).getCardState();
         // IccId ends with a 'F' which should be ignored and taking into account.
-        doReturn("123F").when(mUiccSlot).getIccId();
+        doReturn("123F").when(mUiccSlot).getIccId(0); // default port index
+
         mSubscriptionControllerUT.clearSubInfoRecord(1);
 
         // Active sub list should return 1 now.
@@ -1914,7 +2067,7 @@ public class SubscriptionControllerTest extends TelephonyTest {
         String iccId = "123F";
         mSubscriptionControllerUT.addSubInfoRecord(iccId, 0);
         mSubscriptionControllerUT.registerForUiccAppsEnabled(mHandler, 0, null, false);
-        UiccSlotInfo slot = getFakeUiccSlotInfo(true, 0, iccId + "FF");
+        UiccSlotInfo slot = getFakeUiccSlotInfo(true, 0, iccId + "FF", iccId);
         UiccSlotInfo[] uiccSlotInfos = {slot};
         doReturn(uiccSlotInfos).when(mTelephonyManager).getUiccSlotsInfo();
 
@@ -1956,5 +2109,15 @@ public class SubscriptionControllerTest extends TelephonyTest {
         assertTrue(mSubscriptionControllerUT.checkPhoneIdAndIccIdMatch(0, "test"));
         assertTrue(mSubscriptionControllerUT.checkPhoneIdAndIccIdMatch(0, "test2"));
         assertFalse(mSubscriptionControllerUT.checkPhoneIdAndIccIdMatch(0, "test3"));
+    }
+
+    private void setNoPermission() {
+        doThrow(new SecurityException()).when(mContext)
+                .enforcePermission(anyString(), anyInt(), anyInt(), anyString());
+    }
+
+    private void setReadPhoneState() {
+        doNothing().when(mContext).enforcePermission(
+                eq(android.Manifest.permission.READ_PHONE_STATE), anyInt(), anyInt(), anyString());
     }
 }
