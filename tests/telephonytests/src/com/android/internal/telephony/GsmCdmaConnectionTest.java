@@ -36,7 +36,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -44,15 +43,15 @@ import java.util.Arrays;
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class GsmCdmaConnectionTest extends TelephonyTest {
-
     private GsmCdmaConnection connection;
 
-    @Mock
+    // Mocked classes
     DriverCall mDC;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mDC = mock(DriverCall.class);
         replaceInstance(Handler.class, "mLooper", mCT, Looper.myLooper());
 
         mCT.mForegroundCall = new GsmCdmaCall(mCT);
@@ -277,5 +276,23 @@ public class GsmCdmaConnectionTest extends TelephonyTest {
         connection = new GsmCdmaConnection(mPhone, mDC, mCT, 0);
         assertEquals(new ArrayList<String>(Arrays.asList(forwardedNumber)),
                 connection.getForwardedNumber());
+    }
+
+    @Test @SmallTest
+    public void testForwardedNumberEmptyNull() {
+        mDC.state = DriverCall.State.INCOMING;
+        mDC.forwardedNumber = "";
+        connection = new GsmCdmaConnection(mPhone, mDC, mCT, 0);
+        assertNull(connection.getForwardedNumber());
+        mDC.forwardedNumber = null;
+        connection.update(mDC);
+        assertNull(connection.getForwardedNumber());
+
+        mDC.forwardedNumber = null;
+        connection = new GsmCdmaConnection(mPhone, mDC, mCT, 0);
+        assertNull(connection.getForwardedNumber());
+        mDC.forwardedNumber = "";
+        connection.update(mDC);
+        assertNull(connection.getForwardedNumber());
     }
 }

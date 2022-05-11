@@ -30,6 +30,7 @@ import static com.android.internal.telephony.dataconnection.DcTrackerTest.FAKE_P
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Matchers.argThat;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyBoolean;
@@ -38,23 +39,34 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.content.pm.UserInfo;
 import android.net.InetAddresses;
 import android.net.KeepalivePacketData;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.NattKeepalivePacketData;
+import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.vcn.VcnNetworkPolicyResult;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Message;
+import android.os.UserManager;
+import android.provider.Telephony;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
 import android.telephony.CarrierConfigManager;
 import android.telephony.ServiceState;
+import android.telephony.ServiceState.RegState;
+import android.telephony.ServiceState.RilRadioTechnology;
+import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataProfile;
@@ -63,11 +75,13 @@ import android.telephony.data.DataServiceCallback;
 import android.telephony.data.TrafficDescriptor;
 import android.test.suitebuilder.annotation.MediumTest;
 import android.test.suitebuilder.annotation.SmallTest;
+import android.util.Pair;
 
 import com.android.internal.R;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.RetryManager;
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.data.KeepaliveStatus;
 import com.android.internal.telephony.dataconnection.DataConnection.ConnectionParams;
 import com.android.internal.telephony.dataconnection.DataConnection.DisconnectParams;
 import com.android.internal.telephony.dataconnection.DataConnection.SetupResult;
@@ -77,207 +91,102 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.function.Consumer;
 
 public class DataConnectionTest extends TelephonyTest {
     private static final int DEFAULT_DC_CID = 10;
+    private static final ArrayList<TrafficDescriptor> DEFAULT_TD_LIST = new ArrayList<>();
 
-    @Mock
+    // Mocked classes
     DcTesterFailBringUpAll mDcTesterFailBringUpAll;
-    @Mock
     ConnectionParams mCp;
-    @Mock
     DisconnectParams mDcp;
-    @Mock
     ApnContext mApnContext;
-    @Mock
     ApnContext mEnterpriseApnContext;
-    @Mock
     DcFailBringUp mDcFailBringUp;
-    @Mock
     DataCallSessionStats mDataCallSessionStats;
-    @Mock
     DataConnection mDefaultDc;
-    @Mock
     DataServiceManager mDataServiceManager;
 
     private DataConnection mDc;
     private DataConnectionTestHandler mDataConnectionTestHandler;
     private DcController mDcc;
 
-    private ApnSetting mApn1 = ApnSetting.makeApnSetting(
-            2163,                   // id
-            "44010",                // numeric
-            "sp-mode",              // name
-            "spmode.ne.jp",         // apn
-            null,                   // proxy
-            -1,                     // port
-            null,                   // mmsc
-            null,                   // mmsproxy
-            -1,                     // mmsport
-            "",                     // user
-            "",                     // password
-            -1,                     // authtype
-            ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_SUPL, // types
-            ApnSetting.PROTOCOL_IP, // protocol
-            ApnSetting.PROTOCOL_IP, // roaming_protocol
-            true,                   // carrier_enabled
-            0,                      // networktype_bitmask
-            0,                      // profile_id
-            false,                  // modem_cognitive
-            0,                      // max_conns
-            0,                      // wait_time
-            0,                      // max_conns_time
-            0,                      // mtu
-            -1,                     // mvno_type
-            "");                    // mnvo_match_data
+    private final ApnSetting mApn1 = new ApnSetting.Builder()
+            .setId(2163)
+            .setOperatorNumeric("44010")
+            .setEntryName("sp-mode")
+            .setApnName("spmode.ne.jp")
+            .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_SUPL)
+            .setProtocol(ApnSetting.PROTOCOL_IP)
+            .setRoamingProtocol(ApnSetting.PROTOCOL_IP)
+            .setCarrierEnabled(true)
+            .build();
 
-    private ApnSetting mApn2 = ApnSetting.makeApnSetting(
-            2164,                   // id
-            "44010",                // numeric
-            "sp-mode",              // name
-            "spmode.ne.jp",         // apn
-            null,                   // proxy
-            -1,                     // port
-            null,                   // mmsc
-            null,                   // mmsproxy
-            -1,                     // mmsport
-            "",                     // user
-            "",                     // password
-            -1,                     // authtype
-            ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_DUN, // types
-            ApnSetting.PROTOCOL_IP, // protocol
-            ApnSetting.PROTOCOL_IP, // roaming_protocol
-            true,                   // carrier_enabled
-            0,                      // networktype_bitmask
-            0,                      // profile_id
-            false,                  // modem_cognitive
-            0,                      // max_conns
-            0,                      // wait_time
-            0,                      // max_conns_time
-            0,                      // mtu
-            -1,                     // mvno_type
-            "");                    // mnvo_match_data
+    private final ApnSetting mApn2 = new ApnSetting.Builder()
+            .setId(2164)
+            .setOperatorNumeric("44010")
+            .setEntryName("sp-mode")
+            .setApnName("spmode.ne.jp")
+            .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_DUN)
+            .setProtocol(ApnSetting.PROTOCOL_IP)
+            .setRoamingProtocol(ApnSetting.PROTOCOL_IP)
+            .setCarrierEnabled(true)
+            .build();
 
-    private ApnSetting mApn3 = ApnSetting.makeApnSetting(
-            2165,                   // id
-            "44010",                // numeric
-            "sp-mode",              // name
-            "spmode.ne.jp",         // apn
-            null,                   // proxy
-            -1,                     // port
-            null,                   // mmsc
-            null,                   // mmsproxy
-            -1,                     // mmsport
-            "",                     // user
-            "",                     // password
-            -1,                     // authtype
-            ApnSetting.TYPE_DEFAULT, // types
-            ApnSetting.PROTOCOL_IPV6, // protocol
-            ApnSetting.PROTOCOL_IP, // roaming_protocol
-            true,                   // carrier_enabled
-            0,                      // networktype_bitmask
-            0,                      // profile_id
-            false,                  // modem_cognitive
-            0,                      // max_conns
-            0,                      // wait_time
-            0,                      // max_conns_time
-            0,                      // mtu
-            -1,                     // mvno_type
-            "",                     // mnvo_match_data
-            0,                      // apn_set_id
-            -1,                     // carrier_id
-            1);                     // skip_464xlat
+    private final ApnSetting mApn3 = new ApnSetting.Builder()
+            .setId(2165)
+            .setOperatorNumeric("44010")
+            .setEntryName("sp-mode")
+            .setApnName("spmode.ne.jp")
+            .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
+            .setProtocol(ApnSetting.PROTOCOL_IPV6)
+            .setRoamingProtocol(ApnSetting.PROTOCOL_IP)
+            .setNetworkTypeBitmask(0)
+            .setCarrierEnabled(true)
+            .setCarrierId(1)
+            .setSkip464Xlat(1)
+            .build();
 
-    private ApnSetting mApn4 = ApnSetting.makeApnSetting(
-            2166,                   // id
-            "44010",                // numeric
-            "sp-mode",              // name
-            "spmode.ne.jp",         // apn
-            null,                   // proxy
-            -1,                     // port
-            null,                   // mmsc
-            null,                   // mmsproxy
-            -1,                     // mmsport
-            "",                     // user
-            "",                     // password
-            -1,                     // authtype
-            ApnSetting.TYPE_IMS,    // types
-            ApnSetting.PROTOCOL_IPV6, // protocol
-            ApnSetting.PROTOCOL_IP, // roaming_protocol
-            true,                   // carrier_enabled
-            0,                      // networktype_bitmask
-            0,                      // profile_id
-            false,                  // modem_cognitive
-            0,                      // max_conns
-            0,                      // wait_time
-            0,                      // max_conns_time
-            0,                      // mtu
-            -1,                     // mvno_type
-            "");                    // mnvo_match_data
+    private final ApnSetting mApn4 = new ApnSetting.Builder()
+            .setId(2166)
+            .setOperatorNumeric("44010")
+            .setEntryName("sp-mode")
+            .setApnName("spmode.ne.jp")
+            .setApnTypeBitmask(ApnSetting.TYPE_IMS)
+            .setProtocol(ApnSetting.PROTOCOL_IPV6)
+            .setRoamingProtocol(ApnSetting.PROTOCOL_IP)
+            .setCarrierEnabled(true)
+            .build();
 
-    private ApnSetting mApn5 = ApnSetting.makeApnSetting(
-            2167,                   // id
-            "44010",                // numeric
-            "sp-mode",              // name
-            "spmode.ne.jp",         // apn
-            null,                   // proxy
-            -1,                     // port
-            null,                   // mmsc
-            null,                   // mmsproxy
-            -1,                     // mmsport
-            "",                     // user
-            "",                     // password
-            -1,                     // authtype
-            ApnSetting.TYPE_IMS,    // types
-            ApnSetting.PROTOCOL_IPV6, // protocol
-            ApnSetting.PROTOCOL_IP, // roaming_protocol
-            true,                   // carrier_enabled
-            0,                      // networktype_bitmask
-            0,                      // profile_id
-            false,                  // modem_cognitive
-            0,                      // max_conns
-            0,                      // wait_time
-            0,                      // max_conns_time
-            0,                      // mtu
-            -1,                     // mvno_type
-            "",                     // mnvo_match_data
-            0,                      // apn_set_id
-            -1,                     // carrier_id
-            0);                     // skip_464xlat
+    private final ApnSetting mApn5 = new ApnSetting.Builder()
+            .setId(2167)
+            .setOperatorNumeric("44010")
+            .setEntryName("sp-mode")
+            .setApnName("spmode.ne.jp")
+            .setApnTypeBitmask(ApnSetting.TYPE_IMS)
+            .setProtocol(ApnSetting.PROTOCOL_IPV6)
+            .setRoamingProtocol(ApnSetting.PROTOCOL_IP)
+            .setCarrierEnabled(true)
+            .setSkip464Xlat(Telephony.Carriers.SKIP_464XLAT_DISABLE)
+            .build();
 
-    private ApnSetting mApn6 = ApnSetting.makeApnSetting(
-            2168,                   // id
-            "44010",                // numeric
-            "sp-mode",              // name
-            "spmode.ne.jp",         // apn
-            null,                   // proxy
-            -1,                     // port
-            null,                   // mmsc
-            null,                   // mmsproxy
-            -1,                     // mmsport
-            "",                     // user
-            "",                     // password
-            -1,                     // authtype
-            ApnSetting.TYPE_EMERGENCY, // types
-            ApnSetting.PROTOCOL_IP, // protocol
-            ApnSetting.PROTOCOL_IP, // roaming_protocol
-            true,                   // carrier_enabled
-            0,                      // networktype_bitmask
-            0,                      // profile_id
-            false,                  // modem_cognitive
-            0,                      // max_conns
-            0,                      // wait_time
-            0,                      // max_conns_time
-            0,                      // mtu
-            -1,                     // mvno_type
-            "");                    // mnvo_match_data
+    private final ApnSetting mApn6 = new ApnSetting.Builder()
+            .setId(2168)
+            .setOperatorNumeric("44010")
+            .setEntryName("sp-mode")
+            .setApnName("spmode.ne.jp")
+            .setApnTypeBitmask(ApnSetting.TYPE_EMERGENCY)
+            .setProtocol(ApnSetting.PROTOCOL_IP)
+            .setRoamingProtocol(ApnSetting.PROTOCOL_IP)
+            .setCarrierEnabled(true)
+            .build();
 
     private class DataConnectionTestHandler extends HandlerThread {
 
@@ -290,11 +199,11 @@ public class DataConnectionTest extends TelephonyTest {
             Handler h = new Handler();
             mDcc = DcController.makeDcc(mPhone, mDcTracker, mDataServiceManager, h.getLooper(), "");
             mDc = DataConnection.makeDataConnection(mPhone, 0, mDcTracker, mDataServiceManager,
-                    mDcTesterFailBringUpAll, mDcc, true);
+                    mDcTesterFailBringUpAll, mDcc);
         }
     }
 
-    private void setSuccessfulSetupDataResponse(int cid) {
+    private void setSuccessfulSetupDataResponse(int cid, ArrayList<TrafficDescriptor> tds) {
         doAnswer(invocation -> {
             final Message msg = (Message) invocation.getArguments()[10];
 
@@ -322,7 +231,7 @@ public class DataConnectionTest extends TelephonyTest {
                     .setMtuV6(1500)
                     .setPduSessionId(1)
                     .setQosBearerSessions(new ArrayList<>())
-                    .setTrafficDescriptors(new ArrayList<>())
+                    .setTrafficDescriptors(tds)
                     .build();
             msg.getData().putParcelable("data_call_response", response);
             msg.arg1 = DataServiceCallback.RESULT_SUCCESS;
@@ -347,8 +256,18 @@ public class DataConnectionTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mDcTesterFailBringUpAll = mock(DcTesterFailBringUpAll.class);
+        mCp = mock(ConnectionParams.class);
+        mDcp = mock(DisconnectParams.class);
+        mApnContext = mock(ApnContext.class);
+        mEnterpriseApnContext = mock(ApnContext.class);
+        mDcFailBringUp = mock(DcFailBringUp.class);
+        mDataCallSessionStats = mock(DataCallSessionStats.class);
+        mDefaultDc = mock(DataConnection.class);
+        mDataServiceManager = mock(DataServiceManager.class);
         logd("+Setup!");
         doReturn("fake.action_detached").when(mPhone).getActionDetached();
+        doReturn(false).when(mPhone).isUsingNewDataStack();
         replaceInstance(ConnectionParams.class, "mApnContext", mCp, mApnContext);
         replaceInstance(ConnectionParams.class, "mRilRat", mCp,
                 ServiceState.RIL_RADIO_TECHNOLOGY_UMTS);
@@ -377,7 +296,7 @@ public class DataConnectionTest extends TelephonyTest {
 
         mDcp.mApnContext = mApnContext;
 
-        setSuccessfulSetupDataResponse(DEFAULT_DC_CID);
+        setSuccessfulSetupDataResponse(DEFAULT_DC_CID, DEFAULT_TD_LIST);
 
         doAnswer(invocation -> {
             final Message msg = (Message) invocation.getArguments()[2];
@@ -401,10 +320,15 @@ public class DataConnectionTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         logd("tearDown");
+        mDc.quitNow();
         mDc = null;
-        mDcc = null;
         mDataConnectionTestHandler.quit();
         mDataConnectionTestHandler.join();
+        mDataConnectionTestHandler = null;
+        mDcc.removeCallbacksAndMessages(null);
+        mDcc = null;
+        DEFAULT_TD_LIST.clear();
+        waitForMs(100);
         super.tearDown();
     }
 
@@ -429,9 +353,9 @@ public class DataConnectionTest extends TelephonyTest {
     }
 
     private boolean isSuspended() throws Exception {
-        Method method = DataConnection.class.getDeclaredMethod("isSuspended");
-        method.setAccessible(true);
-        return (boolean) method.invoke(mDc);
+        Field field = DataConnection.class.getDeclaredField("mIsSuspended");
+        field.setAccessible(true);
+        return field.getBoolean(mDc);
     }
 
     private SetupResult setLinkProperties(DataCallResponse response, LinkProperties linkProperties)
@@ -475,6 +399,63 @@ public class DataConnectionTest extends TelephonyTest {
                 eq(false), eq(DataService.REQUEST_REASON_NORMAL), any(),
                 anyInt(), any(), tdCaptor.capture(), anyBoolean(), any(Message.class));
 
+        verify(mSimulatedCommandsVerifier, times(0))
+                .allocatePduSessionId(any());
+
+        assertEquals("spmode.ne.jp", dpCaptor.getValue().getApn());
+        if (tdCaptor.getValue() != null) {
+            if (mApnContext.getApnTypeBitmask() == ApnSetting.TYPE_ENTERPRISE) {
+                assertEquals(null, tdCaptor.getValue().getDataNetworkName());
+                assertTrue(Arrays.equals(DataConnection.getEnterpriseOsAppId(),
+                        tdCaptor.getValue().getOsAppId()));
+            } else {
+                assertEquals("spmode.ne.jp", tdCaptor.getValue().getDataNetworkName());
+                assertEquals(null, tdCaptor.getValue().getOsAppId());
+            }
+        }
+        assertTrue(mDc.isActive());
+
+        assertEquals(1, mDc.getPduSessionId());
+        assertEquals(3, mDc.getPcscfAddresses().length);
+        assertTrue(Arrays.stream(mDc.getPcscfAddresses()).anyMatch("fd00:976a:c305:1d::8"::equals));
+        assertTrue(Arrays.stream(mDc.getPcscfAddresses()).anyMatch("fd00:976a:c202:1d::7"::equals));
+        assertTrue(Arrays.stream(mDc.getPcscfAddresses()).anyMatch("fd00:976a:c305:1d::5"::equals));
+    }
+
+    @Test
+    @SmallTest
+    public void testConnectOnIwlan() throws Exception {
+        assertTrue(mDc.isInactive());
+        Field field = DataConnection.class.getDeclaredField("mTransportType");
+        field.setAccessible(true);
+        field.setInt(mDc, AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+        connectEvent(true);
+
+        verify(mCT, times(1)).registerForVoiceCallStarted(any(Handler.class),
+                eq(DataConnection.EVENT_DATA_CONNECTION_VOICE_CALL_STARTED), eq(null));
+        verify(mCT, times(1)).registerForVoiceCallEnded(any(Handler.class),
+                eq(DataConnection.EVENT_DATA_CONNECTION_VOICE_CALL_ENDED), eq(null));
+        verify(mSimulatedCommandsVerifier, times(0))
+                .registerForNattKeepaliveStatus(any(Handler.class),
+                        eq(DataConnection.EVENT_KEEPALIVE_STATUS), eq(null));
+        verify(mSimulatedCommandsVerifier, times(0))
+                .registerForLceInfo(any(Handler.class),
+                        eq(DataConnection.EVENT_LINK_CAPACITY_CHANGED), eq(null));
+        verify(mVcnManager, atLeastOnce())
+                .applyVcnNetworkPolicy(
+                        argThat(caps ->
+                                caps.hasCapability(
+                                        NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)),
+                        any());
+
+        ArgumentCaptor<DataProfile> dpCaptor = ArgumentCaptor.forClass(DataProfile.class);
+        ArgumentCaptor<TrafficDescriptor> tdCaptor =
+                ArgumentCaptor.forClass(TrafficDescriptor.class);
+        verify(mDataServiceManager, times(1)).setupDataCall(
+                eq(AccessNetworkType.UTRAN), dpCaptor.capture(), eq(false),
+                eq(false), eq(DataService.REQUEST_REASON_NORMAL), any(),
+                anyInt(), any(), tdCaptor.capture(), anyBoolean(), any(Message.class));
+
         verify(mSimulatedCommandsVerifier, times(1))
                 .allocatePduSessionId(any());
 
@@ -491,7 +472,7 @@ public class DataConnectionTest extends TelephonyTest {
         }
         assertTrue(mDc.isActive());
 
-        assertEquals(mDc.getPduSessionId(), 1);
+        assertEquals(1, mDc.getPduSessionId());
         assertEquals(3, mDc.getPcscfAddresses().length);
         assertTrue(Arrays.stream(mDc.getPcscfAddresses()).anyMatch("fd00:976a:c305:1d::8"::equals));
         assertTrue(Arrays.stream(mDc.getPcscfAddresses()).anyMatch("fd00:976a:c202:1d::7"::equals));
@@ -513,12 +494,33 @@ public class DataConnectionTest extends TelephonyTest {
         assertTrue(mDc.isInactive());
 
         // Change the CID
-        setSuccessfulSetupDataResponse(DEFAULT_DC_CID + 1);
+        setSuccessfulSetupDataResponse(DEFAULT_DC_CID + 1, DEFAULT_TD_LIST);
 
         // Verify that ENTERPRISE was set up
         connectEvent(true);
         assertTrue(mDc.getNetworkCapabilities().hasCapability(
                 NetworkCapabilities.NET_CAPABILITY_ENTERPRISE));
+    }
+
+    @Test
+    public void testConnectEventDuplicateContextIdsDifferentTDs() throws Exception {
+        setUpDefaultData(DEFAULT_DC_CID);
+
+        // Try to connect ENTERPRISE with the same CID as default but different TrafficDescriptors
+        replaceInstance(ConnectionParams.class, "mApnContext", mCp, mEnterpriseApnContext);
+        doReturn(mApn1).when(mEnterpriseApnContext).getApnSetting();
+        doReturn(ApnSetting.TYPE_ENTERPRISE_STRING).when(mEnterpriseApnContext).getApnType();
+        doReturn(ApnSetting.TYPE_ENTERPRISE).when(mEnterpriseApnContext).getApnTypeBitmask();
+        ArrayList<TrafficDescriptor> tdList = new ArrayList<>();
+        tdList.add(new TrafficDescriptor("dnn", DataConnection.getEnterpriseOsAppId()));
+        setSuccessfulSetupDataResponse(DEFAULT_DC_CID, tdList);
+
+        // Verify that ENTERPRISE wasn't set up but the TD list was updated
+        connectEvent(false);
+        assertTrue(mDc.isInactive());
+        ArgumentCaptor<DataCallResponse> captor = ArgumentCaptor.forClass(DataCallResponse.class);
+        verify(mDefaultDc).updateTrafficDescriptors(captor.capture());
+        assertEquals(tdList, captor.getValue().getTrafficDescriptors());
     }
 
     @Test
@@ -565,6 +567,28 @@ public class DataConnectionTest extends TelephonyTest {
 
         verify(mSimulatedCommandsVerifier, times(1)).unregisterForLceInfo(any(Handler.class));
         verify(mSimulatedCommandsVerifier, times(1))
+                .unregisterForNattKeepaliveStatus(any(Handler.class));
+        verify(mDataServiceManager, times(1)).deactivateDataCall(eq(DEFAULT_DC_CID),
+                eq(DataService.REQUEST_REASON_NORMAL), any(Message.class));
+        verify(mSimulatedCommandsVerifier, times(0))
+                .releasePduSessionId(any(), eq(5));
+
+        assertTrue(mDc.isInactive());
+    }
+
+    @Test
+    @SmallTest
+    public void testDisconnectOnIwlan() throws Exception {
+        testConnectEvent();
+
+        Field field = DataConnection.class.getDeclaredField("mTransportType");
+        field.setAccessible(true);
+        field.setInt(mDc, AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+        mDc.setPduSessionId(5);
+        disconnectEvent();
+
+        verify(mSimulatedCommandsVerifier, times(0)).unregisterForLceInfo(any(Handler.class));
+        verify(mSimulatedCommandsVerifier, times(0))
                 .unregisterForNattKeepaliveStatus(any(Handler.class));
         verify(mDataServiceManager, times(1)).deactivateDataCall(eq(DEFAULT_DC_CID),
                 eq(DataService.REQUEST_REASON_NORMAL), any(Message.class));
@@ -762,6 +786,50 @@ public class DataConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testVcnNetworkCapability() throws Exception {
+        mContextFixture.getCarrierConfigBundle().putStringArray(
+                CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
+                new String[] { "default" });
+        doReturn(mApn2).when(mApnContext).getApnSetting();
+
+        doAnswer(invocation -> {
+            NetworkCapabilities nc = invocation.getArgument(0);
+            NetworkCapabilities policyNc = new NetworkCapabilities.Builder(nc)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                    .build();
+
+            return new VcnNetworkPolicyResult(
+                    false /* isTearDownRequested */, policyNc);
+        }).when(mVcnManager).applyVcnNetworkPolicy(any(), any());
+        connectEvent(true);
+
+        assertFalse("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED));
+        assertFalse("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED));
+
+        disconnectEvent();
+
+        doAnswer(invocation -> {
+            NetworkCapabilities nc = invocation.getArgument(0);
+            NetworkCapabilities policyNc = new NetworkCapabilities.Builder(nc)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
+                    .build();
+
+            return new VcnNetworkPolicyResult(
+                    false /* isTearDownRequested */, policyNc);
+        }).when(mVcnManager).applyVcnNetworkPolicy(any(), any());
+        connectEvent(true);
+
+        assertFalse("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED));
+        assertTrue("capabilities: " + getNetworkCapabilities(), getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED));
+    }
+
+    @Test
+    @SmallTest
     public void testEnterpriseNetworkCapability() throws Exception {
         mContextFixture.getCarrierConfigBundle().putStringArray(
                 CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
@@ -876,6 +944,40 @@ public class DataConnectionTest extends TelephonyTest {
     }
 
     @Test
+    public void testOwnerUid() throws Exception {
+        Context mockContext = mContextFixture.getTestDouble();
+        doReturn(mockContext).when(mPhone).getContext();
+
+        String testPkg = "com.android.telephony.test";
+        TelephonyManager telMgr = mockContext.getSystemService(TelephonyManager.class);
+        doReturn(testPkg).when(telMgr).getCarrierServicePackageNameForLogicalSlot(anyInt());
+
+        UserInfo info = new UserInfo(0 /* id */, "TEST_USER", 0 /* flags */);
+        UserManager userMgr = mockContext.getSystemService(UserManager.class);
+        doReturn(Collections.singletonList(info)).when(userMgr).getUsers();
+
+        int carrierConfigPkgUid = 12345;
+        PackageManager pkgMgr = mockContext.getPackageManager();
+        doReturn(carrierConfigPkgUid).when(pkgMgr).getPackageUidAsUser(eq(testPkg), anyInt());
+
+        mContextFixture
+                .getCarrierConfigBundle()
+                .putStringArray(
+                        CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
+                        new String[] {"default"});
+        testConnectEvent();
+        AsyncResult adminUidsResult = new AsyncResult(null, new int[] {carrierConfigPkgUid}, null);
+        mDc.sendMessage(DataConnection.EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED, adminUidsResult);
+        // Wait for carirer privilege UIDs to be updated
+        waitForMs(100);
+
+        assertEquals(carrierConfigPkgUid, getNetworkCapabilities().getOwnerUid());
+        assertEquals(
+                Collections.singleton(carrierConfigPkgUid),
+                getNetworkCapabilities().getAllowedUids());
+    }
+
+    @Test
     public void testSubscriptionIds() throws Exception {
         mContextFixture.getCarrierConfigBundle().putStringArray(
                 CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
@@ -924,6 +1026,12 @@ public class DataConnectionTest extends TelephonyTest {
         mDc.sendMessage(DataConnection.EVENT_DISCONNECT, mDcp);
         waitForMs(100);
         assertTrue(mDc.isInactive());
+    }
+
+    private void serviceStateChangedEvent(@RegState int dataRegState, @RilRadioTechnology int rat) {
+        mDc.obtainMessage(DataConnection.EVENT_DATA_CONNECTION_DRS_OR_RAT_CHANGED,
+                new AsyncResult(null, new Pair<>(dataRegState, rat), null)).sendToTarget();
+        waitForMs(100);
     }
 
     @Test
@@ -1174,7 +1282,8 @@ public class DataConnectionTest extends TelephonyTest {
         if (useCondensedFlow) {
             // Indicate in the response that the keepalive has failed.
             AsyncResult.forMessage(
-                    kaStarted, new KeepaliveStatus(KeepaliveStatus.ERROR_UNSUPPORTED), null);
+                    kaStarted, new KeepaliveStatus(KeepaliveStatus.ERROR_UNSUPPORTED),
+                    null);
             kaStarted.sendToTarget();
         } else {
             // Indicate that the keepalive is queued, and then signal a failure from the modem
@@ -1281,24 +1390,56 @@ public class DataConnectionTest extends TelephonyTest {
         assertTrue(mDc.isInactive());
         doReturn(mApn1).when(mApnContext).getApnSetting();
         doReturn(ApnSetting.TYPE_DEFAULT).when(mApnContext).getApnTypeBitmask();
+        doReturn(true).when(mSST).isConcurrentVoiceAndDataAllowed();
         connectEvent(true);
 
+        // Before getting any service state event, the connection should not be suspended.
+        assertFalse(isSuspended());
+
         // Return true if combined reg state is not in service
-        doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getDataRegistrationState();
+        serviceStateChangedEvent(ServiceState.STATE_OUT_OF_SERVICE,
+                ServiceState.RIL_RADIO_TECHNOLOGY_UNKNOWN);
         assertTrue(isSuspended());
 
         // Return false if in service and concurrent voice and data is allowed
-        doReturn(ServiceState.STATE_IN_SERVICE).when(mServiceState).getDataRegistrationState();
-        doReturn(true).when(mSST).isConcurrentVoiceAndDataAllowed();
+        serviceStateChangedEvent(ServiceState.STATE_IN_SERVICE,
+                ServiceState.RIL_RADIO_TECHNOLOGY_LTE);
         assertFalse(isSuspended());
 
         // Return false if in service and concurrent voice/data not allowed but call state is idle
         doReturn(false).when(mSST).isConcurrentVoiceAndDataAllowed();
         doReturn(PhoneConstants.State.IDLE).when(mCT).getState();
+        mDc.sendMessage(DataConnection.EVENT_DATA_CONNECTION_VOICE_CALL_STARTED);
+        waitForMs(100);
         assertFalse(isSuspended());
 
         // Return true if in service, concurrent voice/data not allowed, and call state not idle
         doReturn(PhoneConstants.State.RINGING).when(mCT).getState();
+        mDc.sendMessage(DataConnection.EVENT_DATA_CONNECTION_VOICE_CALL_STARTED);
+        waitForMs(100);
+        assertTrue(isSuspended());
+    }
+
+    @Test
+    public void testDataCreatedWhenOutOfService() throws Exception {
+        serviceStateChangedEvent(ServiceState.STATE_OUT_OF_SERVICE,
+                ServiceState.RIL_RADIO_TECHNOLOGY_UNKNOWN);
+        ArgumentCaptor<NetworkCapabilities> ncCaptor =
+                ArgumentCaptor.forClass(NetworkCapabilities.class);
+        doReturn(mock(Network.class)).when(mConnectivityManager).registerNetworkAgent(
+                any(), any(), any(), ncCaptor.capture(), any(), any(), anyInt());
+
+        doReturn(mApn1).when(mApnContext).getApnSetting();
+        doReturn(ApnSetting.TYPE_DEFAULT).when(mApnContext).getApnTypeBitmask();
+        doReturn(true).when(mSST).isConcurrentVoiceAndDataAllowed();
+        connectEvent(true);
+        waitForMs(100);
+
+        NetworkCapabilities nc = ncCaptor.getValue();
+        // The network must be created with NOT_SUSPENDED capability.
+        assertTrue(nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED));
+
+        // But it's final state must be suspended.
         assertTrue(isSuspended());
     }
 
@@ -1315,5 +1456,24 @@ public class DataConnectionTest extends TelephonyTest {
         // retry timer).
         verify(mDataThrottler).setRetryTime(eq(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_SUPL),
                 eq(RetryManager.NO_SUGGESTED_RETRY_DELAY), eq(DcTracker.REQUEST_TYPE_NORMAL));
+    }
+
+    @Test
+    public void testDataHandoverFailed() throws Exception {
+        doReturn(mDefaultDc).when(mDcTracker).getDataConnectionByApnType(anyString());
+
+        doAnswer(invocation -> {
+            final Consumer<Integer> consumer = (Consumer<Integer>) invocation.getArguments()[0];
+            consumer.accept(DataServiceCallback.RESULT_SUCCESS);
+            return null;
+        }).when(mDefaultDc).startHandover(any(Consumer.class));
+
+        replaceInstance(ConnectionParams.class, "mRequestType", mCp,
+                DcTracker.REQUEST_TYPE_HANDOVER);
+        assertTrue(mDc.isInactive());
+        connectEvent(false);
+
+        // Make sure the data connection is still in inactive state
+        assertTrue(mDc.isInactive());
     }
 }

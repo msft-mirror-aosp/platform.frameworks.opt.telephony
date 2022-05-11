@@ -29,6 +29,7 @@ import android.net.QosFilter;
 import android.net.QosSessionAttributes;
 import android.net.SocketKeepalive;
 import android.net.Uri;
+import android.os.Handler;
 import android.os.Message;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.TransportType;
@@ -37,16 +38,18 @@ import android.telephony.AnomalyReporter;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
-import android.telephony.data.NrQosSessionAttributes;
 import android.telephony.data.QosBearerSession;
-import android.util.ArrayMap;
 import android.util.LocalLog;
 import android.util.SparseArray;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.DctConstants;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.SlidingWindowEventCounter;
+import com.android.internal.telephony.data.KeepaliveStatus;
+import com.android.internal.telephony.data.NotifyQosSessionInterface;
+import com.android.internal.telephony.data.QosCallbackTracker;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.telephony.Rlog;
@@ -59,6 +62,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -73,12 +77,14 @@ import java.util.concurrent.TimeUnit;
  * {@link DataConnection} so for a short window of time this object might be accessed by two
  * different {@link DataConnection}. Thus each method in this class needs to be synchronized.
  */
-public class DcNetworkAgent extends NetworkAgent {
+public class DcNetworkAgent extends NetworkAgent implements NotifyQosSessionInterface {
     private final String mTag;
 
     private final int mId;
 
     private final Phone mPhone;
+
+    private final Handler mHandler;
 
     private int mTransportType;
 
@@ -86,21 +92,24 @@ public class DcNetworkAgent extends NetworkAgent {
 
     public final DcKeepaliveTracker keepaliveTracker = new DcKeepaliveTracker();
 
-    private final QosCallbackTracker mQosCallbackTracker = new QosCallbackTracker(this);
+    private final QosCallbackTracker mQosCallbackTracker;
 
     private final Executor mQosCallbackExecutor = Executors.newSingleThreadExecutor();
 
     private DataConnection mDataConnection;
 
-    private final LocalLog mNetCapsLocalLog = new LocalLog(50);
+    private final LocalLog mNetCapsLocalLog = new LocalLog(32);
 
     // For interface duplicate detection. Key is the net id, value is the interface name in string.
-    private static Map<Integer, String> sInterfaceNames = new ArrayMap<>();
+    private static Map<Integer, String> sInterfaceNames = new ConcurrentHashMap<>();
 
     private static final long NETWORK_UNWANTED_ANOMALY_WINDOW_MS = TimeUnit.MINUTES.toMillis(5);
     private static final int NETWORK_UNWANTED_ANOMALY_NUM_OCCURRENCES =  12;
 
-    DcNetworkAgent(DataConnection dc, Phone phone, int score, NetworkAgentConfig config,
+    private static final int EVENT_UNWANTED_TIMEOUT = 1;
+
+    @VisibleForTesting
+    public DcNetworkAgent(DataConnection dc, Phone phone, int score, NetworkAgentConfig config,
             NetworkProvider networkProvider, int transportType) {
         super(phone.getContext(), dc.getHandler().getLooper(), "DcNetworkAgent",
                 dc.getNetworkCapabilities(), dc.getLinkProperties(), score, config,
@@ -109,6 +118,18 @@ public class DcNetworkAgent extends NetworkAgent {
         mId = getNetwork().getNetId();
         mTag = "DcNetworkAgent" + "-" + mId;
         mPhone = phone;
+        mHandler = new Handler(dc.getHandler().getLooper()) {
+            @Override
+            public void handleMessage(Message msg) {
+                if (msg.what == EVENT_UNWANTED_TIMEOUT) {
+                    loge("onNetworkUnwanted timed out. Perform silent de-register.");
+                    logd("Unregister from connectivity service. " + sInterfaceNames.get(mId)
+                            + " removed.");
+                    sInterfaceNames.remove(mId);
+                    DcNetworkAgent.this.unregister();
+                }
+            }
+        };
         mNetworkCapabilities = dc.getNetworkCapabilities();
         mTransportType = transportType;
         mDataConnection = dc;
@@ -119,6 +140,7 @@ public class DcNetworkAgent extends NetworkAgent {
         } else {
             loge("The connection does not have a valid link properties.");
         }
+        mQosCallbackTracker = new QosCallbackTracker(this, mPhone);
     }
 
     private @NetworkType int getNetworkType() {
@@ -144,7 +166,7 @@ public class DcNetworkAgent extends NetworkAgent {
                 // Using fixed UUID to avoid duplicate bugreport notification
                 AnomalyReporter.reportAnomaly(
                         UUID.fromString("02f3d3f6-4613-4415-b6cb-8d92c8a938a6"),
-                        message);
+                        message, mPhone.getCarrierId());
                 return;
             }
         }
@@ -200,6 +222,7 @@ public class DcNetworkAgent extends NetworkAgent {
 
     @Override
     public synchronized void onNetworkUnwanted() {
+        mHandler.sendEmptyMessageDelayed(EVENT_UNWANTED_TIMEOUT, TimeUnit.SECONDS.toMillis(30));
         trackNetworkUnwanted();
         if (mDataConnection == null) {
             loge("onNetworkUnwanted found called on no-owner DcNetworkAgent!");
@@ -229,7 +252,7 @@ public class DcNetworkAgent extends NetworkAgent {
         if (sNetworkUnwantedCounter.addOccurrence()) {
             AnomalyReporter.reportAnomaly(
                     UUID.fromString("3f578b5c-64e9-11eb-ae93-0242ac130002"),
-                    "Network Unwanted called 12 times in 5 minutes.");
+                    "Network Unwanted called 12 times in 5 minutes.", mPhone.getCarrierId());
         }
     }
 
@@ -353,6 +376,7 @@ public class DcNetworkAgent extends NetworkAgent {
     public synchronized void unregister(DataConnection dc) {
         if (!isOwned(dc, "unregister")) return;
 
+        mHandler.removeMessages(EVENT_UNWANTED_TIMEOUT);
         logd("Unregister from connectivity service. " + sInterfaceNames.get(mId) + " removed.");
         sInterfaceNames.remove(mId);
         super.unregister();
@@ -412,11 +436,13 @@ public class DcNetworkAgent extends NetworkAgent {
         mQosCallbackExecutor.execute(() -> mQosCallbackTracker.updateSessions(qosBearerSessions));
     }
 
+    @Override
     public void notifyQosSessionAvailable(final int qosCallbackId, final int sessionId,
             @NonNull final QosSessionAttributes attributes) {
         super.sendQosSessionAvailable(qosCallbackId, sessionId, attributes);
     }
 
+    @Override
     public void notifyQosSessionLost(final int qosCallbackId,
             final int sessionId, final int qosSessionType) {
         super.sendQosSessionLost(qosCallbackId, sessionId, qosSessionType);

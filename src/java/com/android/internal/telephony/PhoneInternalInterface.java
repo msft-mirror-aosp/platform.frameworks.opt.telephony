@@ -26,6 +26,7 @@ import android.os.Message;
 import android.os.ResultReceiver;
 import android.os.WorkSource;
 import android.telecom.VideoProfile;
+import android.telephony.Annotation.DataActivityType;
 import android.telephony.ImsiEncryptionInfo;
 import android.telephony.NetworkScanRequest;
 import android.telephony.PreciseDataConnectionState;
@@ -38,6 +39,7 @@ import com.android.internal.telephony.PhoneConstants.DataState;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Internal interface used to control the phone; SDK developers cannot
@@ -207,6 +209,7 @@ public interface PhoneInternalInterface {
     static final String REASON_IWLAN_DATA_SERVICE_DIED = "iwlanDataServiceDied";
     static final String REASON_VCN_REQUESTED_TEARDOWN = "vcnRequestedTeardown";
     static final String REASON_DATA_UNTHROTTLED = "dataUnthrottled";
+    static final String REASON_TRAFFIC_DESCRIPTORS_UPDATED = "trafficDescriptorsUpdated";
 
     // Reasons for Radio being powered off
     int RADIO_POWER_REASON_USER = 0;
@@ -310,11 +313,10 @@ public interface PhoneInternalInterface {
     PreciseDataConnectionState getPreciseDataConnectionState(String apnType);
 
     /**
-     * Get the current DataActivityState. No change notification exists at this
-     * interface -- use
-     * {@link android.telephony.TelephonyManager} instead.
+     * Get the current data activity. No change notification exists at this
+     * interface.
      */
-    DataActivityState getDataActivityState();
+    @DataActivityType int getDataActivityState();
 
     /**
      * Returns a list of MMI codes that are pending. (They have initiated
@@ -489,12 +491,33 @@ public interface PhoneInternalInterface {
      *
      * @param dialString The dial string.
      * @param dialArgs Parameters to perform the dial with.
+     * @param chosenPhone The Phone (either GsmCdmaPhone or ImsPhone) that has been chosen to dial
+     *                    this number. This is used for any setup that should occur before dial
+     *                    actually occurs.
      * @exception CallStateException if a new outgoing call is not currently
      *                possible because no more call slots exist or a call exists
      *                that is dialing, alerting, ringing, or waiting. Other
      *                errors are handled asynchronously.
      */
-    Connection dial(String dialString, @NonNull DialArgs dialArgs) throws CallStateException;
+    Connection dial(String dialString, @NonNull DialArgs dialArgs,
+            Consumer<Phone> chosenPhone) throws CallStateException;
+
+    /**
+     * Initiate a new voice connection. This happens asynchronously, so you
+     * cannot assume the audio path is connected (or a call index has been
+     * assigned) until PhoneStateChanged notification has occurred.
+     *
+     * @param dialString The dial string.
+     * @param dialArgs Parameters to perform the dial with.
+     * @exception CallStateException if a new outgoing call is not currently
+     *                possible because no more call slots exist or a call exists
+     *                that is dialing, alerting, ringing, or waiting. Other
+     *                errors are handled asynchronously.
+     */
+    default Connection dial(String dialString, @NonNull DialArgs dialArgs)
+            throws CallStateException {
+        return dial(dialString, dialArgs, (phone) -> {});
+    }
 
     /**
      * Initiate a new conference connection. This happens asynchronously, so you
@@ -1074,4 +1097,10 @@ public interface PhoneInternalInterface {
      *  their mobile plan.
      */
     String getMobileProvisioningUrl();
+
+    /**
+     * Update the cellular usage setting if applicable.
+     */
+    boolean updateUsageSetting();
+
 }
