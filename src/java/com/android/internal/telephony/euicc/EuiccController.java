@@ -1210,11 +1210,14 @@ public class EuiccController extends IEuiccController.Stub {
         } else {
             // DSDS Mode
             for (int portIndex : slot.getPortList()) {
-                if (slot.isPortActive(portIndex)
-                        && mSubscriptionManager.getActiveSubscriptionInfoForSimSlotIndex(
-                        slot.getPhoneIdFromPortIndex(portIndex)) == null) {
-                    // If the port is active and empty, return the portIndex.
-                    return portIndex;
+                if (slot.isPortActive(portIndex)) {
+                    SubscriptionInfo subscriptionInfo =
+                              mSubscriptionManager.getActiveSubscriptionInfoForSimSlotIndex(
+                                    slot.getPhoneIdFromPortIndex(portIndex));
+                    if (subscriptionInfo == null || subscriptionInfo.isOpportunistic()) {
+                            // If the port is active and empty/opportunistic, return the portIndex.
+                        return portIndex;
+                    }
                 }
             }
             // Check whether the pSim is active and empty
@@ -1307,7 +1310,9 @@ public class EuiccController extends IEuiccController.Stub {
         }
         String cardIdString = UiccController.getInstance().convertToCardString(cardId);
         for (int slotIndex = 0; slotIndex < slotInfos.length; slotIndex++) {
-            if (IccUtils.compareIgnoreTrailingFs(cardIdString, slotInfos[slotIndex].getCardId())) {
+            String retrievedCardId = slotInfos[slotIndex] != null
+                    ? slotInfos[slotIndex].getCardId() : null;
+            if (IccUtils.compareIgnoreTrailingFs(cardIdString, retrievedCardId)) {
                 return slotIndex;
             }
         }
