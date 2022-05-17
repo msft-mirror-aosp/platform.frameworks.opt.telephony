@@ -24,6 +24,7 @@ import android.content.ContentValues;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -198,6 +199,36 @@ public class DataProfileManager extends Handler {
     }
 
     /**
+     * Check if there are any Enterprise APN configured by DPC and return a data profile
+     * with the same.
+     * @return data profile with enterprise ApnSetting if available, else null
+     */
+    @Nullable private DataProfile getEnterpriseDataProfile() {
+        Cursor cursor = mPhone.getContext().getContentResolver().query(
+                Telephony.Carriers.DPC_URI, null, null, null, null);
+        if (cursor == null) {
+            loge("Cannot access APN database through telephony provider.");
+            return null;
+        }
+
+        DataProfile dataProfile = null;
+        while (cursor.moveToNext()) {
+            ApnSetting apn = ApnSetting.makeApnSetting(cursor);
+            if (apn != null) {
+                dataProfile = new DataProfile.Builder()
+                        .setApnSetting(apn)
+                        .setTrafficDescriptor(new TrafficDescriptor(apn.getApnName(), null))
+                        .setPreferred(false)
+                        .build();
+                if (dataProfile.canSatisfy(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)) {
+                    break;
+                }
+            }
+        }
+        cursor.close();
+        return dataProfile;
+    }
+    /**
      * Update all data profiles, including preferred data profile, and initial attach data profile.
      * Also send those profiles down to the modem if needed.
      */
@@ -227,6 +258,20 @@ public class DataProfileManager extends Handler {
             cursor.close();
         }
 
+        // Check if any of the profile already supports ENTERPRISE, if not, check if DPC has
+        // configured one and retrieve the same.
+        DataProfile dataProfile = profiles.stream()
+                .filter(dp -> dp.canSatisfy(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE))
+                .findFirst()
+                .orElse(null);
+        if (dataProfile == null) {
+            dataProfile = getEnterpriseDataProfile();
+            if (dataProfile != null) {
+                profiles.add(dataProfile);
+                log("Added enterprise profile " + dataProfile);
+            }
+        }
+
         // Check if any of the profile already supports IMS, if not, add the default one.
         DataProfile dataProfile = profiles.stream()
                 .filter(dp -> dp.canSatisfy(NetworkCapabilities.NET_CAPABILITY_IMS))
@@ -236,6 +281,7 @@ public class DataProfileManager extends Handler {
             profiles.add(new DataProfile.Builder()
                     .setApnSetting(buildDefaultApnSetting("DEFAULT IMS", "ims",
                             ApnSetting.TYPE_IMS))
+                    .setTrafficDescriptor(new TrafficDescriptor("ims", null))
                     .build());
             log("Added default IMS data profile.");
         }
@@ -249,6 +295,7 @@ public class DataProfileManager extends Handler {
             profiles.add(new DataProfile.Builder()
                     .setApnSetting(buildDefaultApnSetting("DEFAULT EIMS", "sos",
                             ApnSetting.TYPE_EMERGENCY))
+                    .setTrafficDescriptor(new TrafficDescriptor("sos", null))
                     .build());
             log("Added default EIMS data profile.");
         }
@@ -419,9 +466,11 @@ public class DataProfileManager extends Handler {
             preferredDataProfile = null;
         }
 
+        for (DataProfile dataProfile : mAllDataProfiles) {
+            dataProfile.setPreferred(dataProfile.equals(preferredDataProfile));
+        }
+
         if (!Objects.equals(mPreferredDataProfile, preferredDataProfile)) {
-            // Replaced the data profile with preferred bit set.
-            if (preferredDataProfile != null) preferredDataProfile.setPreferred(true);
             mPreferredDataProfile = preferredDataProfile;
 
             logl("Changed preferred data profile to " + mPreferredDataProfile);
@@ -560,8 +609,7 @@ public class DataProfileManager extends Handler {
         profileBuilder.setTrafficDescriptor(trafficDescriptor);
 
         DataProfile dataProfile = profileBuilder.build();
-        log("Added a new data profile " + dataProfile + " for " + networkRequest);
-        mAllDataProfiles.add(dataProfile);
+        log("Created data profile " + dataProfile + " for " + networkRequest);
         return dataProfile;
     }
 
@@ -576,6 +624,7 @@ public class DataProfileManager extends Handler {
             @NonNull TelephonyNetworkRequest networkRequest, @NetworkType int networkType) {
         if (!networkRequest.hasAttribute(
                 TelephonyNetworkRequest.CAPABILITY_ATTRIBUTE_APN_SETTING)) {
+            loge("Network request does not have APN setting attribute.");
             return null;
         }
 
@@ -626,69 +675,6 @@ public class DataProfileManager extends Handler {
     }
 
     /**
-     * Generate a traffic-descriptor type data profile from a network request.
-     *
-     * @param networkRequest The network request.
-     * @return The generated data profile. {@code null} if not available.
-     */
-    private @Nullable DataProfile getTrafficDescriptorTypeDataProfile(
-            @NonNull TelephonyNetworkRequest networkRequest) {
-        if (!networkRequest.hasAttribute(
-                TelephonyNetworkRequest.CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_OS_APP_ID)) {
-            return null;
-        }
-
-        // If the network request also contains APN-type capabilities (for example, enterprise
-        // is also an APN-type capability, then we fill in the corresponding APN setting in
-        // data profile as well.
-        ApnSetting apnSetting = null;
-        if (networkRequest.hasAttribute(
-                TelephonyNetworkRequest.CAPABILITY_ATTRIBUTE_APN_SETTING)) {
-            // Put the preferred data profile at the top of the list, then the longest time
-            // hasn't used data profile will be in the front so all the data profiles can be
-            // tried.
-            apnSetting = mAllDataProfiles.stream()
-                    .filter(dataProfile -> dataProfile.getApnSetting() != null)
-                    .filter(networkRequest::canBeSatisfiedBy)
-                    .min(Comparator.comparing(
-                            (DataProfile dp) -> !dp.equals(mPreferredDataProfile))
-                            .thenComparingLong(DataProfile::getLastSetupTimestamp))
-                    .map(DataProfile::getApnSetting)
-                    .orElse(null);
-        }
-
-        byte[] osAppId = networkRequest.getOsAppId() != null
-                ? networkRequest.getOsAppId().getBytes() : null;
-        DataProfile dataProfile = new DataProfile.Builder()
-                .setApnSetting(apnSetting)
-                .setTrafficDescriptor(new TrafficDescriptor(
-                        apnSetting != null ? apnSetting.getApnName() : null,
-                        osAppId))
-                .build();
-        if (!mAllDataProfiles.contains(dataProfile)) {
-            mAllDataProfiles.add(dataProfile);
-        }
-        return dataProfile;
-    }
-
-    /**
-     * Check if the data profile is valid. Profiles can change dynamically when users add/remove/
-     * switch APNs in APN editors, when SIM refreshes, or when SIM swapped. This is used to check
-     * if the data profile which is used for current data network is still valid. If the profile
-     * is not valid anymore, the data network should be torn down.
-     *
-     * @param dataProfile The data profile to check.
-     * @return {@code true} if the data profile is still valid for current environment.
-     */
-    public boolean isDataProfileValid(@NonNull DataProfile dataProfile) {
-        return mAllDataProfiles.contains(dataProfile)
-                && (dataProfile.getApnSetting() == null
-                || dataProfile.getApnSetting().getApnSetId() == mPreferredDataProfileSetId
-                || dataProfile.getApnSetting().getApnSetId()
-                == Telephony.Carriers.MATCH_ALL_APN_SET_ID);
-    }
-
-    /**
      * Check if the data profile is the preferred data profile.
      *
      * @param dataProfile The data profile to check.
@@ -699,6 +685,20 @@ public class DataProfileManager extends Handler {
     }
 
     /**
+     * Check if there is tethering data profile for certain network type.
+     *
+     * @param networkType The network type
+     * @return {@code true} if tethering data profile is found.
+     */
+    public boolean isTetheringDataProfileExisting(@NetworkType int networkType) {
+        TelephonyNetworkRequest networkRequest = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
+                        .build(), mPhone);
+        return null != getDataProfileForNetworkRequest(networkRequest, networkType);
+    }
+
+     /**
      * Check if any preferred data profile exists.
      *
      * @return {@code true} if any preferred data profile exists
@@ -790,8 +790,10 @@ public class DataProfileManager extends Handler {
         apnBuilder.setAuthType(apn2.getAuthType() == -1
                 ? apn1.getAuthType() : apn2.getAuthType());
         apnBuilder.setApnTypeBitmask(apn1.getApnTypeBitmask() | apn2.getApnTypeBitmask());
-        apnBuilder.setMtuV4(apn2.getMtuV4() == -1 ? apn1.getMtuV4() : apn2.getMtuV4());
-        apnBuilder.setMtuV6(apn2.getMtuV6() == -1 ? apn1.getMtuV6() : apn2.getMtuV6());
+        apnBuilder.setMtuV4(apn2.getMtuV4() <= ApnSetting.UNSET_MTU
+                ? apn1.getMtuV4() : apn2.getMtuV4());
+        apnBuilder.setMtuV6(apn2.getMtuV6() <= ApnSetting.UNSET_MTU
+                ? apn1.getMtuV6() : apn2.getMtuV6());
 
         // The following fields in apn1 and apn2 should be the same, otherwise ApnSetting.similar()
         // should fail earlier.
@@ -817,6 +819,42 @@ public class DataProfileManager extends Handler {
                 .setApnSetting(apnBuilder.build())
                 .setTrafficDescriptor(dp1.getTrafficDescriptor())
                 .build();
+    }
+
+    /**
+     * Get data profile by APN name and/or traffic descriptor.
+     *
+     * @param apnName APN name.
+     * @param trafficDescriptor Traffic descriptor.
+     *
+     * @return Data profile by APN name and/or traffic descriptor. Either one of APN name or
+     * traffic descriptor should be provided. {@code null} if data profile is not found.
+     */
+    public @Nullable DataProfile getDataProfile(@Nullable String apnName,
+            @Nullable TrafficDescriptor trafficDescriptor) {
+        if (apnName == null && trafficDescriptor == null) return null;
+
+        List<DataProfile> dataProfiles = mAllDataProfiles;
+
+        // Check if any existing data profile has the same traffic descriptor.
+        if (trafficDescriptor != null) {
+            dataProfiles = mAllDataProfiles.stream()
+                    .filter(dp -> trafficDescriptor.equals(dp.getTrafficDescriptor()))
+                    .collect(Collectors.toList());
+        }
+
+        // Check if any existing data profile has the same APN name.
+        if (apnName != null) {
+            dataProfiles = dataProfiles.stream()
+                    .filter(dp -> dp.getApnSetting() != null
+                            && (dp.getApnSetting().getApnSetId()
+                            == Telephony.Carriers.MATCH_ALL_APN_SET_ID
+                            || dp.getApnSetting().getApnSetId() == mPreferredDataProfileSetId))
+                    .filter(dp -> apnName.equals(dp.getApnSetting().getApnName()))
+                    .collect(Collectors.toList());
+        }
+
+        return dataProfiles.isEmpty() ? null : dataProfiles.get(0);
     }
 
     /**
