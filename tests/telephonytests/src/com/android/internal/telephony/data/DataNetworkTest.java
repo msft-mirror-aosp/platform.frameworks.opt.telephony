@@ -73,6 +73,7 @@ import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.data.DataEvaluation.DataAllowedReason;
 import com.android.internal.telephony.data.DataNetwork.DataNetworkCallback;
+import com.android.internal.telephony.data.DataNetworkController.NetworkRequestList;
 import com.android.internal.telephony.data.LinkBandwidthEstimator.LinkBandwidthEstimatorCallback;
 import com.android.internal.telephony.metrics.DataCallSessionStats;
 
@@ -94,7 +95,9 @@ import java.util.concurrent.Executor;
 @TestableLooper.RunWithLooper
 public class DataNetworkTest extends TelephonyTest {
     private static final String IPV4_ADDRESS = "10.0.2.15";
+    private static final String IPV4_ADDRESS1 = "10.0.2.16";
     private static final String IPV6_ADDRESS = "2607:fb90:a620:651d:eabe:f8da:c107:44be";
+    private static final String IPV6_ADDRESS1 = "2607:fb90:a620:651d:eabe:f8da:c107:44bf";
 
     private static final int ADMIN_UID1 = 1234;
     private static final int ADMIN_UID2 = 5678;
@@ -178,6 +181,7 @@ public class DataNetworkTest extends TelephonyTest {
     // Mocked classes
     private DataNetworkCallback mDataNetworkCallback;
     private DataCallSessionStats mDataCallSessionStats;
+    private PhoneSwitcher mMockedPhoneSwitcher;
 
     private final NetworkRegistrationInfo mIwlanNetworkRegistrationInfo =
             new NetworkRegistrationInfo.Builder()
@@ -213,9 +217,8 @@ public class DataNetworkTest extends TelephonyTest {
                             InetAddresses.parseNumericAddress("fd00:976a:c305:1d::8"),
                             InetAddresses.parseNumericAddress("fd00:976a:c202:1d::7"),
                             InetAddresses.parseNumericAddress("fd00:976a:c305:1d::5")))
-                    .setMtu(1500)
-                    .setMtuV4(1500)
-                    .setMtuV6(1500)
+                    .setMtuV4(1234)
+                    .setMtuV6(5678)
                     .setPduSessionId(1)
                     .setQosBearerSessions(new ArrayList<>())
                     .setTrafficDescriptors(tds)
@@ -298,6 +301,8 @@ public class DataNetworkTest extends TelephonyTest {
 
         mDataNetworkCallback = Mockito.mock(DataNetworkCallback.class);
         mDataCallSessionStats = Mockito.mock(DataCallSessionStats.class);
+        mMockedPhoneSwitcher = Mockito.mock(PhoneSwitcher.class);
+        replaceInstance(PhoneSwitcher.class, "sPhoneSwitcher", null, mMockedPhoneSwitcher);
         doAnswer(invocation -> {
             ((Runnable) invocation.getArguments()[0]).run();
             return null;
@@ -314,6 +319,8 @@ public class DataNetworkTest extends TelephonyTest {
         doReturn(true).when(mDataConfigManager).isTempNotMeteredSupportedByCarrier();
         doReturn(true).when(mDataConfigManager).isImsDelayTearDownEnabled();
         doReturn(FAKE_IMSI).when(mPhone).getSubscriberId();
+        doReturn(true).when(mDataNetworkController)
+                .isNetworkRequestExisting(any(TelephonyNetworkRequest.class));
 
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
@@ -348,8 +355,7 @@ public class DataNetworkTest extends TelephonyTest {
     // expected, and make sure it is always sorted.
     @Test
     public void testCreateDataNetwork() throws Exception {
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build(), mPhone));
@@ -389,6 +395,16 @@ public class DataNetworkTest extends TelephonyTest {
         assertThat(lp.getAddresses()).containsExactly(
                 InetAddresses.parseNumericAddress(IPV4_ADDRESS),
                 InetAddresses.parseNumericAddress(IPV6_ADDRESS));
+
+        assertThat(lp.getRoutes()).hasSize(2);
+        assertThat(lp.getRoutes().get(0).getGateway()).isEqualTo(
+                InetAddresses.parseNumericAddress("10.0.2.15"));
+        assertThat(lp.getRoutes().get(0).getMtu()).isEqualTo(1234);
+        assertThat(lp.getRoutes().get(1).getGateway()).isEqualTo(
+                InetAddresses.parseNumericAddress("fe80::2"));
+        assertThat(lp.getRoutes().get(1).getMtu()).isEqualTo(5678);
+        // The higher value of v4 and v6 should be used.
+        assertThat(lp.getMtu()).isEqualTo(5678);
 
         ArgumentCaptor<PreciseDataConnectionState> pdcsCaptor =
                 ArgumentCaptor.forClass(PreciseDataConnectionState.class);
@@ -433,8 +449,7 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testCreateImsDataNetwork() throws Exception {
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
                 .build(), mPhone));
@@ -511,8 +526,7 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testCreateDataNetworkOnEnterpriseSlice() throws Exception {
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
                 .build(), mPhone));
@@ -547,8 +561,7 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testCreateDataNetworkOnUrllcSlice() throws Exception {
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY)
                 .build(), mPhone));
@@ -581,8 +594,7 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testCreateDataNetworkOnEmbbSlice() throws Exception {
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH)
                 .build(), mPhone));
@@ -615,8 +627,7 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testCreateDataNetworkOnCbsSlice() throws Exception {
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_CBS)
                 .build(), mPhone));
@@ -650,8 +661,7 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testSlicingDataNetworkHasSlicingCapabilitiesBeforeConnected() throws Exception {
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_CBS)
                 .build(), mPhone));
@@ -736,8 +746,7 @@ public class DataNetworkTest extends TelephonyTest {
         doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WLAN).when(mAccessNetworksManager)
                 .getPreferredTransportByNetworkCapability(NetworkCapabilities.NET_CAPABILITY_IMS);
 
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
                 .build(), mPhone));
@@ -916,8 +925,7 @@ public class DataNetworkTest extends TelephonyTest {
     }
 
     private void setupDataNetwork() throws Exception {
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build(), mPhone));
@@ -1094,8 +1102,7 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testDataNetworkHasCapabilitiesAtBeginning() {
-        DataNetworkController.NetworkRequestList
-                networkRequestList = new DataNetworkController.NetworkRequestList();
+        NetworkRequestList networkRequestList = new NetworkRequestList();
         networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build(), mPhone));
@@ -1292,5 +1299,328 @@ public class DataNetworkTest extends TelephonyTest {
         // Not suspended
         assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
                 NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)).isTrue();
+    }
+
+    @Test
+    public void testGetApnTypeCapability() throws Exception {
+        testCreateDataNetwork();
+        assertThat(mDataNetworkUT.getApnTypeNetworkCapability())
+                .isEqualTo(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+
+        TelephonyNetworkRequest networkRequest = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder().addCapability(
+                        NetworkCapabilities.NET_CAPABILITY_SUPL).build(), mPhone);
+        mDataNetworkUT.attachNetworkRequests(new NetworkRequestList(networkRequest));
+        processAllMessages();
+
+        assertThat(mDataNetworkUT.getApnTypeNetworkCapability())
+                .isEqualTo(NetworkCapabilities.NET_CAPABILITY_SUPL);
+
+        mDataNetworkUT.detachNetworkRequest(networkRequest);
+        processAllMessages();
+
+        assertThat(mDataNetworkUT.getApnTypeNetworkCapability())
+                .isEqualTo(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+    }
+
+    @Test
+    public void testGetPriority() throws Exception {
+        testCreateDataNetwork();
+
+        // Internet priority is 20
+        assertThat(mDataNetworkUT.getPriority()).isEqualTo(20);
+
+        TelephonyNetworkRequest networkRequest = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder().addCapability(
+                        NetworkCapabilities.NET_CAPABILITY_SUPL).build(), mPhone);
+        mDataNetworkUT.attachNetworkRequests(new NetworkRequestList(networkRequest));
+        processAllMessages();
+
+        // SUPL priority is 80
+        assertThat(mDataNetworkUT.getPriority()).isEqualTo(80);
+
+        mDataNetworkUT.detachNetworkRequest(networkRequest);
+        processAllMessages();
+
+        // Internet priority is 20
+        assertThat(mDataNetworkUT.getPriority()).isEqualTo(20);
+    }
+
+    @Test
+    public void testIpChangedV4() throws Exception {
+        testCreateDataNetwork();
+
+        DataCallResponse response = new DataCallResponse.Builder()
+                .setCause(0)
+                .setRetryDurationMillis(-1L)
+                .setId(123)
+                .setLinkStatus(2)
+                .setProtocolType(ApnSetting.PROTOCOL_IPV4V6)
+                .setInterfaceName("ifname")
+                .setAddresses(Arrays.asList(
+                        new LinkAddress(InetAddresses.parseNumericAddress(IPV4_ADDRESS1), 32),
+                        new LinkAddress(IPV6_ADDRESS + "/64")))
+                .setDnsAddresses(Arrays.asList(InetAddresses.parseNumericAddress("10.0.2.3"),
+                        InetAddresses.parseNumericAddress("fd00:976a::9")))
+                .setGatewayAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("10.0.2.15"),
+                        InetAddresses.parseNumericAddress("fe80::2")))
+                .setPcscfAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::8"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c202:1d::7"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::5")))
+                .setMtuV4(1234)
+                .setMtuV6(5678)
+                .setPduSessionId(1)
+                .setQosBearerSessions(new ArrayList<>())
+                .setTrafficDescriptors(Collections.emptyList())
+                .build();
+
+        // IP changes
+        mDataNetworkUT.obtainMessage(8/*EVENT_DATA_STATE_CHANGED*/,
+                new AsyncResult(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                        List.of(response), null)).sendToTarget();
+        processAllMessages();
+
+        ArgumentCaptor<LinkProperties> linkPropertiesCaptor =
+                ArgumentCaptor.forClass(LinkProperties.class);
+
+        // Agent re-created, so register should be called twice.
+        verify(mConnectivityManager, times(2)).registerNetworkAgent(any(), any(NetworkInfo.class),
+                linkPropertiesCaptor.capture(), any(NetworkCapabilities.class), any(), any(),
+                anyInt());
+        // The new agent should have the new IP address.
+        assertThat(linkPropertiesCaptor.getValue().getAllAddresses()).containsExactly(
+                InetAddresses.parseNumericAddress(IPV4_ADDRESS1),
+                InetAddresses.parseNumericAddress(IPV6_ADDRESS));
+
+        assertThat(linkPropertiesCaptor.getValue()).isEqualTo(mDataNetworkUT.getLinkProperties());
+    }
+
+    @Test
+    public void testIpChangedV6() throws Exception {
+        testCreateDataNetwork();
+
+        DataCallResponse response = new DataCallResponse.Builder()
+                .setCause(0)
+                .setRetryDurationMillis(-1L)
+                .setId(123)
+                .setLinkStatus(2)
+                .setProtocolType(ApnSetting.PROTOCOL_IPV4V6)
+                .setInterfaceName("ifname")
+                .setAddresses(Arrays.asList(new LinkAddress(IPV6_ADDRESS1 + "/64")))
+                .setDnsAddresses(Arrays.asList(InetAddresses.parseNumericAddress("10.0.2.3"),
+                        InetAddresses.parseNumericAddress("fd00:976a::9")))
+                .setGatewayAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("10.0.2.15"),
+                        InetAddresses.parseNumericAddress("fe80::2")))
+                .setPcscfAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::8"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c202:1d::7"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::5")))
+                .setMtuV4(1234)
+                .setMtuV6(5678)
+                .setPduSessionId(1)
+                .setQosBearerSessions(new ArrayList<>())
+                .setTrafficDescriptors(Collections.emptyList())
+                .build();
+
+        // IP changes
+        mDataNetworkUT.obtainMessage(8/*EVENT_DATA_STATE_CHANGED*/,
+                new AsyncResult(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                        List.of(response), null)).sendToTarget();
+        processAllMessages();
+
+        ArgumentCaptor<LinkProperties> linkPropertiesCaptor =
+                ArgumentCaptor.forClass(LinkProperties.class);
+
+        // Agent re-created, so register should be called twice.
+        verify(mConnectivityManager, times(2)).registerNetworkAgent(any(), any(NetworkInfo.class),
+                linkPropertiesCaptor.capture(), any(NetworkCapabilities.class), any(), any(),
+                anyInt());
+        // The new agent should have the new IP address.
+        assertThat(linkPropertiesCaptor.getValue().getAllAddresses()).containsExactly(
+                InetAddresses.parseNumericAddress(IPV6_ADDRESS1));
+
+        assertThat(linkPropertiesCaptor.getValue()).isEqualTo(mDataNetworkUT.getLinkProperties());
+    }
+
+    @Test
+    public void testIpChangedFromV4ToV6() throws Exception {
+        doAnswer(invocation -> {
+            final Message msg = (Message) invocation.getArguments()[10];
+
+            DataCallResponse response = new DataCallResponse.Builder()
+                    .setCause(0)
+                    .setRetryDurationMillis(-1L)
+                    .setId(123)
+                    .setLinkStatus(2)
+                    .setProtocolType(ApnSetting.PROTOCOL_IPV4V6)
+                    .setInterfaceName("ifname")
+                    .setAddresses(Arrays.asList(
+                            new LinkAddress(InetAddresses.parseNumericAddress(IPV4_ADDRESS), 32)))
+                    .setDnsAddresses(Arrays.asList(InetAddresses.parseNumericAddress("10.0.2.3"),
+                            InetAddresses.parseNumericAddress("fd00:976a::9")))
+                    .setGatewayAddresses(Arrays.asList(
+                            InetAddresses.parseNumericAddress("10.0.2.15"),
+                            InetAddresses.parseNumericAddress("fe80::2")))
+                    .setPcscfAddresses(Arrays.asList(
+                            InetAddresses.parseNumericAddress("fd00:976a:c305:1d::8"),
+                            InetAddresses.parseNumericAddress("fd00:976a:c202:1d::7"),
+                            InetAddresses.parseNumericAddress("fd00:976a:c305:1d::5")))
+                    .setMtuV4(1234)
+                    .setMtuV6(5678)
+                    .setPduSessionId(1)
+                    .setQosBearerSessions(new ArrayList<>())
+                    .setTrafficDescriptors(Collections.emptyList())
+                    .build();
+            msg.getData().putParcelable("data_call_response", response);
+            msg.arg1 = DataServiceCallback.RESULT_SUCCESS;
+            msg.sendToTarget();
+            return null;
+        }).when(mMockedWwanDataServiceManager).setupDataCall(anyInt(), any(DataProfile.class),
+                anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(), any(), any(), anyBoolean(),
+                any(Message.class));
+
+        NetworkRequestList networkRequestList = new NetworkRequestList();
+        networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build(), mPhone));
+
+        mDataNetworkUT = new DataNetwork(mPhone, Looper.myLooper(), mDataServiceManagers,
+                mInternetDataProfile, networkRequestList,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                DataAllowedReason.NORMAL, mDataNetworkCallback);
+        replaceInstance(DataNetwork.class, "mDataCallSessionStats",
+                mDataNetworkUT, mDataCallSessionStats);
+        processAllMessages();
+
+        DataCallResponse response = new DataCallResponse.Builder()
+                .setCause(0)
+                .setRetryDurationMillis(-1L)
+                .setId(123)
+                .setLinkStatus(2)
+                .setProtocolType(ApnSetting.PROTOCOL_IPV4V6)
+                .setInterfaceName("ifname")
+                .setAddresses(Arrays.asList(new LinkAddress(IPV6_ADDRESS + "/64")))
+                .setDnsAddresses(Arrays.asList(InetAddresses.parseNumericAddress("10.0.2.3"),
+                        InetAddresses.parseNumericAddress("fd00:976a::9")))
+                .setGatewayAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("10.0.2.15"),
+                        InetAddresses.parseNumericAddress("fe80::2")))
+                .setPcscfAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::8"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c202:1d::7"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::5")))
+                .setMtuV4(1234)
+                .setMtuV6(5678)
+                .setPduSessionId(1)
+                .setQosBearerSessions(new ArrayList<>())
+                .setTrafficDescriptors(Collections.emptyList())
+                .build();
+
+        // IP changes
+        mDataNetworkUT.obtainMessage(8/*EVENT_DATA_STATE_CHANGED*/,
+                new AsyncResult(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                        List.of(response), null)).sendToTarget();
+        processAllMessages();
+
+        // Agent should not be re-created, so register should be called ony once.
+        verify(mConnectivityManager, times(1)).registerNetworkAgent(any(), any(NetworkInfo.class),
+                any(LinkProperties.class), any(NetworkCapabilities.class), any(), any(),
+                anyInt());
+
+        // The network should have IPv6 address now
+        assertThat(mDataNetworkUT.getLinkProperties().getAllAddresses()).containsExactly(
+                InetAddresses.parseNumericAddress(IPV6_ADDRESS));
+    }
+
+    @Test
+    public void testIpChangedV4Removed() throws Exception {
+        testCreateDataNetwork();
+
+        DataCallResponse response = new DataCallResponse.Builder()
+                .setCause(0)
+                .setRetryDurationMillis(-1L)
+                .setId(123)
+                .setLinkStatus(2)
+                .setProtocolType(ApnSetting.PROTOCOL_IPV4V6)
+                .setInterfaceName("ifname")
+                .setAddresses(Arrays.asList(new LinkAddress(IPV6_ADDRESS + "/64")))
+                .setDnsAddresses(Arrays.asList(InetAddresses.parseNumericAddress("10.0.2.3"),
+                        InetAddresses.parseNumericAddress("fd00:976a::9")))
+                .setGatewayAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("10.0.2.15"),
+                        InetAddresses.parseNumericAddress("fe80::2")))
+                .setPcscfAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::8"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c202:1d::7"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::5")))
+                .setMtuV4(1234)
+                .setMtuV6(5678)
+                .setPduSessionId(1)
+                .setQosBearerSessions(new ArrayList<>())
+                .setTrafficDescriptors(Collections.emptyList())
+                .build();
+
+        // IP changes
+        mDataNetworkUT.obtainMessage(8/*EVENT_DATA_STATE_CHANGED*/,
+                new AsyncResult(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                        List.of(response), null)).sendToTarget();
+        processAllMessages();
+
+        // Agent should not be re-created, so register should be called ony once.
+        verify(mConnectivityManager, times(1)).registerNetworkAgent(any(), any(NetworkInfo.class),
+                any(LinkProperties.class), any(NetworkCapabilities.class), any(), any(),
+                anyInt());
+
+        // The network should have IPv6 address now
+        assertThat(mDataNetworkUT.getLinkProperties().getAllAddresses()).containsExactly(
+                InetAddresses.parseNumericAddress(IPV6_ADDRESS));
+    }
+
+    @Test
+    public void testIpChangedV6Removed() throws Exception {
+        testCreateDataNetwork();
+
+        DataCallResponse response = new DataCallResponse.Builder()
+                .setCause(0)
+                .setRetryDurationMillis(-1L)
+                .setId(123)
+                .setLinkStatus(2)
+                .setProtocolType(ApnSetting.PROTOCOL_IPV4V6)
+                .setInterfaceName("ifname")
+                .setAddresses(Arrays.asList(new LinkAddress(
+                        InetAddresses.parseNumericAddress(IPV4_ADDRESS), 32)))
+                .setDnsAddresses(Arrays.asList(InetAddresses.parseNumericAddress("10.0.2.3"),
+                        InetAddresses.parseNumericAddress("fd00:976a::9")))
+                .setGatewayAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("10.0.2.15"),
+                        InetAddresses.parseNumericAddress("fe80::2")))
+                .setPcscfAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::8"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c202:1d::7"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::5")))
+                .setMtuV4(1234)
+                .setMtuV6(5678)
+                .setPduSessionId(1)
+                .setQosBearerSessions(new ArrayList<>())
+                .setTrafficDescriptors(Collections.emptyList())
+                .build();
+
+        // IP changes
+        mDataNetworkUT.obtainMessage(8/*EVENT_DATA_STATE_CHANGED*/,
+                new AsyncResult(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                        List.of(response), null)).sendToTarget();
+        processAllMessages();
+
+        // Agent should not be re-created, so register should be called ony once.
+        verify(mConnectivityManager, times(1)).registerNetworkAgent(any(), any(NetworkInfo.class),
+                any(LinkProperties.class), any(NetworkCapabilities.class), any(), any(),
+                anyInt());
+
+        // The network should have IPv6 address now
+        assertThat(mDataNetworkUT.getLinkProperties().getAllAddresses()).containsExactly(
+                InetAddresses.parseNumericAddress(IPV4_ADDRESS));
     }
 }
