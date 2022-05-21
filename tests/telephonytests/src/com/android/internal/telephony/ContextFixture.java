@@ -67,6 +67,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IInterface;
 import android.os.PersistableBundle;
+import android.os.PowerManager;
 import android.os.PowerWhitelistManager;
 import android.os.SystemConfigManager;
 import android.os.UserHandle;
@@ -346,6 +347,8 @@ public class ContextFixture implements TestFixture<Context> {
                 return Context.TELEPHONY_REGISTRY_SERVICE;
             } else if (serviceClass == NetworkPolicyManager.class) {
                 return Context.NETWORK_POLICY_SERVICE;
+            } else if (serviceClass == PowerManager.class) {
+                return Context.POWER_SERVICE;
             }
             return super.getSystemServiceName(serviceClass);
         }
@@ -726,6 +729,8 @@ public class ContextFixture implements TestFixture<Context> {
             .getDefaultSharedPreferences(TestApplication.getAppContext());
     private final MockContentResolver mContentResolver = new MockContentResolver();
     private final PersistableBundle mBundle = new PersistableBundle();
+    private final Network mNetwork = mock(Network.class);
+    private int mNetworkId = 200;
 
     public ContextFixture() {
         MockitoAnnotations.initMocks(this);
@@ -765,10 +770,9 @@ public class ContextFixture implements TestFixture<Context> {
         }
 
         doReturn(mBundle).when(mCarrierConfigManager).getConfigForSubId(anyInt());
-        //doReturn(mBundle).when(mCarrierConfigManager).getConfig(anyInt());
         doReturn(mBundle).when(mCarrierConfigManager).getConfig();
-
-        doReturn(mock(Network.class)).when(mConnectivityManager).registerNetworkAgent(
+        doAnswer(invocation -> mNetworkId++).when(mNetwork).getNetId();
+        doReturn(mNetwork).when(mConnectivityManager).registerNetworkAgent(
                 any(), any(), any(), any(), any(), any(), anyInt());
 
         doReturn(true).when(mEuiccManager).isEnabled();

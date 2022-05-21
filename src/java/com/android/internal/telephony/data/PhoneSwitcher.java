@@ -71,7 +71,6 @@ import android.util.LocalLog;
 import com.android.ims.ImsException;
 import com.android.ims.ImsManager;
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.telephony.Call;
 import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.ISetOpportunisticDataCallback;
 import com.android.internal.telephony.IccCard;
@@ -513,7 +512,8 @@ public class PhoneSwitcher extends Handler {
                             v -> new DataSettingsManagerCallback(this::post) {
                                 @Override
                                 public void onDataEnabledChanged(boolean enabled,
-                                        @TelephonyManager.DataEnabledChangedReason int reason) {
+                                        @TelephonyManager.DataEnabledChangedReason int reason,
+                                        @NonNull String callingPackage) {
                                     evaluateIfDataSwitchIsNeeded("EVENT_DATA_ENABLED_CHANGED");
                                 }});
                     phone.getDataSettingsManager().registerCallback(
@@ -566,6 +566,11 @@ public class PhoneSwitcher extends Handler {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_MCX)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_1)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_2)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_3)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_4)
+                .addEnterpriseId(NetworkCapabilities.NET_ENTERPRISE_ID_5)
                 .setNetworkSpecifier(new MatchAllNetworkSpecifier());
 
         NetworkFactory networkFactory = new PhoneSwitcherNetworkRequestListener(looper, context,
@@ -880,7 +885,8 @@ public class PhoneSwitcher extends Handler {
                         v -> new DataSettingsManagerCallback(this::post) {
                             @Override
                             public void onDataEnabledChanged(boolean enabled,
-                                    @TelephonyManager.DataEnabledChangedReason int reason) {
+                                    @TelephonyManager.DataEnabledChangedReason int reason,
+                                    @NonNull String callingPackage) {
                                 evaluateIfDataSwitchIsNeeded("EVENT_DATA_ENABLED_CHANGED");
                             }
                         });
@@ -1427,8 +1433,17 @@ public class PhoneSwitcher extends Handler {
             return false;
         }
 
-        int phoneIdToHandle = phoneIdForRequest(networkRequest);
+        NetworkRequest netRequest = networkRequest.getNativeNetworkRequest();
+        int subId = getSubIdFromNetworkSpecifier(netRequest.getNetworkSpecifier());
 
+        //if this phone is an emergency networkRequest
+        //and subId is not specified that is invalid or default
+        if (isAnyVoiceCallActiveOnDevice() && isEmergencyNetworkRequest(networkRequest)
+                && (subId == DEFAULT_SUBSCRIPTION_ID || subId == INVALID_SUBSCRIPTION_ID)) {
+            return phoneId == mPhoneIdInVoiceCall;
+        }
+
+        int phoneIdToHandle = phoneIdForRequest(networkRequest);
         return phoneId == phoneIdToHandle;
     }
 
@@ -1636,14 +1651,8 @@ public class PhoneSwitcher extends Handler {
         }
 
         // A phone in voice call might trigger data being switched to it.
-        // We only report true if its precise call state is ACTIVE, ALERTING or HOLDING.
-        // The reason is data switching is interrupting, so we only switch when necessary and
-        // acknowledged by the users. For incoming call, we don't switch until answered
-        // (RINGING -> ACTIVE), for outgoing call we don't switch until call is connected
-        // in network (DIALING -> ALERTING).
-        return (phone.getForegroundCall().getState() == Call.State.ACTIVE
-                || phone.getForegroundCall().getState() == Call.State.ALERTING
-                || phone.getBackgroundCall().getState() == Call.State.HOLDING);
+        return (!phone.getBackgroundCall().isIdle()
+                || !phone.getForegroundCall().isIdle());
     }
 
     private void updateHalCommandToUse() {

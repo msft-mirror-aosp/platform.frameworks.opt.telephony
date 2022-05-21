@@ -636,6 +636,8 @@ public class RILUtils {
             byte[] pdu) {
         android.hardware.radio.messaging.CdmaSmsMessage msg =
                 new android.hardware.radio.messaging.CdmaSmsMessage();
+        msg.address = new android.hardware.radio.messaging.CdmaSmsAddress();
+        msg.subAddress = new android.hardware.radio.messaging.CdmaSmsSubaddress();
         int addrNbrOfDigits;
         int subaddrNbrOfDigits;
         int bearerDataLength;
@@ -979,7 +981,10 @@ public class RILUtils {
         dpi.mtuV6 = dp.getMtuV6();
         dpi.persistent = dp.isPersistent();
         dpi.preferred = dp.isPreferred();
-        dpi.alwaysOn = dp.getApnSetting().isAlwaysOn();
+        dpi.alwaysOn = false;
+        if (dp.getApnSetting() != null) {
+            dpi.alwaysOn = dp.getApnSetting().isAlwaysOn();
+        }
         dpi.trafficDescriptor = convertToHalTrafficDescriptorAidl(dp.getTrafficDescriptor());
 
         // profile id is only meaningful when it's persistent on the modem.
@@ -4423,7 +4428,7 @@ public class RILUtils {
      */
     public static android.hardware.radio.V1_6.PhonebookRecordInfo convertToHalPhonebookRecordInfo(
             SimPhonebookRecord record) {
-        if(record != null) {
+        if (record != null) {
             return record.toPhonebookRecordInfo();
         }
         return null;
@@ -4436,10 +4441,10 @@ public class RILUtils {
      */
     public static android.hardware.radio.sim.PhonebookRecordInfo
             convertToHalPhonebookRecordInfoAidl(SimPhonebookRecord record) {
-        if(record != null) {
+        if (record != null) {
             return record.toPhonebookRecordInfoAidl();
         }
-        return null;
+        return new android.hardware.radio.sim.PhonebookRecordInfo();
     }
 
     /**

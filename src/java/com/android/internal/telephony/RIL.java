@@ -186,6 +186,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     int mLastRadioPowerResult = RadioError.NONE;
 
+    boolean mIsRadioProxyInitialized = false;
+
     // When we are testing emergency calls using ril.test.emergencynumber, this will trigger test
     // ECbM when the call is ended.
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
@@ -352,6 +354,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                             + ", service = " + serviceToString(service) + ", service cookie = "
                             + mServiceCookies.get(service));
                     if ((long) msg.obj == mServiceCookies.get(service).get()) {
+                        mIsRadioProxyInitialized = false;
                         resetProxyAndRequestList(service);
                     }
                     break;
@@ -363,6 +366,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                             + ", service = " + serviceToString(aidlService) + ", cookie = "
                             + mServiceCookies.get(aidlService));
                     if (obj.get() == mServiceCookies.get(aidlService).get()) {
+                        mIsRadioProxyInitialized = false;
                         resetProxyAndRequestList(aidlService);
                     }
                     break;
@@ -522,6 +526,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
 
             if (serviceBound) {
+                mIsRadioProxyInitialized = false;
                 for (int service = MIN_SERVICE_IDX; service <= MAX_SERVICE_IDX; service++) {
                     resetProxyAndRequestList(service);
                 }
@@ -538,6 +543,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
             if (mMockModem != null) {
                 mRadioVersion = RADIO_HAL_VERSION_UNKNOWN;
                 mMockModem = null;
+                for (int service = MIN_SERVICE_IDX; service <= MAX_SERVICE_IDX; service++) {
+                    resetProxyAndRequestList(service);
+                }
             }
         }
 
@@ -660,9 +668,12 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 }
 
                 if (mRadioProxy != null) {
-                    mRadioProxy.linkToDeath(mRadioProxyDeathRecipient,
-                            mServiceCookies.get(RADIO_SERVICE).incrementAndGet());
-                    mRadioProxy.setResponseFunctions(mRadioResponse, mRadioIndication);
+                    if (!mIsRadioProxyInitialized) {
+                        mIsRadioProxyInitialized = true;
+                        mRadioProxy.linkToDeath(mRadioProxyDeathRecipient,
+                                mServiceCookies.get(RADIO_SERVICE).incrementAndGet());
+                        mRadioProxy.setResponseFunctions(mRadioResponse, mRadioIndication);
+                    }
                 } else {
                     mDisabledRadioServices.get(RADIO_SERVICE).add(mPhoneId);
                     riljLoge("getRadioProxy: set mRadioProxy for "
@@ -953,10 +964,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
                         if (mRadioVersion.greaterOrEqual(RADIO_HAL_VERSION_2_0)) {
                             throw new AssertionError("serviceProxy shouldn't be HIDL with HAL 2.0");
                         }
-                        serviceProxy.getHidl().linkToDeath(mRadioProxyDeathRecipient,
-                                mServiceCookies.get(service).incrementAndGet());
-                        serviceProxy.getHidl().setResponseFunctions(
-                                mRadioResponse, mRadioIndication);
+                        if (!mIsRadioProxyInitialized) {
+                            mIsRadioProxyInitialized = true;
+                            serviceProxy.getHidl().linkToDeath(mRadioProxyDeathRecipient,
+                                    mServiceCookies.get(service).incrementAndGet());
+                            serviceProxy.getHidl().setResponseFunctions(
+                                    mRadioResponse, mRadioIndication);
+                        }
                     }
                 } else {
                     mDisabledRadioServices.get(service).add(mPhoneId);
@@ -984,6 +998,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     @Override
     public synchronized void onSlotActiveStatusChange(boolean active) {
+        mIsRadioProxyInitialized = false;
         for (int service = MIN_SERVICE_IDX; service <= MAX_SERVICE_IDX; service++) {
             if (active) {
                 // Try to connect to RIL services and set response functions.
@@ -1169,6 +1184,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     private void handleRadioProxyExceptionForRR(int service, String caller, Exception e) {
         riljLoge(caller + ": " + e);
         e.printStackTrace();
+        mIsRadioProxyInitialized = false;
         resetProxyAndRequestList(service);
     }
 
@@ -4457,8 +4473,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
     }
 
     @Override
-    public void setSignalStrengthReportingCriteria(SignalThresholdInfo signalThresholdInfo,
-            int ran, Message result) {
+    public void setSignalStrengthReportingCriteria(
+            @NonNull List<SignalThresholdInfo> signalThresholdInfos, @Nullable Message result) {
         RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class, result);
         if (networkProxy.isEmpty()) return;
         if (mRadioVersion.greaterOrEqual(RADIO_HAL_VERSION_1_2)) {
@@ -4470,8 +4486,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
 
             try {
-                networkProxy.setSignalStrengthReportingCriteria(rr.mSerial, signalThresholdInfo,
-                        ran);
+                networkProxy.setSignalStrengthReportingCriteria(rr.mSerial, signalThresholdInfos);
             } catch (RemoteException | RuntimeException e) {
                 handleRadioProxyExceptionForRR(NETWORK_SERVICE,
                         "setSignalStrengthReportingCriteria", e);
