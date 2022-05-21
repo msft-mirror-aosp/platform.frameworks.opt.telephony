@@ -1436,6 +1436,10 @@ public class ImsPhone extends ImsPhoneBase {
 
         switch(code) {
             case ImsReasonInfo.CODE_UT_NOT_SUPPORTED:
+                // fall through
+            case ImsReasonInfo.CODE_UT_OPERATION_NOT_ALLOWED:
+                // not allowed is reported by operators when the network doesn't support a specific
+                // type of barring.
                 error = CommandException.Error.REQUEST_NOT_SUPPORTED;
                 break;
             case ImsReasonInfo.CODE_UT_CB_PASSWORD_MISMATCH:
@@ -2574,7 +2578,7 @@ public class ImsPhone extends ImsPhoneBase {
             imsDialArgsBuilder = ImsPhone.ImsDialArgs.Builder.from(dialArgs);
 
             Bundle extras = new Bundle(dialArgs.intentExtras);
-            if (causeCode == CallFailCause.EMC_REDIAL_ON_VOWIFI && isWifiCallingEnabled()) {
+            if (causeCode == CallFailCause.EMC_REDIAL_ON_VOWIFI) {
                 extras.putString(ImsCallProfile.EXTRA_CALL_RAT_TYPE,
                         String.valueOf(ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN));
                 logd("trigger VoWifi emergency call");
