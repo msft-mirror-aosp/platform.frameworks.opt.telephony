@@ -199,6 +199,36 @@ public class DataProfileManager extends Handler {
     }
 
     /**
+     * Check if there are any Enterprise APN configured by DPC and return a data profile
+     * with the same.
+     * @return data profile with enterprise ApnSetting if available, else null
+     */
+    @Nullable private DataProfile getEnterpriseDataProfile() {
+        Cursor cursor = mPhone.getContext().getContentResolver().query(
+                Telephony.Carriers.DPC_URI, null, null, null, null);
+        if (cursor == null) {
+            loge("Cannot access APN database through telephony provider.");
+            return null;
+        }
+
+        DataProfile dataProfile = null;
+        while (cursor.moveToNext()) {
+            ApnSetting apn = ApnSetting.makeApnSetting(cursor);
+            if (apn != null) {
+                dataProfile = new DataProfile.Builder()
+                        .setApnSetting(apn)
+                        .setTrafficDescriptor(new TrafficDescriptor(apn.getApnName(), null))
+                        .setPreferred(false)
+                        .build();
+                if (dataProfile.canSatisfy(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)) {
+                    break;
+                }
+            }
+        }
+        cursor.close();
+        return dataProfile;
+    }
+    /**
      * Update all data profiles, including preferred data profile, and initial attach data profile.
      * Also send those profiles down to the modem if needed.
      */
@@ -228,8 +258,22 @@ public class DataProfileManager extends Handler {
             cursor.close();
         }
 
-        // Check if any of the profile already supports IMS, if not, add the default one.
+        // Check if any of the profile already supports ENTERPRISE, if not, check if DPC has
+        // configured one and retrieve the same.
         DataProfile dataProfile = profiles.stream()
+                .filter(dp -> dp.canSatisfy(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE))
+                .findFirst()
+                .orElse(null);
+        if (dataProfile == null) {
+            dataProfile = getEnterpriseDataProfile();
+            if (dataProfile != null) {
+                profiles.add(dataProfile);
+                log("Added enterprise profile " + dataProfile);
+            }
+        }
+
+        // Check if any of the profile already supports IMS, if not, add the default one.
+        dataProfile = profiles.stream()
                 .filter(dp -> dp.canSatisfy(NetworkCapabilities.NET_CAPABILITY_IMS))
                 .findFirst()
                 .orElse(null);
@@ -268,14 +312,15 @@ public class DataProfileManager extends Handler {
             profilesChanged = true;
         }
 
+        // Reload the latest preferred data profile from either database or config.
+        profilesChanged |= updatePreferredDataProfile();
+
         int setId = getPreferredDataProfileSetId();
         if (setId != mPreferredDataProfileSetId) {
             logl("Changed preferred data profile set id to " + setId);
             mPreferredDataProfileSetId = setId;
             profilesChanged = true;
         }
-        // Reload the latest preferred data profile from either database or config.
-        profilesChanged |= updatePreferredDataProfile();
 
         updateDataProfilesAtModem();
         updateInitialAttachDataProfileAtModem();
@@ -417,6 +462,10 @@ public class DataProfileManager extends Handler {
             preferredDataProfile = getPreferredDataProfileFromDb();
             if (preferredDataProfile == null) {
                 preferredDataProfile = getPreferredDataProfileFromConfig();
+                if (preferredDataProfile != null) {
+                    // Save the carrier specified preferred data profile into database
+                    setPreferredDataProfile(preferredDataProfile);
+                }
             }
         } else {
             preferredDataProfile = null;
@@ -565,8 +614,7 @@ public class DataProfileManager extends Handler {
         profileBuilder.setTrafficDescriptor(trafficDescriptor);
 
         DataProfile dataProfile = profileBuilder.build();
-        log("Added a new data profile " + dataProfile + " for " + networkRequest);
-        mAllDataProfiles.add(dataProfile);
+        log("Created data profile " + dataProfile + " for " + networkRequest);
         return dataProfile;
     }
 
@@ -645,14 +693,21 @@ public class DataProfileManager extends Handler {
      * Check if there is tethering data profile for certain network type.
      *
      * @param networkType The network type
-     * @return {@code true} if tethering data profile is found.
+     * @return {@code true} if tethering data profile is found. {@code false} if no specific profile
+     * should used for tethering. In this case, tethering service will use internet network for
+     * tethering.
      */
     public boolean isTetheringDataProfileExisting(@NetworkType int networkType) {
+        if (mDataConfigManager.isTetheringProfileDisabledForRoaming()
+                && mPhone.getServiceState().getDataRoaming()) {
+            // Use internet network for tethering.
+            return false;
+        }
         TelephonyNetworkRequest networkRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
                         .build(), mPhone);
-        return null != getDataProfileForNetworkRequest(networkRequest, networkType);
+        return getDataProfileForNetworkRequest(networkRequest, networkType) != null;
     }
 
      /**
@@ -891,6 +946,8 @@ public class DataProfileManager extends Handler {
         pw.println("Preferred data profile from config=" + getPreferredDataProfileFromConfig());
         pw.println("Preferred data profile set id=" + mPreferredDataProfileSetId);
         pw.println("Initial attach data profile=" + mInitialAttachDataProfile);
+        pw.println("isTetheringDataProfileExisting=" + isTetheringDataProfileExisting(
+                TelephonyManager.NETWORK_TYPE_LTE));
 
         pw.println("Local logs:");
         pw.increaseIndent();

@@ -36,7 +36,9 @@ import android.net.Uri;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Telephony;
+import android.telephony.AccessNetworkConstants;
 import android.telephony.NetworkRegistrationInfo;
+import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataProfile;
@@ -57,11 +59,13 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
@@ -359,6 +363,16 @@ public class DataProfileManagerTest extends TelephonyTest {
             logd("ApnSettingContentProvider: uri=" + uri + ", values=" + values);
             if (uri.isPathPrefixMatch(Telephony.Carriers.PREFERRED_APN_URI)) {
                 mPreferredApnId = values.getAsInteger(Telephony.Carriers.APN_ID);
+                if (mPreferredApnId != -1) {
+                    for (Object apnSetting : mAllApnSettings) {
+                        int id = (int) ((Object[]) apnSetting)[0];
+                        if (id == mPreferredApnId) {
+                            mPreferredApnSet = (int) ((Object[]) apnSetting)[28]; //update setId too
+                        }
+                    }
+                } else {
+                    mPreferredApnSet = 0; // db is emptied
+                }
                 logd("mPreferredApnId=" + mPreferredApnId);
             }
             return null;
@@ -396,6 +410,12 @@ public class DataProfileManagerTest extends TelephonyTest {
         Method method = DataProfileManager.class.getDeclaredMethod("dedupeDataProfiles", cArgs);
         method.setAccessible(true);
         method.invoke(mDataProfileManagerUT, dataProfiles);
+    }
+
+    private @NonNull List<DataProfile> getAllDataProfiles() throws Exception {
+        Field field = DataProfileManager.class.getDeclaredField("mAllDataProfiles");
+        field.setAccessible(true);
+        return (List<DataProfile>) field.get(mDataProfileManagerUT);
     }
 
     @Before
@@ -851,5 +871,80 @@ public class DataProfileManagerTest extends TelephonyTest {
         // There should be no preferred APN after APN reset
         assertThat(mDataProfileManagerUT.isAnyPreferredDataProfileExisting()).isFalse();
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isFalse();
+    }
+
+    @Test
+    public void testResetApnWithPreferredConfig() {
+        // carrier configured preferred data profile should be picked
+        doReturn(GENERAL_PURPOSE_APN1).when(mDataConfigManager).getDefaultPreferredApn();
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(), mPhone);
+        mSimInserted = true;
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // The carrier configured data profile should be the preferred APN after APN reset
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE);
+
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN1);
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
+
+        // APN reset
+        mPreferredApnId = -1;
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        Mockito.clearInvocations(mDataConfigManager);
+        processAllMessages();
+
+        // The carrier configured data profile should be the preferred APN after APN reset
+        dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE);
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN1);
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
+    }
+
+    @Test
+    public void testTetheringApnExisting() {
+        assertThat(mDataProfileManagerUT.isTetheringDataProfileExisting(
+                TelephonyManager.NETWORK_TYPE_NR)).isTrue();
+        assertThat(mDataProfileManagerUT.isTetheringDataProfileExisting(
+                TelephonyManager.NETWORK_TYPE_LTE)).isFalse();
+    }
+
+    @Test
+    public void testTetheringApnDisabledForRoaming() {
+        doReturn(true).when(mDataConfigManager).isTetheringProfileDisabledForRoaming();
+
+        assertThat(mDataProfileManagerUT.isTetheringDataProfileExisting(
+                TelephonyManager.NETWORK_TYPE_NR)).isTrue();
+
+        ServiceState ss = new ServiceState();
+
+        ss.addNetworkRegistrationInfo(new NetworkRegistrationInfo.Builder()
+                .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_NR)
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING)
+                .setDomain(NetworkRegistrationInfo.DOMAIN_PS)
+                .build());
+
+        ss.setDataRoamingFromRegistration(true);
+        doReturn(ss).when(mSST).getServiceState();
+        doReturn(ss).when(mPhone).getServiceState();
+
+        assertThat(mDataProfileManagerUT.isTetheringDataProfileExisting(
+                TelephonyManager.NETWORK_TYPE_NR)).isFalse();
+    }
+
+    @Test
+    public void testNoDefaultIms() throws Exception {
+        List<DataProfile> dataProfiles = getAllDataProfiles();
+
+        // Since the database already had IMS, there should not be default IMS created in the
+        // database.
+        assertThat(dataProfiles.stream()
+                .filter(dp -> dp.canSatisfy(NetworkCapabilities.NET_CAPABILITY_IMS))
+                .collect(Collectors.toList())).hasSize(1);
     }
 }
