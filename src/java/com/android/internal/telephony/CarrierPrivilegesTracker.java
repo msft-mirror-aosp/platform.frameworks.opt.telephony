@@ -31,6 +31,8 @@ import static android.telephony.TelephonyManager.SIM_STATE_NOT_READY;
 import static android.telephony.TelephonyManager.SIM_STATE_READY;
 import static android.telephony.TelephonyManager.SIM_STATE_UNKNOWN;
 
+import static com.android.internal.telephony.SubscriptionInfoUpdater.simStateString;
+
 import android.annotation.ElapsedRealtimeLong;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -106,11 +108,14 @@ public class CarrierPrivilegesTracker extends Handler {
     private static final String SHA_1 = "SHA-1";
     private static final String SHA_256 = "SHA-256";
 
+    // TODO(b/232273884): Turn feature on when find solution to handle the inter-carriers switching
     /**
      * Time delay to clear UICC rules after UICC is gone.
      * This introduces the grace period to retain carrier privileges when SIM is removed.
+     *
+     * This feature is off by default due to the security concern during inter-carriers switching.
      */
-    private static final long CLEAR_UICC_RULES_DELAY_MILLIS = TimeUnit.SECONDS.toMillis(30);
+    private static final long CLEAR_UICC_RULES_DELAY_MILLIS = TimeUnit.SECONDS.toMillis(0);
 
     /**
      * PackageManager flags used to query installed packages.
@@ -177,6 +182,11 @@ public class CarrierPrivilegesTracker extends Handler {
      * Action to clear UICC rules.
      */
     private static final int ACTION_CLEAR_UICC_RULES = 9;
+
+    /**
+     * Action to handle the case when UiccAccessRules has been loaded.
+     */
+    private static final int ACTION_UICC_ACCESS_RULES_LOADED = 10;
 
     private final Context mContext;
     private final Phone mPhone;
@@ -430,6 +440,10 @@ public class CarrierPrivilegesTracker extends Handler {
                 handleClearUiccRules();
                 break;
             }
+            case ACTION_UICC_ACCESS_RULES_LOADED: {
+                handleUiccAccessRulesLoaded();
+                break;
+            }
             default: {
                 Rlog.e(TAG, "Received unknown msg type: " + msg.what);
                 break;
@@ -502,16 +516,8 @@ public class CarrierPrivilegesTracker extends Handler {
 
         // Only include the UICC rules if the SIM is fully loaded
         if (simState == SIM_STATE_LOADED) {
-            mClearUiccRulesUptimeMillis = CLEAR_UICC_RULE_NOT_SCHEDULED;
-            removeMessages(ACTION_CLEAR_UICC_RULES);
-
-            updatedUiccRules = getSimRules();
-
-            mLocalLog.log("SIM fully loaded:"
-                    + " slotId=" + slotId
-                    + " simState=" + simState
-                    + " updated SIM-loaded rules=" + updatedUiccRules);
-            maybeUpdateRulesAndNotifyRegistrants(mUiccRules, updatedUiccRules);
+            mLocalLog.log("SIM fully loaded, handleUiccAccessRulesLoaded.");
+            handleUiccAccessRulesLoaded();
         } else {
             if (!mUiccRules.isEmpty()
                     && mClearUiccRulesUptimeMillis == CLEAR_UICC_RULE_NOT_SCHEDULED) {
@@ -519,13 +525,29 @@ public class CarrierPrivilegesTracker extends Handler {
                         SystemClock.uptimeMillis() + CLEAR_UICC_RULES_DELAY_MILLIS;
                 sendMessageAtTime(obtainMessage(ACTION_CLEAR_UICC_RULES),
                         mClearUiccRulesUptimeMillis);
-                mLocalLog.log("SIM is gone. Delay " + TimeUnit.MILLISECONDS.toSeconds(
+                mLocalLog.log("SIM is gone, simState=" + simStateString(simState)
+                        + ". Delay " + TimeUnit.MILLISECONDS.toSeconds(
                         CLEAR_UICC_RULES_DELAY_MILLIS) + " seconds to clear UICC rules.");
             } else {
                 mLocalLog.log(
                         "Ignore SIM gone event while UiccRules is empty or waiting to be emptied.");
             }
         }
+    }
+
+    private void handleUiccAccessRulesLoaded() {
+        mClearUiccRulesUptimeMillis = CLEAR_UICC_RULE_NOT_SCHEDULED;
+        removeMessages(ACTION_CLEAR_UICC_RULES);
+
+        List<UiccAccessRule> updatedUiccRules = getSimRules();
+        mLocalLog.log("UiccAccessRules loaded:"
+                + " updated SIM-loaded rules=" + updatedUiccRules);
+        maybeUpdateRulesAndNotifyRegistrants(mUiccRules, updatedUiccRules);
+    }
+
+    /** Called when UiccAccessRules has been loaded */
+    public void onUiccAccessRulesLoaded() {
+        sendEmptyMessage(ACTION_UICC_ACCESS_RULES_LOADED);
     }
 
     private void handleClearUiccRules() {
@@ -574,9 +596,11 @@ public class CarrierPrivilegesTracker extends Handler {
         // installed for a user it wasn't installed in before, which means there will be an
         // additional UID.
         getUidsForPackage(pkg.packageName, /* invalidateCache= */ true);
-        mLocalLog.log("Package added/replaced/changed:"
-                + " pkg=" + Rlog.pii(TAG, pkgName)
-                + " cert hashes=" + mInstalledPackageCerts.get(pkgName));
+        if (VDBG) {
+            Rlog.d(TAG, "Package added/replaced/changed:"
+                    + " pkg=" + Rlog.pii(TAG, pkgName)
+                    + " cert hashes=" + mInstalledPackageCerts.get(pkgName));
+        }
 
         maybeUpdatePrivilegedPackagesAndNotifyRegistrants();
     }
@@ -603,7 +627,9 @@ public class CarrierPrivilegesTracker extends Handler {
             return;
         }
 
-        mLocalLog.log("Package removed or disabled by user: pkg=" + Rlog.pii(TAG, pkgName));
+        if (VDBG) {
+            Rlog.d(TAG, "Package removed or disabled by user: pkg=" + Rlog.pii(TAG, pkgName));
+        }
 
         maybeUpdatePrivilegedPackagesAndNotifyRegistrants();
     }

@@ -102,6 +102,8 @@ public class DataNetworkTest extends TelephonyTest {
     private static final int ADMIN_UID1 = 1234;
     private static final int ADMIN_UID2 = 5678;
 
+    private static final int DEFAULT_MTU = 1501;
+
     private static final String FAKE_IMSI = "123456789";
 
     private DataNetwork mDataNetworkUT;
@@ -181,6 +183,7 @@ public class DataNetworkTest extends TelephonyTest {
     // Mocked classes
     private DataNetworkCallback mDataNetworkCallback;
     private DataCallSessionStats mDataCallSessionStats;
+    private PhoneSwitcher mMockedPhoneSwitcher;
 
     private final NetworkRegistrationInfo mIwlanNetworkRegistrationInfo =
             new NetworkRegistrationInfo.Builder()
@@ -217,7 +220,6 @@ public class DataNetworkTest extends TelephonyTest {
                             InetAddresses.parseNumericAddress("fd00:976a:c202:1d::7"),
                             InetAddresses.parseNumericAddress("fd00:976a:c305:1d::5")))
                     .setMtuV4(1234)
-                    .setMtuV6(5678)
                     .setPduSessionId(1)
                     .setQosBearerSessions(new ArrayList<>())
                     .setTrafficDescriptors(tds)
@@ -300,6 +302,8 @@ public class DataNetworkTest extends TelephonyTest {
 
         mDataNetworkCallback = Mockito.mock(DataNetworkCallback.class);
         mDataCallSessionStats = Mockito.mock(DataCallSessionStats.class);
+        mMockedPhoneSwitcher = Mockito.mock(PhoneSwitcher.class);
+        replaceInstance(PhoneSwitcher.class, "sPhoneSwitcher", null, mMockedPhoneSwitcher);
         doAnswer(invocation -> {
             ((Runnable) invocation.getArguments()[0]).run();
             return null;
@@ -315,6 +319,7 @@ public class DataNetworkTest extends TelephonyTest {
                 .when(mDataConfigManager).getBandwidthEstimateSource();
         doReturn(true).when(mDataConfigManager).isTempNotMeteredSupportedByCarrier();
         doReturn(true).when(mDataConfigManager).isImsDelayTearDownEnabled();
+        doReturn(DEFAULT_MTU).when(mDataConfigManager).getDefaultMtu();
         doReturn(FAKE_IMSI).when(mPhone).getSubscriberId();
         doReturn(true).when(mDataNetworkController)
                 .isNetworkRequestExisting(any(TelephonyNetworkRequest.class));
@@ -399,9 +404,10 @@ public class DataNetworkTest extends TelephonyTest {
         assertThat(lp.getRoutes().get(0).getMtu()).isEqualTo(1234);
         assertThat(lp.getRoutes().get(1).getGateway()).isEqualTo(
                 InetAddresses.parseNumericAddress("fe80::2"));
-        assertThat(lp.getRoutes().get(1).getMtu()).isEqualTo(5678);
+        // The default from carrier configs should be used if MTU is not set.
+        assertThat(lp.getRoutes().get(1).getMtu()).isEqualTo(DEFAULT_MTU);
         // The higher value of v4 and v6 should be used.
-        assertThat(lp.getMtu()).isEqualTo(5678);
+        assertThat(lp.getMtu()).isEqualTo(DEFAULT_MTU);
 
         ArgumentCaptor<PreciseDataConnectionState> pdcsCaptor =
                 ArgumentCaptor.forClass(PreciseDataConnectionState.class);
@@ -1213,45 +1219,10 @@ public class DataNetworkTest extends TelephonyTest {
         logd("Trigger non VoPS");
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME, dsri);
-        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
-                NetworkCapabilities.NET_CAPABILITY_MMTEL)).isFalse();
-    }
-
-    @Test
-    public void testMovingToNonVopsVoiceCallOngoing() throws Exception {
-        DataSpecificRegistrationInfo dsri = new DataSpecificRegistrationInfo(8, false, true, true,
-                new LteVopsSupportInfo(LteVopsSupportInfo.LTE_STATUS_SUPPORTED,
-                        LteVopsSupportInfo.LTE_STATUS_SUPPORTED));
-        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
-                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, dsri);
-        testCreateImsDataNetwork();
-
+        // MMTEL should not be removed.
         assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
                 NetworkCapabilities.NET_CAPABILITY_MMTEL)).isTrue();
-
-        // Voice call ongoing.
-        doReturn(PhoneConstants.State.OFFHOOK).when(mImsCT).getState();
-
-        dsri = new DataSpecificRegistrationInfo(8, false, true, true,
-                new LteVopsSupportInfo(LteVopsSupportInfo.LTE_STATUS_NOT_SUPPORTED,
-                        LteVopsSupportInfo.LTE_STATUS_NOT_SUPPORTED));
-        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
-                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, dsri);
-
-        // Should not lose MMTEL since voice call is ongoing
-        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
-                NetworkCapabilities.NET_CAPABILITY_MMTEL)).isTrue();
-
-        // Voice call ended.
-        doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
-        mDataNetworkUT.sendMessage(23/*EVENT_VOICE_CALL_ENDED*/);
-        processAllMessages();
-
-        // MMTEL should be removed.
-        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
-                NetworkCapabilities.NET_CAPABILITY_MMTEL)).isFalse();
     }
-
 
     @Test
     public void testCssIndicatorChanged() throws Exception {
