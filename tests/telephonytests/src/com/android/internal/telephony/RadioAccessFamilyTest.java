@@ -28,10 +28,10 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 @RunWith(AndroidTestingRunner.class)
-public class RadioAccessFamilyTest {
+public class RadioAccessFamilyTest extends TelephonyTest {
     @Test
     @SmallTest
-    public void testCompareSameFamily() {
+    public void testCompareSameFamily() throws Exception {
         // same family same number results in no clear winner
         assertEquals(0, RadioAccessFamily.compare(
                     TelephonyManager.NETWORK_TYPE_BITMASK_HSUPA,
@@ -47,7 +47,7 @@ public class RadioAccessFamilyTest {
 
     @Test
     @SmallTest
-    public void testComparedGreatestUnique() {
+    public void testComparedGreatestUnique() throws Exception {
         // Because LHS supports a unique higher-generation RAT, prefer that to a large list of
         // older RATs. Since RHS is greater, compare should be positive.
         assertTrue(0 < RadioAccessFamily.compare(

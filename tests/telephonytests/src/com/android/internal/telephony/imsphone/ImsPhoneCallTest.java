@@ -21,7 +21,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -41,10 +40,12 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.mockito.Mock;
 
 public class ImsPhoneCallTest extends TelephonyTest {
-    // Mocked classes
+    @Mock
     ImsPhoneConnection mConnection1;
+    @Mock
     ImsPhoneConnection mConnection2;
 
     ImsStreamMediaProfile mMediaProfile;
@@ -54,8 +55,6 @@ public class ImsPhoneCallTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mConnection1 = mock(ImsPhoneConnection.class);
-        mConnection2 = mock(ImsPhoneConnection.class);
         replaceInstance(ImsPhoneCallTracker.class, "mPhone", mImsCT, mImsPhone);
 
         mImsCallUT = new ImsPhoneCall(mImsCT, ImsPhoneCall.CONTEXT_FOREGROUND);
@@ -66,7 +65,6 @@ public class ImsPhoneCallTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         mImsCallUT = null;
-        mMediaProfile = null;
         super.tearDown();
     }
 

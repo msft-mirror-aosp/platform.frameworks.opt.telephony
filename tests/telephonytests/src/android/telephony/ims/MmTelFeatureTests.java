@@ -124,10 +124,9 @@ public class MmTelFeatureTests extends ImsTestBase {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         mFeature = null;
         mFeatureBinder = null;
-        super.tearDown();
     }
 
     @SmallTest

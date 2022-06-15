@@ -26,7 +26,6 @@ import android.telephony.PhysicalChannelConfig.Builder;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
 
-import org.junit.After;
 import org.junit.Test;
 
 /** Unit test for {@link android.telephony.PhysicalChannelConfig}. */
@@ -62,11 +61,6 @@ public class PhysicalChannelConfigTest {
                 .setUplinkChannelNumber(uplinkChannelNumber)
                 .setBand(band)
                 .build();
-    }
-
-    @After
-    public void tearDown() {
-        mPhysicalChannelConfig = null;
     }
 
     @Test
@@ -131,9 +125,11 @@ public class PhysicalChannelConfigTest {
     @Test
     public void testFrequencyRangeWithoutBand() {
         try {
-            setUpPhysicalChannelConfig(NETWORK_TYPE_UMTS, 0, CHANNEL_NUMBER, CHANNEL_NUMBER, -1);
-            fail();
-        } catch (IllegalArgumentException expected) { }
+            setUpPhysicalChannelConfig(NETWORK_TYPE_UMTS, 0, CHANNEL_NUMBER, CHANNEL_NUMBER,
+                    ServiceState.FREQUENCY_RANGE_UNKNOWN);
+            fail("Frequency range: 0 is invalid.");
+        } catch (IllegalArgumentException e) {
+        }
     }
 
     @Test

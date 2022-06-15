@@ -27,7 +27,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.content.res.Resources;
 import android.os.AsyncResult;
 import android.os.Build;
 import android.os.Handler;
@@ -38,13 +37,13 @@ import android.os.PersistableBundle;
 import android.os.UserHandle;
 import android.preference.PreferenceManager;
 import android.service.carrier.CarrierIdentifier;
+import android.service.carrier.CarrierService;
 import android.service.euicc.EuiccProfileInfo;
 import android.service.euicc.EuiccService;
 import android.service.euicc.GetEuiccProfileInfoListResult;
 import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
-import android.telephony.SubscriptionManager.UsageSetting;
 import android.telephony.TelephonyManager;
 import android.telephony.TelephonyManager.SimState;
 import android.telephony.UiccAccessRule;
@@ -59,7 +58,6 @@ import com.android.internal.telephony.uicc.IccRecords;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccController;
-import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccSlot;
 import com.android.telephony.Rlog;
 
@@ -67,7 +65,6 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArraySet;
 
 /**
  *@hide
@@ -122,28 +119,6 @@ public class SubscriptionInfoUpdater extends Handler {
     private int mCurrentlyActiveUserId;
     private CarrierServiceBindHelper mCarrierServiceBindHelper;
 
-    private volatile boolean shouldRetryUpdateEmbeddedSubscriptions = false;
-    private final CopyOnWriteArraySet<Integer> retryUpdateEmbeddedSubscriptionCards =
-        new CopyOnWriteArraySet<>();
-    private final BroadcastReceiver mUserUnlockedReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (Intent.ACTION_USER_UNLOCKED.equals(intent.getAction())) {
-                // The LPA may not have been ready before user unlock, and so previous attempts
-                // to refresh the list of embedded subscriptions may have failed. This retries
-                // the refresh operation after user unlock.
-                if (shouldRetryUpdateEmbeddedSubscriptions) {
-                    logd("Retrying refresh embedded subscriptions after user unlock.");
-                    for (int cardId : retryUpdateEmbeddedSubscriptionCards){
-                        requestEmbeddedSubscriptionInfoListRefresh(cardId, null);
-                    }
-                    retryUpdateEmbeddedSubscriptionCards.clear();
-                    sContext.unregisterReceiver(mUserUnlockedReceiver);
-                }
-            }
-        }
-    };
-
     /**
      * Runnable with a boolean parameter. This is used in
      * updateEmbeddedSubscriptions(List<Integer> cardIds, @Nullable UpdateEmbeddedSubsCallback).
@@ -168,10 +143,6 @@ public class SubscriptionInfoUpdater extends Handler {
         mEuiccManager = (EuiccManager) sContext.getSystemService(Context.EUICC_SERVICE);
 
         mCarrierServiceBindHelper = new CarrierServiceBindHelper(sContext);
-
-        sContext.registerReceiver(
-                mUserUnlockedReceiver, new IntentFilter(Intent.ACTION_USER_UNLOCKED));
-
         initializeCarrierApps();
 
         PhoneConfigurationManager.registerForMultiSimConfigChange(
@@ -216,12 +187,12 @@ public class SubscriptionInfoUpdater extends Handler {
     }
 
     /**
-     * Update subscriptions if needed when there's a change in inactive port.
-     * @param prevActivePhoneId is the corresponding phoneId of the port if port was previously
+     * Update subscriptions if needed when there's a change in inactive slot.
+     * @param prevActivePhoneId is the corresponding phoneId of the slot if slot was previously
      *                          active. It could be INVALID if it was already inactive.
-     * @param iccId iccId in that port, if any.
+     * @param iccId iccId in that slot, if any.
      */
-    public void updateInternalIccStateForInactivePort(int prevActivePhoneId, String iccId) {
+    public void updateInternalIccStateForInactiveSlot(int prevActivePhoneId, String iccId) {
         sendMessage(obtainMessage(EVENT_INACTIVE_SLOT_ICC_STATE_CHANGED, prevActivePhoneId,
                 0, iccId));
     }
@@ -248,16 +219,12 @@ public class SubscriptionInfoUpdater extends Handler {
         for (int i = 0; i < TelephonyManager.getDefault().getActiveModemCount(); i++) {
             UiccSlot slot = UiccController.getInstance().getUiccSlotForPhone(i);
             int slotId = UiccController.getInstance().getSlotIdFromPhoneId(i);
-            // When psim card is absent there is no port object even the port state is active.
-            // We should check the slot state for psim and port state for esim(MEP eUICC).
-            if  (sIccId[i] == null || slot == null || !slot.isActive()
-                    || (slot.isEuicc() && UiccController.getInstance().getUiccPort(i) == null)) {
+            if  (sIccId[i] == null || slot == null || !slot.isActive()) {
                 if (sIccId[i] == null) {
                     logd("Wait for SIM " + i + " Iccid");
                 } else {
-                    logd(String.format("Wait for port corresponding to phone %d to be active, "
-                        + "slotId is %d" + " , portIndex is %d", i, slotId,
-                            slot.getPortIndexFromPhoneId(i)));
+                    logd(String.format("Wait for slot corresponding to phone %d to be active, "
+                            + "slotId is %d", i, slotId));
                 }
                 return false;
             }
@@ -294,7 +261,7 @@ public class SubscriptionInfoUpdater extends Handler {
                 break;
 
             case EVENT_INACTIVE_SLOT_ICC_STATE_CHANGED:
-                handleInactivePortIccStateChange(msg.arg1, (String) msg.obj);
+                handleInactiveSlotIccStateChange(msg.arg1, (String) msg.obj);
                 break;
 
             case EVENT_SIM_LOCKED:
@@ -448,10 +415,9 @@ public class SubscriptionInfoUpdater extends Handler {
         }
 
         // ICCID is not available in IccRecords by the time SIM Ready event received
-        // hence get ICCID from UiccPort.
-        UiccPort port = UiccController.getInstance().getUiccPort(phoneId);
-        String iccId = (port == null) ? null : IccUtils.stripTrailingFs(port.getIccId());
-
+        // hence get ICCID from UiccSlot.
+        UiccSlot uiccSlot = UiccController.getInstance().getUiccSlotForPhone(phoneId);
+        String iccId = (uiccSlot != null) ? IccUtils.stripTrailingFs(uiccSlot.getIccId()) : null;
         if (!TextUtils.isEmpty(iccId)) {
             sIccId[phoneId] = iccId;
             updateSubscriptionInfoByIccId(phoneId, true /* updateEmbeddedSubs */);
@@ -476,9 +442,8 @@ public class SubscriptionInfoUpdater extends Handler {
         boolean uiccAppsDisabled = areUiccAppsDisabledOnCard(phoneId);
         if (iccCard.isEmptyProfile() || uiccAppsDisabled) {
             if (uiccAppsDisabled) {
-                UiccPort port = UiccController.getInstance().getUiccPort(phoneId);
-                String iccId = (port == null) ? null : port.getIccId();
-                sInactiveIccIds[phoneId] = IccUtils.stripTrailingFs(iccId);
+                UiccSlot slot = UiccController.getInstance().getUiccSlotForPhone(phoneId);
+                sInactiveIccIds[phoneId] = IccUtils.stripTrailingFs(slot.getIccId());
             }
             isFinalState = true;
             // ICC_NOT_READY is a terminal state for
@@ -506,15 +471,10 @@ public class SubscriptionInfoUpdater extends Handler {
         // cardStatus (since IRadio 1.2). Amd upon cardStatus change we'll receive another
         // handleSimNotReady so this will be evaluated again.
         UiccSlot slot = UiccController.getInstance().getUiccSlotForPhone(phoneId);
-        if (slot == null) return false;
-        UiccPort port = UiccController.getInstance().getUiccPort(phoneId);
-        String iccId = (port == null) ? null : port.getIccId();
-        if (iccId == null) {
-            return false;
-        }
+        if (slot == null || slot.getIccId() == null) return false;
         SubscriptionInfo info =
                 mSubscriptionController.getSubInfoForIccId(
-                        IccUtils.stripTrailingFs(iccId));
+                        IccUtils.stripTrailingFs(slot.getIccId()));
         return info != null && !info.areUiccApplicationsEnabled();
     }
 
@@ -631,72 +591,12 @@ public class SubscriptionInfoUpdater extends Handler {
         updateCarrierServices(phoneId, IccCardConstants.INTENT_VALUE_ICC_LOADED);
     }
 
-    /**
-     * Calculate the usage setting based on the carrier request.
-     *
-     * @param currentUsageSetting the current setting in the subscription DB
-     * @param preferredUsageSetting provided by the carrier config
-     * @return the calculated usage setting.
-     */
-    @VisibleForTesting
-    @UsageSetting public int calculateUsageSetting(
-            @UsageSetting int currentUsageSetting, @UsageSetting int preferredUsageSetting) {
-        int defaultUsageSetting;
-        int[] supportedUsageSettings;
-
-        //  Load the resources to provide the device capability
-        try {
-            defaultUsageSetting = sContext.getResources().getInteger(
-                com.android.internal.R.integer.config_default_cellular_usage_setting);
-            supportedUsageSettings = sContext.getResources().getIntArray(
-                com.android.internal.R.array.config_supported_cellular_usage_settings);
-            // If usage settings are not supported, return the default setting, which is UNKNOWN.
-            if (supportedUsageSettings == null
-                    || supportedUsageSettings.length < 1) return currentUsageSetting;
-        } catch (Resources.NotFoundException nfe) {
-            loge("Failed to load usage setting resources!");
-            return currentUsageSetting;
-        }
-
-        // If the current setting is invalid, including the first time the value is set,
-        // update it to default (this will trigger a change in the DB).
-        if (currentUsageSetting < SubscriptionManager.USAGE_SETTING_DEFAULT
-                || currentUsageSetting > SubscriptionManager.USAGE_SETTING_DATA_CENTRIC) {
-            logd("Updating usage setting for current subscription");
-            currentUsageSetting = SubscriptionManager.USAGE_SETTING_DEFAULT;
-        }
-
-        // Range check the inputs, and on failure, make no changes
-        if (preferredUsageSetting < SubscriptionManager.USAGE_SETTING_DEFAULT
-                || preferredUsageSetting > SubscriptionManager.USAGE_SETTING_DATA_CENTRIC) {
-            loge("Invalid usage setting!" + preferredUsageSetting);
-            return currentUsageSetting;
-        }
-
-        // Default is always allowed
-        if (preferredUsageSetting == SubscriptionManager.USAGE_SETTING_DEFAULT) {
-            return preferredUsageSetting;
-        }
-
-        // Forced setting must be explicitly supported
-        for (int i = 0; i < supportedUsageSettings.length; i++) {
-            if (preferredUsageSetting == supportedUsageSettings[i]) return preferredUsageSetting;
-        }
-
-        // If the preferred setting is not possible, just keep the current setting.
-        return currentUsageSetting;
-    }
-
     private void restoreSimSpecificSettingsForPhone(int phoneId) {
         SubscriptionManager subManager = SubscriptionManager.from(sContext);
         subManager.restoreSimSpecificSettingsForIccIdFromBackup(sIccId[phoneId]);
     }
 
     private void updateCarrierServices(int phoneId, String simState) {
-        if (!SubscriptionManager.isValidPhoneId(phoneId)) {
-            logd("Ignore updateCarrierServices request with invalid phoneId " + phoneId);
-            return;
-        }
         CarrierConfigManager configManager =
                 (CarrierConfigManager) sContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
         configManager.updateConfigForPhoneId(phoneId, simState);
@@ -710,10 +610,10 @@ public class SubscriptionInfoUpdater extends Handler {
     }
 
     /**
-     * PhoneId is the corresponding phoneId of the port if port was previously active.
+     * PhoneId is the corresponding phoneId of the slot if slot was previously active.
      * It could be INVALID if it was already inactive.
      */
-    private void handleInactivePortIccStateChange(int phoneId, String iccId) {
+    private void handleInactiveSlotIccStateChange(int phoneId, String iccId) {
         if (SubscriptionManager.isValidPhoneId(phoneId)) {
             // If phoneId is valid, it means the physical slot was previously active in that
             // phoneId. In this case, found the subId and set its phoneId to invalid.
@@ -759,12 +659,8 @@ public class SubscriptionInfoUpdater extends Handler {
             }
             String iccId = sInactiveIccIds[phoneId] != null
                     ? sInactiveIccIds[phoneId] : sIccId[phoneId];
-            ContentValues value = new ContentValues();
+            ContentValues value = new ContentValues(1);
             value.put(SubscriptionManager.UICC_APPLICATIONS_ENABLED, true);
-            if (isSimAbsent) {
-                // When sim is absent, set the port index to invalid port index -1;
-                value.put(SubscriptionManager.PORT_INDEX, TelephonyManager.INVALID_PORT_INDEX);
-            }
             sContext.getContentResolver().update(SubscriptionManager.CONTENT_URI, value,
                     SubscriptionManager.ICC_ID + "=\'" + iccId + "\'", null);
             sInactiveIccIds[phoneId] = null;
@@ -914,7 +810,6 @@ public class SubscriptionInfoUpdater extends Handler {
         // Do nothing if eUICCs are disabled. (Previous entries may remain in the cache, but they
         // are filtered out of list calls as long as EuiccManager.isEnabled returns false).
         if (!mEuiccManager.isEnabled()) {
-            if (DBG) logd("updateEmbeddedSubscriptions: eUICC not enabled");
             callback.run(false /* hasChanges */);
             return;
         }
@@ -959,9 +854,7 @@ public class SubscriptionInfoUpdater extends Handler {
         if (DBG) logd("updateEmbeddedSubscriptionsCache");
 
         if (result == null) {
-            if (DBG) logd("updateEmbeddedSubscriptionsCache: IPC to the eUICC controller failed");
-            retryUpdateEmbeddedSubscriptionCards.add(cardId);
-            shouldRetryUpdateEmbeddedSubscriptions = true;
+            // IPC to the eUICC controller failed.
             return false;
         }
 
@@ -1047,8 +940,6 @@ public class SubscriptionInfoUpdater extends Handler {
                         SubscriptionManager.NAME_SOURCE_CARRIER);
             }
             values.put(SubscriptionManager.PROFILE_CLASS, embeddedProfile.getProfileClass());
-            values.put(SubscriptionManager.PORT_INDEX,
-                    getEmbeddedProfilePortIndex(embeddedProfile.getIccid()));
             CarrierIdentifier cid = embeddedProfile.getCarrierIdentifier();
             if (cid != null) {
                 // Due to the limited subscription information, carrier id identified here might
@@ -1075,7 +966,7 @@ public class SubscriptionInfoUpdater extends Handler {
             }
             hasChanges = true;
             contentResolver.update(SubscriptionManager.CONTENT_URI, values,
-                    SubscriptionManager.ICC_ID + "='" + embeddedProfile.getIccid() + "'", null);
+                    SubscriptionManager.ICC_ID + "=\"" + embeddedProfile.getIccid() + "\"", null);
 
             // refresh Cached Active Subscription Info List
             mSubscriptionController.refreshCachedActiveSubscriptionInfoList();
@@ -1095,7 +986,7 @@ public class SubscriptionInfoUpdater extends Handler {
                 SubscriptionInfo info = existingSubscriptions.get(i);
                 if (info.isEmbedded()) {
                     if (DBG) logd("Removing embedded subscription of IccId " + info.getIccId());
-                    iccidsToRemove.add("'" + info.getIccId() + "'");
+                    iccidsToRemove.add("\"" + info.getIccId() + "\"");
                 }
             }
             String whereClause = SubscriptionManager.ICC_ID + " IN ("
@@ -1113,16 +1004,6 @@ public class SubscriptionInfoUpdater extends Handler {
         return hasChanges;
     }
 
-    private int getEmbeddedProfilePortIndex(String iccId) {
-        UiccSlot[] slots = UiccController.getInstance().getUiccSlots();
-        for (UiccSlot slot : slots) {
-            if (slot != null && slot.isEuicc()
-                    && slot.getPortIndexFromIccId(iccId) != TelephonyManager.INVALID_PORT_INDEX) {
-                return slot.getPortIndexFromIccId(iccId);
-            }
-        }
-        return TelephonyManager.INVALID_PORT_INDEX;
-    }
     /**
      * Called by CarrierConfigLoader to update the subscription before sending a broadcast.
      */
@@ -1143,10 +1024,11 @@ public class SubscriptionInfoUpdater extends Handler {
     private boolean isCarrierServicePackage(int phoneId, String pkgName) {
         if (pkgName.equals(getDefaultCarrierServicePackageName())) return false;
 
-        String carrierPackageName = TelephonyManager.from(sContext)
-                .getCarrierServicePackageNameForLogicalSlot(phoneId);
-        if (DBG) logd("Carrier service package for subscription = " + carrierPackageName);
-        return pkgName.equals(carrierPackageName);
+        List<String> carrierPackageNames = TelephonyManager.from(sContext)
+                .getCarrierPackageNamesForIntentAndPhone(
+                        new Intent(CarrierService.CARRIER_SERVICE_INTERFACE), phoneId);
+        if (DBG) logd("Carrier Packages For Subscription = " + carrierPackageNames);
+        return carrierPackageNames != null && carrierPackageNames.contains(pkgName);
     }
 
     /**
@@ -1224,33 +1106,6 @@ public class SubscriptionInfoUpdater extends Handler {
                 }
             }
         }
-
-        final int preferredUsageSetting =
-                config.getInt(
-                        CarrierConfigManager.KEY_CELLULAR_USAGE_SETTING_INT,
-                        SubscriptionManager.USAGE_SETTING_UNKNOWN);
-
-        @UsageSetting int newUsageSetting = calculateUsageSetting(
-                currentSubInfo.getUsageSetting(),
-                preferredUsageSetting);
-
-        if (newUsageSetting != currentSubInfo.getUsageSetting()) {
-            cv.put(SubscriptionManager.USAGE_SETTING, newUsageSetting);
-            if (DBG) {
-                logd("UsageSetting changed,"
-                        + " oldSetting=" + currentSubInfo.getUsageSetting()
-                        + " preferredSetting=" + preferredUsageSetting
-                        + " newSetting=" + newUsageSetting);
-            }
-        } else {
-            if (DBG) {
-                logd("UsageSetting unchanged,"
-                        + " oldSetting=" + currentSubInfo.getUsageSetting()
-                        + " preferredSetting=" + preferredUsageSetting
-                        + " newSetting=" + newUsageSetting);
-            }
-        }
-
         if (cv.size() > 0 && sContext.getContentResolver().update(SubscriptionManager
                     .getUriForSubscriptionId(currentSubId), cv, null, null) > 0) {
             mSubscriptionController.refreshCachedActiveSubscriptionInfoList();
@@ -1293,15 +1148,10 @@ public class SubscriptionInfoUpdater extends Handler {
             SubscriptionManager.putPhoneIdAndSubIdExtra(i, phoneId);
             // TODO(b/130664115) we manually populate this intent with the slotId. In the future we
             // should do a review of whether to make this public
-            UiccSlot slot = UiccController.getInstance().getUiccSlotForPhone(phoneId);
             int slotId = UiccController.getInstance().getSlotIdFromPhoneId(phoneId);
             i.putExtra(PhoneConstants.SLOT_KEY, slotId);
-            if (slot != null) {
-                i.putExtra(PhoneConstants.PORT_KEY, slot.getPortIndexFromPhoneId(phoneId));
-            }
             logd("Broadcasting intent ACTION_SIM_CARD_STATE_CHANGED " + simStateString(state)
-                    + " for phone: " + phoneId + " slot: " + slotId + " port: "
-                    + slot.getPortIndexFromPhoneId(phoneId));
+                    + " for phone: " + phoneId + " slot: " + slotId);
             sContext.sendBroadcast(i, Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
             TelephonyMetrics.getInstance().updateSimState(phoneId, state);
         }
@@ -1325,15 +1175,10 @@ public class SubscriptionInfoUpdater extends Handler {
             SubscriptionManager.putPhoneIdAndSubIdExtra(i, phoneId);
             // TODO(b/130664115) we populate this intent with the actual slotId. In the future we
             // should do a review of whether to make this public
-            UiccSlot slot = UiccController.getInstance().getUiccSlotForPhone(phoneId);
             int slotId = UiccController.getInstance().getSlotIdFromPhoneId(phoneId);
             i.putExtra(PhoneConstants.SLOT_KEY, slotId);
-            if (slot != null) {
-                i.putExtra(PhoneConstants.PORT_KEY, slot.getPortIndexFromPhoneId(phoneId));
-            }
             logd("Broadcasting intent ACTION_SIM_APPLICATION_STATE_CHANGED " + simStateString(state)
-                    + " for phone: " + phoneId + " slot: " + slotId + "port: "
-                    + slot.getPortIndexFromPhoneId(phoneId));
+                    + " for phone: " + phoneId + " slot: " + slotId);
             sContext.sendBroadcast(i, Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
             TelephonyMetrics.getInstance().updateSimState(phoneId, state);
         }

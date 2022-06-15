@@ -26,7 +26,6 @@ import android.os.Message;
 import android.os.ResultReceiver;
 import android.os.WorkSource;
 import android.telecom.VideoProfile;
-import android.telephony.Annotation.DataActivityType;
 import android.telephony.ImsiEncryptionInfo;
 import android.telephony.NetworkScanRequest;
 import android.telephony.PreciseDataConnectionState;
@@ -209,7 +208,6 @@ public interface PhoneInternalInterface {
     static final String REASON_IWLAN_DATA_SERVICE_DIED = "iwlanDataServiceDied";
     static final String REASON_VCN_REQUESTED_TEARDOWN = "vcnRequestedTeardown";
     static final String REASON_DATA_UNTHROTTLED = "dataUnthrottled";
-    static final String REASON_TRAFFIC_DESCRIPTORS_UPDATED = "trafficDescriptorsUpdated";
 
     // Reasons for Radio being powered off
     int RADIO_POWER_REASON_USER = 0;
@@ -313,10 +311,11 @@ public interface PhoneInternalInterface {
     PreciseDataConnectionState getPreciseDataConnectionState(String apnType);
 
     /**
-     * Get the current data activity. No change notification exists at this
-     * interface.
+     * Get the current DataActivityState. No change notification exists at this
+     * interface -- use
+     * {@link android.telephony.TelephonyManager} instead.
      */
-    @DataActivityType int getDataActivityState();
+    DataActivityState getDataActivityState();
 
     /**
      * Returns a list of MMI codes that are pending. (They have initiated
@@ -1097,10 +1096,4 @@ public interface PhoneInternalInterface {
      *  their mobile plan.
      */
     String getMobileProvisioningUrl();
-
-    /**
-     * Update the cellular usage setting if applicable.
-     */
-    boolean updateUsageSetting();
-
 }

@@ -19,7 +19,6 @@ import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -32,10 +31,13 @@ import android.telephony.SignalStrength;
 import android.telephony.TelephonyManager;
 import android.test.suitebuilder.annotation.SmallTest;
 
+import com.android.internal.telephony.PhoneInternalInterface.DataActivityState;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -46,28 +48,25 @@ public class DefaultPhoneNotifierTest extends TelephonyTest {
     private static final int SUB_ID = 0;
 
     private DefaultPhoneNotifier mDefaultPhoneNotifierUT;
-
-    // Mocked classes
+    @Mock
     SignalStrength mSignalStrength;
+    @Mock
     CellInfo mCellInfo;
+    @Mock
     GsmCdmaCall mForeGroundCall;
+    @Mock
     GsmCdmaCall mBackGroundCall;
+    @Mock
     GsmCdmaCall mRingingCall;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mSignalStrength = mock(SignalStrength.class);
-        mCellInfo = mock(CellInfo.class);
-        mForeGroundCall = mock(GsmCdmaCall.class);
-        mBackGroundCall = mock(GsmCdmaCall.class);
-        mRingingCall = mock(GsmCdmaCall.class);
         mDefaultPhoneNotifierUT = new DefaultPhoneNotifier(mContext);
     }
 
     @After
     public void tearDown() throws Exception {
-        mDefaultPhoneNotifierUT = null;
         super.tearDown();
     }
 
@@ -85,13 +84,13 @@ public class DefaultPhoneNotifierTest extends TelephonyTest {
     @Test @SmallTest
     public void testNotifyDataActivity() throws Exception {
         //mock data activity state
-        doReturn(TelephonyManager.DATA_ACTIVITY_NONE).when(mPhone).getDataActivityState();
+        doReturn(DataActivityState.NONE).when(mPhone).getDataActivityState();
         mDefaultPhoneNotifierUT.notifyDataActivity(mPhone);
         verify(mTelephonyRegistryManager).notifyDataActivityChanged(eq(0),
                 eq(TelephonyManager.DATA_ACTIVITY_NONE));
 
         doReturn(1).when(mPhone).getSubId();
-        doReturn(TelephonyManager.DATA_ACTIVITY_IN).when(mPhone).getDataActivityState();
+        doReturn(DataActivityState.DATAIN).when(mPhone).getDataActivityState();
         mDefaultPhoneNotifierUT.notifyDataActivity(mPhone);
         verify(mTelephonyRegistryManager).notifyDataActivityChanged(eq(1),
                 eq(TelephonyManager.DATA_ACTIVITY_IN));

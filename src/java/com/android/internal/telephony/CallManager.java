@@ -28,8 +28,8 @@ import android.telephony.PhoneNumberUtils;
 import android.telephony.PhoneStateListener;
 import android.telephony.ServiceState;
 
-import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.imsphone.ImsPhoneConnection;
+import com.android.internal.telephony.sip.SipPhone;
 import com.android.telephony.Rlog;
 
 import java.util.ArrayList;
@@ -61,14 +61,14 @@ public class CallManager {
     private static final boolean VDBG = false;
 
     private static final int EVENT_DISCONNECT = 100;
-    @VisibleForTesting static final int EVENT_PRECISE_CALL_STATE_CHANGED = 101;
+    private static final int EVENT_PRECISE_CALL_STATE_CHANGED = 101;
     private static final int EVENT_NEW_RINGING_CONNECTION = 102;
     private static final int EVENT_UNKNOWN_CONNECTION = 103;
     private static final int EVENT_INCOMING_RING = 104;
-    @VisibleForTesting static final int EVENT_RINGBACK_TONE = 105;
+    private static final int EVENT_RINGBACK_TONE = 105;
     private static final int EVENT_IN_CALL_VOICE_PRIVACY_ON = 106;
     private static final int EVENT_IN_CALL_VOICE_PRIVACY_OFF = 107;
-    @VisibleForTesting static final int EVENT_CALL_WAITING = 108;
+    private static final int EVENT_CALL_WAITING = 108;
     private static final int EVENT_DISPLAY_INFO = 109;
     private static final int EVENT_SIGNAL_INFO = 110;
     private static final int EVENT_CDMA_OTA_STATUS_CHANGE = 111;
@@ -500,6 +500,11 @@ public class CallManager {
                 }
 
                 int newAudioMode = AudioManager.MODE_IN_CALL;
+                if (offhookPhone instanceof SipPhone) {
+                    Rlog.d(LOG_TAG, "setAudioMode Set audio mode for SIP call!");
+                    // enable IN_COMMUNICATION audio mode instead for sipPhone
+                    newAudioMode = AudioManager.MODE_IN_COMMUNICATION;
+                }
                 int currMode = audioManager.getMode();
                 if (currMode != newAudioMode || mSpeedUpAudioForMtCall) {
                     // request audio focus before setting the new mode
@@ -734,7 +739,9 @@ public class CallManager {
 
         Phone fgPhone = getFgPhone(subId);
         if (fgPhone != null) {
-            if (canConference(heldCall)) {
+            if (fgPhone instanceof SipPhone) {
+                ((SipPhone) fgPhone).conference(heldCall);
+            } else if (canConference(heldCall)) {
                 fgPhone.conference();
             } else {
                 throw(new CallStateException("Can't conference foreground and selected background call"));
@@ -1665,7 +1672,8 @@ public class CallManager {
     }
 
     /**
-     * Return true if there is at least one active foreground call on a particular subId
+     * Return true if there is at least one active foreground call
+     * on a particular subId or an active sip call
      */
     @UnsupportedAppUsage
     public boolean hasActiveFgCall(int subId) {
@@ -1683,7 +1691,8 @@ public class CallManager {
     }
 
     /**
-     * Return true if there is at least one active background call on a particular subId
+     * Return true if there is at least one active background call
+     * on a particular subId or an active sip call
      */
     @UnsupportedAppUsage
     public boolean hasActiveBgCall(int subId) {
@@ -1760,7 +1769,8 @@ public class CallManager {
     private Call getFirstNonIdleCall(List<Call> calls, int subId) {
         Call result = null;
         for (Call call : calls) {
-            if (call.getPhone().getSubId() == subId) {
+            if ((call.getPhone().getSubId() == subId) ||
+                    (call.getPhone() instanceof SipPhone)) {
                 if (!call.isIdle()) {
                     return call;
                 } else if (call.getState() != Call.State.IDLE) {
@@ -1801,7 +1811,8 @@ public class CallManager {
      *
      * Active call means the call is NOT idle defined by Call.isIdle()
      *
-     * 1. If there is only one active background call on given sub, return it
+     * 1. If there is only one active background call on given sub or
+     *    on SIP Phone, return it
      * 2. If there is more than one active background call, return the background call
      *    associated with the active sub.
      * 3. If there is no background call at all, return null.
@@ -1971,7 +1982,8 @@ public class CallManager {
      */
     private  Call getFirstActiveCall(ArrayList<Call> calls, int subId) {
         for (Call call : calls) {
-            if ((!call.isIdle()) && (call.getPhone().getSubId() == subId)) {
+            if ((!call.isIdle()) && ((call.getPhone().getSubId() == subId) ||
+                    (call.getPhone() instanceof SipPhone))) {
                 return call;
             }
         }
@@ -1996,7 +2008,9 @@ public class CallManager {
     private Call getFirstCallOfState(ArrayList<Call> calls, Call.State state,
             int subId) {
         for (Call call : calls) {
-            if ((call.getState() == state) || (call.getPhone().getSubId() == subId)) {
+            if ((call.getState() == state) ||
+                ((call.getPhone().getSubId() == subId) ||
+                (call.getPhone() instanceof SipPhone))) {
                 return call;
             }
         }
@@ -2017,14 +2031,17 @@ public class CallManager {
     /**
      * @return true if more than one active ringing call exists on
      * the active subId.
-     * This checks for the active calls on provided subId.
+     * This checks for the active calls on provided
+     * subId and also active calls on SIP Phone.
      *
      */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private boolean hasMoreThanOneRingingCall(int subId) {
         int count = 0;
         for (Call call : mRingingCalls) {
-            if ((call.getState().isRinging()) && (call.getPhone().getSubId() == subId)) {
+            if ((call.getState().isRinging()) &&
+                ((call.getPhone().getSubId() == subId) ||
+                (call.getPhone() instanceof SipPhone))) {
                 if (++count > 1) return true;
             }
         }
@@ -2034,13 +2051,16 @@ public class CallManager {
     /**
      * @return true if more than one active background call exists on
      * the provided subId.
-     * This checks for the background calls on provided subId.
+     * This checks for the background calls on provided
+     * subId and also background calls on SIP Phone.
      *
      */
     private boolean hasMoreThanOneHoldingCall(int subId) {
         int count = 0;
         for (Call call : mBackgroundCalls) {
-            if ((call.getState() == Call.State.HOLDING) && (call.getPhone().getSubId() == subId)) {
+            if ((call.getState() == Call.State.HOLDING) &&
+                ((call.getPhone().getSubId() == subId) ||
+                (call.getPhone() instanceof SipPhone))) {
                 if (++count > 1) return true;
             }
         }

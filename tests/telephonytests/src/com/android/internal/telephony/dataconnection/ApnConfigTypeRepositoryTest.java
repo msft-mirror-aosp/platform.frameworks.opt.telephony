@@ -22,7 +22,6 @@ import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
 import android.telephony.data.ApnSetting;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -36,11 +35,6 @@ public class ApnConfigTypeRepositoryTest {
     @Before
     public void setUp() throws Exception {
         mCarrierConfig = new PersistableBundle();
-    }
-
-    @After
-    public void tearDown() {
-        mCarrierConfig = null;
     }
 
     @Test

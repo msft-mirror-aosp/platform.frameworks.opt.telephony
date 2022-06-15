@@ -29,7 +29,6 @@ import static org.mockito.Matchers.anyInt;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -42,6 +41,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.location.Country;
 import android.location.CountryDetector;
@@ -76,6 +76,7 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
@@ -86,20 +87,31 @@ import java.util.List;
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class GsmSmsDispatcherTest extends TelephonyTest {
+
+    private static final long TIMEOUT_MS = 500;
     private static final String CARRIER_APP_PACKAGE_NAME = "com.android.carrier";
 
-    // Mocked classes
+    @Mock
+    private android.telephony.SmsMessage mSmsMessage;
+    @Mock
+    private SmsMessage mGsmSmsMessage;
+    @Mock
     private SmsDispatchersController mSmsDispatchersController;
+    @Mock
     private GsmInboundSmsHandler mGsmInboundSmsHandler;
+    @Mock
     private CountryDetector mCountryDetector;
+    @Mock
     private SMSDispatcher.SmsTracker mSmsTracker;
+    @Mock
     private ISub.Stub mISubStub;
+    @Mock
     private ICarrierMessagingService.Stub mICarrierAppMessagingService;
 
     private Object mLock = new Object();
     private boolean mReceivedTestIntent;
     private static final String TEST_INTENT = "com.android.internal.telephony.TEST_INTENT";
-    private final BroadcastReceiver mTestReceiver = new BroadcastReceiver() {
+    private BroadcastReceiver mTestReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             logd("onReceive");
@@ -129,13 +141,8 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
 
     @Before
     public void setUp() throws Exception {
+
         super.setUp(getClass().getSimpleName());
-        mSmsDispatchersController = mock(SmsDispatchersController.class);
-        mGsmInboundSmsHandler = mock(GsmInboundSmsHandler.class);
-        mCountryDetector = mock(CountryDetector.class);
-        mSmsTracker = mock(SMSDispatcher.SmsTracker.class);
-        mISubStub = mock(ISub.Stub.class);
-        mICarrierAppMessagingService = mock(ICarrierMessagingService.Stub.class);
 
         // Note that this replaces only cached services in ServiceManager. If a service is not found
         // in the cache, a real instance is used.
@@ -152,10 +159,9 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
+        mGsmSmsDispatcher = null;
         mGsmSmsDispatcherTestHandler.quit();
         mGsmSmsDispatcherTestHandler.join();
-        mGsmSmsDispatcherTestHandler = null;
-        mGsmSmsDispatcher = null;
         super.tearDown();
     }
 
@@ -329,10 +335,11 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
     }
 
     private void mockUiccWithCarrierApp() {
+        when(mUiccController.getUiccCard(mPhone.getPhoneId())).thenReturn(mUiccCard);
         List<String> carrierPackages = new ArrayList<>();
         carrierPackages.add(CARRIER_APP_PACKAGE_NAME);
-        when(mCarrierPrivilegesTracker.getCarrierPackageNamesForIntent(any()))
-                .thenReturn(carrierPackages);
+        when(mUiccCard.getCarrierPackageNamesForIntent(
+                any(PackageManager.class), any(Intent.class))).thenReturn(carrierPackages);
     }
 
     private void mockCarrierAppStubResults(final int result, ICarrierMessagingService.Stub stub,

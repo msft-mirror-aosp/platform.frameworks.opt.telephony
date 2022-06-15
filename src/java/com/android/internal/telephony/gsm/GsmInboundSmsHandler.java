@@ -67,8 +67,7 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
                 sTestBroadcastReceiver = new GsmCbTestBroadcastReceiver();
                 IntentFilter filter = new IntentFilter();
                 filter.addAction(TEST_ACTION);
-                context.registerReceiver(sTestBroadcastReceiver, filter,
-                        Context.RECEIVER_EXPORTED);
+                context.registerReceiver(sTestBroadcastReceiver, filter);
             }
         }
     }

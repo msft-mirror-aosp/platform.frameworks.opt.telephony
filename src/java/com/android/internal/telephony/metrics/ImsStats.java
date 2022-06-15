@@ -35,6 +35,8 @@ import android.os.SystemClock;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.TransportType;
 import android.telephony.Annotation.NetworkType;
+import android.telephony.NetworkRegistrationInfo;
+import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
 import android.telephony.ims.ImsReasonInfo;
 import android.telephony.ims.ProvisioningManager;
@@ -263,24 +265,10 @@ public class ImsStats {
             @ImsRegistrationTech int radioTech, MmTelCapabilities capabilities) {
         conclude();
 
-        boolean ratChanged = false;
-        @NetworkType int newRat = convertRegistrationTechToNetworkType(radioTech);
-        if (mLastRegistrationStats != null && mLastRegistrationStats.rat != newRat) {
-            mLastRegistrationStats.rat = newRat;
-            ratChanged = true;
+        if (mLastRegistrationStats != null) {
+            mLastRegistrationStats.rat = convertRegistrationTechToNetworkType(radioTech);
         }
-
-        boolean voiceAvailableNow = capabilities.isCapable(CAPABILITY_TYPE_VOICE);
-        boolean voiceAvailabilityChanged =
-                (mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_VOICE) != voiceAvailableNow);
         mLastAvailableFeatures = capabilities;
-
-        // Notify voice RAT change if 1. RAT changed while voice over IMS is available, or 2. voice
-        // over IMS availability changed
-        if ((ratChanged && voiceAvailableNow) || voiceAvailabilityChanged) {
-            mPhone.getDefaultPhone().getServiceStateTracker().getServiceStateStats()
-                    .onImsVoiceRegistrationChanged();
-        }
     }
 
     /** Updates the stats when capable features changed. */
@@ -347,20 +335,6 @@ public class ImsStats {
         mLastAvailableFeatures = new MmTelCapabilities();
     }
 
-    /**
-     * Returns the current RAT used for IMS voice registration, or {@link
-     * TelephonyManager#NETWORK_TYPE_UNKNOWN} if there isn't any.
-     */
-    @NetworkType
-    @VisibleForTesting
-    public synchronized int getImsVoiceRadioTech() {
-        if (mLastRegistrationStats == null
-                || !mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_VOICE)) {
-            return TelephonyManager.NETWORK_TYPE_UNKNOWN;
-        }
-        return mLastRegistrationStats.rat;
-    }
-
     @NetworkType
     private int getRatAtEnd(@NetworkType int lastStateRat) {
         return lastStateRat == TelephonyManager.NETWORK_TYPE_IWLAN ? lastStateRat : getWwanPsRat();
@@ -380,7 +354,14 @@ public class ImsStats {
 
     @NetworkType
     private int getWwanPsRat() {
-        return ServiceStateStats.getDataRat(mPhone.getServiceStateTracker().getServiceState());
+        ServiceState state = mPhone.getServiceStateTracker().getServiceState();
+        final NetworkRegistrationInfo wwanRegInfo =
+                state.getNetworkRegistrationInfo(
+                        NetworkRegistrationInfo.DOMAIN_PS,
+                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+        return wwanRegInfo != null
+                ? wwanRegInfo.getAccessNetworkTechnology()
+                : TelephonyManager.NETWORK_TYPE_UNKNOWN;
     }
 
     private ImsRegistrationStats getDefaultImsRegistrationStats() {

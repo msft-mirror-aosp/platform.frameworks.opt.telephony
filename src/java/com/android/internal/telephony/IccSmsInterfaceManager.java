@@ -98,7 +98,7 @@ public class IccSmsInterfaceManager {
     public SmsDispatchersController mDispatchersController;
     private SmsPermissions mSmsPermissions;
 
-    private final LocalLog mCellBroadcastLocalLog = new LocalLog(64);
+    private final LocalLog mCellBroadcastLocalLog = new LocalLog(100);
 
     private static final class Request {
         AtomicBoolean mStatus = new AtomicBoolean(false);
@@ -597,8 +597,8 @@ public class IccSmsInterfaceManager {
             String destAddr, String scAddr, String text, PendingIntent sentIntent,
             PendingIntent deliveryIntent, boolean persistMessageForNonDefaultSmsApp, int priority,
             boolean expectMore, int validityPeriod) {
-        if (!mSmsPermissions.checkCallingCanSendText(persistMessageForNonDefaultSmsApp,
-                    callingPackage, callingAttributionTag, "Sending SMS message")) {
+        if (!mSmsPermissions.checkCallingOrSelfCanSendSms(callingPackage, callingAttributionTag,
+                "Sending SMS message")) {
             returnUnspecifiedFailure(sentIntent);
             return;
         }

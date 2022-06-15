@@ -53,7 +53,7 @@ public class CarrierTestOverride {
        </carrierTestOverrides>
      */
     static final String DATA_CARRIER_TEST_OVERRIDE_PATH =
-            "/user_de/0/com.android.phone/files/carrier_test_conf_sim";
+            "/user_de/0/com.android.phone/files/carrier_test_conf.xml";
     static final String CARRIER_TEST_XML_HEADER = "carrierTestOverrides";
     static final String CARRIER_TEST_XML_SUBHEADER = "carrierTestOverride";
     static final String CARRIER_TEST_XML_ITEM_KEY = "key";
@@ -69,9 +69,9 @@ public class CarrierTestOverride {
 
     private HashMap<String, String> mCarrierTestParamMap;
 
-    CarrierTestOverride(int phoneId) {
+    CarrierTestOverride() {
         mCarrierTestParamMap = new HashMap<String, String>();
-        loadCarrierTestOverrides(phoneId);
+        loadCarrierTestOverrides();
     }
 
     boolean isInTestMode() {
@@ -169,12 +169,12 @@ public class CarrierTestOverride {
         mCarrierTestParamMap.put(CARRIER_TEST_XML_ITEM_KEY_STRING_SPN, spn);
     }
 
-    private void loadCarrierTestOverrides(int phoneId) {
+    private void loadCarrierTestOverrides() {
 
         FileReader carrierTestConfigReader;
-        String filePath = DATA_CARRIER_TEST_OVERRIDE_PATH + Integer.toString(phoneId) + ".xml";
-        Rlog.d(LOG_TAG, "File path : " + filePath);
-        File carrierTestConfigFile = new File(Environment.getDataDirectory(), filePath);
+
+        File carrierTestConfigFile = new File(Environment.getDataDirectory(),
+                DATA_CARRIER_TEST_OVERRIDE_PATH);
 
         try {
             carrierTestConfigReader = new FileReader(carrierTestConfigFile);

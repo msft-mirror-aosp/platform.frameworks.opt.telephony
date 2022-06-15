@@ -33,7 +33,6 @@ public class ClientWakelockAccountantTest extends TestCase {
 
     @Override
     public void tearDown() throws Exception {
-        mClient = null;
         super.tearDown();
     }
 

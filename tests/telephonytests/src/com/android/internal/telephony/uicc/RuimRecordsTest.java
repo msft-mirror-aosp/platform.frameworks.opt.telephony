@@ -16,16 +16,18 @@
 
 package com.android.internal.telephony.uicc;
 
-import static org.junit.Assert.*;
-
+import android.content.Context;
 import android.os.AsyncResult;
 import android.os.HandlerThread;
-
 import com.android.internal.telephony.TelephonyTest;
 
+import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.MockitoAnnotations;
+
 
 public class RuimRecordsTest extends TelephonyTest {
 
@@ -45,14 +47,13 @@ public class RuimRecordsTest extends TelephonyTest {
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(getClass().getSimpleName());
+        super.setUp(this.getClass().getSimpleName());
         new RuimRecordsTestHandler(TAG).start();
         waitUntilReady();
     }
 
     @After
     public void tearDown() throws Exception {
-        mRuimRecords = null;
         super.tearDown();
     }
 

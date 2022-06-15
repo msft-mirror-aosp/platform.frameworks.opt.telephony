@@ -21,7 +21,6 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.anyObject;
 import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -44,13 +43,17 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 public class UiccStateChangedLauncherTest extends TelephonyTest {
+    private static final String TAG = UiccStateChangedLauncherTest.class.getName();
     private static final int CARD_COUNT = 1;
     private static final String PROVISIONING_PACKAGE_NAME = "test.provisioning.package";
 
-    // Mocked classes
+    @Mock
     private Context mContext;
+    @Mock
     private Resources mResources;
 
     private IccCardStatus makeCardStatus(CardState state) {
@@ -60,15 +63,14 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
         status.mCdmaSubscriptionAppIndex = -1;
         status.mGsmUmtsSubscriptionAppIndex = -1;
         status.mImsSubscriptionAppIndex = -1;
-        status.mSlotPortMapping = new IccSlotPortMapping();
         return status;
     }
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(getClass().getSimpleName());
-        mContext = mock(Context.class);
-        mResources = mock(Resources.class);
+        super.setUp(TAG);
+
+        MockitoAnnotations.initMocks(this);
         when(mContext.getResources()).thenReturn(mResources);
         when(TelephonyManager.getDefault().getPhoneCount()).thenReturn(CARD_COUNT);
     }
@@ -99,7 +101,7 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
 
         // The first broadcast should be sent after initialization.
         UiccCard card = new UiccCard(mContext, mSimulatedCommands,
-                makeCardStatus(CardState.CARDSTATE_PRESENT), 0 /* phoneId */, new Object(), false);
+                makeCardStatus(CardState.CARDSTATE_PRESENT), 0 /* phoneId */, new Object());
         when(UiccController.getInstance().getUiccCardForPhone(0)).thenReturn(card);
         uiccLauncher.handleMessage(msg);
 
@@ -114,7 +116,7 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
 
         // Card state's changed to restricted. Broadcast should be sent.
         card.update(mContext, mSimulatedCommands,
-                makeCardStatus(CardState.CARDSTATE_RESTRICTED), 0);
+                makeCardStatus(CardState.CARDSTATE_RESTRICTED));
         uiccLauncher.handleMessage(msg);
 
         broadcast_count++;
@@ -129,7 +131,7 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
 
         // Card state's changed from restricted. Broadcast should be sent.
         card.update(mContext, mSimulatedCommands,
-                makeCardStatus(CardState.CARDSTATE_PRESENT), 0);
+                makeCardStatus(CardState.CARDSTATE_PRESENT));
         uiccLauncher.handleMessage(msg);
 
         broadcast_count++;

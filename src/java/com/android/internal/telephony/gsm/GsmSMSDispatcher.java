@@ -52,6 +52,9 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private GsmInboundSmsHandler mGsmInboundSmsHandler;
 
+    /** Status report received */
+    private static final int EVENT_NEW_SMS_STATUS_REPORT = 100;
+
     public GsmSMSDispatcher(Phone phone, SmsDispatchersController smsDispatchersController,
             GsmInboundSmsHandler gsmInboundSmsHandler) {
         super(phone, smsDispatchersController);
@@ -84,17 +87,21 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
     @Override
     public void handleMessage(Message msg) {
         switch (msg.what) {
-            case EVENT_NEW_ICC_SMS:
-                // pass to InboundSmsHandler to process
-                mGsmInboundSmsHandler.sendMessage(InboundSmsHandler.EVENT_NEW_SMS, msg.obj);
-                break;
+        case EVENT_NEW_SMS_STATUS_REPORT:
+            handleStatusReport((AsyncResult) msg.obj);
+            break;
 
-            case EVENT_ICC_CHANGED:
-                onUpdateIccAvailability();
-                break;
+        case EVENT_NEW_ICC_SMS:
+        // pass to InboundSmsHandler to process
+        mGsmInboundSmsHandler.sendMessage(InboundSmsHandler.EVENT_NEW_SMS, msg.obj);
+        break;
 
-            default:
-                super.handleMessage(msg);
+        case EVENT_ICC_CHANGED:
+            onUpdateIccAvailability();
+            break;
+
+        default:
+            super.handleMessage(msg);
         }
     }
 
@@ -124,15 +131,17 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
         return SMSDispatcherUtil.calculateLengthGsm(messageBody, use7bitOnly);
     }
 
-    @Override
-    protected void handleStatusReport(Object o) {
-        if (o instanceof AsyncResult) {
-            byte[] pdu = (byte[]) ((AsyncResult) o).result;
-            mSmsDispatchersController.handleSmsStatusReport(SmsConstants.FORMAT_3GPP, pdu);
-            mCi.acknowledgeLastIncomingGsmSms(true, 0 /* cause */, null);
-        } else {
-            Rlog.e(TAG, "handleStatusReport() called for object type " + o.getClass().getName());
-        }
+    /**
+     * Called when a status report is received. This should correspond to a previously successful
+     * SEND.
+     *
+     * @param ar AsyncResult passed into the message handler. ar.result should be a byte array for
+     *           the status report PDU.
+     */
+    private void handleStatusReport(AsyncResult ar) {
+        byte[] pdu = (byte[]) ar.result;
+        mSmsDispatchersController.handleSmsStatusReport(SmsConstants.FORMAT_3GPP, pdu);
+        mCi.acknowledgeLastIncomingGsmSms(true, 0 /* cause */, null);
     }
 
     /** {@inheritDoc} */

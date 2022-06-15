@@ -17,16 +17,12 @@
 package android.telephony.ims;
 
 import static junit.framework.Assert.assertEquals;
-import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertNull;
 import static junit.framework.Assert.assertTrue;
 import static junit.framework.Assert.fail;
 
-import static org.junit.Assert.assertNotNull;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,6 +36,7 @@ import android.telephony.ims.feature.ImsFeature;
 import android.telephony.ims.feature.MmTelFeature;
 import android.telephony.ims.stub.ImsFeatureConfiguration;
 import android.test.suitebuilder.annotation.SmallTest;
+import android.util.SparseArray;
 
 import androidx.test.runner.AndroidJUnit4;
 
@@ -58,12 +55,8 @@ public class ImsServiceTest {
 
     private static final int TEST_SLOT_0 = 0;
     private static final int TEST_SLOT_1 = 1;
-    private static final int TEST_SUB_2 = 2;
-    private static final int TEST_SUB_3 = 3;
 
-    private TestImsServiceCompat mTestImsServiceCompat;
     private TestImsService mTestImsService;
-    private IImsServiceController mTestImsServiceCompatBinder;
     private IImsServiceController mTestImsServiceBinder;
 
     private Context mMockContext;
@@ -76,11 +69,6 @@ public class ImsServiceTest {
         mTestCallback = mock(IImsFeatureStatusCallback.class);
         mImsFeatureStatusCallbackBinder = mock(IBinder.class);
         when(mTestCallback.asBinder()).thenReturn(mImsFeatureStatusCallbackBinder);
-        // Create an ImsService that uses slotId and not subId to test compatibility.
-        mTestImsServiceCompat = new TestImsServiceCompat(mMockContext);
-        mTestImsServiceCompatBinder = (IImsServiceController) mTestImsServiceCompat.onBind(
-                new Intent(ImsService.SERVICE_INTERFACE));
-
         mTestImsService = new TestImsService(mMockContext);
         mTestImsServiceBinder = (IImsServiceController) mTestImsService.onBind(
                 new Intent(ImsService.SERVICE_INTERFACE));
@@ -90,135 +78,26 @@ public class ImsServiceTest {
     public void tearDown() throws Exception {
         mMockContext = null;
         mTestCallback = null;
-        mTestImsServiceCompat = null;
-        mTestImsServiceCompatBinder = null;
         mTestImsService = null;
         mTestImsServiceBinder = null;
     }
 
     @Test
     @SmallTest
-    public void testCreateMMTelFeatureCompat() throws RemoteException {
-        IImsMmTelFeature f = mTestImsServiceCompatBinder.createMmTelFeature(TEST_SLOT_0,
-                TEST_SUB_2);
-        mTestImsServiceCompatBinder.addFeatureStatusCallback(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL,
-                mTestCallback);
-        mTestImsServiceCompat.mTestMmTelFeature.sendSetFeatureState(ImsFeature.STATE_READY);
-
-        ImsFeature featureToVerify = mTestImsServiceCompat.getImsFeature(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL);
-        MmTelFeature testMMTelFeature = null;
-        if (featureToVerify instanceof MmTelFeature) {
-            testMMTelFeature = (MmTelFeature) featureToVerify;
-        } else {
-            fail();
-        }
-        assertTrue(mTestImsServiceCompat.isImsFeatureCreatedForSlot(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-        assertEquals(mTestImsServiceCompat.mSpyMmTelFeature, testMMTelFeature);
-        // Verify that upon creating a feature, we assign the callback and get the set feature state
-        // when querying it.
-        verify(mTestImsServiceCompat.mSpyMmTelFeature)
-                .addImsFeatureStatusCallback(eq(mTestCallback));
-        assertEquals(ImsFeature.STATE_READY, f.getFeatureState());
-    }
-
-    @Test
-    @SmallTest
-    public void testNotCreateMMTelFeatureCompat() throws RemoteException {
-        IImsMmTelFeature f = mTestImsServiceCompatBinder.createMmTelFeature(TEST_SLOT_0,
-                TEST_SUB_2);
-        mTestImsServiceCompatBinder.addFeatureStatusCallback(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL,
-                mTestCallback);
-        mTestImsServiceCompat.mTestMmTelFeature.sendSetFeatureState(ImsFeature.STATE_READY);
-
-        ImsFeature featureToVerify = mTestImsServiceCompat.getImsFeature(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL);
-        MmTelFeature testMMTelFeature = null;
-        if (featureToVerify instanceof MmTelFeature) {
-            testMMTelFeature = (MmTelFeature) featureToVerify;
-        } else {
-            fail();
-        }
-        assertTrue(mTestImsServiceCompat.isImsFeatureCreatedForSlot(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-        assertEquals(mTestImsServiceCompat.mSpyMmTelFeature, testMMTelFeature);
-        // Verify that upon creating a feature, we assign the callback and get the set feature state
-        // when querying it.
-        verify(mTestImsServiceCompat.mSpyMmTelFeature)
-                .addImsFeatureStatusCallback(eq(mTestCallback));
-        assertEquals(ImsFeature.STATE_READY, f.getFeatureState());
-        // Ensures feature is not created if already have one.
-        IImsMmTelFeature f2 = mTestImsServiceCompatBinder.createMmTelFeature(TEST_SLOT_0,
-                TEST_SUB_3);
-        mTestImsServiceCompatBinder.addFeatureStatusCallback(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL,
-                mTestCallback);
-        assertEquals(mTestImsServiceCompat.createMmtelfeatureCount, 1);
-        verify(mTestImsServiceCompat.mSpyMmTelFeature, times(2))
-                .addImsFeatureStatusCallback(eq(mTestCallback));
-    }
-
-    @Test
-    @SmallTest
-    public void testRemoveMMTelFeatureCompat() throws RemoteException {
-        mTestImsServiceCompatBinder.createMmTelFeature(TEST_SLOT_0, TEST_SUB_2);
-        mTestImsServiceCompatBinder.addFeatureStatusCallback(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL,
-                mTestCallback);
-        assertTrue(mTestImsServiceCompat.isImsFeatureCreatedForSlot(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-
-        mTestImsServiceCompatBinder.removeFeatureStatusCallback(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL, mTestCallback);
-        mTestImsServiceCompatBinder.removeImsFeature(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL, false);
-
-        verify(mTestImsServiceCompat.mSpyMmTelFeature).onFeatureRemoved();
-        verify(mTestImsServiceCompat.mSpyMmTelFeature).removeImsFeatureStatusCallback(
-                mTestCallback);
-        assertNull(mTestImsServiceCompat.getImsFeature(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL));
-        assertFalse(mTestImsServiceCompat.isImsFeatureCreatedForSlot(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-    }
-
-    @Test
-    @SmallTest
-    public void testNotRemoveMMTelFeatureCompat() throws RemoteException {
-        mTestImsServiceCompatBinder.createMmTelFeature(TEST_SLOT_0, TEST_SUB_2);
-        mTestImsServiceCompatBinder.addFeatureStatusCallback(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL,
-                mTestCallback);
-        assertTrue(mTestImsServiceCompat.isImsFeatureCreatedForSlot(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-
-        mTestImsServiceCompatBinder.removeFeatureStatusCallback(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL, mTestCallback);
-        mTestImsServiceCompatBinder.removeImsFeature(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL, true);
-        // make sure the feature is not removed because it is created with slot ID so is not
-        // affected by sub ID changing
-        verify(mTestImsServiceCompat.mSpyMmTelFeature, never()).onFeatureRemoved();
-        verify(mTestImsServiceCompat.mSpyMmTelFeature).removeImsFeatureStatusCallback(
-                mTestCallback);
-        assertNotNull(mTestImsServiceCompat.getImsFeature(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL));
-        assertTrue(mTestImsServiceCompat.isImsFeatureCreatedForSlot(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-    }
-
-    @Test
-    @SmallTest
     public void testCreateMMTelFeature() throws RemoteException {
-        IImsMmTelFeature f = mTestImsServiceBinder.createMmTelFeature(TEST_SLOT_0, TEST_SUB_2);
+        IImsMmTelFeature f = mTestImsServiceBinder.createMmTelFeature(TEST_SLOT_0);
         mTestImsServiceBinder.addFeatureStatusCallback(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL,
                 mTestCallback);
         mTestImsService.mTestMmTelFeature.sendSetFeatureState(ImsFeature.STATE_READY);
 
-        ImsFeature featureToVerify = mTestImsService.getImsFeature(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL);
+        SparseArray<ImsFeature> features = mTestImsService.getFeatures(TEST_SLOT_0);
+        ImsFeature featureToVerify = features.get(ImsFeature.FEATURE_MMTEL);
         MmTelFeature testMMTelFeature = null;
         if (featureToVerify instanceof MmTelFeature) {
             testMMTelFeature = (MmTelFeature) featureToVerify;
         } else {
             fail();
         }
-        assertFalse(mTestImsServiceCompat.isImsFeatureCreatedForSlot(TEST_SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
         assertEquals(mTestImsService.mSpyMmTelFeature, testMMTelFeature);
         // Verify that upon creating a feature, we assign the callback and get the set feature state
         // when querying it.
@@ -229,23 +108,24 @@ public class ImsServiceTest {
     @Test
     @SmallTest
     public void testRemoveMMTelFeature() throws RemoteException {
-        mTestImsServiceBinder.createMmTelFeature(TEST_SLOT_0, TEST_SUB_2);
+        mTestImsServiceBinder.createMmTelFeature(TEST_SLOT_0);
         mTestImsServiceBinder.addFeatureStatusCallback(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL,
                 mTestCallback);
 
         mTestImsServiceBinder.removeFeatureStatusCallback(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL,
                 mTestCallback);
-        mTestImsServiceBinder.removeImsFeature(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL, true);
+        mTestImsServiceBinder.removeImsFeature(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL);
 
         verify(mTestImsService.mSpyMmTelFeature).onFeatureRemoved();
         verify(mTestImsService.mSpyMmTelFeature).removeImsFeatureStatusCallback(mTestCallback);
-        assertNull(mTestImsService.getImsFeature(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL));
+        SparseArray<ImsFeature> features = mTestImsService.getFeatures(TEST_SLOT_0);
+        assertNull(features.get(ImsFeature.FEATURE_MMTEL));
     }
 
     @Test
     @SmallTest
     public void testCallMethodOnCreatedFeature() throws RemoteException {
-        IImsMmTelFeature f = mTestImsServiceBinder.createMmTelFeature(TEST_SLOT_0, TEST_SUB_2);
+        IImsMmTelFeature f = mTestImsServiceBinder.createMmTelFeature(TEST_SLOT_0);
         mTestImsServiceBinder.addFeatureStatusCallback(TEST_SLOT_0, ImsFeature.FEATURE_MMTEL,
                 mTestCallback);
 
@@ -277,7 +157,8 @@ public class ImsServiceTest {
     @Test
     @SmallTest
     public void testCapsSanitized() throws RemoteException {
-        long validCaps = ImsService.CAPABILITY_SIP_DELEGATE_CREATION;
+        long validCaps =
+                ImsService.CAPABILITY_SIP_DELEGATE_CREATION;
         // emergency over MMTEL should not be set here, but rather internally in Telephony.
         long invalidCaps = 0xDEADBEEF00000000L | ImsService.CAPABILITY_EMERGENCY_OVER_MMTEL;
         invalidCaps |= validCaps;

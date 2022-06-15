@@ -17,17 +17,16 @@
 package com.android.internal.telephony.imsphone;
 
 import android.content.Context;
+import android.net.LinkProperties;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Message;
 import android.os.RegistrantList;
 import android.sysprop.TelephonyProperties;
-import android.telephony.Annotation.DataActivityType;
 import android.telephony.CallQuality;
 import android.telephony.NetworkScanRequest;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
-import android.telephony.TelephonyManager;
 import android.telephony.ims.ImsReasonInfo;
 import android.util.Pair;
 
@@ -179,8 +178,8 @@ abstract class ImsPhoneBase extends Phone {
     }
 
     @Override
-    public @DataActivityType int getDataActivityState() {
-        return TelephonyManager.DATA_ACTIVITY_NONE;
+    public DataActivityState getDataActivityState() {
+        return DataActivityState.NONE;
     }
 
     /**
@@ -473,7 +472,7 @@ abstract class ImsPhoneBase extends Phone {
     }
 
     @Override
-    public boolean isDataAllowed() {
+    public boolean isDataAllowed(int apnType) {
         return false;
     }
 
@@ -507,6 +506,13 @@ abstract class ImsPhoneBase extends Phone {
     public boolean needsOtaServiceProvisioning() {
         // FIXME: what's this for Volte?
         return false;
+    }
+
+    //@Override
+    @Override
+    public LinkProperties getLinkProperties(String apnType) {
+        // FIXME: what's this for Volte?
+        return null;
     }
 
     @Override

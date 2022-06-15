@@ -16,16 +16,6 @@
  */
 package com.android.internal.telephony;
 
-import static android.telephony.TelephonyManager.SIM_ACTIVATION_STATE_ACTIVATED;
-import static android.telephony.TelephonyManager.SIM_ACTIVATION_STATE_DEACTIVATED;
-import static android.telephony.TelephonyManager.SIM_ACTIVATION_STATE_RESTRICTED;
-import static android.telephony.TelephonyManager.SIM_ACTIVATION_STATE_UNKNOWN;
-
-import static org.junit.Assert.assertEquals;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-
 import junit.framework.AssertionFailedError;
 
 import org.junit.After;
@@ -34,12 +24,23 @@ import org.junit.Test;
 
 import java.security.InvalidParameterException;
 
+import static org.junit.Assert.assertEquals;
+import static android.telephony.TelephonyManager.SIM_ACTIVATION_STATE_ACTIVATED;
+import static android.telephony.TelephonyManager.SIM_ACTIVATION_STATE_UNKNOWN;
+import static android.telephony.TelephonyManager.SIM_ACTIVATION_STATE_RESTRICTED;
+import static android.telephony.TelephonyManager.SIM_ACTIVATION_STATE_DEACTIVATED;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.Matchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
 public class SimActivationTrackerTest extends TelephonyTest {
     private SimActivationTracker mSAT;
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(getClass().getSimpleName());
+        super.setUp("SimActivaitonTrackerTest");
         mSAT = new SimActivationTracker(mPhone);
     }
 

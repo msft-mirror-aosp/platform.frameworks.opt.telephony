@@ -19,13 +19,6 @@ package com.android.internal.telephony.metrics;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_CS;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_UNKNOWN;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_FIVE_MINUTES;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_ONE_HOUR;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_ONE_MINUTE;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_TEN_MINUTES;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_THIRTY_MINUTES;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_MORE_THAN_ONE_HOUR;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_UNKNOWN;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MO;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MT;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__MAIN_CODEC_QUALITY__CODEC_QUALITY_FULLBAND;
@@ -89,7 +82,7 @@ import java.util.stream.Collectors;
 public class VoiceCallSessionStats {
     private static final String TAG = VoiceCallSessionStats.class.getSimpleName();
 
-    // Upper bounds of each call setup duration category in milliseconds.
+    /** Upper bounds of each call setup duration category in milliseconds. */
     private static final int CALL_SETUP_DURATION_UNKNOWN = 0;
     private static final int CALL_SETUP_DURATION_EXTREMELY_FAST = 400;
     private static final int CALL_SETUP_DURATION_ULTRA_FAST = 700;
@@ -101,21 +94,14 @@ public class VoiceCallSessionStats {
     private static final int CALL_SETUP_DURATION_ULTRA_SLOW = 10000;
     // CALL_SETUP_DURATION_EXTREMELY_SLOW has no upper bound (it includes everything above 10000)
 
-    // Upper bounds of each call duration category in milliseconds.
-    private static final int CALL_DURATION_ONE_MINUTE = 60000;
-    private static final int CALL_DURATION_FIVE_MINUTES = 300000;
-    private static final int CALL_DURATION_TEN_MINUTES = 600000;
-    private static final int CALL_DURATION_THIRTY_MINUTES = 1800000;
-    private static final int CALL_DURATION_ONE_HOUR = 3600000;
-
     /** Number of buckets for codec quality, from UNKNOWN to FULLBAND. */
     private static final int CODEC_QUALITY_COUNT = 5;
 
     /**
      * Threshold to calculate the main audio codec quality of the call.
      *
-     * <p>The audio codec quality was equal to or greater than the main audio codec quality for at
-     * least 70% of the call.
+     * The audio codec quality was equal to or greater than the main audio codec quality for
+     * at least 70% of the call.
      */
     private static final int MAIN_CODEC_QUALITY_THRESHOLD = 70;
 
@@ -128,9 +114,6 @@ public class VoiceCallSessionStats {
     /** Holds setup duration buckets with values as their upper bounds in milliseconds. */
     private static final SparseIntArray CALL_SETUP_DURATION_MAP = buildCallSetupDurationMap();
 
-    /** Holds call duration buckets with values as their upper bounds in milliseconds. */
-    private static final SparseIntArray CALL_DURATION_MAP = buildCallDurationMap();
-
     /**
      * Tracks statistics for each call connection, indexed with ID returned by {@link
      * #getConnectionId}.
@@ -138,10 +121,9 @@ public class VoiceCallSessionStats {
     private final SparseArray<VoiceCallSession> mCallProtos = new SparseArray<>();
 
     /**
-     * Tracks usage of codecs for each call.
-     *
-     * <p>The outer array is used to map each connection id to the corresponding codec usage. The
-     * inner array is used to map timestamp (key) with the codec in use (value).
+     * Tracks usage of codecs for each call. The outer array is used to map each connection id to
+     * the corresponding codec usage. The inner array is used to map timestamp (key) with the
+     * codec in use (value).
      */
     private final SparseArray<LongSparseArray<Integer>> mCodecUsage = new SparseArray<>();
 
@@ -170,7 +152,7 @@ public class VoiceCallSessionStats {
     /** Updates internal states when previous CS calls are accepted to track MT call setup time. */
     public synchronized void onRilAcceptCall(List<Connection> connections) {
         for (Connection conn : connections) {
-            acceptCall(conn);
+            addCall(conn);
         }
     }
 
@@ -191,10 +173,7 @@ public class VoiceCallSessionStats {
                     addCall(conn);
                     checkCallSetup(conn, mCallProtos.get(id));
                 } else {
-                    logd(
-                            "onRilCallListChanged: skip adding disconnected connection,"
-                                    + " connectionId=%d",
-                            id);
+                    logd("onRilCallListChanged: skip adding disconnected connection");
                 }
             } else {
                 VoiceCallSession proto = mCallProtos.get(id);
@@ -206,7 +185,6 @@ public class VoiceCallSessionStats {
                     proto.disconnectReasonCode = conn.getDisconnectCause();
                     proto.disconnectExtraCode = conn.getPreciseDisconnectCause();
                     proto.disconnectExtraMessage = conn.getVendorDisconnectCause();
-                    proto.callDuration = classifyCallDuration(conn.getDurationMillis());
                     finishCall(id);
                 }
             }
@@ -236,7 +214,7 @@ public class VoiceCallSessionStats {
     /** Updates internal states when previous IMS calls are accepted to track MT call setup time. */
     public synchronized void onImsAcceptCall(List<Connection> connections) {
         for (Connection conn : connections) {
-            acceptCall(conn);
+            addCall(conn);
         }
     }
 
@@ -247,19 +225,19 @@ public class VoiceCallSessionStats {
             List<Integer> imsConnIds = getImsConnectionIds();
             if (imsConnIds.size() == 1) {
                 loge("onImsCallTerminated: ending IMS call w/ conn=null");
-                finishImsCall(imsConnIds.get(0), reasonInfo, 0);
+                finishImsCall(imsConnIds.get(0), reasonInfo);
             } else {
                 loge("onImsCallTerminated: %d IMS calls w/ conn=null", imsConnIds.size());
             }
         } else {
             int id = getConnectionId(conn);
             if (mCallProtos.contains(id)) {
-                finishImsCall(id, reasonInfo, conn.getDurationMillis());
+                finishImsCall(id, reasonInfo);
             } else {
-                loge("onImsCallTerminated: untracked connection, connectionId=%d", id);
+                loge("onImsCallTerminated: untracked connection");
                 // fake a call so at least some info can be tracked
                 addCall(conn);
-                finishImsCall(id, reasonInfo, conn.getDurationMillis());
+                finishImsCall(id, reasonInfo);
             }
         }
     }
@@ -276,7 +254,7 @@ public class VoiceCallSessionStats {
         int id = getConnectionId(conn);
         VoiceCallSession proto = mCallProtos.get(id);
         if (proto == null) {
-            loge("onAudioCodecChanged: untracked connection, connectionId=%d", id);
+            loge("onAudioCodecChanged: untracked connection");
             return;
         }
         int codec = audioQualityToCodec(proto.bearerAtEnd, audioQuality);
@@ -297,10 +275,10 @@ public class VoiceCallSessionStats {
         int id = getConnectionId(conn);
         VoiceCallSession proto = mCallProtos.get(id);
         if (proto == null) {
-            loge("onVideoStateChange: untracked connection, connectionId=%d", id);
+            loge("onVideoStateChange: untracked connection");
             return;
         }
-        logd("onVideoStateChange: video state=%d, connectionId=%d", videoState, id);
+        logd("Video state = " + videoState);
         if (videoState != VideoProfile.STATE_AUDIO_ONLY) {
             proto.videoEnabled = true;
         }
@@ -311,10 +289,10 @@ public class VoiceCallSessionStats {
         int id = getConnectionId(conn);
         VoiceCallSession proto = mCallProtos.get(id);
         if (proto == null) {
-            loge("onMultipartyChange: untracked connection, connectionId=%d", id);
+            loge("onMultipartyChange: untracked connection");
             return;
         }
-        logd("onMultipartyChange: isMultiparty=%b, connectionId=%d", isMultiParty, id);
+        logd("Multiparty = " + isMultiParty);
         if (isMultiParty) {
             proto.isMultiparty = true;
         }
@@ -328,12 +306,11 @@ public class VoiceCallSessionStats {
      */
     public synchronized void onCallStateChanged(Call call) {
         for (Connection conn : call.getConnections()) {
-            int id = getConnectionId(conn);
-            VoiceCallSession proto = mCallProtos.get(id);
+            VoiceCallSession proto = mCallProtos.get(getConnectionId(conn));
             if (proto != null) {
                 checkCallSetup(conn, proto);
             } else {
-                loge("onCallStateChanged: untracked connection, connectionId=%d", id);
+                loge("onCallStateChanged: untracked connection");
             }
         }
     }
@@ -388,19 +365,6 @@ public class VoiceCallSessionStats {
 
     /* internal */
 
-    /** Handles ringing MT call getting accepted. */
-    private void acceptCall(Connection conn) {
-        int id = getConnectionId(conn);
-        if (mCallProtos.contains(id)) {
-            logd("acceptCall: resetting setup info, connectionId=%d", id);
-            VoiceCallSession proto = mCallProtos.get(id);
-            proto.setupBeginMillis = getTimeMillis();
-            proto.setupDuration = VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_UNKNOWN;
-        } else {
-            loge("acceptCall: untracked connection, connectionId=%d", id);
-        }
-    }
-
     /**
      * Adds a call connection.
      *
@@ -410,63 +374,59 @@ public class VoiceCallSessionStats {
     private void addCall(Connection conn) {
         int id = getConnectionId(conn);
         if (mCallProtos.contains(id)) {
-            loge(
-                    "addCall: already tracked connection, connectionId=%d, connectionInfo=%s",
-                    id, conn);
-            return;
+            // mostly handles ringing MT call getting accepted (MT call setup begins)
+            logd("addCall: resetting setup info");
+            VoiceCallSession proto = mCallProtos.get(id);
+            proto.setupBeginMillis = getTimeMillis();
+            proto.setupDuration = VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_UNKNOWN;
+        } else {
+            int bearer = getBearer(conn);
+            ServiceState serviceState = getServiceState();
+            @NetworkType int rat = getRat(serviceState);
+
+            VoiceCallSession proto = new VoiceCallSession();
+
+            proto.bearerAtStart = bearer;
+            proto.bearerAtEnd = bearer;
+            proto.direction = getDirection(conn);
+            proto.setupDuration = VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_UNKNOWN;
+            proto.setupFailed = true;
+            proto.disconnectReasonCode = conn.getDisconnectCause();
+            proto.disconnectExtraCode = conn.getPreciseDisconnectCause();
+            proto.disconnectExtraMessage = conn.getVendorDisconnectCause();
+            proto.ratAtStart = rat;
+            proto.ratAtConnected = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+            proto.ratAtEnd = rat;
+            proto.ratSwitchCount = 0L;
+            proto.codecBitmask = 0L;
+            proto.simSlotIndex = mPhoneId;
+            proto.isMultiSim = SimSlotState.isMultiSim();
+            proto.isEsim = SimSlotState.isEsim(mPhoneId);
+            proto.carrierId = mPhone.getCarrierId();
+            proto.srvccCompleted = false;
+            proto.srvccFailureCount = 0L;
+            proto.srvccCancellationCount = 0L;
+            proto.rttEnabled = false;
+            proto.isEmergency = conn.isEmergencyCall();
+            proto.isRoaming = serviceState != null ? serviceState.getVoiceRoaming() : false;
+            proto.isMultiparty = conn.isMultiparty();
+
+            // internal fields for tracking
+            proto.setupBeginMillis = getTimeMillis();
+
+            proto.concurrentCallCountAtStart = mCallProtos.size();
+            mCallProtos.put(id, proto);
+
+            // RAT call count needs to be updated
+            updateRatTracker(serviceState);
         }
-        int bearer = getBearer(conn);
-        ServiceState serviceState = getServiceState();
-        @NetworkType int rat = ServiceStateStats.getVoiceRat(mPhone, serviceState);
-
-        VoiceCallSession proto = new VoiceCallSession();
-
-        proto.bearerAtStart = bearer;
-        proto.bearerAtEnd = bearer;
-        proto.direction = getDirection(conn);
-        proto.setupDuration = VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_UNKNOWN;
-        proto.setupFailed = true;
-        proto.disconnectReasonCode = conn.getDisconnectCause();
-        proto.disconnectExtraCode = conn.getPreciseDisconnectCause();
-        proto.disconnectExtraMessage = conn.getVendorDisconnectCause();
-        proto.ratAtStart = rat;
-        proto.ratAtConnected = TelephonyManager.NETWORK_TYPE_UNKNOWN;
-        proto.ratAtEnd = rat;
-        proto.ratSwitchCount = 0L;
-        proto.codecBitmask = 0L;
-        proto.simSlotIndex = mPhoneId;
-        proto.isMultiSim = SimSlotState.isMultiSim();
-        proto.isEsim = SimSlotState.isEsim(mPhoneId);
-        proto.carrierId = mPhone.getCarrierId();
-        proto.srvccCompleted = false;
-        proto.srvccFailureCount = 0L;
-        proto.srvccCancellationCount = 0L;
-        proto.rttEnabled = false;
-        proto.isEmergency = conn.isEmergencyCall();
-        proto.isRoaming = serviceState != null ? serviceState.getVoiceRoaming() : false;
-        proto.isMultiparty = conn.isMultiparty();
-
-        // internal fields for tracking
-        proto.setupBeginMillis = getTimeMillis();
-
-        // audio codec might have already been set
-        int codec = audioQualityToCodec(bearer, conn.getAudioCodec());
-        if (codec != AudioCodec.AUDIO_CODEC_UNKNOWN) {
-            proto.codecBitmask = (1L << codec);
-        }
-
-        proto.concurrentCallCountAtStart = mCallProtos.size();
-        mCallProtos.put(id, proto);
-
-        // RAT call count needs to be updated
-        updateRatTracker(serviceState);
     }
 
     /** Sends the call metrics to persist storage when it is finished. */
     private void finishCall(int connectionId) {
         VoiceCallSession proto = mCallProtos.get(connectionId);
         if (proto == null) {
-            loge("finishCall: could not find call to be removed, connectionId=%d", connectionId);
+            loge("finishCall: could not find call to be removed");
             return;
         }
         mCallProtos.delete(connectionId);
@@ -502,15 +462,14 @@ public class VoiceCallSessionStats {
     }
 
     private void setRttStarted(ImsPhoneConnection conn) {
-        int id = getConnectionId(conn);
-        VoiceCallSession proto = mCallProtos.get(id);
+        VoiceCallSession proto = mCallProtos.get(getConnectionId(conn));
         if (proto == null) {
-            loge("onRttStarted: untracked connection, connectionId=%d", id);
+            loge("onRttStarted: untracked connection");
             return;
         }
         // should be IMS w/o SRVCC
         if (proto.bearerAtStart != getBearer(conn) || proto.bearerAtEnd != getBearer(conn)) {
-            loge("onRttStarted: connection bearer mismatch but proceeding, connectionId=%d", id);
+            loge("onRttStarted: connection bearer mismatch but proceeding");
         }
         proto.rttEnabled = true;
     }
@@ -551,7 +510,7 @@ public class VoiceCallSessionStats {
             proto.setupFailed = false;
             // Track RAT when voice call is connected.
             ServiceState serviceState = getServiceState();
-            proto.ratAtConnected = ServiceStateStats.getVoiceRat(mPhone, serviceState);
+            proto.ratAtConnected = getRat(serviceState);
             // Reset list of codecs with the last codec at the present time. In this way, we
             // track codec quality only after call is connected and not while ringing.
             resetCodecList(conn);
@@ -559,9 +518,8 @@ public class VoiceCallSessionStats {
     }
 
     private void updateRatTracker(ServiceState state) {
-        @NetworkType int rat = ServiceStateStats.getVoiceRat(mPhone, state);
-        int band =
-                (rat == TelephonyManager.NETWORK_TYPE_IWLAN) ? 0 : ServiceStateStats.getBand(state);
+        @NetworkType int rat = getRat(state);
+        int band = ServiceStateStats.getBand(state, rat);
 
         mRatUsage.add(mPhone.getCarrierId(), rat, getTimeMillis(), getConnectionIds());
         for (int i = 0; i < mCallProtos.size(); i++) {
@@ -575,13 +533,12 @@ public class VoiceCallSessionStats {
         }
     }
 
-    private void finishImsCall(int id, ImsReasonInfo reasonInfo, long durationMillis) {
+    private void finishImsCall(int id, ImsReasonInfo reasonInfo) {
         VoiceCallSession proto = mCallProtos.get(id);
         proto.bearerAtEnd = VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
         proto.disconnectReasonCode = reasonInfo.mCode;
         proto.disconnectExtraCode = reasonInfo.mExtraCode;
         proto.disconnectExtraMessage = ImsStats.filterExtraMessage(reasonInfo.mExtraMessage);
-        proto.callDuration = classifyCallDuration(durationMillis);
         finishCall(id);
     }
 
@@ -610,6 +567,17 @@ public class VoiceCallSessionStats {
         }
     }
 
+    private @NetworkType int getRat(@Nullable ServiceState state) {
+        if (state == null) {
+            return TelephonyManager.NETWORK_TYPE_UNKNOWN;
+        }
+        boolean isWifiCall =
+                mPhone.getImsPhone() != null
+                        && mPhone.getImsPhone().isWifiCallingEnabled()
+                        && state.getDataNetworkType() == TelephonyManager.NETWORK_TYPE_IWLAN;
+        return isWifiCall ? TelephonyManager.NETWORK_TYPE_IWLAN : state.getVoiceNetworkType();
+    }
+
     /** Returns the signal strength. */
     private int getSignalStrength(@NetworkType int rat) {
         if (rat == TelephonyManager.NETWORK_TYPE_IWLAN) {
@@ -629,8 +597,8 @@ public class VoiceCallSessionStats {
             int level = wifiManager.calculateSignalLevel(wifiInfo.getRssi());
             int max = wifiManager.getMaxSignalLevel();
             // Scale result into 0 to 4 range.
-            result =
-                    VOICE_CALL_SESSION__SIGNAL_STRENGTH_AT_END__SIGNAL_STRENGTH_GREAT * level / max;
+            result = VOICE_CALL_SESSION__SIGNAL_STRENGTH_AT_END__SIGNAL_STRENGTH_GREAT
+                    * level / max;
             logd("WiFi level: " + result + " (" + level + "/" + max + ")");
         }
         return result;
@@ -691,7 +659,7 @@ public class VoiceCallSessionStats {
     }
 
     private int getCodecQuality(int codec) {
-        switch (codec) {
+        switch(codec) {
             case AudioCodec.AUDIO_CODEC_AMR:
             case AudioCodec.AUDIO_CODEC_QCELP13K:
             case AudioCodec.AUDIO_CODEC_EVRC:
@@ -754,19 +722,6 @@ public class VoiceCallSessionStats {
             }
         }
         return VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_EXTREMELY_SLOW;
-    }
-
-    private static int classifyCallDuration(long durationMillis) {
-        if (durationMillis == 0L) {
-            return VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_UNKNOWN;
-        }
-        // keys in CALL_SETUP_DURATION_MAP are upper bounds in ascending order
-        for (int i = 0; i < CALL_DURATION_MAP.size(); i++) {
-            if (durationMillis < CALL_DURATION_MAP.keyAt(i)) {
-                return CALL_DURATION_MAP.valueAt(i);
-            }
-        }
-        return VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_MORE_THAN_ONE_HOUR;
     }
 
     /**
@@ -865,29 +820,6 @@ public class VoiceCallSessionStats {
                 CALL_SETUP_DURATION_ULTRA_SLOW,
                 VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_ULTRA_SLOW);
         // anything above would be CALL_SETUP_DURATION_EXTREMELY_SLOW
-
-        return map;
-    }
-
-    private static SparseIntArray buildCallDurationMap() {
-        SparseIntArray map = new SparseIntArray();
-
-        map.put(
-                CALL_DURATION_ONE_MINUTE,
-                VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_ONE_MINUTE);
-        map.put(
-                CALL_DURATION_FIVE_MINUTES,
-                VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_FIVE_MINUTES);
-        map.put(
-                CALL_DURATION_TEN_MINUTES,
-                VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_TEN_MINUTES);
-        map.put(
-                CALL_DURATION_THIRTY_MINUTES,
-                VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_THIRTY_MINUTES);
-        map.put(
-                CALL_DURATION_ONE_HOUR,
-                VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_LESS_THAN_ONE_HOUR);
-        // anything above would be MORE_THAN_ONE_HOUR
 
         return map;
     }

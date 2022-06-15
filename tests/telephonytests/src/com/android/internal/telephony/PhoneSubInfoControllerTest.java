@@ -25,7 +25,6 @@ import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.mock;
 
 import android.app.AppOpsManager;
 import android.app.PropertyInvalidatedCache;
@@ -39,6 +38,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mock;
 
 public class PhoneSubInfoControllerTest extends TelephonyTest {
     private static final String FEATURE_ID = "myfeatureId";
@@ -47,13 +47,12 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     private AppOpsManager mAppOsMgr;
     private PackageManager mPm;
 
-    // Mocked classes
+    @Mock
     GsmCdmaPhone mSecondPhone;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mSecondPhone = mock(GsmCdmaPhone.class);
         PropertyInvalidatedCache.disableForTestMode();
         /* mPhone -> PhoneId: 0 -> SubId:0
            mSecondPhone -> PhoneId:1 -> SubId: 1*/
@@ -92,9 +91,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
-        mAppOsMgr = null;
-        mPm = null;
-        mPhoneSubInfoControllerUT = null;
         super.tearDown();
     }
 

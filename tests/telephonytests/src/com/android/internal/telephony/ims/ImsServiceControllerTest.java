@@ -39,7 +39,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.RemoteException;
-import android.telephony.SubscriptionManager;
 import android.telephony.ims.ImsService;
 import android.telephony.ims.aidl.IImsConfig;
 import android.telephony.ims.aidl.IImsMmTelFeature;
@@ -49,7 +48,6 @@ import android.telephony.ims.aidl.IImsServiceController;
 import android.telephony.ims.feature.ImsFeature;
 import android.telephony.ims.stub.ImsFeatureConfiguration;
 import android.test.suitebuilder.annotation.SmallTest;
-import android.util.SparseIntArray;
 
 import androidx.test.runner.AndroidJUnit4;
 
@@ -64,6 +62,7 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 
 import java.util.HashSet;
 
@@ -75,10 +74,6 @@ public class ImsServiceControllerTest extends ImsTestBase {
 
     private static final int SLOT_0 = 0;
     private static final int SLOT_1 = 1;
-    private static final int SUB_2 = 2;
-    private static final int SUB_3 = 3;
-    private static final int SUB_4 = 4;
-    private static final int SUB_5 = 5;
 
     private static final ImsServiceController.RebindRetry REBIND_RETRY =
             new ImsServiceController.RebindRetry() {
@@ -97,7 +92,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
         public ImsFeatureContainer container;
 
         @Override
-        public void imsFeatureCreated(ImsFeatureContainer c, int subId) {
+        public void imsFeatureCreated(ImsFeatureContainer c) {
             container = c;
         }
 
@@ -107,7 +102,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
         }
 
         @Override
-        public void imsStatusChanged(int stat, int subId) {
+        public void imsStatusChanged(int stat) {
             container.setState(stat);
         }
 
@@ -117,17 +112,16 @@ public class ImsServiceControllerTest extends ImsTestBase {
         }
     }
 
-    // Mocked classes
-    IImsMmTelFeature mMockMmTelFeature;
-    IBinder mMockMmTelBinder;
-    IImsRcsFeature mMockRcsFeature;
-    IBinder mMockRcsBinder;
-    IImsConfig mMockImsConfig;
-    IImsRegistration mMockRcsRegistration;
-    IImsServiceController mMockServiceControllerBinder;
-    ImsServiceController.ImsServiceControllerCallbacks mMockCallbacks;
-    Context mMockContext;
+    @Mock IImsMmTelFeature mMockMmTelFeature;
+    @Mock IBinder mMockMmTelBinder;
+    @Mock IImsRcsFeature mMockRcsFeature;
+    @Mock IBinder mMockRcsBinder;
+    @Mock IImsConfig mMockImsConfig;
+    @Mock IImsRegistration mMockRcsRegistration;
 
+    @Mock IImsServiceController mMockServiceControllerBinder;
+    @Mock ImsServiceController.ImsServiceControllerCallbacks mMockCallbacks;
+    @Mock Context mMockContext;
     private final ComponentName mTestComponentName = new ComponentName("TestPkg",
             "ImsServiceControllerTest");
     private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -138,29 +132,17 @@ public class ImsServiceControllerTest extends ImsTestBase {
     @Override
     public void setUp() throws Exception {
         super.setUp();
-        mMockMmTelFeature = mock(IImsMmTelFeature.class);
-        mMockMmTelBinder = mock(IBinder.class);
-        mMockRcsFeature = mock(IImsRcsFeature.class);
-        mMockRcsBinder = mock(IBinder.class);
-        mMockImsConfig = mock(IImsConfig.class);
-        mMockRcsRegistration = mock(IImsRegistration.class);
-        mMockServiceControllerBinder = mock(IImsServiceController.class);
-        mMockCallbacks = mock(ImsServiceController.ImsServiceControllerCallbacks.class);
-        mMockContext = mock(Context.class);
-
         mRepo = new ImsFeatureBinderRepository();
         mTestImsServiceController = new ImsServiceController(mMockContext, mTestComponentName,
                 mMockCallbacks, mHandler, REBIND_RETRY, mRepo);
         when(mMockContext.bindService(any(), any(), anyInt())).thenReturn(true);
-        when(mMockServiceControllerBinder.createMmTelFeature(anyInt(), anyInt()))
+        when(mMockServiceControllerBinder.createMmTelFeature(anyInt()))
                 .thenReturn(mMockMmTelFeature);
-        when(mMockServiceControllerBinder.createRcsFeature(anyInt(), anyInt()))
+        when(mMockServiceControllerBinder.createRcsFeature(anyInt()))
                 .thenReturn(mMockRcsFeature);
-        when(mMockServiceControllerBinder.createEmergencyOnlyMmTelFeature(anyInt()))
-                .thenReturn(mMockMmTelFeature);
-        when(mMockServiceControllerBinder.getConfig(anyInt(), anyInt()))
+        when(mMockServiceControllerBinder.getConfig(anyInt()))
                 .thenReturn(mMockImsConfig);
-        when(mMockServiceControllerBinder.getRegistration(anyInt(), anyInt()))
+        when(mMockServiceControllerBinder.getRegistration(anyInt()))
                 .thenReturn(mMockRcsRegistration);
         when(mMockMmTelFeature.asBinder()).thenReturn(mMockMmTelBinder);
         when(mMockRcsFeature.asBinder()).thenReturn(mMockRcsBinder);
@@ -174,8 +156,6 @@ public class ImsServiceControllerTest extends ImsTestBase {
         mTestImsServiceController = null;
         // Make sure the handler is empty before finishing the test.
         waitForHandlerAction(mHandler, 1000);
-        mTestImsServiceController = null;
-        mRepo = null;
         super.tearDown();
     }
 
@@ -193,9 +173,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
         ArgumentCaptor<Intent> intentCaptor =
                 ArgumentCaptor.forClass(Intent.class);
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        assertTrue(mTestImsServiceController.bind(testFeatures, slotIdToSubIdMap.clone()));
+        assertTrue(mTestImsServiceController.bind(testFeatures));
 
         int expectedFlags = Context.BIND_AUTO_CREATE | Context.BIND_FOREGROUND_SERVICE
                 | Context.BIND_IMPORTANT;
@@ -214,12 +192,10 @@ public class ImsServiceControllerTest extends ImsTestBase {
         HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_MMTEL));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
 
         // already bound, should return false
-        assertFalse(mTestImsServiceController.bind(testFeatures, slotIdToSubIdMap.clone()));
+        assertFalse(mTestImsServiceController.bind(testFeatures));
 
         verify(mMockContext, times(1)).bindService(any(), any(), anyInt());
     }
@@ -237,14 +213,12 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
 
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_RCS), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
@@ -253,132 +227,6 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 eq(mTestImsServiceController));
         validateMmTelFeatureContainerExists(SLOT_0);
         validateRcsFeatureContainerExists(SLOT_0);
-    }
-
-    /**
-     * Ensures ImsServiceController removes/adds changes to features that result in the same
-     * feature set with IMS feature when sub ID changed.
-     */
-    @SmallTest
-    @Test
-    public void testCallChangeWithNoNewFeaturesWithSubIdChanged()
-                        throws RemoteException {
-        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
-                ImsFeature.FEATURE_RCS));
-
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0, SUB_2);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_RCS),
-                eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateRcsFeatureContainerExists(SLOT_0);
-
-        slotIdToSubIdMap.put(SLOT_0, SUB_3);
-        // ensure remove and add unchanged features that have a slot ID associated with the new
-        // subscription ID.
-        mTestImsServiceController.changeImsServiceFeatures(testFeatures,
-                slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(true));
-        verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), eq(true));
-        verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), any());
-        verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_0), eq(ImsFeature.FEATURE_RCS),
-                eq(mTestImsServiceController));
-
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_3);
-        verify(mMockServiceControllerBinder, times(2)).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0, SUB_3);
-        verify(mMockServiceControllerBinder, times(2)).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), any());
-        verify(mMockCallbacks, times(2)).imsServiceFeatureCreated(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(mTestImsServiceController));
-        verify(mMockCallbacks, times(2)).imsServiceFeatureCreated(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateRcsFeatureContainerExists(SLOT_0);
-    }
-
-    /**
-     * Ensures ImsServiceController removes/adds changes to features that result in the same
-     * feature set with IMS feature when sub ID changed.
-     */
-    @SmallTest
-    @Test
-    public void testCallChangeWithNoNewFeaturesWithAllSubIdChanged()
-                        throws RemoteException {
-        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
-                ImsFeature.FEATURE_MMTEL));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        slotIdToSubIdMap.put(SLOT_1, SUB_3);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1, SUB_3);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateMmTelFeatureContainerExists(SLOT_1);
-
-        slotIdToSubIdMap.put(SLOT_0, SUB_4);
-        slotIdToSubIdMap.put(SLOT_1, SUB_5);
-        // ensure remove and add unchanged features that have a slot ID associated with the new
-        // subscription ID.
-        mTestImsServiceController.changeImsServiceFeatures(testFeatures,
-                slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(true));
-        verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), eq(true));
-        verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_4);
-        verify(mMockServiceControllerBinder, times(2)).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks, times(2)).imsServiceFeatureCreated(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1, SUB_5);
-        verify(mMockServiceControllerBinder, times(2)).addFeatureStatusCallback(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks, times(2)).imsServiceFeatureCreated(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateMmTelFeatureContainerExists(SLOT_1);
     }
 
     /**
@@ -395,14 +243,12 @@ public class ImsServiceControllerTest extends ImsTestBase {
         when(mMockServiceControllerBinder.getImsServiceCapabilities()).thenReturn(
                 ImsService.CAPABILITY_SIP_DELEGATE_CREATION);
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
 
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_RCS), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
@@ -427,11 +273,9 @@ public class ImsServiceControllerTest extends ImsTestBase {
         when(mMockServiceControllerBinder.getImsServiceCapabilities()).thenReturn(
                 ImsService.CAPABILITY_SIP_DELEGATE_CREATION);
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
 
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
@@ -453,39 +297,9 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_MMTEL));
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
 
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_EMERGENCY_MMTEL), eq(mTestImsServiceController));
-        // Make sure this callback happens, which will notify the framework of emergency calling
-        // availability.
-        validateMmTelFeatureContainerExistsWithEmergency(SLOT_0);
-    }
-
-    /**
-     * Tests proper API is called to create MMTEL for Emergency when sub ID is invalid
-     */
-    @SmallTest
-    @Test
-    public void testBindEmergencyMmTelWithInvalidSubId() throws RemoteException {
-        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
-                ImsFeature.FEATURE_EMERGENCY_MMTEL));
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-
-        verify(mMockServiceControllerBinder).createEmergencyOnlyMmTelFeature(SLOT_0);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
@@ -511,12 +325,10 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
 
         // Verify no MMTEL or EMERGENCY_MMTEL features are created
-        verify(mMockServiceControllerBinder, never()).createMmTelFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder, never()).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder, never()).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks, never()).imsServiceFeatureCreated(eq(SLOT_0),
@@ -525,7 +337,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 eq(ImsFeature.FEATURE_EMERGENCY_MMTEL), eq(mTestImsServiceController));
         validateMmTelFeatureContainerDoesntExist(SLOT_0);
         // verify RCS feature is created
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_RCS), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_RCS),
@@ -546,9 +358,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_MMTEL));
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
 
         validateMmTelFeatureContainerExistsWithEmergency(SLOT_0);
         validateMmTelFeatureExistsInCallback(SLOT_0, ImsService.CAPABILITY_EMERGENCY_OVER_MMTEL);
@@ -566,9 +376,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        ServiceConnection conn = bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        ServiceConnection conn = bindAndConnectService(testFeatures);
 
         conn.onServiceDisconnected(mTestComponentName);
 
@@ -592,9 +400,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        ServiceConnection conn = bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        ServiceConnection conn = bindAndConnectService(testFeatures);
 
         conn.onServiceDisconnected(mTestComponentName);
 
@@ -629,11 +435,9 @@ public class ImsServiceControllerTest extends ImsTestBase {
         TestCallback cb = new TestCallback();
         mRepo.registerForConnectionUpdates(SLOT_0, ImsFeature.FEATURE_MMTEL, cb, Runnable::run);
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
 
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder).createMmTelFeature(eq(SLOT_0));
         ArgumentCaptor<IImsFeatureStatusCallback> captor =
                 ArgumentCaptor.forClass(IImsFeatureStatusCallback.class);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
@@ -660,19 +464,17 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        ServiceConnection conn = bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        ServiceConnection conn = bindAndConnectService(testFeatures);
 
         mTestImsServiceController.unbind();
 
         verify(mMockContext).unbindService(eq(conn));
         verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(false));
+                eq(ImsFeature.FEATURE_MMTEL));
         verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), eq(false));
+                eq(ImsFeature.FEATURE_RCS));
         verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_RCS), any());
         verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
@@ -694,9 +496,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        ServiceConnection conn = bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        ServiceConnection conn = bindAndConnectService(testFeatures);
 
         conn.onBindingDied(null /*null*/);
 
@@ -721,9 +521,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndNullServiceError(testFeatures, slotIdToSubIdMap.clone());
+        bindAndNullServiceError(testFeatures);
 
         verify(mMockCallbacks, never()).imsServiceFeatureCreated(anyInt(), anyInt(),
                 eq(mTestImsServiceController));
@@ -738,17 +536,15 @@ public class ImsServiceControllerTest extends ImsTestBase {
     @SmallTest
     @Test
     public void testBindServiceAndImsFeatureReturnedNull() throws RemoteException {
-        when(mMockServiceControllerBinder.createRcsFeature(anyInt(), anyInt()))
+        when(mMockServiceControllerBinder.createRcsFeature(anyInt()))
                 .thenReturn(null);
         HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
 
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
 
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0);
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_RCS),
                 eq(mTestImsServiceController));
         validateRcsFeatureContainerDoesntExist(SLOT_0);
@@ -763,11 +559,8 @@ public class ImsServiceControllerTest extends ImsTestBase {
         HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_MMTEL));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        slotIdToSubIdMap.put(SLOT_1, SUB_3);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
+        bindAndConnectService(testFeatures);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
@@ -778,48 +571,9 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeaturesWithAddition.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
                 ImsFeature.FEATURE_MMTEL));
 
-        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithAddition,
-                slotIdToSubIdMap.clone());
+        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithAddition);
 
-        verify(mMockServiceControllerBinder, never()).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(true));
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1, SUB_3);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateMmTelFeatureContainerExists(SLOT_1);
-    }
-
-    /**
-     * Ensures IMS features are correctly changed when configuration change from one to two SIMs.
-     */
-    @SmallTest
-    @Test
-    public void testBindService_oneSimToMsim() throws RemoteException {
-        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        // Create a new list with an additional item
-        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeaturesWithAddition = new HashSet<>(
-                testFeatures);
-        testFeaturesWithAddition.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
-                ImsFeature.FEATURE_MMTEL));
-        slotIdToSubIdMap.put(SLOT_1, SUB_3);
-        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithAddition,
-                slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder, never()).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(true));
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1, SUB_3);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_1),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
@@ -839,10 +593,8 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         TestCallback cb = new TestCallback();
         mRepo.registerForConnectionUpdates(SLOT_0, ImsFeature.FEATURE_MMTEL, cb, Runnable::run);
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
+        bindAndConnectService(testFeatures);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
@@ -858,8 +610,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeaturesWithAddition.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_EMERGENCY_MMTEL));
 
-        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithAddition,
-                slotIdToSubIdMap.clone());
+        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithAddition);
 
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_EMERGENCY_MMTEL),
@@ -871,8 +622,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 | cb.container.getCapabilities()) > 0);
 
         // Remove Emergency calling
-        mTestImsServiceController.changeImsServiceFeatures(testFeatures,
-                slotIdToSubIdMap.clone());
+        mTestImsServiceController.changeImsServiceFeatures(testFeatures);
 
         verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_EMERGENCY_MMTEL),
@@ -893,10 +643,8 @@ public class ImsServiceControllerTest extends ImsTestBase {
         HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0, SUB_2);
+        bindAndConnectService(testFeatures);
+        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_RCS), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_RCS),
@@ -908,11 +656,9 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeaturesWithAddition.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
                 ImsFeature.FEATURE_EMERGENCY_MMTEL));
 
-        slotIdToSubIdMap.put(SLOT_1, SUB_3);
-        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithAddition,
-                slotIdToSubIdMap.clone());
+        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithAddition);
 
-        verify(mMockServiceControllerBinder, never()).createMmTelFeature(SLOT_1, SUB_3);
+        verify(mMockServiceControllerBinder, never()).createMmTelFeature(SLOT_1);
         verify(mMockServiceControllerBinder, never()).addFeatureStatusCallback(eq(SLOT_1),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks, never()).imsServiceFeatureCreated(eq(SLOT_1),
@@ -931,10 +677,8 @@ public class ImsServiceControllerTest extends ImsTestBase {
         HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_MMTEL));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
+        bindAndConnectService(testFeatures);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
@@ -942,13 +686,12 @@ public class ImsServiceControllerTest extends ImsTestBase {
         validateMmTelFeatureContainerExists(SLOT_0);
 
         // Call change with the same features and make sure it is disregarded
-        mTestImsServiceController.changeImsServiceFeatures(testFeatures, slotIdToSubIdMap.clone());
+        mTestImsServiceController.changeImsServiceFeatures(testFeatures);
 
-        verify(mMockServiceControllerBinder, times(1)).createMmTelFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder, times(1)).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder, times(1)).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockServiceControllerBinder, never()).removeImsFeature(anyInt(), anyInt(),
-                eq(true));
+        verify(mMockServiceControllerBinder, never()).removeImsFeature(anyInt(), anyInt());
 
 
         verify(mMockServiceControllerBinder, never()).removeFeatureStatusCallback(anyInt(),
@@ -957,54 +700,6 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 eq(ImsFeature.FEATURE_MMTEL), eq(mTestImsServiceController));
         verify(mMockCallbacks, never()).imsServiceFeatureRemoved(anyInt(), anyInt(), any());
         validateMmTelFeatureContainerExists(SLOT_0);
-    }
-
-    /**
-     * Ensures IMS features are correctly changed when configuration change from two SIMs to one.
-     */
-    @SmallTest
-    @Test
-    public void testBindService_MsimToOneSim() throws RemoteException {
-        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
-                ImsFeature.FEATURE_MMTEL));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        slotIdToSubIdMap.put(SLOT_1, SUB_3);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1, SUB_3);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateMmTelFeatureContainerExists(SLOT_1);
-        // Create a new list with one less item
-        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeaturesWithSubtraction =
-                new HashSet<>(testFeatures);
-        testFeaturesWithSubtraction.remove(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
-                ImsFeature.FEATURE_MMTEL));
-
-        slotIdToSubIdMap.delete(SLOT_1);
-        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithSubtraction,
-                slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder, never()).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(false));
-        verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), eq(false));
-        verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateMmTelFeatureContainerDoesntExist(SLOT_1);
     }
 
     /**
@@ -1018,16 +713,13 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
                 ImsFeature.FEATURE_MMTEL));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        slotIdToSubIdMap.put(SLOT_1, SUB_3);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
+        bindAndConnectService(testFeatures);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
                 eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1, SUB_3);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_1),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
@@ -1040,108 +732,16 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeaturesWithSubtraction.remove(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
                 ImsFeature.FEATURE_MMTEL));
 
-        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithSubtraction,
-                slotIdToSubIdMap.clone());
+        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithSubtraction);
 
         verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), eq(false));
+                eq(ImsFeature.FEATURE_MMTEL));
         verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_1),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
                 eq(mTestImsServiceController));
         validateMmTelFeatureContainerExists(SLOT_0);
         validateMmTelFeatureContainerDoesntExist(SLOT_1);
-    }
-
-    /**
-     * Ensures removed feature is actually removed and remove/add unchanged features that have a
-     * slot ID associated with new subscription ID.
-     */
-    @SmallTest
-    @Test
-    public void testBindServiceAndRemoveFeatureWithSubIdChanged() throws RemoteException {
-        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
-                ImsFeature.FEATURE_MMTEL));
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
-                ImsFeature.FEATURE_MMTEL));
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
-                ImsFeature.FEATURE_RCS));
-        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
-                ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        slotIdToSubIdMap.put(SLOT_1, SUB_3);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0, SUB_2);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_RCS),
-                eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1, SUB_3);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_1, SUB_3);
-        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_RCS), any());
-        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_1), eq(ImsFeature.FEATURE_RCS),
-                eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateMmTelFeatureContainerExists(SLOT_1);
-        validateRcsFeatureContainerExists(SLOT_0);
-        validateRcsFeatureContainerExists(SLOT_1);
-
-        // Create a new list with one less item
-        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeaturesWithSubtraction =
-                new HashSet<>(testFeatures);
-        testFeaturesWithSubtraction.remove(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
-                ImsFeature.FEATURE_MMTEL));
-        slotIdToSubIdMap.put(SLOT_0, SUB_4);
-        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithSubtraction,
-                slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), eq(false));
-        verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateMmTelFeatureContainerDoesntExist(SLOT_1);
-        // ensure remove and add unchanged features that have a slot ID associated with the new
-        // subscription ID.
-        verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(true));
-        verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
-                eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), eq(true));
-        verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), any());
-        verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_0), eq(ImsFeature.FEATURE_RCS),
-                eq(mTestImsServiceController));
-
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_4);
-        verify(mMockServiceControllerBinder, times(2)).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), any());
-        verify(mMockCallbacks, times(2)).imsServiceFeatureCreated(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).createRcsFeature(SLOT_0, SUB_4);
-        verify(mMockServiceControllerBinder, times(2)).addFeatureStatusCallback(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), any());
-        verify(mMockCallbacks, times(2)).imsServiceFeatureCreated(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_RCS), eq(mTestImsServiceController));
-        validateMmTelFeatureContainerExists(SLOT_0);
-        validateRcsFeatureContainerExists(SLOT_0);
-        validateRcsFeatureContainerExists(SLOT_1);
     }
 
     /**
@@ -1155,16 +755,13 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
                 ImsFeature.FEATURE_MMTEL));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        slotIdToSubIdMap.put(SLOT_1, SUB_3);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0, SUB_2);
+        bindAndConnectService(testFeatures);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_0);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
                 eq(mTestImsServiceController));
-        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1, SUB_3);
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1);
         verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_1),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
@@ -1173,17 +770,16 @@ public class ImsServiceControllerTest extends ImsTestBase {
         validateMmTelFeatureContainerExists(SLOT_1);
 
         // Create a new empty list
-        mTestImsServiceController.changeImsServiceFeatures(new HashSet<>(),
-                slotIdToSubIdMap.clone());
+        mTestImsServiceController.changeImsServiceFeatures(new HashSet<>());
 
         verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_0),
-                eq(ImsFeature.FEATURE_MMTEL), eq(false));
+                eq(ImsFeature.FEATURE_MMTEL));
         verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
                 eq(mTestImsServiceController));
         verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_1),
-                eq(ImsFeature.FEATURE_MMTEL), eq(false));
+                eq(ImsFeature.FEATURE_MMTEL));
         verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_1),
                 eq(ImsFeature.FEATURE_MMTEL), any());
         verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
@@ -1201,9 +797,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
         HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_MMTEL));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        bindAndConnectService(testFeatures);
         mTestImsServiceController.unbind();
         // Create a new list with an additional item
         HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeaturesWithAddition = new HashSet<>(
@@ -1212,10 +806,9 @@ public class ImsServiceControllerTest extends ImsTestBase {
         testFeaturesWithAddition.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
 
-        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithAddition,
-                slotIdToSubIdMap.clone());
+        mTestImsServiceController.changeImsServiceFeatures(testFeaturesWithAddition);
 
-        verify(mMockServiceControllerBinder, never()).createRcsFeature(SLOT_0, SUB_2);
+        verify(mMockServiceControllerBinder, never()).createRcsFeature(eq(SLOT_0));
         verify(mMockServiceControllerBinder, never()).removeFeatureStatusCallback(eq(SLOT_0),
                 eq(ImsFeature.FEATURE_RCS), any());
         verify(mMockCallbacks, never()).imsServiceFeatureCreated(eq(SLOT_0),
@@ -1236,9 +829,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        ServiceConnection conn = bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        ServiceConnection conn = bindAndConnectService(testFeatures);
 
         conn.onBindingDied(null /*null*/);
 
@@ -1260,9 +851,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        ServiceConnection conn = bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        ServiceConnection conn = bindAndConnectService(testFeatures);
 
         conn.onBindingDied(null);
         // null binding should be ignored in this case.
@@ -1285,9 +874,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        ServiceConnection conn = bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        ServiceConnection conn = bindAndConnectService(testFeatures);
 
         conn.onBindingDied(null /*null*/);
 
@@ -1306,9 +893,7 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        ServiceConnection conn = bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        ServiceConnection conn = bindAndConnectService(testFeatures);
 
         conn.onBindingDied(null /*null*/);
         mTestImsServiceController.unbind();
@@ -1332,11 +917,9 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 ImsFeature.FEATURE_MMTEL));
         testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
                 ImsFeature.FEATURE_RCS));
-        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
-        slotIdToSubIdMap.put(SLOT_0, SUB_2);
-        ServiceConnection conn = bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        ServiceConnection conn = bindAndConnectService(testFeatures);
         conn.onBindingDied(null /*null*/);
-        mTestImsServiceController.bind(testFeatures, slotIdToSubIdMap.clone());
+        mTestImsServiceController.bind(testFeatures);
 
         long delay = mTestImsServiceController.getRebindDelay();
         waitForHandlerActionDelayed(mHandler, delay, 2 * delay);
@@ -1406,16 +989,14 @@ public class ImsServiceControllerTest extends ImsTestBase {
     }
 
     private void bindAndNullServiceError(
-            HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures,
-            SparseIntArray slotIdToSubIdMap) {
-        ServiceConnection connection = bindService(testFeatures, slotIdToSubIdMap);
+            HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures) {
+        ServiceConnection connection = bindService(testFeatures);
         connection.onNullBinding(mTestComponentName);
     }
 
     private ServiceConnection bindAndConnectService(
-            HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures,
-            SparseIntArray slotIdToSubIdMap) {
-        ServiceConnection connection = bindService(testFeatures, slotIdToSubIdMap);
+            HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures) {
+        ServiceConnection connection = bindService(testFeatures);
         IImsServiceController.Stub controllerStub = mock(IImsServiceController.Stub.class);
         when(controllerStub.queryLocalInterface(any())).thenReturn(mMockServiceControllerBinder);
         connection.onServiceConnected(mTestComponentName, controllerStub);
@@ -1423,11 +1004,10 @@ public class ImsServiceControllerTest extends ImsTestBase {
     }
 
     private ServiceConnection bindService(
-            HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures,
-            SparseIntArray slotIdToSubIdMap) {
+            HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures) {
         ArgumentCaptor<ServiceConnection> serviceCaptor =
                 ArgumentCaptor.forClass(ServiceConnection.class);
-        assertTrue(mTestImsServiceController.bind(testFeatures, slotIdToSubIdMap));
+        assertTrue(mTestImsServiceController.bind(testFeatures));
         verify(mMockContext).bindService(any(), serviceCaptor.capture(), anyInt());
         return serviceCaptor.getValue();
     }

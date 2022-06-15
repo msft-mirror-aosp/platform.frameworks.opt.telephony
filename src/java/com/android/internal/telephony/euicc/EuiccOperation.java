@@ -23,7 +23,6 @@ import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.service.euicc.EuiccService;
-import android.telephony.TelephonyManager;
 import android.telephony.euicc.DownloadableSubscription;
 import android.telephony.euicc.EuiccManager;
 import android.text.TextUtils;
@@ -277,8 +276,6 @@ public class EuiccOperation implements Parcelable {
                 break;
             case ACTION_DOWNLOAD_DEACTIVATE_SIM:
                 resolvedDownloadDeactivateSim(cardId,
-                        resolutionExtras.getInt(EuiccService.EXTRA_RESOLUTION_PORT_INDEX,
-                                TelephonyManager.DEFAULT_PORT_INDEX),
                         resolutionExtras.getBoolean(EuiccService.EXTRA_RESOLUTION_CONSENT),
                         callbackIntent);
                 break;
@@ -289,8 +286,6 @@ public class EuiccOperation implements Parcelable {
                 break;
             case ACTION_DOWNLOAD_NO_PRIVILEGES_OR_DEACTIVATE_SIM_CHECK_METADATA:
                 resolvedDownloadNoPrivilegesOrDeactivateSimCheckMetadata(cardId,
-                        resolutionExtras.getInt(EuiccService.EXTRA_RESOLUTION_PORT_INDEX,
-                                TelephonyManager.DEFAULT_PORT_INDEX),
                         resolutionExtras.getBoolean(EuiccService.EXTRA_RESOLUTION_CONSENT),
                         callbackIntent);
                 break;
@@ -307,34 +302,16 @@ public class EuiccOperation implements Parcelable {
                         resolutionExtras.getBoolean(EuiccService.EXTRA_RESOLUTION_CONSENT),
                         callbackIntent);
                 break;
-            case ACTION_SWITCH_DEACTIVATE_SIM: {
-                // get portIndex from original operation
-                final int portIndex = resolutionExtras.getInt(
-                        EuiccService.EXTRA_RESOLUTION_PORT_INDEX,
-                        0);
-                // get whether legacy API was called from original operation
-                final boolean usePortIndex = resolutionExtras.getBoolean(
-                        EuiccService.EXTRA_RESOLUTION_USE_PORT_INDEX,
-                        false);
-                resolvedSwitchDeactivateSim(cardId, portIndex,
+            case ACTION_SWITCH_DEACTIVATE_SIM:
+                resolvedSwitchDeactivateSim(cardId,
                         resolutionExtras.getBoolean(EuiccService.EXTRA_RESOLUTION_CONSENT),
-                        callbackIntent, usePortIndex);
+                        callbackIntent);
                 break;
-            }
-            case ACTION_SWITCH_NO_PRIVILEGES: {
-                // get portIndex from original operation
-                final int portIndex = resolutionExtras.getInt(
-                        EuiccService.EXTRA_RESOLUTION_PORT_INDEX,
-                        0);
-                // get whether port index was passed in from original operation
-                final boolean usePortIndex = resolutionExtras.getBoolean(
-                        EuiccService.EXTRA_RESOLUTION_USE_PORT_INDEX,
-                        false);
-                resolvedSwitchNoPrivileges(cardId, portIndex,
+            case ACTION_SWITCH_NO_PRIVILEGES:
+                resolvedSwitchNoPrivileges(cardId,
                         resolutionExtras.getBoolean(EuiccService.EXTRA_RESOLUTION_CONSENT),
-                        callbackIntent, usePortIndex);
+                        callbackIntent);
                 break;
-            }
             default:
                 Log.wtf(TAG, "Unknown action: " + mAction);
                 break;
@@ -358,14 +335,13 @@ public class EuiccOperation implements Parcelable {
         }
     }
 
-    private void resolvedDownloadDeactivateSim(int cardId, int portIndex, boolean consent,
+    private void resolvedDownloadDeactivateSim(int cardId, boolean consent,
             PendingIntent callbackIntent) {
         if (consent) {
             // User has consented; perform the download, but this time, tell the LPA to deactivate
             // any required active SIMs.
             EuiccController.get().downloadSubscription(
                     cardId,
-                    portIndex,
                     mDownloadableSubscription,
                     mSwitchAfterDownload,
                     mCallingPackage,
@@ -388,12 +364,8 @@ public class EuiccOperation implements Parcelable {
                 // privilege prompt should also cover permission to deactivate an active SIM, as
                 // the privilege prompt makes it clear that we're switching from the current
                 // carrier.
-                // Action {@link #ACTION_DOWNLOAD_NO_PRIVILEGES} is no more used in platform,this
-                // method will never get called, pass {@link TelephonyManager#DEFAULT_PORT_INDEX}
-                // as portIndex.
                 EuiccController.get().downloadSubscriptionPrivileged(
                         cardId,
-                        TelephonyManager.DEFAULT_PORT_INDEX,
                         token,
                         mDownloadableSubscription,
                         mSwitchAfterDownload,
@@ -411,7 +383,7 @@ public class EuiccOperation implements Parcelable {
     }
 
     private void resolvedDownloadNoPrivilegesOrDeactivateSimCheckMetadata(int cardId,
-            int portIndex, boolean consent, PendingIntent callbackIntent) {
+            boolean consent, PendingIntent callbackIntent) {
         if (consent) {
             // User has consented; perform the download with full privileges.
             long token = Binder.clearCallingIdentity();
@@ -422,7 +394,6 @@ public class EuiccOperation implements Parcelable {
                 // carrier.
                 EuiccController.get().downloadSubscriptionPrivilegedCheckMetadata(
                         cardId,
-                        portIndex,
                         token,
                         mDownloadableSubscription,
                         mSwitchAfterDownload,
@@ -450,11 +421,8 @@ public class EuiccOperation implements Parcelable {
             fail(callbackIntent);
         } else {
             mDownloadableSubscription.setConfirmationCode(confirmationCode);
-            // Action {@link #ACTION_DOWNLOAD_CONFIRMATION_CODE} is not any more used from LPA with
-            // targetSDK >=Q, pass {@link TelephonyManager#DEFAULT_PORT_INDEX} as portIndex.
             EuiccController.get().downloadSubscription(
                     cardId,
-                    TelephonyManager.DEFAULT_PORT_INDEX,
                     mDownloadableSubscription,
                     mSwitchAfterDownload,
                     mCallingPackage,
@@ -489,8 +457,6 @@ public class EuiccOperation implements Parcelable {
             mDownloadableSubscription.setConfirmationCode(confirmationCode);
             EuiccController.get().downloadSubscription(
                     cardId,
-                    resolvedBundle.getInt(EuiccService.EXTRA_RESOLUTION_PORT_INDEX,
-                            TelephonyManager.DEFAULT_PORT_INDEX),
                     mDownloadableSubscription,
                     mSwitchAfterDownload,
                     mCallingPackage,
@@ -516,28 +482,25 @@ public class EuiccOperation implements Parcelable {
         }
     }
 
-    private void resolvedSwitchDeactivateSim(int cardId, int portIndex, boolean consent,
-            PendingIntent callbackIntent, boolean usePortIndex) {
+    private void resolvedSwitchDeactivateSim(int cardId, boolean consent,
+            PendingIntent callbackIntent) {
         if (consent) {
             // User has consented; perform the switch, but this time, tell the LPA to deactivate any
             // required active SIMs.
-            EuiccController euiccController = EuiccController.get();
-            euiccController.switchToSubscription(
+            EuiccController.get().switchToSubscription(
                     cardId,
                     mSubscriptionId,
-                    portIndex,
                     true /* forceDeactivateSim */,
                     mCallingPackage,
-                    callbackIntent,
-                    usePortIndex);
+                    callbackIntent);
         } else {
             // User has not consented; fail the operation.
             fail(callbackIntent);
         }
     }
 
-    private void resolvedSwitchNoPrivileges(int cardId, int portIndex, boolean consent,
-            PendingIntent callbackIntent, boolean usePortIndex) {
+    private void resolvedSwitchNoPrivileges(int cardId, boolean consent,
+            PendingIntent callbackIntent) {
         if (consent) {
             // User has consented; perform the switch with full privileges.
             long token = Binder.clearCallingIdentity();
@@ -548,16 +511,13 @@ public class EuiccOperation implements Parcelable {
                 // carrier. Also note that in practice, we'd need to deactivate the active SIM to
                 // even reach this point, because we cannot fetch the metadata needed to check the
                 // privileges without doing so.
-                EuiccController euiccController = EuiccController.get();
-                euiccController.switchToSubscriptionPrivileged(
+                EuiccController.get().switchToSubscriptionPrivileged(
                         cardId,
-                        portIndex,
                         token,
                         mSubscriptionId,
                         true /* forceDeactivateSim */,
                         mCallingPackage,
-                        callbackIntent,
-                        usePortIndex);
+                        callbackIntent);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }

@@ -30,12 +30,14 @@ import android.util.ArraySet;
 
 import androidx.test.runner.AndroidJUnit4;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -47,27 +49,18 @@ public class CommunicatorTest {
     private List<TransportProtocol> mTransportProtocols = new ArrayList<>();
     private TransportProtocol.Callback mCallback;
     private Communicator mCommunicator;
-
-    // Mocked classes
-    private ArgumentCaptor<Set<Communicator.Message>> mMessagesCaptor;
+    @Mock
     private Communicator.Callback mCommunicatorCallback;
+    @Captor
+    private ArgumentCaptor<Set<Communicator.Message>> mMessagesCaptor;
 
     @Before
     public void setUp() throws Exception {
-        mMessagesCaptor = ArgumentCaptor.forClass(Set.class);
-        mCommunicatorCallback = Mockito.mock(Communicator.Callback.class);
+        MockitoAnnotations.initMocks(this);
         TransportProtocol protocol1 = getMockTransportProtocol();
         TransportProtocol protocol2 = getMockTransportProtocol();
         mTransportProtocols.add(protocol1);
         mTransportProtocols.add(protocol2);
-    }
-
-    @After
-    public void tearDown() {
-        mTransportProtocols.clear();
-        mTransportProtocols = null;
-        mCallback = null;
-        mCommunicator = null;
     }
 
     /**

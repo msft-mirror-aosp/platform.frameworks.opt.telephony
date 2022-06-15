@@ -20,7 +20,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
 
 import android.test.suitebuilder.annotation.SmallTest;
 
@@ -28,18 +27,19 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.mockito.Mock;
 
 import java.io.UnsupportedEncodingException;
 
 public class Sms7BitEncodingTranslatorTest extends TelephonyTest {
-    // Mocked classes
+
+    @Mock
     SmsController mSmsController;
 
     @Before
     public void setUp() throws Exception {
         logd("+Setup!");
         super.setUp(getClass().getSimpleName());
-        mSmsController = mock(SmsController.class);
         mServiceManagerMockedServices.put("isms", mSmsController);
         doReturn(false).when(mSmsController).isImsSmsSupportedForSubscriber(anyInt());
         logd("-Setup!");

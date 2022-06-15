@@ -75,6 +75,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.stubbing.Answer;
 import org.mockito.verification.VerificationMode;
@@ -87,19 +88,24 @@ import java.util.List;
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class GsmInboundSmsHandlerTest extends TelephonyTest {
-    // Mocked classes
+    @Mock
     private SmsStorageMonitor mSmsStorageMonitor;
+    @Mock
     private android.telephony.SmsMessage mSmsMessage;
+    @Mock
     private SmsMessage mGsmSmsMessage;
+    @Mock
     private SmsHeader mSmsHeader;
-    private CdmaInboundSmsHandler mCdmaInboundSmsHandler;
-    private InboundSmsHandler.SmsFilter mSmsFilter;
-    private InboundSmsHandler.SmsFilter mSmsFilter2;
-
     private InboundSmsTracker mInboundSmsTracker;
     private InboundSmsTracker mInboundSmsTrackerSub1;
     private InboundSmsTracker mInboundSmsTrackerPart1;
     private InboundSmsTracker mInboundSmsTrackerPart2;
+    @Mock
+    private CdmaInboundSmsHandler mCdmaInboundSmsHandler;
+    @Mock
+    private InboundSmsHandler.SmsFilter mSmsFilter;
+    @Mock
+    private InboundSmsHandler.SmsFilter mSmsFilter2;
     private List<InboundSmsHandler.SmsFilter> mSmsFilters;
 
     private GsmInboundSmsHandler mGsmInboundSmsHandler;
@@ -109,13 +115,13 @@ public class GsmInboundSmsHandlerTest extends TelephonyTest {
     private static final Uri sRawUri = Uri.withAppendedPath(Telephony.Sms.CONTENT_URI,
             RAW_TABLE_NAME);
 
-    private final String mMessageBody = "This is the message body of a single-part message";
-    private final String mMessageBodyPart1 = "This is the first part of a multi-part message";
-    private final String mMessageBodyPart2 = "This is the second part of a multi-part message";
-    private final int mSubId0 = 0;
-    private final int mSubId1 = 0;
+    private String mMessageBody = "This is the message body of a single-part message";
+    private String mMessageBodyPart1 = "This is the first part of a multi-part message";
+    private String mMessageBodyPart2 = "This is the second part of a multi-part message";
+    private int mSubId0 = 0;
+    private int mSubId1 = 0;
 
-    final byte[] mSmsPdu = new byte[]{(byte) 0xFF, (byte) 0xFF, (byte) 0xFF};
+    byte[] mSmsPdu = new byte[]{(byte)0xFF, (byte)0xFF, (byte)0xFF};
 
     private IState getCurrentState() {
         try {
@@ -155,14 +161,7 @@ public class GsmInboundSmsHandlerTest extends TelephonyTest {
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(getClass().getSimpleName());
-        mSmsStorageMonitor = Mockito.mock(SmsStorageMonitor.class);
-        mSmsMessage = Mockito.mock(android.telephony.SmsMessage.class);
-        mGsmSmsMessage = Mockito.mock(SmsMessage.class);
-        mSmsHeader = Mockito.mock(SmsHeader.class);
-        mCdmaInboundSmsHandler = Mockito.mock(CdmaInboundSmsHandler.class);
-        mSmsFilter = Mockito.mock(InboundSmsHandler.SmsFilter.class);
-        mSmsFilter2 = Mockito.mock(InboundSmsHandler.SmsFilter.class);
+        super.setUp("GsmInboundSmsHandlerTest");
 
         doReturn(true).when(mTelephonyManager).getSmsReceiveCapableForPhone(anyInt(), anyBoolean());
         doReturn(true).when(mSmsStorageMonitor).isStorageAvailable();
@@ -230,12 +229,6 @@ public class GsmInboundSmsHandlerTest extends TelephonyTest {
         mGsmInboundSmsHandler.quit();
         mGsmInboundSmsHandler = null;
         mContentProvider.shutdown();
-        mContentProvider = null;
-        mInboundSmsTracker = null;
-        mInboundSmsTrackerSub1 = null;
-        mInboundSmsTrackerPart1 = null;
-        mInboundSmsTrackerPart2 = null;
-        mSmsFilters = null;
         super.tearDown();
     }
 

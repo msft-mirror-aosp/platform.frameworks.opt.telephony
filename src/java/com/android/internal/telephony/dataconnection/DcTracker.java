@@ -74,6 +74,7 @@ import android.telephony.AccessNetworkConstants.TransportType;
 import android.telephony.Annotation.ApnType;
 import android.telephony.Annotation.DataFailureCause;
 import android.telephony.Annotation.NetworkType;
+import android.telephony.AnomalyReporter;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellLocation;
 import android.telephony.DataFailCause;
@@ -93,7 +94,6 @@ import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataCallResponse.HandoverFailureMode;
 import android.telephony.data.DataProfile;
-import android.telephony.data.ThrottleStatus;
 import android.telephony.gsm.GsmCellLocation;
 import android.text.TextUtils;
 import android.util.EventLog;
@@ -112,12 +112,11 @@ import com.android.internal.telephony.ITelephony;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneFactory;
+import com.android.internal.telephony.PhoneSwitcher;
 import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.RetryManager;
 import com.android.internal.telephony.SettingsObserver;
 import com.android.internal.telephony.SubscriptionInfoUpdater;
-import com.android.internal.telephony.data.DataConfigManager;
-import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.dataconnection.DataConnectionReasons.DataAllowedReasonType;
 import com.android.internal.telephony.dataconnection.DataConnectionReasons.DataDisallowedReasonType;
 import com.android.internal.telephony.dataconnection.DataEnabledSettings.DataEnabledChangedReason;
@@ -142,6 +141,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -211,14 +211,14 @@ public class DcTracker extends Handler {
     public static final int RELEASE_TYPE_HANDOVER = 3;
 
     /** The extras for handover completion message */
-    public static final String DATA_COMPLETE_MSG_EXTRA_NETWORK_REQUEST = "extra_network_request";
-    public static final String DATA_COMPLETE_MSG_EXTRA_TRANSPORT_TYPE = "extra_transport_type";
-    public static final String DATA_COMPLETE_MSG_EXTRA_SUCCESS = "extra_success";
+    static final String DATA_COMPLETE_MSG_EXTRA_NETWORK_REQUEST = "extra_network_request";
+    static final String DATA_COMPLETE_MSG_EXTRA_TRANSPORT_TYPE = "extra_transport_type";
+    static final String DATA_COMPLETE_MSG_EXTRA_SUCCESS = "extra_success";
     /**
      * The flag indicates whether after handover failure, the data connection should remain on the
      * original transport.
      */
-    public static final String DATA_COMPLETE_MSG_EXTRA_HANDOVER_FAILURE_FALLBACK =
+    static final String DATA_COMPLETE_MSG_EXTRA_HANDOVER_FAILURE_FALLBACK =
             "extra_handover_failure_fallback";
 
     private final String mLogTag;
@@ -336,8 +336,8 @@ public class DcTracker extends Handler {
 
     private AsyncChannel mReplyAc = new AsyncChannel();
 
-    private final LocalLog mDataRoamingLeakageLog = new LocalLog(32);
-    private final LocalLog mApnSettingsInitializationLog = new LocalLog(32);
+    private final LocalLog mDataRoamingLeakageLog = new LocalLog(50);
+    private final LocalLog mApnSettingsInitializationLog = new LocalLog(50);
 
     /* 5G connection reevaluation watchdog alarm constants */
     private long mWatchdogTimeMs = 1000 * 60 * 60;
@@ -352,11 +352,14 @@ public class DcTracker extends Handler {
     private boolean mNrSaSub6Unmetered = false;
     private boolean mNrNsaRoamingUnmetered = false;
 
-    // it effect the PhysicalLinkStatusChanged
+    // it effect the PhysicalLinkStateChanged
     private boolean mLteEndcUsingUserDataForRrcDetection = false;
 
+    // stats per data call recovery event
+    private DataStallRecoveryStats mDataStallRecoveryStats;
+
     /* List of SubscriptionPlans, updated when initialized and when plans are changed. */
-    private List<SubscriptionPlan> mSubscriptionPlans = new ArrayList<>();
+    private List<SubscriptionPlan> mSubscriptionPlans = null;
     /* List of network types an unmetered override applies to, set by onSubscriptionOverride
      * and cleared when the device is rebooted or the override expires. */
     private List<Integer> mUnmeteredNetworkTypes = null;
@@ -443,19 +446,6 @@ public class DcTracker extends Handler {
         }
     };
 
-    private class ThrottleStatusChangedCallback implements DataThrottler.Callback {
-        @Override
-        public void onThrottleStatusChanged(List<ThrottleStatus> throttleStatuses) {
-            for (ThrottleStatus status : throttleStatuses) {
-                if (status.getThrottleType() == ThrottleStatus.THROTTLE_TYPE_NONE) {
-                    setupDataOnConnectableApn(mApnContextsByType.get(status.getApnType()),
-                            Phone.REASON_DATA_UNTHROTTLED,
-                            RetryFailures.ALWAYS);
-                }
-            }
-        }
-    }
-
     private NetworkPolicyManager mNetworkPolicyManager;
     private final NetworkPolicyManager.SubscriptionCallback mSubscriptionCallback =
             new NetworkPolicyManager.SubscriptionCallback() {
@@ -487,7 +477,7 @@ public class DcTracker extends Handler {
         public void onSubscriptionPlansChanged(int subId, SubscriptionPlan[] plans) {
             if (mPhone == null || mPhone.getSubId() != subId) return;
 
-            mSubscriptionPlans = Arrays.asList(plans);
+            mSubscriptionPlans = plans == null ? null : Arrays.asList(plans);
             if (DBG) log("SubscriptionPlans changed: " + mSubscriptionPlans);
             reevaluateUnmeteredConnections();
         }
@@ -727,8 +717,6 @@ public class DcTracker extends Handler {
 
     private final DataThrottler mDataThrottler;
 
-    private final ThrottleStatusChangedCallback mThrottleStatusCallback;
-
     /**
      * Request network completion message map. Key is the APN type, value is the list of completion
      * messages to be sent. Using a list because there might be multiple network requests for
@@ -804,9 +792,6 @@ public class DcTracker extends Handler {
 
         mSettingsObserver = new SettingsObserver(mPhone.getContext(), this);
         registerSettingsObserver();
-
-        mThrottleStatusCallback = new ThrottleStatusChangedCallback();
-        mDataThrottler.registerForThrottleStatusChanges(mThrottleStatusCallback);
     }
 
     @VisibleForTesting
@@ -821,7 +806,6 @@ public class DcTracker extends Handler {
         mTransportType = 0;
         mDataServiceManager = null;
         mDataThrottler = null;
-        mThrottleStatusCallback = null;
     }
 
     public void registerServiceStateTrackerEvents() {
@@ -1409,7 +1393,7 @@ public class DcTracker extends Handler {
         if ((apnContext != null && requestApnType == ApnSetting.TYPE_DEFAULT
                 || requestApnType == ApnSetting.TYPE_ENTERPRISE
                 || requestApnType == ApnSetting.TYPE_IA)
-                && mPhone.getAccessNetworksManager().isInLegacyMode()
+                && mPhone.getTransportManager().isInLegacyMode()
                 && dataRat == ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN) {
             reasons.add(DataDisallowedReasonType.ON_IWLAN);
         }
@@ -1458,13 +1442,13 @@ public class DcTracker extends Handler {
         }
 
         if (apnContext != null) {
-            if (mPhone.getAccessNetworksManager().getPreferredTransport(
+            if (mPhone.getTransportManager().getPreferredTransport(
                     apnContext.getApnTypeBitmask())
                     == AccessNetworkConstants.TRANSPORT_TYPE_INVALID) {
                 // If QNS explicitly specified this APN type is not allowed on either cellular or
                 // IWLAN, we should not allow data setup.
                 reasons.add(DataDisallowedReasonType.DISABLED_BY_QNS);
-            } else if (mTransportType != mPhone.getAccessNetworksManager().getPreferredTransport(
+            } else if (mTransportType != mPhone.getTransportManager().getPreferredTransport(
                     apnContext.getApnTypeBitmask())) {
                 // If the latest preference has already switched to other transport, we should not
                 // allow data setup.
@@ -1474,7 +1458,7 @@ public class DcTracker extends Handler {
             // If the transport has been already switched to the other transport, we should not
             // allow the data setup. The only exception is the handover case, where we setup
             // handover data connection before switching the transport.
-            if (mTransportType != mPhone.getAccessNetworksManager().getCurrentTransport(
+            if (mTransportType != mPhone.getTransportManager().getCurrentTransport(
                     apnContext.getApnTypeBitmask()) && requestType != REQUEST_TYPE_HANDOVER) {
                 reasons.add(DataDisallowedReasonType.ON_OTHER_TRANSPORT);
             }
@@ -1624,14 +1608,14 @@ public class DcTracker extends Handler {
         if (dataConnectionReasons.contains(DataDisallowedReasonType.DISABLED_BY_QNS)
                 || dataConnectionReasons.contains(DataDisallowedReasonType.ON_OTHER_TRANSPORT)) {
             logStr += ", current transport=" + AccessNetworkConstants.transportTypeToString(
-                    mPhone.getAccessNetworksManager().getCurrentTransport(
+                    mPhone.getTransportManager().getCurrentTransport(
                             apnContext.getApnTypeBitmask()));
             logStr += ", preferred transport=" + AccessNetworkConstants.transportTypeToString(
-                    mPhone.getAccessNetworksManager().getPreferredTransport(
+                    mPhone.getTransportManager().getPreferredTransport(
                             apnContext.getApnTypeBitmask()));
         }
         if (DBG) log(logStr);
-        ApnContext.requestLog(apnContext, logStr);
+        apnContext.requestLog(logStr);
         if (!isDataAllowed) {
             StringBuilder str = new StringBuilder();
 
@@ -1664,7 +1648,7 @@ public class DcTracker extends Handler {
             }
 
             if (DBG) log(str.toString());
-            ApnContext.requestLog(apnContext, str.toString());
+            apnContext.requestLog(str.toString());
             if (requestType == REQUEST_TYPE_HANDOVER) {
                 // If fails due to latest preference already changed back to source transport, then
                 // just fallback (will not attempt handover anymore, and will not tear down the
@@ -1679,7 +1663,7 @@ public class DcTracker extends Handler {
         if (apnContext.getState() == DctConstants.State.FAILED) {
             String str = "trySetupData: make a FAILED ApnContext IDLE so its reusable";
             if (DBG) log(str);
-            ApnContext.requestLog(apnContext, str);
+            apnContext.requestLog(str);
             apnContext.setState(DctConstants.State.IDLE);
         }
         int radioTech = getDataRat();
@@ -1696,7 +1680,7 @@ public class DcTracker extends Handler {
             if (waitingApns.isEmpty()) {
                 String str = "trySetupData: X No APN found retValue=false";
                 if (DBG) log(str);
-                ApnContext.requestLog(apnContext, str);
+                apnContext.requestLog(str);
                 if (requestType == REQUEST_TYPE_HANDOVER) {
                     sendHandoverCompleteMessages(apnContext.getApnTypeBitmask(), false,
                             false);
@@ -1846,7 +1830,7 @@ public class DcTracker extends Handler {
         String str = "cleanUpConnectionInternal: detach=" + detach + " reason="
                 + apnContext.getReason();
         if (VDBG) log(str + " apnContext=" + apnContext);
-        ApnContext.requestLog(apnContext, str);
+        apnContext.requestLog(str);
         if (detach) {
             if (apnContext.isDisconnected()) {
                 // The request is detach and but ApnContext is not connected.
@@ -1870,7 +1854,7 @@ public class DcTracker extends Handler {
                         str = "cleanUpConnectionInternal: tearing down"
                                 + (disconnectAll ? " all" : "") + " using gen#" + generation;
                         if (DBG) log(str + "apnContext=" + apnContext);
-                        ApnContext.requestLog(apnContext, str);
+                        apnContext.requestLog(str);
                         Pair<ApnContext, Integer> pair = new Pair<>(apnContext, generation);
                         Message msg = obtainMessage(DctConstants.EVENT_DISCONNECT_DONE, pair);
 
@@ -1886,8 +1870,7 @@ public class DcTracker extends Handler {
                     // apn is connected but no reference to the data connection.
                     // Should not be happen, but reset the state in case.
                     apnContext.setState(DctConstants.State.IDLE);
-                    ApnContext.requestLog(
-                            apnContext, "cleanUpConnectionInternal: connected, bug no dc");
+                    apnContext.requestLog("cleanUpConnectionInternal: connected, bug no dc");
                 }
             }
         } else {
@@ -2012,6 +1995,14 @@ public class DcTracker extends Handler {
         int bearer = getDataRat();
         ArrayList<ApnSetting> dunCandidates = new ArrayList<ApnSetting>();
         ArrayList<ApnSetting> retDunSettings = new ArrayList<ApnSetting>();
+
+        // Places to look for tether APN in order: TETHER_DUN_APN setting (to be deprecated soon),
+        // APN database
+        String apnData = Settings.Global.getString(mResolver, Settings.Global.TETHER_DUN_APN);
+        if (!TextUtils.isEmpty(apnData)) {
+            dunCandidates.addAll(ApnSetting.arrayFromString(apnData));
+            if (VDBG) log("fetchDunApns: dunCandidates from Setting: " + dunCandidates);
+        }
 
         if (dunCandidates.isEmpty()) {
             if (!ArrayUtils.isEmpty(mAllApnSettings)) {
@@ -2147,8 +2138,7 @@ public class DcTracker extends Handler {
             log("setupData: apnContext=" + apnContext + ", requestType="
                     + requestTypeToString(requestType));
         }
-        ApnContext.requestLog(
-                apnContext, "setupData. requestType=" + requestTypeToString(requestType));
+        apnContext.requestLog("setupData. requestType=" + requestTypeToString(requestType));
         ApnSetting apnSetting;
         DataConnection dataConnection = null;
 
@@ -2311,10 +2301,8 @@ public class DcTracker extends Handler {
             if (DBG) log("setInitialAttachApn: X There in no available apn.");
         } else {
             if (DBG) log("setInitialAttachApn: X selected APN=" + apnSetting);
-            mDataServiceManager.setInitialAttachApn(new DataProfile.Builder()
-                    .setApnSetting(apnSetting)
-                    .setPreferred(apnSetting.equals(getPreferredApn()))
-                    .build(),
+            mDataServiceManager.setInitialAttachApn(createDataProfile(apnSetting,
+                    apnSetting.equals(getPreferredApn())),
                     mPhone.getServiceState().getDataRoamingFromRegistration(), null);
         }
     }
@@ -2373,7 +2361,6 @@ public class DcTracker extends Handler {
      * @return true if only single DataConnection is allowed
      */
     private boolean isOnlySingleDcAllowed(int rilRadioTech) {
-        int networkType = ServiceState.rilRadioTechnologyToNetworkType(rilRadioTech);
         // Default single dc rats with no knowledge of carrier
         int[] singleDcRats = null;
         // get the carrier specific value, if it exists, from CarrierConfigManager.
@@ -2394,17 +2381,12 @@ public class DcTracker extends Handler {
             onlySingleDcAllowed = true;
         }
         if (singleDcRats != null) {
-            for (int i = 0; i < singleDcRats.length && !onlySingleDcAllowed; i++) {
-                if (networkType == singleDcRats[i]) {
-                    onlySingleDcAllowed = true;
-                }
+            for (int i=0; i < singleDcRats.length && onlySingleDcAllowed == false; i++) {
+                if (rilRadioTech == singleDcRats[i]) onlySingleDcAllowed = true;
             }
         }
 
-        if (DBG) {
-            log("isOnlySingleDcAllowed(" + TelephonyManager.getNetworkTypeName(networkType) + "): "
-                    + onlySingleDcAllowed);
-        }
+        if (DBG) log("isOnlySingleDcAllowed(" + rilRadioTech + "): " + onlySingleDcAllowed);
         return onlySingleDcAllowed;
     }
 
@@ -2495,9 +2477,11 @@ public class DcTracker extends Handler {
         registerSettingsObserver();
         SubscriptionPlan[] plans = mNetworkPolicyManager.getSubscriptionPlans(
                 mPhone.getSubId(), mPhone.getContext().getOpPackageName());
-        mSubscriptionPlans = plans == null ? Collections.emptyList() : Arrays.asList(plans);
-        if (DBG) log("SubscriptionPlans initialized: " + mSubscriptionPlans);
-        reevaluateUnmeteredConnections();
+        if (plans != null) {
+            mSubscriptionPlans = Arrays.asList(plans);
+            if (DBG) log("SubscriptionPlans initialized: " + mSubscriptionPlans);
+            reevaluateUnmeteredConnections();
+        }
         mConfigReady = true;
     }
 
@@ -2585,21 +2569,14 @@ public class DcTracker extends Handler {
                 @ApnType int apnTypes = apnSetting.getApnTypeBitmask();
                 mDataThrottler.setRetryTime(apnTypes, RetryManager.NO_SUGGESTED_RETRY_DELAY,
                         REQUEST_TYPE_NORMAL);
+                // After data unthrottled, we should see if it's possible to bring up the data
+                // again.
+                setupDataOnAllConnectableApns(Phone.REASON_DATA_UNTHROTTLED, RetryFailures.ALWAYS);
             } else {
                 loge("EVENT_APN_UNTHROTTLED: Invalid APN passed: " + apn);
             }
         } else {
             loge("EVENT_APN_UNTHROTTLED: apn is null");
-        }
-    }
-
-    private void onTrafficDescriptorsUpdated() {
-        for (ApnContext apnContext : mPrioritySortedApnContexts) {
-            if (apnContext.getApnTypeBitmask() == ApnSetting.TYPE_ENTERPRISE
-                    && apnContext.getApnSetting().getPermanentFailed()) {
-                setupDataOnConnectableApn(
-                        apnContext, Phone.REASON_TRAFFIC_DESCRIPTORS_UPDATED, RetryFailures.ALWAYS);
-            }
         }
     }
 
@@ -2766,14 +2743,14 @@ public class DcTracker extends Handler {
         String str = "onEnableApn: apnType=" + ApnSetting.getApnTypeString(apnType)
                 + ", request type=" + requestTypeToString(requestType);
         if (DBG) log(str);
-        ApnContext.requestLog(apnContext, str);
+        apnContext.requestLog(str);
 
         if (!apnContext.isDependencyMet()) {
             apnContext.setReason(Phone.REASON_DATA_DEPENDENCY_UNMET);
             apnContext.setEnabled(true);
             str = "onEnableApn: dependency is not met.";
             if (DBG) log(str);
-            ApnContext.requestLog(apnContext, str);
+            apnContext.requestLog(str);
             if (onHandoverCompleteMsg != null) {
                 sendHandoverCompleteMsg(onHandoverCompleteMsg, false, mTransportType, false);
             }
@@ -2850,7 +2827,7 @@ public class DcTracker extends Handler {
         String str = "onDisableApn: apnType=" + ApnSetting.getApnTypeString(apnType)
                 + ", release type=" + releaseTypeToString(releaseType);
         if (DBG) log(str);
-        ApnContext.requestLog(apnContext, str);
+        apnContext.requestLog(str);
 
         if (apnContext.isReady()) {
             cleanup = (releaseType == RELEASE_TYPE_DETACH
@@ -2869,7 +2846,7 @@ public class DcTracker extends Handler {
                     str = "Clean up the connection. Apn type = " + apnContext.getApnType()
                             + ", state = " + apnContext.getState();
                     if (DBG) log(str);
-                    ApnContext.requestLog(apnContext, str);
+                    apnContext.requestLog(str);
                     cleanup = true;
                 }
             } else {
@@ -3499,10 +3476,7 @@ public class DcTracker extends Handler {
         for (ApnSetting apn : mAllApnSettings) {
             if (apn.getApnSetId() == Telephony.Carriers.MATCH_ALL_APN_SET_ID
                     || preferredApnSetId == apn.getApnSetId()) {
-                DataProfile dp = new DataProfile.Builder()
-                        .setApnSetting(apn)
-                        .setPreferred(apn.equals(getPreferredApn()))
-                        .build();
+                DataProfile dp = createDataProfile(apn, apn.equals(getPreferredApn()));
                 if (!dataProfileList.contains(dp)) {
                     dataProfileList.add(dp);
                 }
@@ -3562,6 +3536,10 @@ public class DcTracker extends Handler {
             mPreferredApn = null;
         } else {
             mPreferredApn = getPreferredApn();
+            if (mPreferredApn != null && !mPreferredApn.getOperatorNumeric().equals(operator)) {
+                mPreferredApn = null;
+                setPreferredApn(-1);
+            }
             if (DBG) log("createAllApnList: mPreferredApn=" + mPreferredApn);
         }
 
@@ -3614,45 +3592,25 @@ public class DcTracker extends Handler {
         int networkTypeBitmask = (dest.getNetworkTypeBitmask() == 0
                 || src.getNetworkTypeBitmask() == 0)
                 ? 0 : (dest.getNetworkTypeBitmask() | src.getNetworkTypeBitmask());
-        return new ApnSetting.Builder()
-                .setId(id)
-                .setOperatorNumeric(dest.getOperatorNumeric())
-                .setEntryName(dest.getEntryName())
-                .setApnName(dest.getApnName())
-                .setProxyAddress(proxy)
-                .setProxyPort(port)
-                .setMmsc(mmsc)
-                .setMmsProxyAddress(mmsProxy)
-                .setMmsProxyPort(mmsPort)
-                .setUser(dest.getUser())
-                .setPassword(dest.getPassword())
-                .setAuthType(dest.getAuthType())
-                .setApnTypeBitmask(resultApnType)
-                .setProtocol(protocol)
-                .setRoamingProtocol(roamingProtocol)
-                .setCarrierEnabled(dest.isEnabled())
-                .setNetworkTypeBitmask(networkTypeBitmask)
-                .setProfileId(dest.getProfileId())
-                .setModemCognitive(dest.isPersistent() || src.isPersistent())
-                .setMaxConns(dest.getMaxConns())
-                .setWaitTime(dest.getWaitTime())
-                .setMaxConnsTime(dest.getMaxConnsTime())
-                .setMtuV4(dest.getMtuV4())
-                .setMtuV6(dest.getMtuV6())
-                .setMvnoType(dest.getMvnoType())
-                .setMvnoMatchData(dest.getMvnoMatchData())
-                .setApnSetId(dest.getApnSetId())
-                .setCarrierId(dest.getCarrierId())
-                .setSkip464Xlat(dest.getSkip464Xlat())
-                .build();
+
+        return ApnSetting.makeApnSetting(id, dest.getOperatorNumeric(), dest.getEntryName(),
+            dest.getApnName(), proxy, port, mmsc, mmsProxy, mmsPort, dest.getUser(),
+            dest.getPassword(), dest.getAuthType(), resultApnType, protocol, roamingProtocol,
+            dest.isEnabled(), networkTypeBitmask, dest.getProfileId(),
+            (dest.isPersistent() || src.isPersistent()), dest.getMaxConns(),
+            dest.getWaitTime(), dest.getMaxConnsTime(), dest.getMtu(), dest.getMvnoType(),
+            dest.getMvnoMatchData(), dest.getApnSetId(), dest.getCarrierId(),
+            dest.getSkip464Xlat());
     }
 
     private DataConnection createDataConnection() {
         if (DBG) log("createDataConnection E");
 
         int id = mUniqueIdGenerator.getAndIncrement();
+        boolean doAllocatePduSessionId =
+                mTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WLAN;
         DataConnection dataConnection = DataConnection.makeDataConnection(mPhone, id, this,
-                mDataServiceManager, mDcTesterFailBringUpAll, mDcc);
+                mDataServiceManager, mDcTesterFailBringUpAll, mDcc, doAllocatePduSessionId);
         mDataConnections.put(id, dataConnection);
         if (DBG) log("createDataConnection() X id=" + id + " dc=" + dataConnection);
         return dataConnection;
@@ -3725,9 +3683,7 @@ public class DcTracker extends Handler {
                 log("buildWaitingApns: Preferred APN:" + operator + ":"
                         + mPreferredApn.getOperatorNumeric() + ":" + mPreferredApn);
             }
-
-            if (TextUtils.equals(mPreferredApn.getOperatorNumeric(), operator)
-                    || mPreferredApn.getCarrierId() == mPhone.getCarrierId()) {
+            if (mPreferredApn.getOperatorNumeric().equals(operator)) {
                 if (mPreferredApn.canSupportNetworkType(
                         ServiceState.rilRadioTechnologyToNetworkType(radioTech))) {
                     // Create a new instance of ApnSetting for ENTERPRISE because each
@@ -4243,9 +4199,6 @@ public class DcTracker extends Handler {
                 String apn = (String) ar.result;
                 onApnUnthrottled(apn);
                 break;
-            case DctConstants.EVENT_TRAFFIC_DESCRIPTORS_UPDATED:
-                onTrafficDescriptorsUpdated();
-                break;
             default:
                 Rlog.e("DcTracker", "Unhandled event=" + msg);
                 break;
@@ -4307,18 +4260,15 @@ public class DcTracker extends Handler {
             }
         }
         if (useLte) {
-            Pair<Integer, Integer> ltePair =
-                    temp.get(DataConfigManager.DATA_CONFIG_NETWORK_TYPE_LTE);
+            Pair<Integer, Integer> ltePair = temp.get(DctConstants.RAT_NAME_LTE);
             if (ltePair != null) {
-                if (temp.containsKey(DataConfigManager.DATA_CONFIG_NETWORK_TYPE_NR_NSA)) {
-                    temp.put(DataConfigManager.DATA_CONFIG_NETWORK_TYPE_NR_NSA, new Pair<>(
-                            temp.get(DataConfigManager.DATA_CONFIG_NETWORK_TYPE_NR_NSA).first,
-                            ltePair.second));
+                if (temp.containsKey(DctConstants.RAT_NAME_NR_NSA)) {
+                    temp.put(DctConstants.RAT_NAME_NR_NSA, new Pair<>(
+                            temp.get(DctConstants.RAT_NAME_NR_NSA).first, ltePair.second));
                 }
-                if (temp.containsKey(DataConfigManager.DATA_CONFIG_NETWORK_TYPE_NR_NSA_MMWAVE)) {
-                    temp.put(DataConfigManager.DATA_CONFIG_NETWORK_TYPE_NR_NSA_MMWAVE, new Pair<>(
-                            temp.get(DataConfigManager.DATA_CONFIG_NETWORK_TYPE_NR_NSA_MMWAVE)
-                                    .first, ltePair.second));
+                if (temp.containsKey(DctConstants.RAT_NAME_NR_NSA_MMWAVE)) {
+                    temp.put(DctConstants.RAT_NAME_NR_NSA_MMWAVE, new Pair<>(
+                            temp.get(DctConstants.RAT_NAME_NR_NSA_MMWAVE).first, ltePair.second));
                 }
             }
         }
@@ -4416,7 +4366,7 @@ public class DcTracker extends Handler {
         int rat = mPhone.getDisplayInfoController().getTelephonyDisplayInfo().getNetworkType();
         // congested override and either network is specified or unknown and all networks specified
         boolean isCongested = mCongestedOverride && (mCongestedNetworkTypes.contains(rat)
-                || mCongestedNetworkTypes.containsAll(Arrays.stream(
+                || mUnmeteredNetworkTypes.containsAll(Arrays.stream(
                 TelephonyManager.getAllNetworkTypes()).boxed().collect(Collectors.toSet())));
         for (DataConnection dataConnection : mDataConnections.values()) {
             dataConnection.onCongestednessChanged(isCongested);
@@ -4438,10 +4388,27 @@ public class DcTracker extends Handler {
     }
 
     private void setDataConnectionUnmetered(boolean isUnmetered) {
-        if (!isUnmetered || isTempNotMeteredSupportedByCarrier()) {
+        // TODO: Remove this after b/176119724 is fixed. This is just a workaround to prevent
+        // NET_CAPABILITY_TEMPORARILY_NOT_METERED incorrectly set on devices that are not supposed
+        // to use 5G unmetered network. Currently TEMPORARILY_NOT_METERED can only happen on few
+        // devices and carriers.
+        if (!isUnmetered || (isUnmetered && tempNotMeteredPossible())) {
             for (DataConnection dataConnection : mDataConnections.values()) {
                 dataConnection.onMeterednessChanged(isUnmetered);
             }
+        } else {
+            // isUnmetered=true but TEMP_NOT_METERED is not possible
+            String message = "Unexpected temp not metered detected. carrier supported="
+                    + isTempNotMeteredSupportedByCarrier() + ", device 5G capable="
+                    + isDevice5GCapable() + ", camped on 5G=" + isCampedOn5G()
+                    + ", timer active=" + mPhone.getDisplayInfoController().is5GHysteresisActive()
+                    + ", display info="
+                    + mPhone.getDisplayInfoController().getTelephonyDisplayInfo()
+                    + ", subscription plans=" + mSubscriptionPlans
+                    + ", Service state=" + mPhone.getServiceState();
+            loge(message);
+            AnomalyReporter.reportAnomaly(
+                    UUID.fromString("9151f0fc-01df-4afb-b744-9c4529055250"), message);
         }
     }
 
@@ -4466,7 +4433,7 @@ public class DcTracker extends Handler {
     }
 
     private boolean isNetworkTypeUnmeteredViaSubscriptionPlan(@NetworkType int networkType) {
-        if (mSubscriptionPlans.isEmpty()) {
+        if (mSubscriptionPlans == null || mSubscriptionPlans.size() == 0) {
             // safe return false if unable to get subscription plans or plans don't exist
             return false;
         }
@@ -4563,6 +4530,18 @@ public class DcTracker extends Handler {
         return false;
     }
 
+    // TODO: Remove this after b/176119724 is fixed. This is just a workaround to prevent
+    // NET_CAPABILITY_TEMPORARILY_NOT_METERED incorrectly set on devices that are not supposed
+    // to use 5G unmetered network. Currently TEMPORARILY_NOT_METERED can only happen on few devices
+    // and carriers.
+    private boolean isDevice5GCapable() {
+        return (mPhone.getRadioAccessFamily() & TelephonyManager.NETWORK_TYPE_BITMASK_NR) != 0;
+    }
+
+    // TODO: Remove this after b/176119724 is fixed. This is just a workaround to prevent
+    // NET_CAPABILITY_TEMPORARILY_NOT_METERED incorrectly set on devices that are not supposed
+    // to use 5G unmetered network. Currently TEMPORARILY_NOT_METERED can only happen on few devices
+    // and carriers.
     private boolean isTempNotMeteredSupportedByCarrier() {
         CarrierConfigManager configManager =
                 mPhone.getContext().getSystemService(CarrierConfigManager.class);
@@ -4575,6 +4554,38 @@ public class DcTracker extends Handler {
         }
 
         return false;
+    }
+
+    // TODO: Remove this after b/176119724 is fixed. This is just a workaround to prevent
+    // NET_CAPABILITY_TEMPORARILY_NOT_METERED incorrectly set on devices that are not supposed
+    // to use 5G unmetered network. Currently TEMPORARILY_NOT_METERED can only happen on few devices
+    // and carriers.
+    private boolean isCampedOn5G() {
+        TelephonyDisplayInfo displayInfo = mPhone.getDisplayInfoController()
+                .getTelephonyDisplayInfo();
+        int overrideNetworkType = displayInfo.getOverrideNetworkType();
+        NetworkRegistrationInfo nri =  mPhone.getServiceState().getNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+        int networkType = nri == null ? TelephonyManager.NETWORK_TYPE_UNKNOWN
+                : nri.getAccessNetworkTechnology();
+
+        boolean isNrSa = networkType == TelephonyManager.NETWORK_TYPE_NR;
+        boolean isNrNsa = (networkType == TelephonyManager.NETWORK_TYPE_LTE
+                || networkType == TelephonyManager.NETWORK_TYPE_LTE_CA)
+                && (overrideNetworkType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA
+                || overrideNetworkType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED);
+        boolean is5GHysteresisActive = mPhone.getDisplayInfoController().is5GHysteresisActive();
+
+        // True if device is on NR SA or NR NSA, or neither but 5G hysteresis is active
+        return isNrSa || isNrNsa || is5GHysteresisActive;
+    }
+
+    // TODO: Remove this after b/176119724 is fixed. This is just a workaround to prevent
+    // NET_CAPABILITY_TEMPORARILY_NOT_METERED incorrectly set on devices that are not supposed
+    // to use 5G unmetered network. Currently TEMPORARILY_NOT_METERED can only happen on few devices
+    // and carriers.
+    private boolean tempNotMeteredPossible() {
+        return isDevice5GCapable() && isTempNotMeteredSupportedByCarrier() && isCampedOn5G();
     }
 
     protected void log(String s) {
@@ -4679,7 +4690,6 @@ public class DcTracker extends Handler {
             for (Entry<String, ApnContext> entry : apnCtxsSet) {
                 entry.getValue().dump(fd, pw, args);
             }
-            ApnContext.dumpLocalLog(fd, pw, args);
             pw.println(" ***************************************");
         } else {
             pw.println(" mApnContexts=null");
@@ -4871,7 +4881,7 @@ public class DcTracker extends Handler {
         }
     }
 
-    protected void stopNetStatPoll() {
+    private void stopNetStatPoll() {
         mNetStatPollEnabled = false;
         removeCallbacks(mPollNetStat);
         if (DBG) {
@@ -5463,6 +5473,50 @@ public class DcTracker extends Handler {
         mWatchdog = false;
     }
 
+    private static DataProfile createDataProfile(ApnSetting apn, boolean isPreferred) {
+        return createDataProfile(apn, apn.getProfileId(), isPreferred);
+    }
+
+    @VisibleForTesting
+    public static DataProfile createDataProfile(ApnSetting apn, int profileId,
+                                                boolean isPreferred) {
+        int profileType;
+
+        int networkTypeBitmask = apn.getNetworkTypeBitmask();
+
+        if (networkTypeBitmask == 0) {
+            profileType = DataProfile.TYPE_COMMON;
+        } else if ((networkTypeBitmask & TelephonyManager.NETWORK_STANDARDS_FAMILY_BITMASK_3GPP2)
+                == networkTypeBitmask) {
+            profileType = DataProfile.TYPE_3GPP2;
+        } else if ((networkTypeBitmask & TelephonyManager.NETWORK_STANDARDS_FAMILY_BITMASK_3GPP)
+                == networkTypeBitmask) {
+            profileType = DataProfile.TYPE_3GPP;
+        } else {
+            profileType = DataProfile.TYPE_COMMON;
+        }
+
+        return new DataProfile.Builder()
+                .setProfileId(profileId)
+                .setApn(apn.getApnName())
+                .setProtocolType(apn.getProtocol())
+                .setAuthType(apn.getAuthType())
+                .setUserName(apn.getUser() == null ? "" : apn.getUser())
+                .setPassword(apn.getPassword() == null ? "" : apn.getPassword())
+                .setType(profileType)
+                .setMaxConnectionsTime(apn.getMaxConnsTime())
+                .setMaxConnections(apn.getMaxConns())
+                .setWaitTime(apn.getWaitTime())
+                .enable(apn.isEnabled())
+                .setSupportedApnTypesBitmask(apn.getApnTypeBitmask())
+                .setRoamingProtocolType(apn.getRoamingProtocol())
+                .setBearerBitmask(networkTypeBitmask)
+                .setMtu(apn.getMtu())
+                .setPersistent(apn.isPersistent())
+                .setPreferred(isPreferred)
+                .build();
+    }
+
     private void onDataServiceBindingChanged(boolean bound) {
         if (!bound) {
             if (mTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
@@ -5533,7 +5587,7 @@ public class DcTracker extends Handler {
                     bandwidths = b.getStringArray(CarrierConfigManager.KEY_BANDWIDTH_STRING_ARRAY);
                 }
                 useLte = b.getBoolean(CarrierConfigManager
-                        .KEY_BANDWIDTH_NR_NSA_USE_LTE_VALUE_FOR_UPLINK_BOOL);
+                        .KEY_BANDWIDTH_NR_NSA_USE_LTE_VALUE_FOR_UPSTREAM_BOOL);
                 mWatchdogTimeMs = b.getLong(CarrierConfigManager.KEY_5G_WATCHDOG_TIME_MS_LONG);
                 mNrNsaAllUnmetered = b.getBoolean(CarrierConfigManager.KEY_UNMETERED_NR_NSA_BOOL);
                 mNrNsaMmwaveUnmetered = b.getBoolean(
@@ -5559,24 +5613,24 @@ public class DcTracker extends Handler {
     }
 
     /**
-     * Register for physical link status (i.e. RRC state) changed event.
+     * Register for physical link state (i.e. RRC state) changed event.
      * if {@link CarrierConfigManager.KEY_LTE_ENDC_USING_USER_DATA_FOR_RRC_DETECTION_BOOL} is true,
      * then physical link state is focusing on "internet data connection" instead of RRC state.
      *
      * @param h The handler
      * @param what The event
      */
-    public void registerForPhysicalLinkStatusChanged(Handler h, int what) {
-        mDcc.registerForPhysicalLinkStatusChanged(h, what);
+    public void registerForPhysicalLinkStateChanged(Handler h, int what) {
+        mDcc.registerForPhysicalLinkStateChanged(h, what);
     }
 
     /**
-     * Unregister from physical link status (i.e. RRC state) changed event.
+     * Unregister from physical link state (i.e. RRC state) changed event.
      *
      * @param h The previously registered handler
      */
-    public void unregisterForPhysicalLinkStatusChanged(Handler h) {
-        mDcc.unregisterForPhysicalLinkStatusChanged(h);
+    public void unregisterForPhysicalLinkStateChanged(Handler h) {
+        mDcc.unregisterForPhysicalLinkStateChanged(h);
     }
 
     // We use a specialized equals function in Apn setting when checking if an active

@@ -50,7 +50,12 @@ public class GsmMmiCodeTest extends TelephonyTest {
     private GsmMmiCode mGsmMmiCode;
     private GsmCdmaPhone mGsmCdmaPhoneUT;
 
-    private final Executor mExecutor = Runnable::run;
+    private Executor mExecutor = new Executor() {
+        @Override
+        public void execute(Runnable r) {
+            r.run();
+        }
+    };
 
     @Before
     public void setUp() throws Exception {

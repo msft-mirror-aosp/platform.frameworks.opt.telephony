@@ -36,6 +36,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -43,15 +44,15 @@ import java.util.Arrays;
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class GsmCdmaConnectionTest extends TelephonyTest {
+
     private GsmCdmaConnection connection;
 
-    // Mocked classes
+    @Mock
     DriverCall mDC;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mDC = mock(DriverCall.class);
         replaceInstance(Handler.class, "mLooper", mCT, Looper.myLooper());
 
         mCT.mForegroundCall = new GsmCdmaCall(mCT);

@@ -22,7 +22,6 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import android.os.AsyncResult;
@@ -40,15 +39,16 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class UiccCardApplicationTest extends TelephonyTest {
-    // Mocked classes
-    private IccCardApplicationStatus mUiccCardAppStatus;
-    private UiccProfile mUiccProfile;
-
     private UiccCardApplication mUiccCardApplication;
+    @Mock
+    private IccCardApplicationStatus mUiccCardAppStatus;
+    @Mock
+    private UiccProfile mUiccProfile;
     private Handler mHandler;
     private int mAttemptsRemaining = -1;
     private CommandException mException = null;
@@ -62,9 +62,7 @@ public class UiccCardApplicationTest extends TelephonyTest {
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(getClass().getSimpleName());
-        mUiccCardAppStatus = mock(IccCardApplicationStatus.class);
-        mUiccProfile = mock(UiccProfile.class);
+        super.setUp(this.getClass().getSimpleName());
         //set initial state of app status
         mUiccCardAppStatus.app_type = IccCardApplicationStatus.AppType.APPTYPE_SIM;
         mUiccCardAppStatus.aid = TAG;
@@ -104,14 +102,6 @@ public class UiccCardApplicationTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
-        mUiccProfile = null;
-        if (mHandler != null) {
-            mHandler.removeCallbacksAndMessages(null);
-            mHandler = null;
-        }
-        mException = null;
-        mAppState = null;
-        mUiccCardApplication = null;
         super.tearDown();
     }
 

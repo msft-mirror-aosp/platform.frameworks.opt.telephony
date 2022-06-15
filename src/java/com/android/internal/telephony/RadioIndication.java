@@ -16,14 +16,11 @@
 
 package com.android.internal.telephony;
 
-import static android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID;
-
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_CALL_RING;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_CARRIER_INFO_IMSI_ENCRYPTION;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_CDMA_CALL_WAITING;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_CDMA_INFO_REC;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_CDMA_OTA_PROVISION_STATUS;
-import static com.android.internal.telephony.RILConstants.RIL_UNSOL_CDMA_PRL_CHANGED;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_CDMA_RUIM_SMS_STORAGE_FULL;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_CDMA_SUBSCRIPTION_SOURCE_CHANGED;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_CELL_INFO_LIST;
@@ -72,6 +69,7 @@ import static com.android.internal.telephony.RILConstants.RIL_UNSOL_UICC_APPLICA
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_UICC_SUBSCRIPTION_STATUS_CHANGED;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_UNTHROTTLE_APN;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_VOICE_RADIO_TECH_CHANGED;
+import static com.android.internal.telephony.RILConstants.RIL_UNSOl_CDMA_PRL_CHANGED;
 
 import android.hardware.radio.V1_0.CdmaCallWaiting;
 import android.hardware.radio.V1_0.CdmaInformationRecord;
@@ -88,12 +86,14 @@ import android.hardware.radio.V1_0.SimRefreshResult;
 import android.hardware.radio.V1_0.SsInfoData;
 import android.hardware.radio.V1_0.StkCcUnsolSsResult;
 import android.hardware.radio.V1_0.SuppSvcNotification;
+import android.hardware.radio.V1_2.CellConnectionStatus;
 import android.hardware.radio.V1_6.IRadioIndication;
 import android.hardware.radio.V1_6.PhonebookRecordInfo;
 import android.hardware.radio.V1_6.PhysicalChannelConfig.Band;
 import android.os.AsyncResult;
 import android.os.RemoteException;
 import android.sysprop.TelephonyProperties;
+import android.telephony.Annotation.RadioPowerState;
 import android.telephony.AnomalyReporter;
 import android.telephony.BarringInfo;
 import android.telephony.CellIdentity;
@@ -105,13 +105,15 @@ import android.telephony.PhysicalChannelConfig;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.telephony.SmsMessage;
+import android.telephony.TelephonyManager;
 import android.telephony.data.DataCallResponse;
 import android.telephony.emergency.EmergencyNumber;
 import android.text.TextUtils;
 
 import com.android.internal.telephony.cdma.CdmaCallWaitingNotification;
 import com.android.internal.telephony.cdma.CdmaInformationRecords;
-import com.android.internal.telephony.data.KeepaliveStatus;
+import com.android.internal.telephony.cdma.SmsMessageConverter;
+import com.android.internal.telephony.dataconnection.KeepaliveStatus;
 import com.android.internal.telephony.gsm.SsData;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.uicc.IccRefreshResponse;
@@ -136,9 +138,9 @@ public class RadioIndication extends IRadioIndication.Stub {
      * @param radioState android.hardware.radio.V1_0.RadioState
      */
     public void radioStateChanged(int indicationType, int radioState) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        int state = RILUtils.convertHalRadioState(radioState);
+        int state = getRadioStateFromInt(radioState);
         if (RIL.RILJ_LOGD) {
             mRil.unsljLogMore(RIL_UNSOL_RESPONSE_RADIO_STATE_CHANGED, "radioStateChanged: " +
                     state);
@@ -148,7 +150,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void callStateChanged(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RESPONSE_CALL_STATE_CHANGED);
 
@@ -160,7 +162,7 @@ public class RadioIndication extends IRadioIndication.Stub {
      * @param indicationType RadioIndicationType
      */
     public void networkStateChanged(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RESPONSE_NETWORK_STATE_CHANGED);
 
@@ -168,9 +170,9 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void newSms(int indicationType, ArrayList<Byte> pdu) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        byte[] pduArray = RILUtils.arrayListToPrimitiveArray(pdu);
+        byte[] pduArray = RIL.arrayListToPrimitiveArray(pdu);
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RESPONSE_NEW_SMS);
 
         SmsMessageBase smsb = com.android.internal.telephony.gsm.SmsMessage.createFromPdu(pduArray);
@@ -181,9 +183,9 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void newSmsStatusReport(int indicationType, ArrayList<Byte> pdu) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        byte[] pduArray = RILUtils.arrayListToPrimitiveArray(pdu);
+        byte[] pduArray = RIL.arrayListToPrimitiveArray(pdu);
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RESPONSE_NEW_SMS_STATUS_REPORT);
 
         if (mRil.mSmsStatusRegistrant != null) {
@@ -192,7 +194,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void newSmsOnSim(int indicationType, int recordNumber) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RESPONSE_NEW_SMS_ON_SIM);
 
@@ -202,7 +204,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void onUssd(int indicationType, int ussdModeType, String msg) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogMore(RIL_UNSOL_ON_USSD, "" + ussdModeType);
 
@@ -216,7 +218,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void nitzTimeReceived(int indicationType, String nitzTime, long receivedTime) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_NITZ_TIME_RECEIVED, nitzTime);
 
@@ -241,9 +243,9 @@ public class RadioIndication extends IRadioIndication.Stub {
 
     public void currentSignalStrength(int indicationType,
                                       android.hardware.radio.V1_0.SignalStrength signalStrength) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        SignalStrength ssInitial = RILUtils.convertHalSignalStrength(signalStrength);
+        SignalStrength ssInitial = new SignalStrength(signalStrength);
 
         SignalStrength ss = mRil.fixupSignalStrength10(ssInitial);
         // Note this is set to "verbose" because it happens frequently
@@ -259,9 +261,9 @@ public class RadioIndication extends IRadioIndication.Stub {
      */
     public void currentLinkCapacityEstimate(int indicationType,
                                             android.hardware.radio.V1_2.LinkCapacityEstimate lce) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        List<LinkCapacityEstimate> response = RILUtils.convertHalLceData(lce);
+        List<LinkCapacityEstimate> response = RIL.convertHalLceData(lce, mRil);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_LCEDATA_RECV, response);
 
@@ -275,9 +277,9 @@ public class RadioIndication extends IRadioIndication.Stub {
      */
     public void currentLinkCapacityEstimate_1_6(int indicationType,
             android.hardware.radio.V1_6.LinkCapacityEstimate lce) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        List<LinkCapacityEstimate> response = RILUtils.convertHalLceData(lce);
+        List<LinkCapacityEstimate> response = RIL.convertHalLceData(lce, mRil);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_LCEDATA_RECV, response);
 
@@ -291,9 +293,9 @@ public class RadioIndication extends IRadioIndication.Stub {
      */
     public void currentSignalStrength_1_2(int indicationType,
                                       android.hardware.radio.V1_2.SignalStrength signalStrength) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        SignalStrength ss = RILUtils.convertHalSignalStrength(signalStrength);
+        SignalStrength ss = new SignalStrength(signalStrength);
         // Note this is set to "verbose" because it happens frequently
         if (RIL.RILJ_LOGV) mRil.unsljLogvRet(RIL_UNSOL_SIGNAL_STRENGTH, ss);
 
@@ -308,9 +310,9 @@ public class RadioIndication extends IRadioIndication.Stub {
     public void currentSignalStrength_1_4(int indicationType,
             android.hardware.radio.V1_4.SignalStrength signalStrength) {
 
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        SignalStrength ss = RILUtils.convertHalSignalStrength(signalStrength);
+        SignalStrength ss = new SignalStrength(signalStrength);
 
         if (RIL.RILJ_LOGV) mRil.unsljLogvRet(RIL_UNSOL_SIGNAL_STRENGTH, ss);
 
@@ -325,9 +327,9 @@ public class RadioIndication extends IRadioIndication.Stub {
     public void currentSignalStrength_1_6(int indicationType,
             android.hardware.radio.V1_6.SignalStrength signalStrength) {
 
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        SignalStrength ss = RILUtils.convertHalSignalStrength(signalStrength);
+        SignalStrength ss = new SignalStrength(signalStrength);
 
         if (RIL.RILJ_LOGV) mRil.unsljLogvRet(RIL_UNSOL_SIGNAL_STRENGTH, ss);
 
@@ -341,7 +343,7 @@ public class RadioIndication extends IRadioIndication.Stub {
      */
     public void currentPhysicalChannelConfigs_1_4(int indicationType,
             ArrayList<android.hardware.radio.V1_4.PhysicalChannelConfig> configs) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
         physicalChannelConfigsIndication(configs);
     }
 
@@ -350,7 +352,7 @@ public class RadioIndication extends IRadioIndication.Stub {
      */
     public void currentPhysicalChannelConfigs_1_6(int indicationType,
             ArrayList<android.hardware.radio.V1_6.PhysicalChannelConfig> configs) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
         physicalChannelConfigsIndication(configs);
     }
 
@@ -359,7 +361,7 @@ public class RadioIndication extends IRadioIndication.Stub {
      */
     public void currentPhysicalChannelConfigs(int indicationType,
             ArrayList<android.hardware.radio.V1_2.PhysicalChannelConfig> configs) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
         physicalChannelConfigsIndication(configs);
     }
 
@@ -368,7 +370,6 @@ public class RadioIndication extends IRadioIndication.Stub {
      */
     public void currentEmergencyNumberList(int indicationType,
             ArrayList<android.hardware.radio.V1_4.EmergencyNumber> emergencyNumberList) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
         List<EmergencyNumber> response = new ArrayList<>(emergencyNumberList.size());
 
         for (android.hardware.radio.V1_4.EmergencyNumber emergencyNumberHal
@@ -422,7 +423,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void suppSvcNotify(int indicationType, SuppSvcNotification suppSvcNotification) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         SuppServiceNotification notification = new SuppServiceNotification();
         notification.notificationType = suppSvcNotification.isMT ? 1 : 0;
@@ -439,7 +440,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void stkSessionEnd(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_STK_SESSION_END);
 
@@ -449,7 +450,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void stkProactiveCommand(int indicationType, String cmd) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_STK_PROACTIVE_COMMAND);
 
@@ -459,7 +460,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void stkEventNotify(int indicationType, String cmd) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_STK_EVENT_NOTIFY);
 
@@ -469,7 +470,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void stkCallSetup(int indicationType, long timeout) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_STK_CALL_SETUP, timeout);
 
@@ -479,7 +480,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void simSmsStorageFull(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_SIM_SMS_STORAGE_FULL);
 
@@ -489,7 +490,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void simRefresh(int indicationType, SimRefreshResult refreshResult) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         IccRefreshResponse response = new IccRefreshResponse();
         response.refreshResult = refreshResult.type;
@@ -502,7 +503,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void callRing(int indicationType, boolean isGsm, CdmaSignalInfoRecord record) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         char response[] = null;
 
@@ -525,7 +526,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void simStatusChanged(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RESPONSE_SIM_STATUS_CHANGED);
 
@@ -533,20 +534,22 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void cdmaNewSms(int indicationType, CdmaSmsMessage msg) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RESPONSE_CDMA_NEW_SMS);
 
-        SmsMessage sms = new SmsMessage(RILUtils.convertHalCdmaSmsMessage(msg));
+        // todo: conversion from CdmaSmsMessage to SmsMessage should be contained in this class so
+        // that usage of auto-generated HAL classes is limited to this file
+        SmsMessage sms = SmsMessageConverter.newSmsMessageFromCdmaSmsMessage(msg);
         if (mRil.mCdmaSmsRegistrant != null) {
             mRil.mCdmaSmsRegistrant.notifyRegistrant(new AsyncResult(null, sms, null));
         }
     }
 
     public void newBroadcastSms(int indicationType, ArrayList<Byte> data) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        byte[] response = RILUtils.arrayListToPrimitiveArray(data);
+        byte response[] = RIL.arrayListToPrimitiveArray(data);
         if (RIL.RILJ_LOGD) {
             mRil.unsljLogvRet(RIL_UNSOL_RESPONSE_NEW_BROADCAST_SMS,
                     IccUtils.bytesToHexString(response));
@@ -558,7 +561,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void cdmaRuimSmsStorageFull(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_CDMA_RUIM_SMS_STORAGE_FULL);
 
@@ -568,7 +571,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void restrictedStateChanged(int indicationType, int state) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogvRet(RIL_UNSOL_RESTRICTED_STATE_CHANGED, state);
 
@@ -578,7 +581,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void enterEmergencyCallbackMode(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_ENTER_EMERGENCY_CALLBACK_MODE);
 
@@ -588,7 +591,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void cdmaCallWaiting(int indicationType, CdmaCallWaiting callWaitingRecord) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         // todo: create a CdmaCallWaitingNotification constructor that takes in these fields to make
         // sure no fields are missing
@@ -612,7 +615,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void cdmaOtaProvisionStatus(int indicationType, int status) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         int response[] = new int[1];
         response[0] = status;
@@ -624,7 +627,7 @@ public class RadioIndication extends IRadioIndication.Stub {
 
     public void cdmaInfoRec(int indicationType,
                             android.hardware.radio.V1_0.CdmaInformationRecords records) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         int numberOfInfoRecs = records.infoRec.size();
         for (int i = 0; i < numberOfInfoRecs; i++) {
@@ -718,7 +721,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void indicateRingbackTone(int indicationType, boolean start) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogvRet(RIL_UNSOL_RINGBACK_TONE, start);
 
@@ -726,7 +729,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void resendIncallMute(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RESEND_INCALL_MUTE);
 
@@ -734,7 +737,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void cdmaSubscriptionSourceChanged(int indicationType, int cdmaSource) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         int response[] = new int[1];
         response[0] = cdmaSource;
@@ -746,19 +749,19 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void cdmaPrlChanged(int indicationType, int version) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         int response[] = new int[1];
         response[0] = version;
 
-        if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_CDMA_PRL_CHANGED, response);
+        if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOl_CDMA_PRL_CHANGED, response);
 
         mRil.mCdmaPrlChangedRegistrants.notifyRegistrants(
                 new AsyncResult (null, response, null));
     }
 
     public void exitEmergencyCallbackMode(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_EXIT_EMERGENCY_CALLBACK_MODE);
 
@@ -766,7 +769,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void rilConnected(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RIL_CONNECTED);
 
@@ -779,7 +782,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void voiceRadioTechChanged(int indicationType, int rat) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         int response[] = new int[1];
         response[0] = rat;
@@ -792,48 +795,67 @@ public class RadioIndication extends IRadioIndication.Stub {
 
     /** Get unsolicited message for cellInfoList */
     public void cellInfoList(int indicationType,
-            ArrayList<android.hardware.radio.V1_0.CellInfo> records) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
-        responseCellInfoList(records);
+                             ArrayList<android.hardware.radio.V1_0.CellInfo> records) {
+        mRil.processIndication(indicationType);
+
+        ArrayList<CellInfo> response = RIL.convertHalCellInfoList(records);
+
+        if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_CELL_INFO_LIST, response);
+
+        mRil.mRilCellInfoListRegistrants.notifyRegistrants(new AsyncResult(null, response, null));
     }
 
     /** Get unsolicited message for cellInfoList using HAL V1_2 */
     public void cellInfoList_1_2(int indicationType,
-            ArrayList<android.hardware.radio.V1_2.CellInfo> records) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
-        responseCellInfoList(records);
+                                 ArrayList<android.hardware.radio.V1_2.CellInfo> records) {
+        mRil.processIndication(indicationType);
+
+        ArrayList<CellInfo> response = RIL.convertHalCellInfoList_1_2(records);
+
+        if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_CELL_INFO_LIST, response);
+
+        mRil.mRilCellInfoListRegistrants.notifyRegistrants(new AsyncResult(null, response, null));
     }
 
     /** Get unsolicited message for cellInfoList using HAL V1_4 */
     public void cellInfoList_1_4(int indicationType,
-            ArrayList<android.hardware.radio.V1_4.CellInfo> records) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
-        responseCellInfoList(records);
+                                 ArrayList<android.hardware.radio.V1_4.CellInfo> records) {
+        mRil.processIndication(indicationType);
+
+        ArrayList<CellInfo> response = RIL.convertHalCellInfoList_1_4(records);
+
+        if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_CELL_INFO_LIST, response);
+
+        mRil.mRilCellInfoListRegistrants.notifyRegistrants(new AsyncResult(null, response, null));
     }
 
     /** Get unsolicited message for cellInfoList using HAL V1_5 */
     public void cellInfoList_1_5(int indicationType,
             ArrayList<android.hardware.radio.V1_5.CellInfo> records) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
-        responseCellInfoList(records);
+        mRil.processIndication(indicationType);
+
+        ArrayList<CellInfo> response = RIL.convertHalCellInfoList_1_5(records);
+
+        if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_CELL_INFO_LIST, response);
+
+        mRil.mRilCellInfoListRegistrants.notifyRegistrants(new AsyncResult(null, response, null));
     }
 
     /** Get unsolicited message for cellInfoList using HAL V1_5 */
     public void cellInfoList_1_6(int indicationType,
             ArrayList<android.hardware.radio.V1_6.CellInfo> records) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
-        responseCellInfoList(records);
-    }
+        mRil.processIndication(indicationType);
 
-    private void responseCellInfoList(ArrayList<? extends Object> records) {
-        ArrayList<CellInfo> response = RILUtils.convertHalCellInfoList((ArrayList<Object>) records);
+        ArrayList<CellInfo> response = RIL.convertHalCellInfoList_1_6(records);
+
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_CELL_INFO_LIST, response);
+
         mRil.mRilCellInfoListRegistrants.notifyRegistrants(new AsyncResult(null, response, null));
     }
 
     /** Get unsolicited message for uicc applications enablement changes. */
     public void uiccApplicationsEnablementChanged(int indicationType, boolean enabled) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) {
             mRil.unsljLogRet(RIL_UNSOL_UICC_APPLICATIONS_ENABLEMENT_CHANGED, enabled);
@@ -873,7 +895,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void imsNetworkStateChanged(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLog(RIL_UNSOL_RESPONSE_IMS_NETWORK_STATE_CHANGED);
 
@@ -881,7 +903,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void subscriptionStatusChanged(int indicationType, boolean activate) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         int response[] = new int[1];
         response[0] = activate ? 1 : 0;
@@ -893,7 +915,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void srvccStateNotify(int indicationType, int state) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         int response[] = new int[1];
         response[0] = state;
@@ -909,9 +931,9 @@ public class RadioIndication extends IRadioIndication.Stub {
     public void hardwareConfigChanged(
             int indicationType,
             ArrayList<android.hardware.radio.V1_0.HardwareConfig> configs) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        ArrayList<HardwareConfig> response = RILUtils.convertHalHardwareConfigList(configs);
+        ArrayList<HardwareConfig> response = RIL.convertHalHwConfigList(configs, mRil);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_HARDWARE_CONFIG_CHANGED, response);
 
@@ -921,9 +943,9 @@ public class RadioIndication extends IRadioIndication.Stub {
 
     public void radioCapabilityIndication(int indicationType,
                                           android.hardware.radio.V1_0.RadioCapability rc) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        RadioCapability response = RILUtils.convertHalRadioCapability(rc, mRil);
+        RadioCapability response = RIL.convertHalRadioCapability(rc, mRil);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_RADIO_CAPABILITY, response);
 
@@ -932,7 +954,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void onSupplementaryServiceIndication(int indicationType, StkCcUnsolSsResult ss) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         int num;
         SsData ssData = new SsData();
@@ -980,7 +1002,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void stkCallControlAlphaNotify(int indicationType, String alpha) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_STK_CC_ALPHA_NOTIFY, alpha);
 
@@ -990,9 +1012,9 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void lceData(int indicationType, LceDataInfo lce) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        List<LinkCapacityEstimate> response = RILUtils.convertHalLceData(lce);
+        List<LinkCapacityEstimate> response = RIL.convertHalLceData(lce, mRil);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_LCEDATA_RECV, response);
 
@@ -1002,10 +1024,12 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void pcoData(int indicationType, PcoDataInfo pco) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        PcoData response = new PcoData(pco.cid, pco.bearerProto, pco.pcoId,
-                RILUtils.arrayListToPrimitiveArray(pco.contents));
+        PcoData response = new PcoData(pco.cid,
+                pco.bearerProto,
+                pco.pcoId,
+                RIL.arrayListToPrimitiveArray(pco.contents));
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_PCO_DATA, response);
 
@@ -1013,7 +1037,7 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     public void modemReset(int indicationType, String reason) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_MODEM_RESTART, reason);
 
@@ -1026,7 +1050,7 @@ public class RadioIndication extends IRadioIndication.Stub {
      * @param indicationType RadioIndicationType
      */
     public void carrierInfoForImsiEncryption(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_CARRIER_INFO_IMSI_ENCRYPTION, null);
 
@@ -1041,15 +1065,14 @@ public class RadioIndication extends IRadioIndication.Stub {
      */
     public void keepaliveStatus(
             int indicationType, android.hardware.radio.V1_1.KeepaliveStatus halStatus) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) {
             mRil.unsljLogRet(RIL_UNSOL_KEEPALIVE_STATUS,
                     "handle=" + halStatus.sessionHandle + " code=" +  halStatus.code);
         }
 
-        KeepaliveStatus ks = new KeepaliveStatus(
-                halStatus.sessionHandle, halStatus.code);
+        KeepaliveStatus ks = new KeepaliveStatus(halStatus.sessionHandle, halStatus.code);
         mRil.mNattKeepaliveStatusRegistrants.notifyRegistrants(new AsyncResult(null, ks, null));
     }
 
@@ -1059,7 +1082,7 @@ public class RadioIndication extends IRadioIndication.Stub {
      * @param indicationType RadioIndicationType
      */
     public void simPhonebookChanged(int indicationType) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) {
             mRil.unsljLog(RIL_UNSOL_RESPONSE_SIM_PHONEBOOK_CHANGED);
@@ -1069,24 +1092,24 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     /**
-     * Indicates the content of all the used records in the SIM phonebook.
+     * Indicates the content of all the used records in the SIM phonebook..
      * @param indicationType RadioIndicationType
-     * @param status Status of PbReceivedStatus
      * @param records Content of the SIM phonebook records
      */
     public void simPhonebookRecordsReceived(int indicationType, byte status,
             ArrayList<PhonebookRecordInfo> records) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        List<SimPhonebookRecord> simPhonebookRecords = new ArrayList<>();
+        List<SimPhonebookRecord> simPhonebookRecords = new ArrayList<SimPhonebookRecord>();
 
         for (PhonebookRecordInfo record : records) {
-            simPhonebookRecords.add(RILUtils.convertHalPhonebookRecordInfo(record));
+            simPhonebookRecords.add(new SimPhonebookRecord(record));
         }
 
         if (RIL.RILJ_LOGD) {
             mRil.unsljLogRet(RIL_UNSOL_RESPONSE_SIM_PHONEBOOK_RECORDS_RECEIVED,
-                    "status = " + status + " received " + records.size() + " records");
+                    "status = " + status +
+                    " received " + records.size() + " records");
         }
 
         mRil.mSimPhonebookRecordsReceivedRegistrants.notifyRegistrants(
@@ -1108,15 +1131,15 @@ public class RadioIndication extends IRadioIndication.Stub {
             android.hardware.radio.V1_5.CellIdentity cellIdentity, String chosenPlmn,
             @NetworkRegistrationInfo.Domain int domain,
             int causeCode, int additionalCauseCode) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
-        CellIdentity ci = RILUtils.convertHalCellIdentity(cellIdentity);
+        mRil.processIndication(indicationType);
+        CellIdentity ci = CellIdentity.create(cellIdentity);
         if (ci == null
                 || TextUtils.isEmpty(chosenPlmn)
                 || (domain & NetworkRegistrationInfo.DOMAIN_CS_PS) == 0
                 || (domain & ~NetworkRegistrationInfo.DOMAIN_CS_PS) != 0
                 || causeCode < 0 || additionalCauseCode < 0
                 || (causeCode == Integer.MAX_VALUE && additionalCauseCode == Integer.MAX_VALUE)) {
-            reportAnomaly(
+            AnomalyReporter.reportAnomaly(
                     UUID.fromString("f16e5703-6105-4341-9eb3-e68189156eb4"),
                             "Invalid registrationFailed indication");
 
@@ -1125,8 +1148,11 @@ public class RadioIndication extends IRadioIndication.Stub {
         }
 
         mRil.mRegistrationFailedRegistrant.notifyRegistrant(
-                new AsyncResult(null, new RegistrationFailedEvent(ci, chosenPlmn, domain,
-                        causeCode, additionalCauseCode), null));
+                new AsyncResult(
+                        null,
+                        new RegistrationFailedEvent(ci, chosenPlmn, domain,
+                                causeCode, additionalCauseCode),
+                        null));
     }
 
     /**
@@ -1139,10 +1165,10 @@ public class RadioIndication extends IRadioIndication.Stub {
     public void barringInfoChanged(int indicationType,
             android.hardware.radio.V1_5.CellIdentity cellIdentity,
             ArrayList<android.hardware.radio.V1_5.BarringInfo> barringInfos) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (cellIdentity == null || barringInfos == null) {
-            reportAnomaly(
+            AnomalyReporter.reportAnomaly(
                     UUID.fromString("645b16bb-c930-4c1c-9c5d-568696542e05"),
                             "Invalid barringInfoChanged indication");
 
@@ -1150,12 +1176,36 @@ public class RadioIndication extends IRadioIndication.Stub {
             return;
         }
 
-        BarringInfo cbi = new BarringInfo(RILUtils.convertHalCellIdentity(cellIdentity),
-                RILUtils.convertHalBarringInfoList(barringInfos));
+        CellIdentity ci = CellIdentity.create(cellIdentity);
+        BarringInfo cbi = BarringInfo.create(cellIdentity, barringInfos);
 
         mRil.mBarringInfoChangedRegistrants.notifyRegistrants(
                 new AsyncResult(null, cbi, null));
     }
+
+    /**
+     * @param stateInt
+     * @return {@link RadioPowerState RadioPowerState}
+     */
+    private @RadioPowerState int getRadioStateFromInt(int stateInt) {
+        int state;
+
+        switch(stateInt) {
+            case android.hardware.radio.V1_0.RadioState.OFF:
+                state = TelephonyManager.RADIO_POWER_OFF;
+                break;
+            case android.hardware.radio.V1_0.RadioState.UNAVAILABLE:
+                state = TelephonyManager.RADIO_POWER_UNAVAILABLE;
+                break;
+            case android.hardware.radio.V1_0.RadioState.ON:
+                state = TelephonyManager.RADIO_POWER_ON;
+                break;
+            default:
+                throw new RuntimeException("Unrecognized RadioState: " + stateInt);
+        }
+        return state;
+    }
+
 
     /**
      * Set the frequency range or channel number from the physical channel config. Only one of them
@@ -1178,6 +1228,49 @@ public class RadioIndication extends IRadioIndication.Stub {
         }
     }
 
+    private int convertConnectionStatusFromCellConnectionStatus(int status) {
+        switch (status) {
+            case CellConnectionStatus.PRIMARY_SERVING:
+                return PhysicalChannelConfig.CONNECTION_PRIMARY_SERVING;
+            case CellConnectionStatus.SECONDARY_SERVING:
+                return PhysicalChannelConfig.CONNECTION_SECONDARY_SERVING;
+            default:
+                // only PRIMARY_SERVING and SECONDARY_SERVING are supported.
+                mRil.riljLoge("Unsupported CellConnectionStatus in PhysicalChannelConfig: "
+                        + status);
+                return PhysicalChannelConfig.CONNECTION_UNKNOWN;
+        }
+    }
+
+    /**
+     * Set the band from the physical channel config.
+     *
+     * @param builder the builder of {@link PhysicalChannelConfig}.
+     * @param config physical channel config from ril.
+     */
+    public void setBandToBuilder(PhysicalChannelConfig.Builder builder,
+            android.hardware.radio.V1_6.PhysicalChannelConfig config) {
+
+        android.hardware.radio.V1_6.PhysicalChannelConfig.Band band = config.band;
+
+        switch (band.getDiscriminator()) {
+            case Band.hidl_discriminator.geranBand:
+                builder.setBand(band.geranBand());
+                break;
+            case Band.hidl_discriminator.utranBand:
+                builder.setBand(band.utranBand());
+                break;
+            case Band.hidl_discriminator.eutranBand:
+                builder.setBand(band.eutranBand());
+                break;
+            case Band.hidl_discriminator.ngranBand:
+                builder.setBand(band.ngranBand());
+                break;
+            default:
+                mRil.riljLoge("Unsupported band type " + band.getDiscriminator());
+        }
+    }
+
     private void physicalChannelConfigsIndication(List<? extends Object> configs) {
         List<PhysicalChannelConfig> response = new ArrayList<>(configs.size());
         try {
@@ -1187,8 +1280,8 @@ public class RadioIndication extends IRadioIndication.Stub {
                             (android.hardware.radio.V1_2.PhysicalChannelConfig) obj;
 
                     response.add(new PhysicalChannelConfig.Builder()
-                            .setCellConnectionStatus(RILUtils.convertHalCellConnectionStatus(
-                                    config.status))
+                            .setCellConnectionStatus(
+                                    convertConnectionStatusFromCellConnectionStatus(config.status))
                             .setCellBandwidthDownlinkKhz(config.cellBandwidthDownlink)
                             .build());
                 } else if (obj instanceof android.hardware.radio.V1_4.PhysicalChannelConfig) {
@@ -1197,7 +1290,7 @@ public class RadioIndication extends IRadioIndication.Stub {
                     PhysicalChannelConfig.Builder builder = new PhysicalChannelConfig.Builder();
                     setFrequencyRangeOrChannelNumber(builder, config);
                     response.add(builder.setCellConnectionStatus(
-                            RILUtils.convertHalCellConnectionStatus(config.base.status))
+                            convertConnectionStatusFromCellConnectionStatus(config.base.status))
                             .setCellBandwidthDownlinkKhz(config.base.cellBandwidthDownlink)
                             .setNetworkType(
                                     ServiceState.rilRadioTechnologyToNetworkType(config.rat))
@@ -1208,24 +1301,9 @@ public class RadioIndication extends IRadioIndication.Stub {
                     android.hardware.radio.V1_6.PhysicalChannelConfig config =
                             (android.hardware.radio.V1_6.PhysicalChannelConfig) obj;
                     PhysicalChannelConfig.Builder builder = new PhysicalChannelConfig.Builder();
-                    switch (config.band.getDiscriminator()) {
-                        case Band.hidl_discriminator.geranBand:
-                            builder.setBand(config.band.geranBand());
-                            break;
-                        case Band.hidl_discriminator.utranBand:
-                            builder.setBand(config.band.utranBand());
-                            break;
-                        case Band.hidl_discriminator.eutranBand:
-                            builder.setBand(config.band.eutranBand());
-                            break;
-                        case Band.hidl_discriminator.ngranBand:
-                            builder.setBand(config.band.ngranBand());
-                            break;
-                        default:
-                            mRil.riljLoge("Unsupported band " + config.band.getDiscriminator());
-                    }
+                    setBandToBuilder(builder, config);
                     response.add(builder.setCellConnectionStatus(
-                            RILUtils.convertHalCellConnectionStatus(config.status))
+                            convertConnectionStatusFromCellConnectionStatus(config.status))
                             .setDownlinkChannelNumber(config.downlinkChannelNumber)
                             .setUplinkChannelNumber(config.uplinkChannelNumber)
                             .setCellBandwidthDownlinkKhz(config.cellBandwidthDownlinkKhz)
@@ -1240,8 +1318,9 @@ public class RadioIndication extends IRadioIndication.Stub {
                 }
             }
         } catch (IllegalArgumentException iae) {
-            reportAnomaly(UUID.fromString("918f0970-9aa9-4bcd-a28e-e49a83fe77d5"),
-                    "RIL reported invalid PCC (HIDL)");
+            AnomalyReporter.reportAnomaly(
+                    UUID.fromString("918f0970-9aa9-4bcd-a28e-e49a83fe77d5"),
+                    "Invalid PhysicalChannelConfig reported by HAL");
             mRil.riljLoge("Invalid PhysicalChannelConfig " + iae);
             return;
         }
@@ -1253,33 +1332,32 @@ public class RadioIndication extends IRadioIndication.Stub {
     }
 
     private void responseNetworkScan(int indicationType,
-            android.hardware.radio.V1_1.NetworkScanResult result) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+                                     android.hardware.radio.V1_1.NetworkScanResult result) {
+        mRil.processIndication(indicationType);
 
-        ArrayList<CellInfo> cellInfos =
-                RILUtils.convertHalCellInfoList(new ArrayList<>(result.networkInfos));
-        NetworkScanResult nsr = new NetworkScanResult(result.status, result.error, cellInfos);
+        NetworkScanResult nsr = null;
+        ArrayList<CellInfo> infos = RIL.convertHalCellInfoList(result.networkInfos);
+        nsr = new NetworkScanResult(result.status, result.error, infos);
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_NETWORK_SCAN_RESULT, nsr);
         mRil.mRilNetworkScanResultRegistrants.notifyRegistrants(new AsyncResult(null, nsr, null));
     }
 
     private void responseNetworkScan_1_2(int indicationType,
-            android.hardware.radio.V1_2.NetworkScanResult result) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+                                         android.hardware.radio.V1_2.NetworkScanResult result) {
+        mRil.processIndication(indicationType);
 
-        ArrayList<CellInfo> cellInfos =
-                RILUtils.convertHalCellInfoList(new ArrayList<>(result.networkInfos));
-        NetworkScanResult nsr = new NetworkScanResult(result.status, result.error, cellInfos);
+        NetworkScanResult nsr = null;
+        ArrayList<CellInfo> infos = RIL.convertHalCellInfoList_1_2(result.networkInfos);
+        nsr = new NetworkScanResult(result.status, result.error, infos);
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_NETWORK_SCAN_RESULT, nsr);
         mRil.mRilNetworkScanResultRegistrants.notifyRegistrants(new AsyncResult(null, nsr, null));
     }
 
     private void responseNetworkScan_1_4(int indicationType,
-            android.hardware.radio.V1_4.NetworkScanResult result) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+                                         android.hardware.radio.V1_4.NetworkScanResult result) {
+        mRil.processIndication(indicationType);
 
-        ArrayList<CellInfo> cellInfos =
-                RILUtils.convertHalCellInfoList(new ArrayList<>(result.networkInfos));
+        ArrayList<CellInfo> cellInfos = RIL.convertHalCellInfoList_1_4(result.networkInfos);
         NetworkScanResult nsr = new NetworkScanResult(result.status, result.error, cellInfos);
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_NETWORK_SCAN_RESULT, nsr);
         mRil.mRilNetworkScanResultRegistrants.notifyRegistrants(new AsyncResult(null, nsr, null));
@@ -1287,10 +1365,9 @@ public class RadioIndication extends IRadioIndication.Stub {
 
     private void responseNetworkScan_1_5(int indicationType,
             android.hardware.radio.V1_5.NetworkScanResult result) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        ArrayList<CellInfo> cellInfos =
-                RILUtils.convertHalCellInfoList(new ArrayList<>(result.networkInfos));
+        ArrayList<CellInfo> cellInfos = RIL.convertHalCellInfoList_1_5(result.networkInfos);
         NetworkScanResult nsr = new NetworkScanResult(result.status, result.error, cellInfos);
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_NETWORK_SCAN_RESULT, nsr);
         mRil.mRilNetworkScanResultRegistrants.notifyRegistrants(new AsyncResult(null, nsr, null));
@@ -1298,37 +1375,30 @@ public class RadioIndication extends IRadioIndication.Stub {
 
     private void responseNetworkScan_1_6(int indicationType,
             android.hardware.radio.V1_6.NetworkScanResult result) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
-        ArrayList<CellInfo> cellInfos =
-                RILUtils.convertHalCellInfoList(new ArrayList<>(result.networkInfos));
+        ArrayList<CellInfo> cellInfos = RIL.convertHalCellInfoList_1_6(result.networkInfos);
         NetworkScanResult nsr = new NetworkScanResult(result.status, result.error, cellInfos);
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_NETWORK_SCAN_RESULT, nsr);
         mRil.mRilNetworkScanResultRegistrants.notifyRegistrants(new AsyncResult(null, nsr, null));
     }
 
     private void responseDataCallListChanged(int indicationType, List<?> dcList) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_DATA_CALL_LIST_CHANGED, dcList);
 
-        ArrayList<DataCallResponse> response = RILUtils.convertHalDataCallResultList(dcList);
+        ArrayList<DataCallResponse> response = RIL.convertDataCallResultList(dcList);
         mRil.mDataCallListChangedRegistrants.notifyRegistrants(
                 new AsyncResult(null, response, null));
     }
 
     private void responseApnUnthrottled(int indicationType, String apn) {
-        mRil.processIndication(RIL.RADIO_SERVICE, indicationType);
+        mRil.processIndication(indicationType);
 
         if (RIL.RILJ_LOGD) mRil.unsljLogRet(RIL_UNSOL_UNTHROTTLE_APN, apn);
 
         mRil.mApnUnthrottledRegistrants.notifyRegistrants(
                 new AsyncResult(null, apn, null));
-    }
-
-    private void reportAnomaly(UUID uuid, String msg) {
-        Phone phone = mRil.mPhoneId == null ? null : PhoneFactory.getPhone(mRil.mPhoneId);
-        int carrierId = phone == null ? UNKNOWN_CARRIER_ID : phone.getCarrierId();
-        AnomalyReporter.reportAnomaly(uuid, msg, carrierId);
     }
 }

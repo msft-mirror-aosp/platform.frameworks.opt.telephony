@@ -21,7 +21,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.anyInt;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import android.net.Uri;
@@ -37,25 +36,26 @@ import com.android.internal.telephony.imsphone.ImsRegistrationCallbackHelper.Ims
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mock;
 
 public class ImsRegistrationCallbackHelperTest extends TelephonyTest {
-    // Mocked classes
-    private ImsRegistrationUpdate mMockRegistrationUpdate;
 
+    @Mock
+    private ImsRegistrationUpdate mMockRegistrationUpdate;
     private ImsRegistrationCallbackHelper mRegistrationCallbackHelper;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mMockRegistrationUpdate = mock(ImsRegistrationUpdate.class);
+
         mRegistrationCallbackHelper = new ImsRegistrationCallbackHelper(mMockRegistrationUpdate,
                 Runnable::run);
     }
 
     @After
     public void tearDown() throws Exception {
-        mRegistrationCallbackHelper = null;
         super.tearDown();
+        mRegistrationCallbackHelper = null;
     }
 
     @Test

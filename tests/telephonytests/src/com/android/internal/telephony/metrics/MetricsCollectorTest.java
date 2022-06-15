@@ -28,7 +28,6 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -48,12 +47,12 @@ import com.android.internal.telephony.nano.PersistAtomsProto.VoiceCallSession;
 import com.android.internal.telephony.uicc.IccCardStatus.CardState;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccController;
-import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccSlot;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -82,34 +81,26 @@ public class MetricsCollectorTest extends TelephonyTest {
 
     // b/153195691: we cannot verify the contents of StatsEvent as its getters are marked with @hide
 
-    // Mocked classes
-    private Phone mSecondPhone;
-    private UiccSlot mPhysicalSlot;
-    private UiccSlot mEsimSlot;
-    private UiccCard mActiveCard;
-    private UiccPort mActivePort;
-    private ServiceStateStats mServiceStateStats;
+    @Mock private Phone mSecondPhone;
+    @Mock private UiccSlot mPhysicalSlot;
+    @Mock private UiccSlot mEsimSlot;
+    @Mock private UiccCard mActiveCard;
+
+    @Mock private ServiceStateStats mServiceStateStats;
 
     private MetricsCollector mMetricsCollector;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
-        mSecondPhone = mock(Phone.class);
-        mPhysicalSlot = mock(UiccSlot.class);
-        mEsimSlot = mock(UiccSlot.class);
-        mActiveCard = mock(UiccCard.class);
-        mActivePort = mock(UiccPort.class);
-        mServiceStateStats = mock(ServiceStateStats.class);
-        mMetricsCollector =
-                new MetricsCollector(mContext, mPersistAtomsStorage);
+        mMetricsCollector = new MetricsCollector(mContext);
+        mMetricsCollector.setPersistAtomsStorage(mPersistAtomsStorage);
         doReturn(mSST).when(mSecondPhone).getServiceStateTracker();
         doReturn(mServiceStateStats).when(mSST).getServiceStateStats();
     }
 
     @After
     public void tearDown() throws Exception {
-        mMetricsCollector = null;
         super.tearDown();
     }
 
@@ -124,8 +115,7 @@ public class MetricsCollectorTest extends TelephonyTest {
         doReturn(CardState.CARDSTATE_PRESENT).when(mEsimSlot).getCardState();
         doReturn(true).when(mEsimSlot).isEuicc();
         doReturn(mActiveCard).when(mEsimSlot).getUiccCard();
-        doReturn(4).when(mActivePort).getNumApplications();
-        doReturn(new UiccPort[] {mActivePort}).when(mActiveCard).getUiccPortList();
+        doReturn(4).when(mActiveCard).getNumApplications();
         doReturn(new UiccSlot[] {mPhysicalSlot, mEsimSlot}).when(mUiccController).getUiccSlots();
         doReturn(mPhysicalSlot).when(mUiccController).getUiccSlot(eq(0));
         doReturn(mEsimSlot).when(mUiccController).getUiccSlot(eq(1));

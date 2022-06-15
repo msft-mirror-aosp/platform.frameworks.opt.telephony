@@ -38,8 +38,6 @@ import com.android.internal.telephony.cdma.CdmaSmsBroadcastConfigInfo;
 import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.PersoSubState;
 
-import java.util.List;
-
 /**
  * Volte doesn't need CommandsInterface. The class does nothing but made to work
  * with Phone's constructor.
@@ -661,7 +659,7 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
 
     @Override
     public void setSignalStrengthReportingCriteria(
-            List<SignalThresholdInfo> signalThresholdInfo, Message result) {
+            SignalThresholdInfo signalThresholdInfo, int ran, Message result) {
     }
 
     @Override

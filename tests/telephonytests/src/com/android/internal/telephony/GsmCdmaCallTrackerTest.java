@@ -23,10 +23,10 @@ import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.isA;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.telephony.DisconnectCause;
@@ -49,6 +49,7 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
@@ -59,16 +60,14 @@ public class GsmCdmaCallTrackerTest extends TelephonyTest {
     private String mDialString = PhoneNumberUtils.stripSeparators("+17005554141");
     /* Handler class initiated at the HandlerThread */
     private GsmCdmaCallTracker mCTUT;
-
-    // Mocked classes
-    private GsmCdmaConnection mConnection;
+    @Mock
+    GsmCdmaConnection mConnection;
+    @Mock
     private Handler mHandler;
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(getClass().getSimpleName());
-        mConnection = mock(GsmCdmaConnection.class);
-        mHandler = mock(Handler.class);
+        super.setUp(this.getClass().getSimpleName());
         mSimulatedCommands.setRadioPower(true, null);
         mPhone.mCi = this.mSimulatedCommands;
 

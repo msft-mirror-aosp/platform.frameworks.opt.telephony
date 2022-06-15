@@ -20,12 +20,9 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
 
 import android.hardware.radio.V1_6.NrSignalStrength;
 import android.os.Parcel;
-import android.os.PersistableBundle;
-import android.telephony.CarrierConfigManager;
 import android.telephony.CellInfo;
 import android.telephony.CellSignalStrength;
 import android.telephony.CellSignalStrengthNr;
@@ -37,6 +34,7 @@ import com.google.common.collect.Range;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,13 +57,12 @@ public class CellSignalStrengthNrTest extends TelephonyTest {
     private static final int SSRSRQ = -13;
     private static final int SSSINR = 32;
 
-    // Mocked classes
+    @Mock
     ServiceState mSS;
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(getClass().getSimpleName());
-        mSS = mock(ServiceState.class);
+        super.setUp(this.getClass().getSimpleName());
     }
 
     @After
@@ -111,7 +108,7 @@ public class CellSignalStrengthNrTest extends TelephonyTest {
         nrSignalStrength.base.ssSinr = SSSINR;
 
         // THEN the get method should return the correct value
-        CellSignalStrengthNr css = RILUtils.convertHalNrSignalStrength(nrSignalStrength);
+        CellSignalStrengthNr css = new CellSignalStrengthNr(nrSignalStrength);
         assertThat(css.getCsiRsrp()).isEqualTo(CSIRSRP);
         assertThat(css.getCsiRsrq()).isEqualTo(CSIRSRQ);
         assertThat(css.getCsiSinr()).isEqualTo(CSISINR);
@@ -137,7 +134,7 @@ public class CellSignalStrengthNrTest extends TelephonyTest {
         nrSignalStrength.base.ssSinr = CellInfo.UNAVAILABLE;
 
         // THEN the get method should return unavailable value
-        CellSignalStrengthNr css = RILUtils.convertHalNrSignalStrength(nrSignalStrength);
+        CellSignalStrengthNr css = new CellSignalStrengthNr(nrSignalStrength);
         assertThat(css.getCsiRsrp()).isEqualTo(CellInfo.UNAVAILABLE);
         assertThat(css.getCsiRsrq()).isEqualTo(CellInfo.UNAVAILABLE);
         assertThat(css.getCsiSinr()).isEqualTo(CellInfo.UNAVAILABLE);
@@ -256,42 +253,5 @@ public class CellSignalStrengthNrTest extends TelephonyTest {
         // Add rsrp boost and level should change to 1 - POOR
         css.updateLevel(null, mSS);
         assertEquals(1 /* MODERATE */, css.getLevel());
-    }
-
-    @Test
-    public void testSignalLevel_ThresholdBoundaries() {
-        int[] ssRsrpThresholds = {
-                -110, /* SIGNAL_STRENGTH_POOR */
-                -90,  /* SIGNAL_STRENGTH_MODERATE */
-                -80,  /* SIGNAL_STRENGTH_GOOD */
-                -65,  /* SIGNAL_STRENGTH_GREAT */
-        };
-        PersistableBundle bundle = new PersistableBundle();
-        bundle.putInt(CarrierConfigManager.KEY_PARAMETERS_USE_FOR_5G_NR_SIGNAL_BAR_INT,
-                CellSignalStrengthNr.USE_SSRSRP);
-        bundle.putIntArray(CarrierConfigManager.KEY_5G_NR_SSRSRP_THRESHOLDS_INT_ARRAY,
-                ssRsrpThresholds);
-
-        CellSignalStrengthNr css;
-
-        css = new CellSignalStrengthNr(CSIRSRP, CSIRSRQ, CSISINR, ssRsrpThresholds[0], SSRSRQ,
-                SSSINR);
-        css.updateLevel(bundle, null);
-        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_POOR, css.getLevel());
-
-        css = new CellSignalStrengthNr(CSIRSRP, CSIRSRQ, CSISINR, ssRsrpThresholds[1], SSRSRQ,
-                SSSINR);
-        css.updateLevel(bundle, null);
-        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_MODERATE, css.getLevel());
-
-        css = new CellSignalStrengthNr(CSIRSRP, CSIRSRQ, CSISINR, ssRsrpThresholds[2], SSRSRQ,
-                SSSINR);
-        css.updateLevel(bundle, null);
-        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_GOOD, css.getLevel());
-
-        css = new CellSignalStrengthNr(CSIRSRP, CSIRSRQ, CSISINR, ssRsrpThresholds[3], SSRSRQ,
-                SSSINR);
-        css.updateLevel(bundle, null);
-        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_GREAT, css.getLevel());
     }
 }
