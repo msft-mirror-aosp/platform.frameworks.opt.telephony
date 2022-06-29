@@ -313,6 +313,9 @@ import android.telephony.UiccSlotMapping;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataProfile;
+import android.telephony.data.DataService;
+import android.telephony.data.DataService.DeactivateDataReason;
+import android.telephony.data.DataService.SetupDataReason;
 import android.telephony.data.EpsQos;
 import android.telephony.data.NetworkSliceInfo;
 import android.telephony.data.NetworkSlicingConfig;
@@ -633,6 +636,8 @@ public class RILUtils {
             byte[] pdu) {
         android.hardware.radio.messaging.CdmaSmsMessage msg =
                 new android.hardware.radio.messaging.CdmaSmsMessage();
+        msg.address = new android.hardware.radio.messaging.CdmaSmsAddress();
+        msg.subAddress = new android.hardware.radio.messaging.CdmaSmsSubaddress();
         int addrNbrOfDigits;
         int subaddrNbrOfDigits;
         int bearerDataLength;
@@ -4618,6 +4623,46 @@ public class RILUtils {
     /** Convert null to an empty String */
     public static String convertNullToEmptyString(String string) {
         return string != null ? string : "";
+    }
+
+    /**
+     * Convert setup data reason to string.
+     *
+     * @param reason The reason for setup data call.
+     * @return The reason in string format.
+     */
+    public static String setupDataReasonToString(@SetupDataReason int reason) {
+        switch (reason) {
+            case DataService.REQUEST_REASON_NORMAL:
+                return "NORMAL";
+            case DataService.REQUEST_REASON_HANDOVER:
+                return "HANDOVER";
+            case DataService.REQUEST_REASON_UNKNOWN:
+                return "UNKNOWN";
+            default:
+                return "UNKNOWN(" + reason + ")";
+        }
+    }
+
+    /**
+     * Convert deactivate data reason to string.
+     *
+     * @param reason The reason for deactivate data call.
+     * @return The reason in string format.
+     */
+    public static String deactivateDataReasonToString(@DeactivateDataReason int reason) {
+        switch (reason) {
+            case DataService.REQUEST_REASON_NORMAL:
+                return "NORMAL";
+            case DataService.REQUEST_REASON_HANDOVER:
+                return "HANDOVER";
+            case DataService.REQUEST_REASON_SHUTDOWN:
+                return "SHUTDOWN";
+            case DataService.REQUEST_REASON_UNKNOWN:
+                return "UNKNOWN";
+            default:
+                return "UNKNOWN(" + reason + ")";
+        }
     }
 
     /**

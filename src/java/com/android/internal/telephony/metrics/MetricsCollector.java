@@ -16,10 +16,6 @@
 
 package com.android.internal.telephony.metrics;
 
-import static android.telephony.PhoneNumberUtils.areSamePhoneNumber;
-import static android.telephony.SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER;
-import static android.telephony.SubscriptionManager.PHONE_NUMBER_SOURCE_IMS;
-import static android.telephony.SubscriptionManager.PHONE_NUMBER_SOURCE_UICC;
 import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 import static android.text.format.DateUtils.MINUTE_IN_MILLIS;
 import static android.text.format.DateUtils.SECOND_IN_MILLIS;
@@ -37,7 +33,6 @@ import static com.android.internal.telephony.TelephonyStatsLog.IMS_REGISTRATION_
 import static com.android.internal.telephony.TelephonyStatsLog.IMS_REGISTRATION_TERMINATION;
 import static com.android.internal.telephony.TelephonyStatsLog.INCOMING_SMS;
 import static com.android.internal.telephony.TelephonyStatsLog.OUTGOING_SMS;
-import static com.android.internal.telephony.TelephonyStatsLog.PER_SIM_STATUS;
 import static com.android.internal.telephony.TelephonyStatsLog.PRESENCE_NOTIFY_EVENT;
 import static com.android.internal.telephony.TelephonyStatsLog.RCS_ACS_PROVISIONING_STATS;
 import static com.android.internal.telephony.TelephonyStatsLog.RCS_CLIENT_PROVISIONING_STATS;
@@ -51,18 +46,16 @@ import static com.android.internal.telephony.TelephonyStatsLog.TELEPHONY_NETWORK
 import static com.android.internal.telephony.TelephonyStatsLog.UCE_EVENT_STATS;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_RAT_USAGE;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION;
+import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_UNKNOWN;
 
 import android.annotation.Nullable;
 import android.app.StatsManager;
 import android.content.Context;
-import android.telephony.SubscriptionInfo;
-import android.text.TextUtils;
 import android.util.StatsEvent;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyStatsLog;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularDataServiceSwitch;
@@ -94,7 +87,6 @@ import com.android.telephony.Rlog;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -136,24 +128,14 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                     .setCoolDownMillis(MIN_COOLDOWN_MILLIS)
                     .build();
 
-    private final PersistAtomsStorage mStorage;
-    private final TelephonyStatsLogHelper mTelephonyStatsLog;
+    private PersistAtomsStorage mStorage;
     private final StatsManager mStatsManager;
     private final AirplaneModeStats mAirplaneModeStats;
     private final Set<DataCallSessionStats> mOngoingDataCallStats = ConcurrentHashMap.newKeySet();
     private static final Random sRandom = new Random();
 
     public MetricsCollector(Context context) {
-        this(context, new PersistAtomsStorage(context), new TelephonyStatsLogHelper());
-    }
-
-    /** Allows dependency injection. Used during unit tests. */
-    @VisibleForTesting
-    public MetricsCollector(Context context,
-                            PersistAtomsStorage storage,
-                            TelephonyStatsLogHelper telephonyStatsLog) {
-        mStorage = storage;
-        mTelephonyStatsLog = telephonyStatsLog;
+        mStorage = new PersistAtomsStorage(context);
         mStatsManager = (StatsManager) context.getSystemService(Context.STATS_MANAGER);
         if (mStatsManager != null) {
             registerAtom(CELLULAR_DATA_SERVICE_SWITCH, POLICY_PULL_DAILY);
@@ -182,7 +164,6 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
             registerAtom(UCE_EVENT_STATS, POLICY_PULL_DAILY);
             registerAtom(PRESENCE_NOTIFY_EVENT, POLICY_PULL_DAILY);
             registerAtom(GBA_EVENT, POLICY_PULL_DAILY);
-            registerAtom(PER_SIM_STATUS, null);
 
             Rlog.d(TAG, "registered");
         } else {
@@ -190,6 +171,12 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
         }
 
         mAirplaneModeStats = new AirplaneModeStats(context);
+    }
+
+    /** Replaces the {@link PersistAtomsStorage} backing the puller. Used during unit tests. */
+    @VisibleForTesting
+    public void setPersistAtomsStorage(PersistAtomsStorage storage) {
+        mStorage = storage;
     }
 
     /**
@@ -254,8 +241,6 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 return pullPresenceNotifyEvent(data);
             case GBA_EVENT:
                 return pullGbaEvent(data);
-            case PER_SIM_STATUS:
-                return pullPerSimStatus(data);
             default:
                 Rlog.e(TAG, String.format("unexpected atom ID %d", atomTag));
                 return StatsManager.PULL_SKIP;
@@ -655,70 +640,6 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
         }
     }
 
-    private int pullPerSimStatus(List<StatsEvent> data) {
-        SubscriptionController subscriptionController = SubscriptionController.getInstance();
-        if (subscriptionController == null) {
-            return StatsManager.PULL_SKIP;
-        }
-        for (Phone phone : getPhonesIfAny()) {
-            int subId = phone.getSubId();
-            String countryIso =
-                    Optional.ofNullable(subscriptionController.getSubscriptionInfo(subId))
-                            .map(SubscriptionInfo::getCountryIso)
-                            .orElse("");
-            // numbersFromAllSources[]- Phone numbers from each sources
-            // numberIds[] - Array of integer ids representing phone numbers.
-            // If number is empty then id will be 0. Two same numbers will have same id, and
-            // different numbers will have different ids.
-            // For example, [1, 0, 1] means that uicc and ims numbers are the same while carrier
-            // number is empty and [1, 2, 3] means all numbers are different.
-            // index 0 - PHONE_NUMBER_SOURCE_UICC
-            // index 1 - PHONE_NUMBER_SOURCE_CARRIER
-            // index 2 - PHONE_NUMBER_SOURCE_IMS
-            String[] numbersFromAllSources =
-                    new String[] {
-                        subscriptionController.getPhoneNumber(
-                                subId, PHONE_NUMBER_SOURCE_UICC, null, null), // 0
-                        subscriptionController.getPhoneNumber(
-                                subId, PHONE_NUMBER_SOURCE_CARRIER, null, null), // 1
-                        subscriptionController.getPhoneNumber(
-                                subId, PHONE_NUMBER_SOURCE_IMS, null, null), // 2
-                    };
-            int[] numberIds = new int[numbersFromAllSources.length]; // default value 0
-            for (int i = 0, idForNextUniqueNumber = 1; i < numberIds.length; i++) {
-                if (TextUtils.isEmpty(numbersFromAllSources[i])) {
-                    // keep id 0 if number not available
-                    continue;
-                }
-                // the number is available:
-                // try to find the same number from other sources and reuse the id
-                for (int j = 0; j < i; j++) {
-                    if (!TextUtils.isEmpty(numbersFromAllSources[j])
-                            && areSamePhoneNumber(
-                                    numbersFromAllSources[i],
-                                    numbersFromAllSources[j],
-                                    countryIso)) {
-                        numberIds[i] = numberIds[j];
-                    }
-                }
-                // didn't find same number (otherwise should not be id 0), assign a new id
-                if (numberIds[i] == 0) {
-                    numberIds[i] = idForNextUniqueNumber;
-                    idForNextUniqueNumber++;
-                }
-            }
-            StatsEvent statsEvent = mTelephonyStatsLog.buildStatsEvent(
-                    PER_SIM_STATUS,
-                    phone.getPhoneId(), // simSlotIndex
-                    phone.getCarrierId(), // carrierId
-                    numberIds[0], // phoneNumberSourceUicc
-                    numberIds[1], // phoneNumberSourceCarrier
-                    numberIds[2]); // phoneNumberSourceIms
-            data.add(statsEvent);
-        }
-        return StatsManager.PULL_SUCCESS;
-    }
-
     /** Registers a pulled atom ID {@code atomId} with optional {@code policy} for pulling. */
     private void registerAtom(int atomId, @Nullable StatsManager.PullAtomMetadata policy) {
         mStatsManager.setPullAtomCallback(atomId, policy, ConcurrentUtils.DIRECT_EXECUTOR, this);
@@ -764,7 +685,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 session.bearerAtStart,
                 session.bearerAtEnd,
                 session.direction,
-                session.setupDuration,
+                // deprecated and replaced by setupDurationMillis
+                VOICE_CALL_SESSION__CALL_DURATION__CALL_DURATION_UNKNOWN,
                 session.setupFailed,
                 session.disconnectReasonCode,
                 session.disconnectExtraCode,
