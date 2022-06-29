@@ -67,6 +67,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IInterface;
 import android.os.PersistableBundle;
+import android.os.PowerManager;
 import android.os.PowerWhitelistManager;
 import android.os.SystemConfigManager;
 import android.os.UserHandle;
@@ -303,6 +304,8 @@ public class ContextFixture implements TestFixture<Context> {
                     return mLocationManager;
                 case Context.NETWORK_POLICY_SERVICE:
                     return mNetworkPolicyManager;
+                case Context.TELEPHONY_IMS_SERVICE:
+                    return mImsManager;
                 default:
                     return null;
             }
@@ -344,6 +347,8 @@ public class ContextFixture implements TestFixture<Context> {
                 return Context.TELEPHONY_REGISTRY_SERVICE;
             } else if (serviceClass == NetworkPolicyManager.class) {
                 return Context.NETWORK_POLICY_SERVICE;
+            } else if (serviceClass == PowerManager.class) {
+                return Context.POWER_SERVICE;
             }
             return super.getSystemServiceName(serviceClass);
         }
@@ -717,6 +722,7 @@ public class ContextFixture implements TestFixture<Context> {
     private final KeyguardManager mKeyguardManager = mock(KeyguardManager.class);
     private final VcnManager mVcnManager = mock(VcnManager.class);
     private final NetworkPolicyManager mNetworkPolicyManager = mock(NetworkPolicyManager.class);
+    private final ImsManager mImsManager = mock(ImsManager.class);
     private final Configuration mConfiguration = new Configuration();
     private final DisplayMetrics mDisplayMetrics = new DisplayMetrics();
     private final SharedPreferences mSharedPreferences = PreferenceManager

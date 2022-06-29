@@ -22,10 +22,12 @@ import android.os.Handler;
 import android.os.Message;
 import android.os.RegistrantList;
 import android.sysprop.TelephonyProperties;
+import android.telephony.Annotation.DataActivityType;
 import android.telephony.CallQuality;
 import android.telephony.NetworkScanRequest;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
+import android.telephony.TelephonyManager;
 import android.telephony.ims.ImsReasonInfo;
 import android.util.Pair;
 
@@ -177,8 +179,8 @@ abstract class ImsPhoneBase extends Phone {
     }
 
     @Override
-    public DataActivityState getDataActivityState() {
-        return DataActivityState.NONE;
+    public @DataActivityType int getDataActivityState() {
+        return TelephonyManager.DATA_ACTIVITY_NONE;
     }
 
     /**
@@ -471,7 +473,7 @@ abstract class ImsPhoneBase extends Phone {
     }
 
     @Override
-    public boolean isDataAllowed(int apnType) {
+    public boolean isDataAllowed() {
         return false;
     }
 
