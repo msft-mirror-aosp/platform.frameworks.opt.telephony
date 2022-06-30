@@ -37,6 +37,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
+import android.os.Registrant;
 import android.os.RegistrantList;
 import android.os.RemoteException;
 import android.os.UserHandle;
@@ -61,6 +62,7 @@ import com.android.internal.telephony.PhoneConfigurationManager;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.telephony.Rlog;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -68,6 +70,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.stream.Collectors;
 
 /**
  * Data service manager manages handling data requests and responses on data services (e.g.
@@ -114,8 +117,9 @@ public class DataServiceManager extends Handler {
 
     private CellularDataServiceConnection mServiceConnection;
 
-    private final UUID mAnomalyUUID = UUID.fromString("fc1956de-c080-45de-8431-a1faab687110");
     private String mLastBoundPackageName;
+
+    private List<DataCallResponse> mLastDataCallResponseList = Collections.EMPTY_LIST;
 
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
@@ -140,7 +144,19 @@ public class DataServiceManager extends Handler {
             String message = "Data service " + mLastBoundPackageName +  " for transport type "
                     + AccessNetworkConstants.transportTypeToString(mTransportType) + " died.";
             loge(message);
-            AnomalyReporter.reportAnomaly(mAnomalyUUID, message);
+            AnomalyReporter.reportAnomaly(UUID.fromString("fc1956de-c080-45de-8431-a1faab687110"),
+                    message, mPhone.getCarrierId());
+
+            // Cancel all pending requests
+            for (Message m : mMessageMap.values()) {
+                sendCompleteMessage(m, DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE);
+            }
+            mMessageMap.clear();
+
+            // Tear down all connections
+            mLastDataCallResponseList = Collections.EMPTY_LIST;
+            mDataCallListChangedRegistrants.notifyRegistrants(
+                    new AsyncResult(null, Collections.EMPTY_LIST, null));
         }
     }
 
@@ -175,7 +191,7 @@ public class DataServiceManager extends Handler {
     private void revokePermissionsFromUnusedDataServices() {
         // Except the current data services from having their permissions removed.
         Set<String> dataServices = getAllDataServicePackageNames();
-        for (int transportType : mPhone.getTransportManager().getAvailableTransports()) {
+        for (int transportType : mPhone.getAccessNetworksManager().getAvailableTransports()) {
             dataServices.remove(getDataServicePackageName(transportType));
         }
 
@@ -292,14 +308,42 @@ public class DataServiceManager extends Handler {
 
         @Override
         public void onRequestDataCallListComplete(@DataServiceCallback.ResultCode int resultCode,
-                                              List<DataCallResponse> dataCallList) {
-            if (DBG) log("onRequestDataCallListComplete. resultCode = " + resultCode);
+                List<DataCallResponse> dataCallList) {
+            if (DBG) {
+                log("onRequestDataCallListComplete. resultCode = "
+                        + DataServiceCallback.resultCodeToString(resultCode));
+            }
             Message msg = mMessageMap.remove(asBinder());
+            if (msg != null) {
+                msg.getData().putParcelableList(DATA_CALL_RESPONSE, dataCallList);
+            }
             sendCompleteMessage(msg, resultCode);
+
+            // Handle data stall case on WWAN transport
+            if (mTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
+                if (mLastDataCallResponseList.size() != dataCallList.size()
+                        || !mLastDataCallResponseList.containsAll(dataCallList)) {
+                    String message = "RIL reported mismatched data call response list for WWAN: "
+                            + "mLastDataCallResponseList=" + mLastDataCallResponseList
+                            + ", dataCallList=" + dataCallList;
+                    loge(message);
+                    if (!dataCallList.stream().map(DataCallResponse::getId)
+                            .collect(Collectors.toSet()).equals(mLastDataCallResponseList.stream()
+                                    .map(DataCallResponse::getId).collect(Collectors.toSet()))) {
+                        AnomalyReporter.reportAnomaly(
+                                UUID.fromString("150323b2-360a-446b-a158-3ce6425821f6"),
+                                message,
+                                mPhone.getCarrierId());
+                    }
+                }
+                onDataCallListChanged(dataCallList);
+            }
         }
 
         @Override
         public void onDataCallListChanged(List<DataCallResponse> dataCallList) {
+            mLastDataCallResponseList =
+                    dataCallList != null ? dataCallList : Collections.EMPTY_LIST;
             mDataCallListChangedRegistrants.notifyRegistrants(
                     new AsyncResult(null, dataCallList, null));
         }
@@ -378,7 +422,7 @@ public class DataServiceManager extends Handler {
         PhoneConfigurationManager.registerForMultiSimConfigChange(
                 this, EVENT_BIND_DATA_SERVICE, null);
 
-        sendEmptyMessage(EVENT_BIND_DATA_SERVICE);
+        rebindDataService();
     }
 
     /**
@@ -408,7 +452,7 @@ public class DataServiceManager extends Handler {
         // Using fixed UUID to avoid duplicate bugreport notification
         AnomalyReporter.reportAnomaly(
                 UUID.fromString("f5d5cbe6-9bd6-4009-b764-42b1b649b1de"),
-                message);
+                message, mPhone.getCarrierId());
     }
 
     private void unbindDataService() {
@@ -932,9 +976,13 @@ public class DataServiceManager extends Handler {
      */
     public void registerForServiceBindingChanged(Handler h, int what) {
         if (h != null) {
-            mServiceBindingChangedRegistrants.addUnique(h, what, mTransportType);
+            mServiceBindingChangedRegistrants.remove(h);
+            Registrant r = new Registrant(h, what, mTransportType);
+            mServiceBindingChangedRegistrants.add(r);
+            if (mBound) {
+                r.notifyResult(true);
+            }
         }
-
     }
 
     /**

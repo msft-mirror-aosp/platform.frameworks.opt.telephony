@@ -157,7 +157,8 @@ public class TelephonyNetworkRequest {
     /**
      * Data config manager for retrieving data config.
      */
-    private final @NonNull DataConfigManager mDataConfigManager;
+    // TODO: Make this @NonNull after old data stack removed.
+    private final @Nullable DataConfigManager mDataConfigManager;
 
     /**
      * The attached data network. Note that the data network could be in any state. {@code null}
@@ -279,7 +280,20 @@ public class TelephonyNetworkRequest {
             // Fallback to the legacy APN type matching.
             List<Integer> apnTypes = Arrays.stream(getCapabilities()).boxed()
                     .map(DataUtils::networkCapabilityToApnType)
+                    .filter(apnType -> apnType != ApnSetting.TYPE_NONE)
                     .collect(Collectors.toList());
+            // In case of enterprise network request, the network request will have internet,
+            // but APN type will not have default type as the enterprise apn should not be used
+            // as default network. Ignore default type of the network request if it
+            // has enterprise type as well. This will make sure the network request with
+            // internet and enterprise will be satisfied with data profile with enterprise at the
+            // same time default network request will not get satisfied with enterprise data
+            // profile.
+            // TODO b/232264746
+            if (apnTypes.contains(ApnSetting.TYPE_ENTERPRISE)) {
+                apnTypes.remove((Integer) ApnSetting.TYPE_DEFAULT);
+            }
+
             return apnTypes.stream().allMatch(dataProfile.getApnSetting()::canHandleType);
         }
         return false;
@@ -387,8 +401,9 @@ public class TelephonyNetworkRequest {
      * @return {@code true} if this network request can result in bringing up a metered network.
      */
     public boolean isMeteredRequest() {
-        return mDataConfigManager.isAnyMeteredCapability(getCapabilities(),
-                mPhone.getServiceState().getDataRoaming());
+        // TODO: Remove null check after old data stack removed.
+        return mDataConfigManager != null && mDataConfigManager.isAnyMeteredCapability(
+                getCapabilities(), mPhone.getServiceState().getDataRoaming());
     }
 
     /**
@@ -442,8 +457,8 @@ public class TelephonyNetworkRequest {
         return "[" + mNativeNetworkRequest.toString() + ", mPriority=" + mPriority
                 + ", state=" + requestStateToString(mState)
                 + ", mAttachedDataNetwork=" + (mAttachedDataNetwork != null
-                ? mAttachedDataNetwork.name() : null) + ", created time="
-                + DataUtils.elapsedTimeToString(mCreatedTimeMillis)
+                ? mAttachedDataNetwork.name() : null) + ", isMetered=" + isMeteredRequest()
+                + ", created time=" + DataUtils.elapsedTimeToString(mCreatedTimeMillis)
                 + ", evaluation result=" + mEvaluation + "]";
     }
 

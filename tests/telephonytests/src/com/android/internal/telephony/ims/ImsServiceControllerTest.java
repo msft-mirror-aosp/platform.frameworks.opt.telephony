@@ -64,7 +64,6 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 
 import java.util.HashSet;
 
@@ -118,16 +117,17 @@ public class ImsServiceControllerTest extends ImsTestBase {
         }
     }
 
-    @Mock IImsMmTelFeature mMockMmTelFeature;
-    @Mock IBinder mMockMmTelBinder;
-    @Mock IImsRcsFeature mMockRcsFeature;
-    @Mock IBinder mMockRcsBinder;
-    @Mock IImsConfig mMockImsConfig;
-    @Mock IImsRegistration mMockRcsRegistration;
+    // Mocked classes
+    IImsMmTelFeature mMockMmTelFeature;
+    IBinder mMockMmTelBinder;
+    IImsRcsFeature mMockRcsFeature;
+    IBinder mMockRcsBinder;
+    IImsConfig mMockImsConfig;
+    IImsRegistration mMockRcsRegistration;
+    IImsServiceController mMockServiceControllerBinder;
+    ImsServiceController.ImsServiceControllerCallbacks mMockCallbacks;
+    Context mMockContext;
 
-    @Mock IImsServiceController mMockServiceControllerBinder;
-    @Mock ImsServiceController.ImsServiceControllerCallbacks mMockCallbacks;
-    @Mock Context mMockContext;
     private final ComponentName mTestComponentName = new ComponentName("TestPkg",
             "ImsServiceControllerTest");
     private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -138,6 +138,16 @@ public class ImsServiceControllerTest extends ImsTestBase {
     @Override
     public void setUp() throws Exception {
         super.setUp();
+        mMockMmTelFeature = mock(IImsMmTelFeature.class);
+        mMockMmTelBinder = mock(IBinder.class);
+        mMockRcsFeature = mock(IImsRcsFeature.class);
+        mMockRcsBinder = mock(IBinder.class);
+        mMockImsConfig = mock(IImsConfig.class);
+        mMockRcsRegistration = mock(IImsRegistration.class);
+        mMockServiceControllerBinder = mock(IImsServiceController.class);
+        mMockCallbacks = mock(ImsServiceController.ImsServiceControllerCallbacks.class);
+        mMockContext = mock(Context.class);
+
         mRepo = new ImsFeatureBinderRepository();
         mTestImsServiceController = new ImsServiceController(mMockContext, mTestComponentName,
                 mMockCallbacks, mHandler, REBIND_RETRY, mRepo);
@@ -164,6 +174,8 @@ public class ImsServiceControllerTest extends ImsTestBase {
         mTestImsServiceController = null;
         // Make sure the handler is empty before finishing the test.
         waitForHandlerAction(mHandler, 1000);
+        mTestImsServiceController = null;
+        mRepo = null;
         super.tearDown();
     }
 
@@ -367,6 +379,68 @@ public class ImsServiceControllerTest extends ImsTestBase {
                 eq(ImsFeature.FEATURE_MMTEL), eq(mTestImsServiceController));
         validateMmTelFeatureContainerExists(SLOT_0);
         validateMmTelFeatureContainerExists(SLOT_1);
+    }
+
+    /**
+     * Ensures ImsServiceController correctly removes the existing MmTelFeature and creates an
+     * emergency only MmTelFeature when slot 0 has no subscription and the sim card is removed for
+     * slot 1.
+     */
+    @SmallTest
+    @Test
+    public void testCallChangeWithNoNewFeaturesWithSlot1SubIdChanged()
+            throws RemoteException {
+        HashSet<ImsFeatureConfiguration.FeatureSlotPair> testFeatures = new HashSet<>();
+        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
+                ImsFeature.FEATURE_EMERGENCY_MMTEL));
+        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_0,
+                ImsFeature.FEATURE_MMTEL));
+        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
+                ImsFeature.FEATURE_EMERGENCY_MMTEL));
+        testFeatures.add(new ImsFeatureConfiguration.FeatureSlotPair(SLOT_1,
+                ImsFeature.FEATURE_MMTEL));
+        SparseIntArray slotIdToSubIdMap = new SparseIntArray();
+        // invalid subid in slot 0
+        slotIdToSubIdMap.put(SLOT_0, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+        // valid subId in slot 1
+        slotIdToSubIdMap.put(SLOT_1, SUB_3);
+        bindAndConnectService(testFeatures, slotIdToSubIdMap.clone());
+        verify(mMockServiceControllerBinder).createEmergencyOnlyMmTelFeature(SLOT_0);
+        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_0),
+                eq(ImsFeature.FEATURE_MMTEL), any());
+        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_0), eq(ImsFeature.FEATURE_MMTEL),
+                eq(mTestImsServiceController));
+        verify(mMockServiceControllerBinder).createMmTelFeature(SLOT_1, SUB_3);
+        verify(mMockServiceControllerBinder).addFeatureStatusCallback(eq(SLOT_1),
+                eq(ImsFeature.FEATURE_MMTEL), any());
+        verify(mMockCallbacks).imsServiceFeatureCreated(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
+                eq(mTestImsServiceController));
+        validateMmTelFeatureContainerExistsWithEmergency(SLOT_0);
+        validateMmTelFeatureContainerExistsWithEmergency(SLOT_1);
+
+        slotIdToSubIdMap.put(SLOT_0, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+        slotIdToSubIdMap.put(SLOT_1, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+
+        // ensure only slot 1 gets replaced with emergency only MmTelFeature.
+        mTestImsServiceController.changeImsServiceFeatures(testFeatures,
+                slotIdToSubIdMap.clone());
+        verify(mMockServiceControllerBinder).removeImsFeature(eq(SLOT_1),
+                eq(ImsFeature.FEATURE_MMTEL), eq(true));
+        verify(mMockServiceControllerBinder).removeFeatureStatusCallback(eq(SLOT_1),
+                eq(ImsFeature.FEATURE_MMTEL), any());
+        verify(mMockCallbacks).imsServiceFeatureRemoved(eq(SLOT_1), eq(ImsFeature.FEATURE_MMTEL),
+                eq(mTestImsServiceController));
+
+        verify(mMockServiceControllerBinder).createEmergencyOnlyMmTelFeature(SLOT_1);
+        verify(mMockServiceControllerBinder, times(2)).addFeatureStatusCallback(eq(SLOT_1),
+                eq(ImsFeature.FEATURE_MMTEL), any());
+        verify(mMockCallbacks, times(2)).imsServiceFeatureCreated(eq(SLOT_1),
+                eq(ImsFeature.FEATURE_MMTEL), eq(mTestImsServiceController));
+        validateMmTelFeatureContainerExistsWithEmergency(SLOT_0);
+        validateMmTelFeatureContainerExistsWithEmergency(SLOT_1);
+
+        // this should not have been called again since it did not change (times = 1)
+        verify(mMockServiceControllerBinder, times(1)).createEmergencyOnlyMmTelFeature(SLOT_0);
     }
 
     /**

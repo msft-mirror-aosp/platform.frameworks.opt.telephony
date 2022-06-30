@@ -120,7 +120,7 @@ import java.util.stream.Collectors;
  */
 public class SubscriptionController extends ISub.Stub {
     private static final String LOG_TAG = "SubscriptionController";
-    private static final boolean DBG = true;
+    private static final boolean DBG = false;
     private static final boolean VDBG = Rlog.isLoggable(LOG_TAG, Log.VERBOSE);
     private static final boolean DBG_CACHE = false;
     private static final int DEPRECATED_SETTING = -1;
@@ -889,6 +889,10 @@ public class SubscriptionController extends ISub.Stub {
                     if (DBG) {
                         logd("[getActiveSubscriptionInfoForSimSlotIndex]+ slotIndex="
                                 + slotIndex + " subId=" + si);
+                    } else {
+                        logd("[getActiveSubscriptionInfoForSimSlotIndex]+ slotIndex="
+                                + slotIndex + " subId=" + conditionallyRemoveIdentifiers(si, false,
+                                false));
                     }
                     return conditionallyRemoveIdentifiers(si, callingPackage, callingFeatureId,
                             "getActiveSubscriptionInfoForSimSlotIndex");
@@ -2825,7 +2829,8 @@ public class SubscriptionController extends ISub.Stub {
         if (subId == SubscriptionManager.DEFAULT_SUBSCRIPTION_ID) {
             throw new RuntimeException("setDefaultVoiceSubId called with DEFAULT_SUB_ID");
         }
-        if (DBG) logdl("[setDefaultVoiceSubId] subId=" + subId);
+
+        logdl("[setDefaultVoiceSubId] subId=" + subId);
 
         int previousDefaultSub = getDefaultSubId();
 
@@ -2839,16 +2844,21 @@ public class SubscriptionController extends ISub.Stub {
 
         TelecomManager telecomManager = mContext.getSystemService(TelecomManager.class);
         PhoneAccountHandle currentHandle = telecomManager.getUserSelectedOutgoingPhoneAccount();
+        logd("[setDefaultVoiceSubId] current phoneAccountHandle=" + currentHandle);
 
         if (!Objects.equals(currentHandle, newHandle)) {
             telecomManager.setUserSelectedOutgoingPhoneAccount(newHandle);
             logd("[setDefaultVoiceSubId] change to phoneAccountHandle=" + newHandle);
         } else {
-            logd("[setDefaultVoiceSubId] default phone account not changed");
+            logd("[setDefaultVoiceSubId] default phoneAccountHandle not changed.");
         }
 
         if (previousDefaultSub != getDefaultSubId()) {
             sendDefaultChangedBroadcast(getDefaultSubId());
+            logd(String.format("[setDefaultVoiceSubId] change to subId=%d", getDefaultSubId()));
+        } else {
+            logd(String.format("[setDefaultVoiceSubId] default subId not changed. subId=%d",
+                    previousDefaultSub));
         }
     }
 
@@ -3280,9 +3290,19 @@ public class SubscriptionController extends ISub.Stub {
     @Override
     public String getSubscriptionProperty(int subId, String propKey, String callingPackage,
             String callingFeatureId) {
-        if (!TelephonyPermissions.checkCallingOrSelfReadPhoneState(mContext, subId, callingPackage,
-                callingFeatureId, "getSubscriptionProperty")) {
-            return null;
+        switch (propKey) {
+            case SubscriptionManager.GROUP_UUID:
+                if (mContext.checkCallingOrSelfPermission(
+                        Manifest.permission.READ_PRIVILEGED_PHONE_STATE) != PERMISSION_GRANTED) {
+                    EventLog.writeEvent(0x534e4554, "213457638", Binder.getCallingUid());
+                    return null;
+                }
+                break;
+            default:
+                if (!TelephonyPermissions.checkCallingOrSelfReadPhoneState(mContext, subId,
+                        callingPackage, callingFeatureId, "getSubscriptionProperty")) {
+                    return null;
+                }
         }
 
         final long identity = Binder.clearCallingIdentity();
@@ -4633,12 +4653,9 @@ public class SubscriptionController extends ISub.Stub {
         }
     }
 
-    /**
-     * Implements getPhoneNumber() APIs, w/o permission check.
-     * Can be used by other phone internal components.
-     */
+    // Internal helper method for implementing getPhoneNumber() API.
     @Nullable
-    public String getPhoneNumber(int subId, int source) {
+    private String getPhoneNumber(int subId, int source) {
         if (source == SubscriptionManager.PHONE_NUMBER_SOURCE_UICC) {
             Phone phone = PhoneFactory.getPhone(getPhoneId(subId));
             return phone != null ? phone.getLine1Number() : null;

@@ -24,6 +24,7 @@ import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -60,7 +61,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
 
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
@@ -92,22 +92,23 @@ public class EuiccPortTest extends TelephonyTest {
         }
     }
 
-    @Mock
+    // Mocked classes
     private CommandsInterface mMockCi;
-    @Mock
     private IccCardStatus mMockIccCardStatus;
+    private EuiccCard mEuiccCard;
+    private Resources mMockResources;
 
     private Handler mHandler;
-    @Mock
-    private EuiccCard mEuiccCard;
     private EuiccPort mEuiccPort;
 
-    @Mock
-    private Resources mMockResources;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mMockCi = mock(CommandsInterface.class);
+        mMockIccCardStatus = mock(IccCardStatus.class);
+        mEuiccCard = mock(EuiccCard.class);
+        mMockResources = mock(Resources.class);
 
         mMockIccCardStatus.mApplications = new IccCardApplicationStatus[]{};
         mMockIccCardStatus.mCdmaSubscriptionAppIndex =
@@ -134,6 +135,9 @@ public class EuiccPortTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
+        mHandler.removeCallbacksAndMessages(null);
+        mHandler = null;
+        mEuiccPort = null;
         super.tearDown();
     }
 
@@ -176,7 +180,7 @@ public class EuiccPortTest extends TelephonyTest {
         assertEquals(1, profiles.length);
         assertEquals("98760000000000543210", profiles[0].getIccid());
         assertEquals(EuiccProfileInfo.PROFILE_STATE_ENABLED, profiles[0].getState());
-        verifyStoreData(channel, "BF2D0F5C0D5A909192B79F709599BF769F20");
+        verifyStoreData(channel, "BF2D0F5C0D5A909192B79F709599BF769F24");
     }
 
     @Test
@@ -199,7 +203,7 @@ public class EuiccPortTest extends TelephonyTest {
     @Test
     public void testEnabledOnEsimPort_GetAllProfiles() {
         int channel = mockLogicalChannelResponses(
-                "BF2D18A016E3145A0A896700000000004523019F7001009F2001019000");
+                "BF2D18A016E3145A0A896700000000004523019F7001009F2401019000");
 
         ResultCaptor<EuiccProfileInfo[]> resultCaptor = new ResultCaptor<>();
         mEuiccPort.mIsSupportsMultipleEnabledProfiles = true; // MEP capable
@@ -214,7 +218,7 @@ public class EuiccPortTest extends TelephonyTest {
         // which is valid port. So the state should be enabled.
         // (As per MEP state and enabledOnEsimPort concept)
         assertEquals(EuiccProfileInfo.PROFILE_STATE_ENABLED, profiles[0].getState());
-        verifyStoreData(channel, "BF2D0F5C0D5A909192B79F709599BF769F20");
+        verifyStoreData(channel, "BF2D0F5C0D5A909192B79F709599BF769F24");
     }
 
     @Test
@@ -231,7 +235,7 @@ public class EuiccPortTest extends TelephonyTest {
         EuiccProfileInfo[] profiles = resultCaptor.result;
         assertEquals(1, profiles.length);
         assertEquals(EuiccProfileInfo.PROFILE_STATE_DISABLED, profiles[0].getState());
-        verifyStoreData(channel, "BF2D0F5C0D5A909192B79F709599BF769F20");
+        verifyStoreData(channel, "BF2D0F5C0D5A909192B79F709599BF769F24");
     }
 
     @Test
