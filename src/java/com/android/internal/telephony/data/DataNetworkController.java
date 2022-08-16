@@ -932,8 +932,13 @@ public class DataNetworkController extends Handler {
                         + DataUtils.networkCapabilityToString(capability) + " preferred on "
                         + AccessNetworkConstants.transportTypeToString(preferredTransport));
                 DataNetworkController.this.onEvaluatePreferredTransport(capability);
-                sendMessage(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
-                        DataEvaluationReason.PREFERRED_TRANSPORT_CHANGED));
+                if (!hasMessages(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS)) {
+                    sendMessage(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
+                            DataEvaluationReason.PREFERRED_TRANSPORT_CHANGED));
+                } else {
+                    log("onPreferredTransportChanged: Skipped evaluating unsatisfied network "
+                            + "requests because another evaluation was already scheduled.");
+                }
             }
         });
 
@@ -1506,8 +1511,10 @@ public class DataNetworkController extends Handler {
                 // Check if it's SUPL during emergency call.
                 evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_SUPL);
             } else if (!networkRequest.hasCapability(
-                    NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
-                // Check if request is restricted.
+                    NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED) && !networkRequest
+                    .hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)) {
+                // Check if request is restricted and not for tethering, which always comes with
+                // a restricted network request.
                 evaluation.addDataAllowedReason(DataAllowedReason.RESTRICTED_REQUEST);
             } else if (transport == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
                 // Check if request is unmetered (WiFi or unmetered APN).
@@ -1653,6 +1660,31 @@ public class DataNetworkController extends Handler {
             }
         }
 
+        // If the data network is IMS that supports voice call, and has MMTEL request (client
+        // specified VoPS is required.)
+        if (dataNetwork.getAttachedNetworkRequestList().get(
+                new int[]{NetworkCapabilities.NET_CAPABILITY_MMTEL}) != null) {
+            // When reaching here, it means the network supports MMTEL, and also has MMTEL request
+            // attached to it.
+            if (!dataNetwork.shouldDelayImsTearDown()) {
+                if (dataNetwork.getTransport() == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
+                    NetworkRegistrationInfo nri = mServiceState.getNetworkRegistrationInfo(
+                            NetworkRegistrationInfo.DOMAIN_PS,
+                            AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+                    if (nri != null) {
+                        DataSpecificRegistrationInfo dsri = nri.getDataSpecificInfo();
+                        if (dsri != null && dsri.getVopsSupportInfo() != null
+                                && !dsri.getVopsSupportInfo().isVopsSupported()) {
+                            evaluation.addDataDisallowedReason(
+                                    DataDisallowedReason.VOPS_NOT_SUPPORTED);
+                        }
+                    }
+                }
+            } else {
+                log("Ignored VoPS check due to delay IMS tear down until call ends.");
+            }
+        }
+
         // Check if data is disabled
         boolean dataDisabled = false;
         if (!mDataSettingsManager.isDataEnabled()) {
@@ -1683,9 +1715,11 @@ public class DataNetworkController extends Handler {
                     && !dataProfile.getApnSetting().canSupportLingeringNetworkType(networkType)) {
                 log("networkType=" + TelephonyManager.getNetworkTypeName(networkType)
                         + ", networkTypeBitmask="
-                        + dataProfile.getApnSetting().getNetworkTypeBitmask()
+                        + TelephonyManager.convertNetworkTypeBitmaskToString(
+                                dataProfile.getApnSetting().getNetworkTypeBitmask())
                         + ", lingeringNetworkTypeBitmask="
-                        + dataProfile.getApnSetting().getLingeringNetworkTypeBitmask());
+                        + TelephonyManager.convertNetworkTypeBitmaskToString(
+                                dataProfile.getApnSetting().getLingeringNetworkTypeBitmask()));
                 evaluation.addDataDisallowedReason(
                         DataDisallowedReason.DATA_NETWORK_TYPE_NOT_ALLOWED);
             }
@@ -1695,13 +1729,10 @@ public class DataNetworkController extends Handler {
             evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_DISABLED);
         }
 
-        // Check if the data profile is still valid, sometimes the users can remove it from the APN
-        // editor. We use very loose check here because APN id can change after APN reset to
-        // default
-        if (mDataProfileManager.getDataProfile(
-                dataProfile.getApnSetting() != null
-                        ? dataProfile.getApnSetting().getApnName() : null,
-                dataProfile.getTrafficDescriptor()) == null) {
+        // Check if the data profile is still compatible, sometimes the users can remove it from the
+        // APN editor. If some of the important fields are changed in APN settings, we need to
+        // tear down the network. Note traffic descriptor from the data profile will not be checked.
+        if (!mDataProfileManager.isDataProfileCompatible(dataProfile)) {
             evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_PROFILE_INVALID);
         }
 
@@ -1720,14 +1751,15 @@ public class DataNetworkController extends Handler {
             // If there are reasons we should tear down the network, check if those are hard reasons
             // or soft reasons. In some scenarios, we can make exceptions if they are soft
             // disallowed reasons.
-            if ((mPhone.isInEmergencyCall() || mPhone.isInEcm())
-                    && dataNetwork.getNetworkCapabilities().hasCapability(
-                            NetworkCapabilities.NET_CAPABILITY_SUPL)) {
+            if ((mPhone.isInEmergencyCall() || mPhone.isInEcm()) && dataNetwork.isEmergencySupl()) {
                 // Check if it's SUPL during emergency call.
                 evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_SUPL);
             } else if (!dataNetwork.getNetworkCapabilities().hasCapability(
-                    NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
-                // Check if request is restricted
+                    NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                    && !dataNetwork.hasNetworkCapabilityInNetworkRequests(
+                            NetworkCapabilities.NET_CAPABILITY_DUN)) {
+                // Check if request is restricted and there are no DUN network requests attached to
+                // the network.
                 evaluation.addDataAllowedReason(DataAllowedReason.RESTRICTED_REQUEST);
             } else if (dataNetwork.getTransport() == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
                 // Check if request is unmetered (WiFi or unmetered APN)
