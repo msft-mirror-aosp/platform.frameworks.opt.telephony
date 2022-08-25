@@ -313,6 +313,24 @@ public class DataNetworkTest extends TelephonyTest {
                 mMockedWwanDataServiceManager);
         mDataServiceManagers.put(AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
                 mMockedWlanDataServiceManager);
+
+        for (int transport : new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                AccessNetworkConstants.TRANSPORT_TYPE_WLAN}) {
+            doAnswer(invocation -> {
+                Message msg = (Message) invocation.getArguments()[1];
+                msg.sendToTarget();
+                return null;
+            }).when(mDataServiceManagers.get(transport)).startHandover(anyInt(),
+                    any(Message.class));
+
+            doAnswer(invocation -> {
+                Message msg = (Message) invocation.getArguments()[1];
+                msg.sendToTarget();
+                return null;
+            }).when(mDataServiceManagers.get(transport)).cancelHandover(anyInt(),
+                    any(Message.class));
+        }
+
         doReturn(true).when(mSST).isConcurrentVoiceAndDataAllowed();
         doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WWAN).when(mAccessNetworksManager)
                 .getPreferredTransportByNetworkCapability(anyInt());
@@ -449,6 +467,106 @@ public class DataNetworkTest extends TelephonyTest {
                 any());
 
         verify(mDataNetworkCallback).onConnected(eq(mDataNetworkUT));
+    }
+
+    @Test
+    public void testCreateDataNetworkWhenOos() throws Exception {
+        DataSpecificRegistrationInfo dsri = new DataSpecificRegistrationInfo(8, false, true, true,
+                new LteVopsSupportInfo(LteVopsSupportInfo.LTE_STATUS_SUPPORTED,
+                        LteVopsSupportInfo.LTE_STATUS_SUPPORTED));
+        // Out of service
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING, dsri);
+
+        NetworkRequestList networkRequestList = new NetworkRequestList();
+        networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build(), mPhone));
+
+        setSuccessfulSetupDataResponse(mMockedWwanDataServiceManager, 123);
+
+        mDataNetworkUT = new DataNetwork(mPhone, Looper.myLooper(), mDataServiceManagers,
+                mInternetDataProfile, networkRequestList,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                DataAllowedReason.NORMAL, mDataNetworkCallback);
+        replaceInstance(DataNetwork.class, "mDataCallSessionStats",
+                mDataNetworkUT, mDataCallSessionStats);
+        processAllMessages();
+
+        ArgumentCaptor<NetworkCapabilities> networkCapabilitiesCaptor =
+                ArgumentCaptor.forClass(NetworkCapabilities.class);
+
+        verify(mConnectivityManager).registerNetworkAgent(any(), any(NetworkInfo.class),
+                any(LinkProperties.class), networkCapabilitiesCaptor.capture(), any(), any(),
+                anyInt());
+
+        // Make sure the initial network capability has NOT_SUSPENDED
+        assertThat(networkCapabilitiesCaptor.getValue().hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)).isTrue();
+
+        // The final network should not have NOT_SUSPENDED because the device is OOS.
+        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)).isFalse();
+    }
+
+    @Test
+    public void testRecreateAgentWhenOos() throws Exception {
+        testCreateDataNetwork();
+
+        DataSpecificRegistrationInfo dsri = new DataSpecificRegistrationInfo(8, false, true, true,
+                new LteVopsSupportInfo(LteVopsSupportInfo.LTE_STATUS_SUPPORTED,
+                        LteVopsSupportInfo.LTE_STATUS_SUPPORTED));
+        // Out of service
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING, dsri);
+
+        DataCallResponse response = new DataCallResponse.Builder()
+                .setCause(0)
+                .setRetryDurationMillis(-1L)
+                .setId(123)
+                .setLinkStatus(2)
+                .setProtocolType(ApnSetting.PROTOCOL_IPV4V6)
+                .setInterfaceName("ifname")
+                .setAddresses(Arrays.asList(
+                        new LinkAddress(InetAddresses.parseNumericAddress(IPV4_ADDRESS1), 32),
+                        new LinkAddress(IPV6_ADDRESS + "/64")))
+                .setDnsAddresses(Arrays.asList(InetAddresses.parseNumericAddress("10.0.2.3"),
+                        InetAddresses.parseNumericAddress("fd00:976a::9")))
+                .setGatewayAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("10.0.2.15"),
+                        InetAddresses.parseNumericAddress("fe80::2")))
+                .setPcscfAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::8"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c202:1d::7"),
+                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::5")))
+                .setMtuV4(1234)
+                .setMtuV6(5678)
+                .setPduSessionId(1)
+                .setQosBearerSessions(new ArrayList<>())
+                .setTrafficDescriptors(Collections.emptyList())
+                .build();
+
+        // IP changes
+        mDataNetworkUT.obtainMessage(8/*EVENT_DATA_STATE_CHANGED*/,
+                new AsyncResult(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                        List.of(response), null)).sendToTarget();
+        processAllMessages();
+
+        ArgumentCaptor<NetworkCapabilities> networkCapabilitiesCaptor =
+                ArgumentCaptor.forClass(NetworkCapabilities.class);
+
+        // Agent re-created, so register should be called twice.
+        verify(mConnectivityManager, times(2)).registerNetworkAgent(any(), any(NetworkInfo.class),
+                any(LinkProperties.class), networkCapabilitiesCaptor.capture(), any(), any(),
+                anyInt());
+
+        // Make sure the 2nd network agent was created with NOT_SUSPENDED.
+        assertThat(networkCapabilitiesCaptor.getValue().hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)).isTrue();
+
+        // The final network should not have NOT_SUSPENDED because the device is OOS.
+        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)).isFalse();
     }
 
     @Test
@@ -876,6 +994,7 @@ public class DataNetworkTest extends TelephonyTest {
         mDataNetworkUT.startHandover(AccessNetworkConstants.TRANSPORT_TYPE_WLAN, null);
         processAllMessages();
 
+        verify(mMockedWwanDataServiceManager).startHandover(eq(123), any(Message.class));
         verify(mLinkBandwidthEstimator).unregisterCallback(any(
                 LinkBandwidthEstimatorCallback.class));
         assertThat(mDataNetworkUT.getTransport())
@@ -899,8 +1018,9 @@ public class DataNetworkTest extends TelephonyTest {
         Mockito.clearInvocations(mDataNetworkCallback);
         Mockito.clearInvocations(mLinkBandwidthEstimator);
         mDataNetworkUT.startHandover(AccessNetworkConstants.TRANSPORT_TYPE_WWAN, null);
-        processAllMessages();
+        processAllFutureMessages();
 
+        verify(mMockedWlanDataServiceManager).startHandover(eq(456), any(Message.class));
         verify(mLinkBandwidthEstimator).registerCallback(
                 any(LinkBandwidthEstimatorCallback.class));
         assertThat(mDataNetworkUT.getTransport())
@@ -919,6 +1039,8 @@ public class DataNetworkTest extends TelephonyTest {
         mDataNetworkUT.startHandover(AccessNetworkConstants.TRANSPORT_TYPE_WLAN, null);
         processAllMessages();
 
+        verify(mMockedWwanDataServiceManager).startHandover(eq(123), any(Message.class));
+        verify(mMockedWwanDataServiceManager).cancelHandover(eq(123), any(Message.class));
         verify(mDataNetworkCallback).onHandoverFailed(eq(mDataNetworkUT),
                 eq(DataFailCause.SERVICE_TEMPORARILY_UNAVAILABLE), eq(-1L),
                 eq(DataCallResponse.HANDOVER_FAILURE_MODE_UNKNOWN));
