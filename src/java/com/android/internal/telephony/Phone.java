@@ -4076,6 +4076,16 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     }
 
     /**
+     * Resets the Carrier Keys in the database. This involves 2 steps:
+     * 1. Delete the keys from the database.
+     * 2. Send an intent to download new Certificates.
+     *
+     * @param forceResetAll : Force delete the downloaded key if any.
+     */
+    public void resetCarrierKeysForImsiEncryption(boolean forceResetAll) {
+    }
+
+    /**
      * Return if UT capability of ImsPhone is enabled or not
      */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
