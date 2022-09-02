@@ -28,9 +28,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.Signature;
 import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.AsyncResult;
@@ -55,6 +53,7 @@ import android.util.ArraySet;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.CarrierAppUtils;
+import com.android.internal.telephony.CarrierPrivilegesTracker;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.IccCard;
 import com.android.internal.telephony.IccCardConstants;
@@ -240,6 +239,13 @@ public class UiccProfile extends IccCard {
 
                 case EVENT_CARRIER_PRIVILEGES_LOADED:
                     if (VDBG) log("handleMessage: EVENT_CARRIER_PRIVILEGES_LOADED");
+                    Phone phone = PhoneFactory.getPhone(mPhoneId);
+                    if (phone != null) {
+                        CarrierPrivilegesTracker cpt = phone.getCarrierPrivilegesTracker();
+                        if (cpt != null) {
+                            cpt.onUiccAccessRulesLoaded();
+                        }
+                    }
                     onCarrierPrivilegesLoadedMessage();
                     updateExternalState();
                     break;
@@ -259,8 +265,13 @@ public class UiccProfile extends IccCard {
                         logWithLocalLog("handleMessage: Error in SIM access with exception "
                                 + ar.exception);
                     }
-                    AsyncResult.forMessage((Message) ar.userObj, ar.result, ar.exception);
-                    ((Message) ar.userObj).sendToTarget();
+                    if (ar.userObj != null) {
+                        AsyncResult.forMessage((Message) ar.userObj, ar.result, ar.exception);
+                        ((Message) ar.userObj).sendToTarget();
+                    } else {
+                        loge("handleMessage: ar.userObj is null in event:" + eventName
+                                + ", failed to post status back to caller");
+                    }
                     break;
                 }
 
@@ -1629,69 +1640,11 @@ public class UiccProfile extends IccCard {
     /**
      * Returns true iff carrier privileges rules are null (dont need to be loaded) or loaded.
      */
+    @VisibleForTesting
     public boolean areCarrierPrivilegeRulesLoaded() {
         UiccCarrierPrivilegeRules carrierPrivilegeRules = getCarrierPrivilegeRules();
         return carrierPrivilegeRules == null
                 || carrierPrivilegeRules.areCarrierPriviligeRulesLoaded();
-    }
-
-    /**
-     * Returns true if there are some carrier privilege rules loaded and specified.
-     */
-    public boolean hasCarrierPrivilegeRules() {
-        UiccCarrierPrivilegeRules carrierPrivilegeRules = getCarrierPrivilegeRules();
-        return carrierPrivilegeRules != null && carrierPrivilegeRules.hasCarrierPrivilegeRules();
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPrivilegeStatus}.
-     */
-    public int getCarrierPrivilegeStatus(Signature signature, String packageName) {
-        UiccCarrierPrivilegeRules carrierPrivilegeRules = getCarrierPrivilegeRules();
-        return carrierPrivilegeRules == null
-                ? TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED :
-                carrierPrivilegeRules.getCarrierPrivilegeStatus(signature, packageName);
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPrivilegeStatus}.
-     */
-    public int getCarrierPrivilegeStatus(PackageManager packageManager, String packageName) {
-        UiccCarrierPrivilegeRules carrierPrivilegeRules = getCarrierPrivilegeRules();
-        return carrierPrivilegeRules == null
-                ? TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED :
-                carrierPrivilegeRules.getCarrierPrivilegeStatus(packageManager, packageName);
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPrivilegeStatus}.
-     */
-    public int getCarrierPrivilegeStatus(PackageInfo packageInfo) {
-        UiccCarrierPrivilegeRules carrierPrivilegeRules = getCarrierPrivilegeRules();
-        return carrierPrivilegeRules == null
-                ? TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED :
-                carrierPrivilegeRules.getCarrierPrivilegeStatus(packageInfo);
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPrivilegeStatusForCurrentTransaction}.
-     */
-    public int getCarrierPrivilegeStatusForCurrentTransaction(PackageManager packageManager) {
-        UiccCarrierPrivilegeRules carrierPrivilegeRules = getCarrierPrivilegeRules();
-        return carrierPrivilegeRules == null
-                ? TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED :
-                carrierPrivilegeRules.getCarrierPrivilegeStatusForCurrentTransaction(
-                        packageManager);
-    }
-
-    /**
-     * Exposes {@link UiccCarrierPrivilegeRules#getCarrierPrivilegeStatusForUid}.
-     */
-    public int getCarrierPrivilegeStatusForUid(PackageManager packageManager, int uid) {
-        UiccCarrierPrivilegeRules carrierPrivilegeRules = getCarrierPrivilegeRules();
-        return carrierPrivilegeRules == null
-                ? TelephonyManager.CARRIER_PRIVILEGE_STATUS_RULES_NOT_LOADED :
-                carrierPrivilegeRules.getCarrierPrivilegeStatusForUid(packageManager, uid);
     }
 
     /**

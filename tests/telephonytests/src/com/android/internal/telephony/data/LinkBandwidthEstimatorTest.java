@@ -29,11 +29,14 @@ import static com.android.internal.telephony.data.LinkBandwidthEstimator.MSG_SCR
 import static com.android.internal.telephony.data.LinkBandwidthEstimator.MSG_SIGNAL_STRENGTH_CHANGED;
 import static com.android.internal.telephony.data.LinkBandwidthEstimator.UNKNOWN_TAC;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -54,13 +57,14 @@ import android.util.Pair;
 
 import com.android.internal.telephony.TelephonyFacade;
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.data.LinkBandwidthEstimator.LinkBandwidthEstimatorCallback;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
+import org.mockito.Mockito;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
@@ -82,15 +86,17 @@ public class LinkBandwidthEstimatorTest extends TelephonyTest {
     private long mElapsedTimeMs = 0;
     private long mTxBytes = 0;
     private long mRxBytes = 0;
-    @Mock
-    TelephonyFacade mTelephonyFacade;
-    @Mock
-    private Handler mTestHandler;
     private NetworkRegistrationInfo mNri;
+
+    // Mocked classes
+    TelephonyFacade mTelephonyFacade;
+    private Handler mTestHandler;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mTelephonyFacade = mock(TelephonyFacade.class);
+        mTestHandler = mock(Handler.class);
         mNetworkCapabilities = new NetworkCapabilities.Builder()
                 .addTransportType(TRANSPORT_CELLULAR)
                 .build();
@@ -139,6 +145,10 @@ public class LinkBandwidthEstimatorTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
+        mLBE = null;
+        mNri = null;
+        mNetworkCapabilities = null;
+        mCellIdentity = null;
         super.tearDown();
     }
 
@@ -458,6 +468,32 @@ public class LinkBandwidthEstimatorTest extends TelephonyTest {
     }
 
     @Test
+    public void testNoOverflowAfterLargeTimeGap() throws Exception {
+        mLBE.obtainMessage(MSG_SCREEN_STATE_CHANGED, true).sendToTarget();
+        processAllMessages();
+
+        for (int i = 0; i < BW_STATS_COUNT_THRESHOLD + 2; i++) {
+            addTxBytes(10_000L);
+            addRxBytes(500_000L);
+            if (i == BW_STATS_COUNT_THRESHOLD) {
+                addElapsedTime(26 * 24 * 3_600_000L);
+                moveTimeForward(26 * 24 * 3_600_000L);
+            } else {
+                addElapsedTime(5_100);
+                moveTimeForward(5_100);
+            }
+            processAllMessages();
+            mLBE.obtainMessage(MSG_MODEM_ACTIVITY_RETURNED, new ModemActivityInfo(
+                    i * 5_100L, 0, 0, TX_TIME_2_MS, i * RX_TIME_2_MS)).sendToTarget();
+            processAllMessages();
+        }
+
+        verify(mTelephonyManager, times(BW_STATS_COUNT_THRESHOLD + 2))
+                .requestModemActivityInfo(any(), any());
+        verifyUpdateBandwidth(-1, 19_531);
+    }
+
+    @Test
     public void testAbnormalTrafficCountTriggerLessBwUpdate() throws Exception {
         mLBE.obtainMessage(MSG_SCREEN_STATE_CHANGED, true).sendToTarget();
         processAllMessages();
@@ -683,5 +719,41 @@ public class LinkBandwidthEstimatorTest extends TelephonyTest {
         assertEquals(0, network.getCount(LINK_RX, 1));
         assertEquals(0, network.getValue(LINK_TX, 1));
         assertEquals(0, network.getValue(LINK_RX, 1));
+    }
+
+    @Test
+    public void testDataActivity() {
+        LinkBandwidthEstimatorCallback callback = Mockito.mock(
+                LinkBandwidthEstimatorCallback.class);
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArguments()[0]).run();
+            return null;
+        }).when(callback).invokeFromExecutor(any(Runnable.class));
+        mLBE.registerCallback(callback);
+
+        mLBE.obtainMessage(MSG_SCREEN_STATE_CHANGED, true).sendToTarget();
+        addTxBytes(10_000L);
+        addRxBytes(19_000L);
+        addElapsedTime(2000);
+        moveTimeForward(2000);
+        processAllMessages();
+        verify(callback).onDataActivityChanged(eq(TelephonyManager.DATA_ACTIVITY_INOUT));
+        Mockito.clearInvocations(callback);
+
+        mLBE.obtainMessage(MSG_SIGNAL_STRENGTH_CHANGED, mSignalStrength).sendToTarget();
+        addTxBytes(10_000L);
+        addElapsedTime(2000);
+        moveTimeForward(2000);
+        processAllMessages();
+        verify(callback).onDataActivityChanged(eq(TelephonyManager.DATA_ACTIVITY_OUT));
+        Mockito.clearInvocations(callback);
+
+        mLBE.obtainMessage(MSG_SIGNAL_STRENGTH_CHANGED, mSignalStrength).sendToTarget();
+        addRxBytes(10_000L);
+        addElapsedTime(2000);
+        moveTimeForward(2000);
+        processAllMessages();
+        verify(callback).onDataActivityChanged(eq(TelephonyManager.DATA_ACTIVITY_IN));
+        Mockito.clearInvocations(callback);
     }
 }

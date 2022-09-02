@@ -17,6 +17,7 @@
 package com.android.internal.telephony.test;
 
 import android.compat.annotation.UnsupportedAppUsage;
+import android.hardware.radio.RadioError;
 import android.hardware.radio.V1_0.DataRegStateResult;
 import android.hardware.radio.V1_0.SetupDataCallResult;
 import android.hardware.radio.V1_0.VoiceRegStateResult;
@@ -180,6 +181,7 @@ public class SimulatedCommands extends BaseCommands
     private boolean mDcSuccess = true;
     private SetupDataCallResult mSetupDataCallResult;
     private boolean mIsRadioPowerFailResponse = false;
+    private boolean mIsReportSmsMemoryStatusFailResponse = false;
 
     public boolean mSetRadioPowerForEmergencyCall;
     public boolean mSetRadioPowerAsSelectedPhoneForEmergencyCall;
@@ -1239,7 +1241,7 @@ public class SimulatedCommands extends BaseCommands
     @Override
     public void deactivateDataCall(int cid, int reason, Message result) {
         SimulatedCommandsVerifier.getInstance().deactivateDataCall(cid, reason, result);
-        resultSuccess(result, null);
+        resultSuccess(result, RadioError.NONE);
     }
 
     @Override
@@ -1297,8 +1299,17 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void reportSmsMemoryStatus(boolean available, Message result) {
-        resultSuccess(result, null);
+        if (!mIsReportSmsMemoryStatusFailResponse) {
+            resultSuccess(result, null);
+        } else {
+            CommandException ex = new CommandException(CommandException.Error.GENERIC_FAILURE);
+            resultFail(result, null, ex);
+        }
         SimulatedCommandsVerifier.getInstance().reportSmsMemoryStatus(available, result);
+    }
+
+    public void setReportSmsMemoryStatusFailResponse(boolean fail) {
+        mIsReportSmsMemoryStatusFailResponse = fail;
     }
 
     @Override
@@ -2066,11 +2077,27 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void setInitialAttachApn(DataProfile dataProfile, boolean isRoaming, Message result) {
+        SimulatedCommandsVerifier.getInstance().setInitialAttachApn(dataProfile, isRoaming, result);
+        resultSuccess(result, null);
     }
 
     @Override
     public void setDataProfile(DataProfile[] dps, boolean isRoaming, Message result) {
+        SimulatedCommandsVerifier.getInstance().setDataProfile(dps, isRoaming, result);
+        resultSuccess(result, null);
     }
+
+    @Override
+    public void startHandover(Message result, int callId) {
+        SimulatedCommandsVerifier.getInstance().startHandover(result, callId);
+        resultSuccess(result, null);
+    };
+
+    @Override
+    public void cancelHandover(Message result, int callId) {
+        SimulatedCommandsVerifier.getInstance().cancelHandover(result, callId);
+        resultSuccess(result, null);
+    };
 
     public void setImsRegistrationState(int[] regState) {
         mImsRegState = regState;
@@ -2336,12 +2363,26 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void registerForPcoData(Handler h, int what, Object obj) {
+        SimulatedCommandsVerifier.getInstance().registerForPcoData(h, what, obj);
         mPcoDataRegistrants.addUnique(h, what, obj);
     }
 
     @Override
     public void unregisterForPcoData(Handler h) {
+        SimulatedCommandsVerifier.getInstance().unregisterForPcoData(h);
         mPcoDataRegistrants.remove(h);
+    }
+
+    @Override
+    public void registerForNotAvailable(Handler h, int what, Object obj) {
+        SimulatedCommandsVerifier.getInstance().registerForNotAvailable(h, what, obj);
+        super.registerForNotAvailable(h, what, obj);
+    }
+
+    @Override
+    public void unregisterForNotAvailable(Handler h) {
+        SimulatedCommandsVerifier.getInstance().unregisterForNotAvailable(h);
+        super.unregisterForNotAvailable(h);
     }
 
     @Override
@@ -2363,8 +2404,8 @@ public class SimulatedCommands extends BaseCommands
     }
 
     @Override
-    public void setSignalStrengthReportingCriteria(SignalThresholdInfo signalThresholdInfo,
-            int ran, Message result) {
+    public void setSignalStrengthReportingCriteria(List<SignalThresholdInfo> signalThresholdInfos,
+            Message result) {
     }
 
     @Override

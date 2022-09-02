@@ -31,6 +31,7 @@ import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.TransportType;
 import android.telephony.Annotation.DataFailureCause;
 import android.telephony.Annotation.NetCapability;
+import android.telephony.AnomalyReporter;
 import android.telephony.DataFailCause;
 import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataProfile;
@@ -45,6 +46,7 @@ import android.util.SparseArray;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCallback;
 import com.android.internal.telephony.data.DataNetworkController.DataNetworkControllerCallback;
 import com.android.internal.telephony.data.DataNetworkController.NetworkRequestList;
 import com.android.internal.telephony.data.DataProfileManager.DataProfileManagerCallback;
@@ -59,18 +61,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * DataRetryManager manages data network setup retry and its configurations.
  */
 public class DataRetryManager extends Handler {
     private static final boolean VDBG = false;
-
-    /** Event for data config updated. */
-    private static final int EVENT_DATA_CONFIG_UPDATED = 1;
 
     /** Event for data setup retry. */
     private static final int EVENT_DATA_SETUP_RETRY = 3;
@@ -93,6 +94,9 @@ public class DataRetryManager extends Handler {
     /** Event for modem reset. */
     private static final int EVENT_MODEM_RESET = 9;
 
+    /** Event for tracking area code change. */
+    private static final int EVENT_TAC_CHANGED = 10;
+
     /** The maximum entries to preserve. */
     private static final int MAXIMUM_HISTORICAL_ENTRIES = 100;
 
@@ -102,26 +106,31 @@ public class DataRetryManager extends Handler {
                     RESET_REASON_RADIO_ON,
                     RESET_REASON_MODEM_RESTART,
                     RESET_REASON_DATA_SERVICE_BOUND,
+                    RESET_REASON_DATA_CONFIG_CHANGED,
+                    RESET_REASON_TAC_CHANGED,
             })
     public @interface RetryResetReason {}
 
     /** Reset due to data profiles changed. */
-    public static final int RESET_REASON_DATA_PROFILES_CHANGED = 1;
+    private static final int RESET_REASON_DATA_PROFILES_CHANGED = 1;
 
     /** Reset due to radio on. This could happen after airplane mode off or RIL restarted. */
-    public static final int RESET_REASON_RADIO_ON = 2;
+    private static final int RESET_REASON_RADIO_ON = 2;
 
     /** Reset due to modem restarted. */
-    public static final int RESET_REASON_MODEM_RESTART = 3;
+    private static final int RESET_REASON_MODEM_RESTART = 3;
 
     /**
      * Reset due to data service bound. This could happen when reboot or when data service crashed
      * and rebound.
      */
-    public static final int RESET_REASON_DATA_SERVICE_BOUND = 4;
+    private static final int RESET_REASON_DATA_SERVICE_BOUND = 4;
 
     /** Reset due to data config changed. */
-    public static final int RESET_REASON_DATA_CONFIG_CHANGED = 5;
+    private static final int RESET_REASON_DATA_CONFIG_CHANGED = 5;
+
+    /** Reset due to tracking area code changed. */
+    private static final int RESET_REASON_TAC_CHANGED = 6;
 
     /** The phone instance. */
     private final @NonNull Phone mPhone;
@@ -402,16 +411,14 @@ public class DataRetryManager extends Handler {
                 String key = tokens[0].trim();
                 String value = tokens[1].trim();
                 if (key.equals(RULE_TAG_CAPABILITIES)) {
-                    mNetworkCapabilities = Arrays.stream(value.split("\\s*\\|\\s*"))
-                            .map(String::trim)
-                            .map(DataUtils::getNetworkCapabilityFromString)
-                            .collect(Collectors.toSet());
+                    mNetworkCapabilities = DataUtils.getNetworkCapabilitiesFromString(value);
                 }
             }
 
-            if (mNetworkCapabilities.size() == 0 && mFailCauses.size() == 0) {
+            if (mFailCauses.isEmpty() && (mNetworkCapabilities.isEmpty()
+                    || mNetworkCapabilities.contains(-1))) {
                 throw new IllegalArgumentException("illegal rule " + ruleString
-                        + ". Should have either network capabilities or fail causes.");
+                            + ". Should have either valid network capabilities or fail causes.");
             }
         }
 
@@ -897,7 +904,7 @@ public class DataRetryManager extends Handler {
          *
          * @param throttleStatusList List of throttle status.
          */
-        public void onThrottleStatusChanged(List<ThrottleStatus> throttleStatusList) {}
+        public void onThrottleStatusChanged(@NonNull List<ThrottleStatus> throttleStatusList) {}
     }
 
     /**
@@ -922,8 +929,12 @@ public class DataRetryManager extends Handler {
         mDataServiceManagers = dataServiceManagers;
         mDataConfigManager = dataNetworkController.getDataConfigManager();
         mDataProfileManager = dataNetworkController.getDataProfileManager();
-        mDataConfigManager.registerForConfigUpdate(this, EVENT_DATA_CONFIG_UPDATED);
-
+        mDataConfigManager.registerCallback(new DataConfigManagerCallback(this::post) {
+            @Override
+            public void onCarrierConfigChanged() {
+                DataRetryManager.this.onCarrierConfigUpdated();
+            }
+        });
         mDataServiceManagers.get(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
                 .registerForApnUnthrottled(this, EVENT_DATA_PROFILE_UNTHROTTLED);
         if (!mPhone.getAccessNetworksManager().isInLegacyMode()) {
@@ -939,35 +950,35 @@ public class DataRetryManager extends Handler {
         dataNetworkController.registerDataNetworkControllerCallback(
                 new DataNetworkControllerCallback(this::post) {
                     @Override
-                    public void onDataServiceBound() {
+                    public void onDataServiceBound(@TransportType int transport) {
                         onReset(RESET_REASON_DATA_SERVICE_BOUND);
                     }
                 });
         mRil.registerForOn(this, EVENT_RADIO_ON, null);
         mRil.registerForModemReset(this, EVENT_MODEM_RESET, null);
+
+        if (mDataConfigManager.shouldResetDataThrottlingWhenTacChanges()) {
+            mPhone.getServiceStateTracker().registerForAreaCodeChanged(this, EVENT_TAC_CHANGED,
+                    null);
+        }
     }
 
     @Override
     public void handleMessage(Message msg) {
         AsyncResult ar;
         switch (msg.what) {
-            case EVENT_DATA_CONFIG_UPDATED:
-                onDataConfigUpdated();
-                break;
             case EVENT_DATA_SETUP_RETRY:
                 DataSetupRetryEntry dataSetupRetryEntry = (DataSetupRetryEntry) msg.obj;
-                Objects.requireNonNull(dataSetupRetryEntry);
-                mDataRetryManagerCallbacks.forEach(callback -> callback.invokeFromExecutor(
-                        () -> callback.onDataNetworkSetupRetry(dataSetupRetryEntry)));
+                if (!isRetryCancelled(dataSetupRetryEntry)) {
+                    mDataRetryManagerCallbacks.forEach(callback -> callback.invokeFromExecutor(
+                            () -> callback.onDataNetworkSetupRetry(dataSetupRetryEntry)));
+                }
                 break;
             case EVENT_DATA_HANDOVER_RETRY:
                 DataHandoverRetryEntry dataHandoverRetryEntry = (DataHandoverRetryEntry) msg.obj;
-                Objects.requireNonNull(dataHandoverRetryEntry);
-                if (mDataRetryEntries.contains(dataHandoverRetryEntry)) {
+                if (!isRetryCancelled(dataHandoverRetryEntry)) {
                     mDataRetryManagerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                             () -> callback.onDataNetworkHandoverRetry(dataHandoverRetryEntry)));
-                } else {
-                    log("Handover was cancelled earlier. " + dataHandoverRetryEntry);
                 }
                 break;
             case EVENT_RADIO_ON:
@@ -975,6 +986,9 @@ public class DataRetryManager extends Handler {
                 break;
             case EVENT_MODEM_RESET:
                 onReset(RESET_REASON_MODEM_RESTART);
+                break;
+            case EVENT_TAC_CHANGED:
+                onReset(RESET_REASON_TAC_CHANGED);
                 break;
             case EVENT_DATA_PROFILE_UNTHROTTLED:
                 ar = (AsyncResult) msg.obj;
@@ -987,7 +1001,7 @@ public class DataRetryManager extends Handler {
                 } else if (ar.result instanceof DataProfile) {
                     dataProfile = (DataProfile) ar.result;
                 }
-                onDataProfileUnthrottled(dataProfile, apn, transport);
+                onDataProfileUnthrottled(dataProfile, apn, transport, true);
                 break;
             case EVENT_CANCEL_PENDING_HANDOVER_RETRY:
                 onCancelPendingHandoverRetry((DataNetwork) msg.obj);
@@ -998,9 +1012,21 @@ public class DataRetryManager extends Handler {
     }
 
     /**
-     * Called when data config is updated.
+     * @param retryEntry The retry entry to check.
+     * @return {@code true} if the retry is null or not in RETRY_STATE_NOT_RETRIED state.
      */
-    private void onDataConfigUpdated() {
+    private boolean isRetryCancelled(@Nullable DataRetryEntry retryEntry) {
+        if (retryEntry != null && retryEntry.getState() == DataRetryEntry.RETRY_STATE_NOT_RETRIED) {
+            return false;
+        }
+        log("Retry was removed earlier. " + retryEntry);
+        return true;
+    }
+
+    /**
+     * Called when carrier config is updated.
+     */
+    private void onCarrierConfigUpdated() {
         onReset(RESET_REASON_DATA_CONFIG_CHANGED);
         mDataSetupRetryRuleList = mDataConfigManager.getDataSetupRetryRules();
         mDataHandoverRetryRuleList = mDataConfigManager.getDataHandoverRetryRules();
@@ -1031,7 +1057,7 @@ public class DataRetryManager extends Handler {
     private void onEvaluateDataSetupRetry(@NonNull DataProfile dataProfile,
             @TransportType int transport, @NonNull NetworkRequestList requestList,
             @DataFailureCause int cause, long retryDelayMillis) {
-        logl("onEvaluateDataRetry: " + dataProfile + ", transport="
+        logl("onEvaluateDataSetupRetry: " + dataProfile + ", transport="
                 + AccessNetworkConstants.transportTypeToString(transport) + ", cause="
                 + DataFailCause.toString(cause) + ", retryDelayMillis=" + retryDelayMillis + "ms"
                 + ", " + requestList);
@@ -1078,7 +1104,8 @@ public class DataRetryManager extends Handler {
                 for (DataSetupRetryRule retryRule : mDataSetupRetryRuleList) {
                     if (retryRule.canBeMatched(capability, cause)) {
                         // Check if there is already a similar network request retry scheduled.
-                        if (isSimilarNetworkRequestRetryScheduled(networkRequestList.get(0))) {
+                        if (isSimilarNetworkRequestRetryScheduled(
+                                networkRequestList.get(0), transport)) {
                             log(networkRequestList.get(0) + " already had similar retry "
                                     + "scheduled.");
                             return;
@@ -1116,7 +1143,8 @@ public class DataRetryManager extends Handler {
             }
 
             if (!retryScheduled) {
-                log("onEvaluateDataRetry: Did not match any retry rule. Stop timer-based retry.");
+                log("onEvaluateDataSetupRetry: Did not match any retry rule. Stop timer-based "
+                        + "retry.");
             }
         }
     }
@@ -1202,22 +1230,11 @@ public class DataRetryManager extends Handler {
                 .filter(entry -> entry.getState() == DataRetryEntry.RETRY_STATE_NOT_RETRIED)
                 .forEach(entry -> entry.setState(DataRetryEntry.RETRY_STATE_CANCELLED));
 
-        final List<ThrottleStatus> throttleStatusList = new ArrayList<>();
         for (DataThrottlingEntry dataThrottlingEntry : mDataThrottlingEntries) {
-            throttleStatusList.addAll(dataThrottlingEntry.dataProfile.getApnSetting().getApnTypes()
-                    .stream()
-                    .map(apnType -> new ThrottleStatus.Builder()
-                            .setApnType(apnType)
-                            .setSlotIndex(mPhone.getPhoneId())
-                            .setNoThrottle()
-                            .setRetryType(dataThrottlingEntry.retryType)
-                            .setTransportType(dataThrottlingEntry.transport)
-                            .build())
-                    .collect(Collectors.toList()));
-        }
-        if (!throttleStatusList.isEmpty()) {
-            mDataRetryManagerCallbacks.forEach(callback -> callback.invokeFromExecutor(
-                    () -> callback.onThrottleStatusChanged(throttleStatusList)));
+            DataProfile dataProfile = dataThrottlingEntry.dataProfile;
+            String apn = dataProfile.getApnSetting() != null
+                    ? dataProfile.getApnSetting().getApnName() : null;
+            onDataProfileUnthrottled(dataProfile, apn, dataThrottlingEntry.transport, false);
         }
 
         mDataThrottlingEntries.clear();
@@ -1265,15 +1282,26 @@ public class DataRetryManager extends Handler {
             if (mDataRetryEntries.get(i) instanceof DataSetupRetryEntry) {
                 DataSetupRetryEntry entry = (DataSetupRetryEntry) mDataRetryEntries.get(i);
                 // count towards the last succeeded data setup.
-                if (entry.setupRetryType == DataSetupRetryEntry.RETRY_TYPE_NETWORK_REQUESTS
-                        && entry.networkRequestList.get(0)
-                        .getApnTypeNetworkCapability() == networkCapability
-                        && entry.appliedDataRetryRule.equals(dataRetryRule)) {
-                    if (entry.getState() == DataRetryEntry.RETRY_STATE_SUCCEEDED
-                            || entry.getState() == DataRetryEntry.RETRY_STATE_CANCELLED) {
-                        break;
+                if (entry.setupRetryType == DataSetupRetryEntry.RETRY_TYPE_NETWORK_REQUESTS) {
+                    if (entry.networkRequestList.isEmpty()) {
+                        String msg = "Invalid data retry entry detected";
+                        logl(msg);
+                        loge("mDataRetryEntries=" + mDataRetryEntries);
+                        AnomalyReporter.reportAnomaly(
+                                UUID.fromString("afeab78c-c0b0-49fc-a51f-f766814d7aa6"),
+                                msg,
+                                mPhone.getCarrierId());
+                        continue;
                     }
-                    count++;
+                    if (entry.networkRequestList.get(0).getApnTypeNetworkCapability()
+                            == networkCapability
+                            && entry.appliedDataRetryRule.equals(dataRetryRule)) {
+                        if (entry.getState() == DataRetryEntry.RETRY_STATE_SUCCEEDED
+                                || entry.getState() == DataRetryEntry.RETRY_STATE_CANCELLED) {
+                            break;
+                        }
+                        count++;
+                    }
                 }
             }
         }
@@ -1364,18 +1392,35 @@ public class DataRetryManager extends Handler {
      * @param apn The apn to be unthrottled. Note this should be only used for HIDL 1.6 or below.
      * When this is set, {@code dataProfile} must be {@code null}.
      * @param transport The transport that this unthrottling request is on.
+     * @param remove Whether to remove unthrottled entries from the list of entries.
      */
     private void onDataProfileUnthrottled(@Nullable DataProfile dataProfile, @Nullable String apn,
-            int transport) {
+            @TransportType int transport, boolean remove) {
+        log("onDataProfileUnthrottled: data profile=" + dataProfile + ", apn=" + apn
+                + ", transport=" + AccessNetworkConstants.transportTypeToString(transport)
+                + ", remove=" + remove);
+
         long now = SystemClock.elapsedRealtime();
         List<DataThrottlingEntry> dataUnthrottlingEntries = new ArrayList<>();
         if (dataProfile != null) {
             // For AIDL-based HAL. There should be only one entry containing this data profile.
-            dataUnthrottlingEntries = mDataThrottlingEntries.stream()
-                    .filter(entry -> entry.expirationTimeMillis > now
-                            && entry.dataProfile.equals(dataProfile)
-                            && entry.transport == transport)
-                    .collect(Collectors.toList());
+            // Note that the data profile reconstructed from DataProfileInfo.aidl will not be
+            // equal to the data profiles kept in data profile manager (due to some fields missing
+            // in DataProfileInfo.aidl), so we need to get the equivalent data profile from data
+            // profile manager.
+            log("onDataProfileUnthrottled: dataProfile=" + dataProfile);
+            Stream<DataThrottlingEntry> stream = mDataThrottlingEntries.stream();
+            stream = stream.filter(entry -> entry.expirationTimeMillis > now);
+            if (dataProfile.getApnSetting() != null) {
+                stream = stream
+                        .filter(entry -> entry.dataProfile.getApnSetting() != null)
+                        .filter(entry -> entry.dataProfile.getApnSetting().getApnName()
+                                .equals(dataProfile.getApnSetting().getApnName()));
+            }
+            stream = stream.filter(entry -> Objects.equals(entry.dataProfile.getTrafficDescriptor(),
+                    dataProfile.getTrafficDescriptor()));
+
+            dataUnthrottlingEntries = stream.collect(Collectors.toList());
         } else if (apn != null) {
             // For HIDL 1.6 or below
             dataUnthrottlingEntries = mDataThrottlingEntries.stream()
@@ -1421,11 +1466,16 @@ public class DataRetryManager extends Handler {
         mDataRetryManagerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                 () -> callback.onThrottleStatusChanged(throttleStatusList)));
 
+        if (unthrottledProfile != null) {
+            // cancel pending retries since we will soon schedule an immediate retry
+            cancelRetriesForDataProfile(unthrottledProfile, transport);
+        }
+
         logl("onDataProfileUnthrottled: Removing the following throttling entries. "
                 + dataUnthrottlingEntries);
         for (DataThrottlingEntry entry : dataUnthrottlingEntries) {
+            // Immediately retry after unthrottling.
             if (entry.retryType == ThrottleStatus.RETRY_TYPE_NEW_CONNECTION) {
-                // Immediately retry after unthrottling.
                 schedule(new DataSetupRetryEntry.Builder<>()
                         .setDataProfile(entry.dataProfile)
                         .setTransport(entry.transport)
@@ -1440,26 +1490,70 @@ public class DataRetryManager extends Handler {
                         .build());
             }
         }
-        mDataThrottlingEntries.removeAll(dataUnthrottlingEntries);
+        if (remove) {
+            mDataThrottlingEntries.removeAll(dataUnthrottlingEntries);
+        }
     }
 
     /**
+     * Cancel pending retries that uses the specified data profile, with specified target transport.
+     *
+     * @param dataProfile The data profile to cancel.
+     * @param transport The target {@link TransportType} on which the retry to cancel.
+     */
+    private void cancelRetriesForDataProfile(@NonNull DataProfile dataProfile,
+            @TransportType int transport) {
+        logl("cancelRetriesForDataProfile: Canceling pending retries for " + dataProfile);
+        mDataRetryEntries.stream()
+                .filter(entry -> {
+                    if (entry.getState() == DataRetryEntry.RETRY_STATE_NOT_RETRIED) {
+                        if (entry instanceof DataSetupRetryEntry) {
+                            DataSetupRetryEntry retryEntry = (DataSetupRetryEntry) entry;
+                            return dataProfile.equals(retryEntry.dataProfile)
+                                    && transport == retryEntry.transport;
+                        } else if (entry instanceof DataHandoverRetryEntry) {
+                            DataHandoverRetryEntry retryEntry = (DataHandoverRetryEntry) entry;
+                            return dataProfile.equals(retryEntry.dataNetwork.getDataProfile());
+                        }
+                    }
+                    return false;
+                })
+                .forEach(entry -> entry.setState(DataRetryEntry.RETRY_STATE_CANCELLED));
+    }
+
+
+
+    /**
      * Check if there is any similar network request scheduled to retry. The definition of similar
-     * is that network requests have same APN capability.
+     * is that network requests have same APN capability and on the same transport.
      *
      * @param networkRequest The network request to check.
+     * @param transport The transport that this request is on.
      * @return {@code true} if similar network request scheduled to retry.
      */
     public boolean isSimilarNetworkRequestRetryScheduled(
-            @NonNull TelephonyNetworkRequest networkRequest) {
+            @NonNull TelephonyNetworkRequest networkRequest, @TransportType int transport) {
         for (int i = mDataRetryEntries.size() - 1; i >= 0; i--) {
             if (mDataRetryEntries.get(i) instanceof DataSetupRetryEntry) {
                 DataSetupRetryEntry entry = (DataSetupRetryEntry) mDataRetryEntries.get(i);
                 if (entry.getState() == DataRetryEntry.RETRY_STATE_NOT_RETRIED
-                        && entry.setupRetryType == DataSetupRetryEntry.RETRY_TYPE_NETWORK_REQUESTS
-                        && entry.networkRequestList.get(0).getApnTypeNetworkCapability()
-                        == networkRequest.getApnTypeNetworkCapability()) {
-                    return true;
+                        && entry.setupRetryType
+                        == DataSetupRetryEntry.RETRY_TYPE_NETWORK_REQUESTS) {
+                    if (entry.networkRequestList.isEmpty()) {
+                        String msg = "Invalid data retry entry detected";
+                        logl(msg);
+                        loge("mDataRetryEntries=" + mDataRetryEntries);
+                        AnomalyReporter.reportAnomaly(
+                                UUID.fromString("781af571-f55d-476d-b510-7a5381f633dc"),
+                                msg,
+                                mPhone.getCarrierId());
+                        continue;
+                    }
+                    if (entry.networkRequestList.get(0).getApnTypeNetworkCapability()
+                            == networkRequest.getApnTypeNetworkCapability()
+                            && entry.transport == transport) {
+                        return true;
+                    }
                 }
             }
         }
@@ -1470,26 +1564,32 @@ public class DataRetryManager extends Handler {
      * Check if there is any data setup retry scheduled with specified data profile.
      *
      * @param dataProfile The data profile to retry.
+     * @param transport The transport that the request is on.
      * @return {@code true} if there is retry scheduled for this data profile.
      */
-    public boolean isAnySetupRetryScheduled(@NonNull DataProfile dataProfile) {
+    public boolean isAnySetupRetryScheduled(@NonNull DataProfile dataProfile,
+            @TransportType int transport) {
         return mDataRetryEntries.stream()
                 .filter(DataSetupRetryEntry.class::isInstance)
                 .map(DataSetupRetryEntry.class::cast)
                 .anyMatch(entry -> entry.getState() == DataRetryEntry.RETRY_STATE_NOT_RETRIED
-                        && dataProfile.equals(entry.dataProfile));
+                        && dataProfile.equals(entry.dataProfile)
+                        && entry.transport == transport);
     }
 
     /**
      * Check if a specific data profile is explicitly throttled by the network.
      *
      * @param dataProfile The data profile to check.
+     * @param transport The transport that the request is on.
      * @return {@code true} if the data profile is currently throttled.
      */
-    public boolean isDataProfileThrottled(@NonNull DataProfile dataProfile) {
+    public boolean isDataProfileThrottled(@NonNull DataProfile dataProfile,
+            @TransportType int transport) {
         long now = SystemClock.elapsedRealtime();
         return mDataThrottlingEntries.stream().anyMatch(
-                entry -> entry.dataProfile.equals(dataProfile) && entry.expirationTimeMillis > now);
+                entry -> entry.dataProfile.equals(dataProfile) && entry.expirationTimeMillis > now
+                        && entry.transport == transport);
     }
 
     /**
@@ -1507,13 +1607,17 @@ public class DataRetryManager extends Handler {
      * @param dataNetwork The data network that was originally scheduled for handover retry.
      */
     private void onCancelPendingHandoverRetry(@NonNull DataNetwork dataNetwork) {
-        mDataRetryEntries.removeIf(entry -> entry instanceof DataHandoverRetryEntry
-                && ((DataHandoverRetryEntry) entry).dataNetwork == dataNetwork);
+        mDataRetryEntries.stream()
+                .filter(entry -> entry instanceof DataHandoverRetryEntry
+                        && ((DataHandoverRetryEntry) entry).dataNetwork == dataNetwork
+                        && entry.getState() == DataRetryEntry.RETRY_STATE_NOT_RETRIED)
+                .forEach(entry -> entry.setState(DataRetryEntry.RETRY_STATE_CANCELLED));
         mDataThrottlingEntries.removeIf(entry -> entry.dataNetwork == dataNetwork);
     }
 
     /**
      * Check if there is any data handover retry scheduled.
+     *
      *
      * @param dataNetwork The network network to retry handover.
      * @return {@code true} if there is retry scheduled for this network capability.
@@ -1562,6 +1666,8 @@ public class DataRetryManager extends Handler {
                 return "DATA_SERVICE_BOUND";
             case RESET_REASON_DATA_CONFIG_CHANGED:
                 return "DATA_CONFIG_CHANGED";
+            case RESET_REASON_TAC_CHANGED:
+                return "TAC_CHANGED";
             default:
                 return "UNKNOWN(" + reason + ")";
         }
