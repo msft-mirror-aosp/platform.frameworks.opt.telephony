@@ -109,9 +109,9 @@ public class TelephonyNetworkRequest {
                     CAPABILITY_ATTRIBUTE_APN_SETTING | CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_DNN),
             new SimpleImmutableEntry<>(NetworkCapabilities.NET_CAPABILITY_IMS,
                     CAPABILITY_ATTRIBUTE_APN_SETTING | CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_DNN),
-            // TODO add OS APP Id as part of b/206703524
             new SimpleImmutableEntry<>(NetworkCapabilities.NET_CAPABILITY_CBS,
-                    CAPABILITY_ATTRIBUTE_APN_SETTING | CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_DNN),
+                    CAPABILITY_ATTRIBUTE_APN_SETTING | CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_DNN
+                            | CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_OS_APP_ID),
             new SimpleImmutableEntry<>(NetworkCapabilities.NET_CAPABILITY_XCAP,
                     CAPABILITY_ATTRIBUTE_APN_SETTING | CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_DNN),
             new SimpleImmutableEntry<>(NetworkCapabilities.NET_CAPABILITY_EIMS,
@@ -280,7 +280,20 @@ public class TelephonyNetworkRequest {
             // Fallback to the legacy APN type matching.
             List<Integer> apnTypes = Arrays.stream(getCapabilities()).boxed()
                     .map(DataUtils::networkCapabilityToApnType)
+                    .filter(apnType -> apnType != ApnSetting.TYPE_NONE)
                     .collect(Collectors.toList());
+            // In case of enterprise network request, the network request will have internet,
+            // but APN type will not have default type as the enterprise apn should not be used
+            // as default network. Ignore default type of the network request if it
+            // has enterprise type as well. This will make sure the network request with
+            // internet and enterprise will be satisfied with data profile with enterprise at the
+            // same time default network request will not get satisfied with enterprise data
+            // profile.
+            // TODO b/232264746
+            if (apnTypes.contains(ApnSetting.TYPE_ENTERPRISE)) {
+                apnTypes.remove((Integer) ApnSetting.TYPE_DEFAULT);
+            }
+
             return apnTypes.stream().allMatch(dataProfile.getApnSetting()::canHandleType);
         }
         return false;

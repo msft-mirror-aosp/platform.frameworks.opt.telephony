@@ -18,8 +18,6 @@ package com.android.internal.telephony.data;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import static org.mockito.Mockito.doReturn;
-
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
@@ -71,12 +69,28 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
             .setWaitTime(456)
             .setMaxConnsTime(789)
             .build();
+    private static final ApnSetting ENTERPRISE_APN_SETTING = new ApnSetting.Builder()
+            .setId(2164)
+            .setOperatorNumeric("12345")
+            .setEntryName("enterprise")
+            .setApnName("enterprise")
+            .setUser("user")
+            .setPassword("passwd")
+            .setApnTypeBitmask(ApnSetting.TYPE_ENTERPRISE)
+            .setProtocol(ApnSetting.PROTOCOL_IPV6)
+            .setRoamingProtocol(ApnSetting.PROTOCOL_IP)
+            .setCarrierEnabled(true)
+            .setNetworkTypeBitmask(0)
+            .setProfileId(1234)
+            .setMaxConns(321)
+            .setWaitTime(456)
+            .setMaxConnsTime(789)
+            .build();
 
     @Before
     public void setUp() throws Exception {
         logd("TelephonyNetworkRequestTest +Setup!");
         super.setUp(getClass().getSimpleName());
-        doReturn(true).when(mPhone).isUsingNewDataStack();
         logd("TelephonyNetworkRequestTest -Setup!");
     }
 
@@ -250,6 +264,40 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
     }
 
     @Test
+    public void testCanBeSatisfiedByEnterpriseApnDataProfile() {
+        TelephonyNetworkRequest enterpriseRequest1 = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(), mPhone);
+        TelephonyNetworkRequest enterpriseRequest2 = new TelephonyNetworkRequest(
+                new NetworkRequest(new NetworkCapabilities()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .addEnterpriseId(2), ConnectivityManager.TYPE_NONE,
+                        0, NetworkRequest.Type.REQUEST), mPhone);
+        TelephonyNetworkRequest internetRequest = new TelephonyNetworkRequest(
+                new NetworkRequest(new NetworkCapabilities()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                        ConnectivityManager.TYPE_NONE,
+                        0, NetworkRequest.Type.REQUEST), mPhone);
+
+        DataProfile enterpriseDataProfile = new DataProfile.Builder()
+                .setApnSetting(ENTERPRISE_APN_SETTING)
+                .build();
+        DataProfile internetDataProfile = new DataProfile.Builder()
+                .setApnSetting(INTERNET_APN_SETTING)
+                .build();
+
+        assertThat(enterpriseRequest1.canBeSatisfiedBy(enterpriseDataProfile)).isTrue();
+        assertThat(enterpriseRequest1.canBeSatisfiedBy(internetDataProfile)).isFalse();
+        assertThat(enterpriseRequest2.canBeSatisfiedBy(enterpriseDataProfile)).isTrue();
+        assertThat(enterpriseRequest2.canBeSatisfiedBy(internetDataProfile)).isFalse();
+        assertThat(internetRequest.canBeSatisfiedBy(enterpriseDataProfile)).isFalse();
+        assertThat(internetRequest.canBeSatisfiedBy(internetDataProfile)).isTrue();
+    }
+
+    @Test
     public void testCanBeSatisfiedByUrllcDataProfile() {
         TelephonyNetworkRequest urllcRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
@@ -311,8 +359,7 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
                         .getBytes()))
                 .build();
 
-        // TODO: fix as part of as part of b/206703524
-        //assertThat(cbsRequest.canBeSatisfiedBy(cbsDataProfile)).isTrue();
-        //assertThat(embbRequest.canBeSatisfiedBy(cbsDataProfile)).isFalse();
+        assertThat(cbsRequest.canBeSatisfiedBy(cbsDataProfile)).isTrue();
+        assertThat(embbRequest.canBeSatisfiedBy(cbsDataProfile)).isFalse();
     }
 }

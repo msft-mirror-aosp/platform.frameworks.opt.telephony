@@ -25,6 +25,7 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -49,11 +50,9 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 
 import java.util.ArrayList;
 import java.util.Collections;
-
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
@@ -65,21 +64,15 @@ public class UiccControllerTest extends TelephonyTest {
     private static final int EVENT_GET_SLOT_STATUS_DONE = 4;
     private static final int EVENT_SIM_REFRESH = 8;
     private static final int EVENT_EID_READY = 9;
-    @Mock
+
+    // Mocked classes
     private Handler mMockedHandler;
-    @Mock
     private IccCardStatus mIccCardStatus;
-    @Mock
     private UiccSlot mMockSlot;
-    @Mock
     private UiccSlot mMockRemovableEuiccSlot;
-    @Mock
     private UiccCard mMockCard;
-    @Mock
     private EuiccCard mMockEuiccCard;
-    @Mock
     private UiccProfile mMockProfile;
-    @Mock
     private UiccPort mMockPort;
 
     private IccCardApplicationStatus composeUiccApplicationStatus(
@@ -96,7 +89,15 @@ public class UiccControllerTest extends TelephonyTest {
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(this.getClass().getSimpleName());
+        super.setUp(getClass().getSimpleName());
+        mMockedHandler = mock(Handler.class);
+        mIccCardStatus = mock(IccCardStatus.class);
+        mMockSlot = mock(UiccSlot.class);
+        mMockRemovableEuiccSlot = mock(UiccSlot.class);
+        mMockCard = mock(UiccCard.class);
+        mMockEuiccCard = mock(EuiccCard.class);
+        mMockProfile = mock(UiccProfile.class);
+        mMockPort = mock(UiccPort.class);
         // some tests use use the shared preferences in the runner context, so reset them here
         PreferenceManager.getDefaultSharedPreferences(InstrumentationRegistry.getContext())
                 .edit().clear().commit();
@@ -126,6 +127,7 @@ public class UiccControllerTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
+        mUiccControllerUT = null;
         super.tearDown();
     }
 
@@ -353,11 +355,13 @@ public class UiccControllerTest extends TelephonyTest {
         doReturn("A1B2C3D4").when(mMockCard).getCardId();
         doReturn(IccCardStatus.CardState.CARDSTATE_PRESENT).when(mMockCard).getCardState();
         doReturn(true).when(mMockSlot).isActive(); //TODO: use UICCPort when ready
+
         // Mock out UiccPort
         doReturn(new int[]{0}).when(mMockSlot).getPortList();
         doReturn(mMockPort).when(mMockCard).getUiccPort(0);
         doReturn("123451234567890").when(mMockPort).getIccId();
         doReturn(true).when(mMockSlot).isPortActive(0);
+        doReturn("123451234567890").when(mMockSlot).getIccId(0);
 
         // simulate card status loaded so that the UiccController sets the card ID
         IccCardStatus ics = new IccCardStatus();
@@ -408,6 +412,7 @@ public class UiccControllerTest extends TelephonyTest {
         doReturn("123451234567890F").when(mMockPort).getIccId();
         doReturn(new int[]{0}).when(mMockSlot).getPortList();
         doReturn(true).when(mMockSlot).isPortActive(0);
+        doReturn("123451234567890F").when(mMockSlot).getIccId(0);
 
         // simulate card status loaded so that the UiccController sets the card ID
         IccCardStatus ics = new IccCardStatus();
@@ -453,6 +458,7 @@ public class UiccControllerTest extends TelephonyTest {
         // Mock out Port Index and IccId
         doReturn(new int[]{0}).when(mMockSlot).getPortList();
         doReturn("123451234567890").when(mMockSlot).getIccId(0);
+        doReturn(-1).when(mMockSlot).getPhoneIdFromPortIndex(0);
 
         // simulate card status loaded so that the UiccController sets the card ID
         IccCardStatus ics = new IccCardStatus();

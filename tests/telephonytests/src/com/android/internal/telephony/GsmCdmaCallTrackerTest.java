@@ -23,10 +23,10 @@ import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.isA;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.telephony.DisconnectCause;
@@ -42,6 +42,9 @@ import androidx.test.filters.FlakyTest;
 
 import com.android.internal.telephony.PhoneInternalInterface.DialArgs;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
+
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -49,7 +52,6 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
@@ -60,14 +62,16 @@ public class GsmCdmaCallTrackerTest extends TelephonyTest {
     private String mDialString = PhoneNumberUtils.stripSeparators("+17005554141");
     /* Handler class initiated at the HandlerThread */
     private GsmCdmaCallTracker mCTUT;
-    @Mock
-    GsmCdmaConnection mConnection;
-    @Mock
+
+    // Mocked classes
+    private GsmCdmaConnection mConnection;
     private Handler mHandler;
 
     @Before
     public void setUp() throws Exception {
-        super.setUp(this.getClass().getSimpleName());
+        super.setUp(getClass().getSimpleName());
+        mConnection = mock(GsmCdmaConnection.class);
+        mHandler = mock(Handler.class);
         mSimulatedCommands.setRadioPower(true, null);
         mPhone.mCi = this.mSimulatedCommands;
 
@@ -108,7 +112,9 @@ public class GsmCdmaCallTrackerTest extends TelephonyTest {
             processAllMessages();
         } catch(Exception ex) {
             ex.printStackTrace();
-            Assert.fail("unexpected exception thrown"+ex.getMessage()+ex.getStackTrace());
+            StringWriter exString = new StringWriter();
+            ex.printStackTrace(new PrintWriter(exString));
+            Assert.fail("unexpected exception thrown" + exString);
         }
 
         assertEquals(PhoneConstants.State.OFFHOOK, mCTUT.getState());

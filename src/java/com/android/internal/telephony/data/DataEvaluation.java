@@ -19,6 +19,7 @@ package com.android.internal.telephony.data;
 import android.annotation.CurrentTimeMillisLong;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.telephony.TelephonyManager;
 import android.telephony.data.DataProfile;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -147,10 +148,23 @@ public class DataEvaluation {
      * Check if only one disallowed reason prevent data connection.
      *
      * @param reason The given reason to check
-     * @return True if the given reason is the only one that prevents data connection
+     * @return {@code true} if the given reason is the only one that prevents data connection
      */
     public boolean containsOnly(DataDisallowedReason reason) {
         return mDataDisallowedReasons.size() == 1 && contains(reason);
+    }
+
+    /**
+     * Check if the any of the disallowed reasons match one of the provided reason.
+     *
+     * @param reasons The given reasons to check.
+     * @return {@code true} if any of the given reasons matches one of the disallowed reasons.
+     */
+    public boolean containsAny(DataDisallowedReason... reasons) {
+        for (DataDisallowedReason reason : reasons) {
+            if (mDataDisallowedReasons.contains(reason)) return true;
+        }
+        return false;
     }
 
     /**
@@ -194,6 +208,8 @@ public class DataEvaluation {
         DATA_SERVICE_STATE_CHANGED,
         /** When data is enabled or disabled (by user, carrier, thermal, etc...) */
         DATA_ENABLED_CHANGED,
+        /** When data enabled overrides are changed (MMS always allowed, data on non-DDS sub). */
+        DATA_ENABLED_OVERRIDE_CHANGED,
         /** When data roaming is enabled or disabled. */
         ROAMING_ENABLED_CHANGED,
         /** When voice call ended (for concurrent voice/data not supported RAT). */
@@ -208,7 +224,7 @@ public class DataEvaluation {
         RETRY_AFTER_DISCONNECTED,
         /** Data setup retry. */
         DATA_RETRY,
-        /** Handover between IWLAN and cellular. */
+        /** For handover evaluation, or for network tearing down after handover succeeds/fails. */
         DATA_HANDOVER,
         /** Preferred transport changed. */
         PREFERRED_TRANSPORT_CHANGED,
@@ -219,6 +235,10 @@ public class DataEvaluation {
          * same time.
          */
         SINGLE_DATA_NETWORK_ARBITRATION,
+        /** Query from {@link TelephonyManager#isDataConnectivityPossible()}. */
+        EXTERNAL_QUERY,
+        /** Tracking area code changed. */
+        TAC_CHANGED,
     }
 
     /** Disallowed reasons. There could be multiple reasons if it is not allowed. */
@@ -256,8 +276,8 @@ public class DataEvaluation {
         NO_SUITABLE_DATA_PROFILE(true),
         /** Current data network type not allowed. */
         DATA_NETWORK_TYPE_NOT_ALLOWED(true),
-        /** Device is currently in an emergency call. */
-        EMERGENCY_CALL(true),
+        /** Device is currently in CDMA ECBM. */
+        CDMA_EMERGENCY_CALLBACK_MODE(true),
         /** There is already a retry setup/handover scheduled. */
         RETRY_SCHEDULED(true),
         /** Network has explicitly request to throttle setup attempt. */
@@ -273,7 +293,9 @@ public class DataEvaluation {
         /** VoPS is not supported by the network. */
         VOPS_NOT_SUPPORTED(true),
         /** Only one data network is allowed at one time. */
-        ONLY_ALLOWED_SINGLE_NETWORK(true);
+        ONLY_ALLOWED_SINGLE_NETWORK(true),
+        /** Data enabled settings are not ready. */
+        DATA_SETTINGS_NOT_READY(true);
 
         private final boolean mIsHardReason;
 
@@ -324,6 +346,10 @@ public class DataEvaluation {
          * The network request is restricted (i.e. Only privilege apps can access the network.)
          */
         RESTRICTED_REQUEST,
+        /**
+         * SUPL is allowed while emergency call is ongoing.
+         */
+        EMERGENCY_SUPL,
         /**
          * Data is allowed because the network request is for emergency. This should be always at
          * the bottom (i.e. highest priority)

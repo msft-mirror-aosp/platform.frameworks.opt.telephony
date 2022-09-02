@@ -18,6 +18,7 @@ package com.android.internal.telephony.data;
 
 import android.annotation.CallbackExecutor;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.StringDef;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -28,6 +29,7 @@ import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PersistableBundle;
 import android.os.Registrant;
 import android.os.RegistrantList;
@@ -36,6 +38,7 @@ import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
+import android.telephony.AccessNetworkConstants.RadioAccessNetworkType;
 import android.telephony.AccessNetworkConstants.TransportType;
 import android.telephony.Annotation.ApnType;
 import android.telephony.Annotation.NetCapability;
@@ -54,6 +57,7 @@ import android.util.SparseArray;
 
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.RIL;
+import com.android.internal.telephony.SlidingWindowEventCounter;
 import com.android.internal.telephony.dataconnection.DataThrottler;
 import com.android.telephony.Rlog;
 
@@ -109,6 +113,11 @@ public class AccessNetworksManager extends Handler {
      */
     public static final String IWLAN_OPERATION_MODE_AP_ASSISTED = "AP-assisted";
 
+    /**
+     * The counters to detect frequent QNS attempt to change preferred network transport by ApnType.
+     */
+    private final @NonNull SparseArray<SlidingWindowEventCounter> mApnTypeToQnsChangeNetworkCounter;
+
     private final String mLogTag;
     private final LocalLog mLocalLog = new LocalLog(64);
     private final UUID mAnomalyUUID = UUID.fromString("c2d1a639-00e2-4561-9619-6acf37d90590");
@@ -122,12 +131,15 @@ public class AccessNetworksManager extends Handler {
             ApnSetting.TYPE_CBS,
             ApnSetting.TYPE_SUPL,
             ApnSetting.TYPE_EMERGENCY,
-            ApnSetting.TYPE_XCAP
+            ApnSetting.TYPE_XCAP,
+            ApnSetting.TYPE_DUN
     };
 
     private final Phone mPhone;
 
     private final CarrierConfigManager mCarrierConfigManager;
+
+    private @Nullable DataConfigManager mDataConfigManager;
 
     private IQualifiedNetworksService mIQualifiedNetworksService;
 
@@ -173,6 +185,9 @@ public class AccessNetworksManager extends Handler {
      * transport. The preferred transports are updated as soon as QNS changes the preference, while
      * the current transports are updated after handover complete.
      */
+    // TODO: Deprecate mPreferredTransports. Should expose mAvailableNetworks to
+    //  DataNetworkController after we support multi preferred access networks (i.e.
+    //  DataNetworkController might select 2nd preferred access network in some scenarios.)
     private final Map<Integer, Integer> mPreferredTransports = new ConcurrentHashMap<>();
 
     /**
@@ -202,23 +217,23 @@ public class AccessNetworksManager extends Handler {
     public static class QualifiedNetworks {
         public final @ApnType int apnType;
         // The qualified networks in preferred order. Each network is a AccessNetworkType.
-        public final int[] qualifiedNetworks;
-        public QualifiedNetworks(@ApnType int apnType, int[] qualifiedNetworks) {
+        public final @NonNull @RadioAccessNetworkType int[] qualifiedNetworks;
+        public QualifiedNetworks(@ApnType int apnType, @NonNull int[] qualifiedNetworks) {
             this.apnType = apnType;
-            this.qualifiedNetworks = qualifiedNetworks;
+            this.qualifiedNetworks = Arrays.stream(qualifiedNetworks)
+                    .boxed()
+                    .filter(DataUtils::isValidAccessNetwork)
+                    .mapToInt(Integer::intValue)
+                    .toArray();
         }
 
         @Override
         public String toString() {
-            List<String> accessNetworkStrings = new ArrayList<>();
-            for (int network : qualifiedNetworks) {
-                accessNetworkStrings.add(AccessNetworkType.toString(network));
-            }
             return "[QualifiedNetworks: apnType="
                     + ApnSetting.getApnTypeString(apnType)
                     + ", networks="
                     + Arrays.stream(qualifiedNetworks)
-                    .mapToObj(type -> AccessNetworkType.toString(type))
+                    .mapToObj(AccessNetworkType::toString)
                     .collect(Collectors.joining(","))
                     + "]";
         }
@@ -229,8 +244,10 @@ public class AccessNetworksManager extends Handler {
         public void binderDied() {
             // TODO: try to rebind the service.
             String message = "Qualified network service " + mLastBoundPackageName + " died.";
+            // clear the anomaly report counters when QNS crash
+            mApnTypeToQnsChangeNetworkCounter.clear();
             loge(message);
-            AnomalyReporter.reportAnomaly(mAnomalyUUID, message);
+            AnomalyReporter.reportAnomaly(mAnomalyUUID, message, mPhone.getCarrierId());
         }
     }
 
@@ -309,9 +326,10 @@ public class AccessNetworksManager extends Handler {
                                     .stream()
                                     .filter(x -> x.getSlotIndex() == mPhone.getPhoneId())
                                     .collect(Collectors.toList());
-
-                    mIQualifiedNetworksService.reportThrottleStatusChanged(mPhone.getPhoneId(),
-                            throttleStatusesBySlot);
+                    if (mIQualifiedNetworksService != null) {
+                        mIQualifiedNetworksService.reportThrottleStatusChanged(mPhone.getPhoneId(),
+                                throttleStatusesBySlot);
+                    }
                 } catch (Exception ex) {
                     loge("onThrottleStatusChanged", ex);
                 }
@@ -322,34 +340,115 @@ public class AccessNetworksManager extends Handler {
     private final class QualifiedNetworksServiceCallback extends
             IQualifiedNetworksServiceCallback.Stub {
         @Override
-        public void onQualifiedNetworkTypesChanged(int apnTypes, int[] qualifiedNetworkTypes) {
-            log("onQualifiedNetworkTypesChanged. apnTypes = ["
+        public void onQualifiedNetworkTypesChanged(int apnTypes,
+                @NonNull int[] qualifiedNetworkTypes) {
+            if (qualifiedNetworkTypes == null) {
+                loge("onQualifiedNetworkTypesChanged: Ignored null input.");
+                return;
+            }
+
+            log("onQualifiedNetworkTypesChanged: apnTypes = ["
                     + ApnSetting.getApnTypesStringFromBitmask(apnTypes)
                     + "], networks = [" + Arrays.stream(qualifiedNetworkTypes)
-                    .mapToObj(i -> AccessNetworkType.toString(i)).collect(Collectors.joining(","))
+                    .mapToObj(AccessNetworkType::toString).collect(Collectors.joining(","))
                     + "]");
+
+            if (Arrays.stream(qualifiedNetworkTypes).anyMatch(accessNetwork
+                    -> !DataUtils.isValidAccessNetwork(accessNetwork))) {
+                loge("Invalid access networks " + Arrays.toString(qualifiedNetworkTypes));
+                if (mDataConfigManager != null
+                        && mDataConfigManager.isInvalidQnsParamAnomalyReportEnabled()) {
+                    reportAnomaly("QNS requested invalid Network Type",
+                            "3e89a3df-3524-45fa-b5f2-0fb0e4c77ec4");
+                }
+                return;
+            }
+
             List<QualifiedNetworks> qualifiedNetworksList = new ArrayList<>();
-            for (int supportedApnType : SUPPORTED_APN_TYPES) {
-                if ((apnTypes & supportedApnType) == supportedApnType) {
-                    if (mAvailableNetworks.get(supportedApnType) != null) {
-                        if (Arrays.equals(mAvailableNetworks.get(supportedApnType),
+            // For anomaly report, only track frequent HO between cellular and IWLAN
+            boolean isRequestedNetworkOnIwlan = Arrays.stream(qualifiedNetworkTypes)
+                    .anyMatch(network -> network == AccessNetworkType.IWLAN);
+            int satisfiedApnTypes = 0;
+            for (int apnType : SUPPORTED_APN_TYPES) {
+                if ((apnTypes & apnType) == apnType) {
+                    // skip the APN anomaly detection if not using the T data stack
+                    if (mDataConfigManager != null) {
+                        satisfiedApnTypes |= apnType;
+                        if (isRequestedNetworkOnIwlan) {
+                            trackFrequentApnTypeChange(apnType);
+                        }
+                    }
+
+                    if (mAvailableNetworks.get(apnType) != null) {
+                        if (Arrays.equals(mAvailableNetworks.get(apnType),
                                 qualifiedNetworkTypes)) {
                             log("Available networks for "
-                                    + ApnSetting.getApnTypesStringFromBitmask(supportedApnType)
+                                    + ApnSetting.getApnTypesStringFromBitmask(apnType)
                                     + " not changed.");
                             continue;
                         }
                     }
-                    mAvailableNetworks.put(supportedApnType, qualifiedNetworkTypes);
-                    qualifiedNetworksList.add(new QualifiedNetworks(supportedApnType,
-                            qualifiedNetworkTypes));
+
+                    // Empty array indicates QNS did not suggest any qualified networks. In this
+                    // case all network requests will be routed to cellular.
+                    if (qualifiedNetworkTypes.length == 0) {
+                        mAvailableNetworks.remove(apnType);
+                        if (getPreferredTransport(apnType)
+                                == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
+                            mPreferredTransports.put(apnType,
+                                    AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+                            mAccessNetworksManagerCallbacks.forEach(callback ->
+                                    callback.invokeFromExecutor(() ->
+                                            callback.onPreferredTransportChanged(DataUtils
+                                                    .apnTypeToNetworkCapability(apnType))));
+                        }
+                    } else {
+                        mAvailableNetworks.put(apnType, qualifiedNetworkTypes);
+                        qualifiedNetworksList.add(new QualifiedNetworks(apnType,
+                                qualifiedNetworkTypes));
+
+                    }
                 }
             }
 
-            if (!qualifiedNetworksList.isEmpty()) {
-                mQualifiedNetworksChangedRegistrants.notifyResult(qualifiedNetworksList);
-                setPreferredTransports(qualifiedNetworksList);
+            // Report anomaly if any requested APN types are unsatisfied
+            if (satisfiedApnTypes != apnTypes
+                    && mDataConfigManager != null
+                    && mDataConfigManager.isInvalidQnsParamAnomalyReportEnabled()) {
+                int unsatisfied = satisfiedApnTypes ^ apnTypes;
+                reportAnomaly("QNS requested unsupported APN Types:"
+                        + Integer.toBinaryString(unsatisfied),
+                        "3e89a3df-3524-45fa-b5f2-0fb0e4c77ec5");
             }
+
+            if (!qualifiedNetworksList.isEmpty()) {
+                setPreferredTransports(qualifiedNetworksList);
+                mQualifiedNetworksChangedRegistrants.notifyResult(qualifiedNetworksList);
+            }
+        }
+    }
+
+    /**
+     * Called when receiving preferred transport change request for a specific apnType.
+     *
+     * @param apnType The requested apnType.
+     */
+    private void trackFrequentApnTypeChange(@ApnSetting.ApnType int apnType) {
+        DataNetworkController dnc = mPhone.getDataNetworkController();
+        // ignore the report when no existing network request
+        if (!dnc.isCapabilityRequestExisting(DataUtils.apnTypeToNetworkCapability(apnType))) return;
+        SlidingWindowEventCounter counter = mApnTypeToQnsChangeNetworkCounter.get(apnType);
+        if (counter == null) {
+            counter = new SlidingWindowEventCounter(
+                    mDataConfigManager.getAnomalyQnsChangeThreshold().timeWindow,
+                    mDataConfigManager.getAnomalyQnsChangeThreshold().eventNumOccurrence);
+            mApnTypeToQnsChangeNetworkCounter.put(apnType, counter);
+        }
+        if (counter.addOccurrence()) {
+            reportAnomaly("QNS requested network change for "
+                            + ApnSetting.getApnTypeString(apnType) + " "
+                            + counter.getFrequencyString(),
+                    "3e89a3df-3524-45fa-b5f2-b8911abc7d56");
         }
     }
 
@@ -377,13 +476,16 @@ public class AccessNetworksManager extends Handler {
     /**
      * Constructor
      *
-     * @param phone The phone object
+     * @param phone The phone object.
+     * @param looper Looper for the handler.
      */
-    public AccessNetworksManager(Phone phone) {
+    public AccessNetworksManager(@NonNull Phone phone, @NonNull Looper looper) {
+        super(looper);
         mPhone = phone;
         mCarrierConfigManager = (CarrierConfigManager) phone.getContext().getSystemService(
                 Context.CARRIER_CONFIG_SERVICE);
         mLogTag = "ANM-" + mPhone.getPhoneId();
+        mApnTypeToQnsChangeNetworkCounter = new SparseArray<>();
 
         if (isInLegacyMode()) {
             log("operates in legacy mode.");
@@ -408,22 +510,45 @@ public class AccessNetworksManager extends Handler {
         }
 
         if (phone.isUsingNewDataStack()) {
-            // Using post to delay the registering because data retry manager instance is created
-            // later than access networks manager.
-            post(() -> mPhone.getDataNetworkController().getDataRetryManager().registerCallback(
+            // Using post to delay the registering because data retry manager and data config
+            // manager instances are created later than access networks manager.
+            post(() -> {
+                mPhone.getDataNetworkController().getDataRetryManager().registerCallback(
                     new DataRetryManager.DataRetryManagerCallback(this::post) {
                         @Override
                         public void onThrottleStatusChanged(List<ThrottleStatus> throttleStatuses) {
                             try {
                                 logl("onThrottleStatusChanged: " + throttleStatuses);
-                                mIQualifiedNetworksService.reportThrottleStatusChanged(
-                                        mPhone.getPhoneId(), throttleStatuses);
+                                if (mIQualifiedNetworksService != null) {
+                                    mIQualifiedNetworksService.reportThrottleStatusChanged(
+                                            mPhone.getPhoneId(), throttleStatuses);
+                                }
                             } catch (Exception ex) {
                                 loge("onThrottleStatusChanged: ", ex);
                             }
                         }
-                    }));
+                    });
+                mDataConfigManager = mPhone.getDataNetworkController().getDataConfigManager();
+                mDataConfigManager.registerCallback(
+                        new DataConfigManager.DataConfigManagerCallback(this::post) {
+                            @Override
+                            public void onDeviceConfigChanged() {
+                                mApnTypeToQnsChangeNetworkCounter.clear();
+                            }
+                        });
+            });
         }
+    }
+
+    /**
+     * Trigger the anomaly report with the specified UUID.
+     *
+     * @param anomalyMsg Description of the event
+     * @param uuid UUID associated with that event
+     */
+    private void reportAnomaly(@NonNull String anomalyMsg, @NonNull String uuid) {
+        logl(anomalyMsg);
+        AnomalyReporter.reportAnomaly(UUID.fromString(uuid), anomalyMsg, mPhone.getCarrierId());
     }
 
     /**
@@ -657,11 +782,11 @@ public class AccessNetworksManager extends Handler {
             if (networks.qualifiedNetworks.length > 0) {
                 int transport = getTransportFromAccessNetwork(networks.qualifiedNetworks[0]);
                 if (getPreferredTransport(networks.apnType) != transport) {
+                    mPreferredTransports.put(networks.apnType, transport);
                     mAccessNetworksManagerCallbacks.forEach(callback ->
                             callback.invokeFromExecutor(() ->
                                     callback.onPreferredTransportChanged(DataUtils
                                             .apnTypeToNetworkCapability(networks.apnType))));
-                    mPreferredTransports.put(networks.apnType, transport);
                     logl("setPreferredTransports: apnType="
                             + ApnSetting.getApnTypeString(networks.apnType) + ", transport="
                             + AccessNetworkConstants.transportTypeToString(transport));

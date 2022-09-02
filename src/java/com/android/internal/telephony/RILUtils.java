@@ -313,6 +313,9 @@ import android.telephony.UiccSlotMapping;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataProfile;
+import android.telephony.data.DataService;
+import android.telephony.data.DataService.DeactivateDataReason;
+import android.telephony.data.DataService.SetupDataReason;
 import android.telephony.data.EpsQos;
 import android.telephony.data.NetworkSliceInfo;
 import android.telephony.data.NetworkSlicingConfig;
@@ -633,6 +636,8 @@ public class RILUtils {
             byte[] pdu) {
         android.hardware.radio.messaging.CdmaSmsMessage msg =
                 new android.hardware.radio.messaging.CdmaSmsMessage();
+        msg.address = new android.hardware.radio.messaging.CdmaSmsAddress();
+        msg.subAddress = new android.hardware.radio.messaging.CdmaSmsSubaddress();
         int addrNbrOfDigits;
         int subaddrNbrOfDigits;
         int bearerDataLength;
@@ -976,7 +981,10 @@ public class RILUtils {
         dpi.mtuV6 = dp.getMtuV6();
         dpi.persistent = dp.isPersistent();
         dpi.preferred = dp.isPreferred();
-        dpi.alwaysOn = dp.getApnSetting().isAlwaysOn();
+        dpi.alwaysOn = false;
+        if (dp.getApnSetting() != null) {
+            dpi.alwaysOn = dp.getApnSetting().isAlwaysOn();
+        }
         dpi.trafficDescriptor = convertToHalTrafficDescriptorAidl(dp.getTrafficDescriptor());
 
         // profile id is only meaningful when it's persistent on the modem.
@@ -4420,7 +4428,7 @@ public class RILUtils {
      */
     public static android.hardware.radio.V1_6.PhonebookRecordInfo convertToHalPhonebookRecordInfo(
             SimPhonebookRecord record) {
-        if(record != null) {
+        if (record != null) {
             return record.toPhonebookRecordInfo();
         }
         return null;
@@ -4433,10 +4441,10 @@ public class RILUtils {
      */
     public static android.hardware.radio.sim.PhonebookRecordInfo
             convertToHalPhonebookRecordInfoAidl(SimPhonebookRecord record) {
-        if(record != null) {
+        if (record != null) {
             return record.toPhonebookRecordInfoAidl();
         }
-        return null;
+        return new android.hardware.radio.sim.PhonebookRecordInfo();
     }
 
     /**
@@ -4457,7 +4465,10 @@ public class RILUtils {
                 for (int i = 0; i < portCount; i++) {
                     IccSimPortInfo simPortInfo = new IccSimPortInfo();
                     simPortInfo.mIccId = slotStatus.portInfo[i].iccId;
-                    simPortInfo.mLogicalSlotIndex = slotStatus.portInfo[i].logicalSlotId;
+                    // If port is not active, set invalid logical slot index(-1) irrespective of
+                    // the modem response. For more info, check http://b/209035150
+                    simPortInfo.mLogicalSlotIndex = slotStatus.portInfo[i].portActive
+                            ? slotStatus.portInfo[i].logicalSlotId : -1;
                     simPortInfo.mPortActive = slotStatus.portInfo[i].portActive;
                     iccSlotStatus.mSimPortInfos[i] = simPortInfo;
                 }
@@ -4479,8 +4490,11 @@ public class RILUtils {
                 iccSlotStatus.mSimPortInfos = new IccSimPortInfo[1];
                 IccSimPortInfo simPortInfo = new IccSimPortInfo();
                 simPortInfo.mIccId = slotStatus.base.iccid;
-                simPortInfo.mLogicalSlotIndex = slotStatus.base.logicalSlotId;
                 simPortInfo.mPortActive = (slotStatus.base.slotState == IccSlotStatus.STATE_ACTIVE);
+                // If port/slot is not active, set invalid logical slot index(-1) irrespective of
+                // the modem response. For more info, check http://b/209035150
+                simPortInfo.mLogicalSlotIndex = simPortInfo.mPortActive
+                        ? slotStatus.base.logicalSlotId : -1;
                 iccSlotStatus.mSimPortInfos[TelephonyManager.DEFAULT_PORT_INDEX] = simPortInfo;
                 iccSlotStatus.atr = slotStatus.base.atr;
                 iccSlotStatus.eid = slotStatus.eid;
@@ -4500,8 +4514,11 @@ public class RILUtils {
                 iccSlotStatus.mSimPortInfos = new IccSimPortInfo[1];
                 IccSimPortInfo simPortInfo = new IccSimPortInfo();
                 simPortInfo.mIccId = slotStatus.iccid;
-                simPortInfo.mLogicalSlotIndex = slotStatus.logicalSlotId;
                 simPortInfo.mPortActive = (slotStatus.slotState == IccSlotStatus.STATE_ACTIVE);
+                // If port/slot is not active, set invalid logical slot index(-1) irrespective of
+                // the modem response. For more info, check http://b/209035150
+                simPortInfo.mLogicalSlotIndex = simPortInfo.mPortActive
+                        ? slotStatus.logicalSlotId : -1;
                 iccSlotStatus.mSimPortInfos[TelephonyManager.DEFAULT_PORT_INDEX] = simPortInfo;
                 iccSlotStatus.atr = slotStatus.atr;
                 response.add(iccSlotStatus);
@@ -4615,6 +4632,46 @@ public class RILUtils {
     /** Convert null to an empty String */
     public static String convertNullToEmptyString(String string) {
         return string != null ? string : "";
+    }
+
+    /**
+     * Convert setup data reason to string.
+     *
+     * @param reason The reason for setup data call.
+     * @return The reason in string format.
+     */
+    public static String setupDataReasonToString(@SetupDataReason int reason) {
+        switch (reason) {
+            case DataService.REQUEST_REASON_NORMAL:
+                return "NORMAL";
+            case DataService.REQUEST_REASON_HANDOVER:
+                return "HANDOVER";
+            case DataService.REQUEST_REASON_UNKNOWN:
+                return "UNKNOWN";
+            default:
+                return "UNKNOWN(" + reason + ")";
+        }
+    }
+
+    /**
+     * Convert deactivate data reason to string.
+     *
+     * @param reason The reason for deactivate data call.
+     * @return The reason in string format.
+     */
+    public static String deactivateDataReasonToString(@DeactivateDataReason int reason) {
+        switch (reason) {
+            case DataService.REQUEST_REASON_NORMAL:
+                return "NORMAL";
+            case DataService.REQUEST_REASON_HANDOVER:
+                return "HANDOVER";
+            case DataService.REQUEST_REASON_SHUTDOWN:
+                return "SHUTDOWN";
+            case DataService.REQUEST_REASON_UNKNOWN:
+                return "UNKNOWN";
+            default:
+                return "UNKNOWN(" + reason + ")";
+        }
     }
 
     /**
@@ -5170,7 +5227,15 @@ public class RILUtils {
      * @return A string containing all public non-static local variables of a class
      */
     public static String convertToString(Object o) {
-        if (isPrimitiveOrWrapper(o.getClass()) || o.getClass() == String.class) return o.toString();
+        boolean toStringExists = false;
+        try {
+            toStringExists = o.getClass().getMethod("toString").getDeclaringClass() != Object.class;
+        } catch (NoSuchMethodException e) {
+            loge(e.toString());
+        }
+        if (toStringExists || isPrimitiveOrWrapper(o.getClass()) || o instanceof ArrayList) {
+            return o.toString();
+        }
         if (o.getClass().isArray()) {
             // Special handling for arrays
             StringBuilder sb = new StringBuilder("[");

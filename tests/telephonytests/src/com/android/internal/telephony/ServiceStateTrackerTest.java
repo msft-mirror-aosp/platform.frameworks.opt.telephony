@@ -30,7 +30,6 @@ import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -93,6 +92,7 @@ import androidx.test.filters.FlakyTest;
 
 import com.android.internal.R;
 import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
+import com.android.internal.telephony.data.DataNetworkController;
 import com.android.internal.telephony.metrics.ServiceStateStats;
 import com.android.internal.telephony.test.SimulatedCommands;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus;
@@ -103,7 +103,6 @@ import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 import org.mockito.Mockito;
 
 import java.lang.reflect.Method;
@@ -113,25 +112,16 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 
-
 public class ServiceStateTrackerTest extends TelephonyTest {
-    @Mock
+    // Mocked classes
     private ProxyController mProxyController;
-    @Mock
     private Handler mTestHandler;
+    private NetworkService mIwlanNetworkService;
+    private INetworkService.Stub mIwlanNetworkServiceStub;
+    private SubscriptionInfo mSubInfo;
+    private ServiceStateStats mServiceStateStats;
 
     private CellularNetworkService mCellularNetworkService;
-
-    @Mock
-    private NetworkService mIwlanNetworkService;
-    @Mock
-    private INetworkService.Stub mIwlanNetworkServiceStub;
-
-    @Mock
-    private SubscriptionInfo mSubInfo;
-
-    @Mock
-    private ServiceStateStats mServiceStateStats;
 
     // SST now delegates all signal strength operations to SSC
     // Add Mock SSC as the dependency to avoid NPE
@@ -229,9 +219,14 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Before
     public void setUp() throws Exception {
-
         logd("ServiceStateTrackerTest +Setup!");
-        super.setUp("ServiceStateTrackerTest");
+        super.setUp(getClass().getSimpleName());
+        mProxyController = Mockito.mock(ProxyController.class);
+        mTestHandler = Mockito.mock(Handler.class);
+        mIwlanNetworkService = Mockito.mock(NetworkService.class);
+        mIwlanNetworkServiceStub = Mockito.mock(INetworkService.Stub.class);
+        mSubInfo = Mockito.mock(SubscriptionInfo.class);
+        mServiceStateStats = Mockito.mock(ServiceStateStats.class);
 
         mContextFixture.putResource(R.string.config_wwan_network_service_package,
                 "com.android.phone");
@@ -241,6 +236,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         addNetworkService();
 
         doReturn(true).when(mDcTracker).areAllDataDisconnected();
+        doReturn(true).when(mDataNetworkController).areAllDataDisconnected();
 
         doReturn(new ServiceState()).when(mPhone).getServiceState();
 
@@ -354,9 +350,13 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         sst = null;
         mSSTTestHandler.quit();
         mSSTTestHandler.join();
+        mSSTTestHandler = null;
         if (mCellularNetworkService != null) {
             mCellularNetworkService.onDestroy();
+            mCellularNetworkService = null;
         }
+        mSsc = null;
+        mBundle = null;
         super.tearDown();
     }
 
@@ -379,6 +379,59 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertTrue(oldState
                 != (mSimulatedCommands.getRadioState() == TelephonyManager.RADIO_POWER_ON));
+    }
+
+    @Test
+    public void testSetRadioPowerWaitForAllDataDisconnected() throws Exception {
+        // Set up DSDS environment
+        GsmCdmaPhone phone2 = Mockito.mock(GsmCdmaPhone.class);
+        DataNetworkController dataNetworkController_phone2 =
+                Mockito.mock(DataNetworkController.class);
+        mPhones = new Phone[] {mPhone, phone2};
+        replaceInstance(PhoneFactory.class, "sPhones", null, mPhones);
+        doReturn(dataNetworkController_phone2).when(phone2).getDataNetworkController();
+        doReturn(mSST).when(phone2).getServiceStateTracker();
+        doReturn(true).when(phone2).isUsingNewDataStack();
+        doReturn(false).when(mDataNetworkController).areAllDataDisconnected();
+        doReturn(false).when(dataNetworkController_phone2).areAllDataDisconnected();
+        doReturn(1).when(mPhone).getSubId();
+        doReturn(2).when(phone2).getSubId();
+
+        // Start with radio on
+        sst.setRadioPower(true);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+        assertEquals(TelephonyManager.RADIO_POWER_ON, mSimulatedCommands.getRadioState());
+
+        // Turn on APM and verify that both subs are waiting for all data disconnected
+        sst.setRadioPower(false);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+        assertEquals(TelephonyManager.RADIO_POWER_ON, mSimulatedCommands.getRadioState());
+        verify(mDataNetworkController).tearDownAllDataNetworks(
+                eq(3 /* TEAR_DOWN_REASON_AIRPLANE_MODE_ON */));
+        verify(dataNetworkController_phone2, never()).tearDownAllDataNetworks(anyInt());
+        ArgumentCaptor<DataNetworkController.DataNetworkControllerCallback> callback1 =
+                ArgumentCaptor.forClass(DataNetworkController.DataNetworkControllerCallback.class);
+        ArgumentCaptor<DataNetworkController.DataNetworkControllerCallback> callback2 =
+                ArgumentCaptor.forClass(DataNetworkController.DataNetworkControllerCallback.class);
+        verify(mDataNetworkController, times(1)).registerDataNetworkControllerCallback(
+                callback1.capture());
+        verify(dataNetworkController_phone2, times(1)).registerDataNetworkControllerCallback(
+                callback2.capture());
+
+        // Data disconnected on sub 2, still waiting for data disconnected on sub 1
+        doReturn(true).when(dataNetworkController_phone2).areAllDataDisconnected();
+        callback2.getValue().onAnyDataNetworkExistingChanged(false);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+        assertEquals(TelephonyManager.RADIO_POWER_ON, mSimulatedCommands.getRadioState());
+        verify(dataNetworkController_phone2, times(1)).unregisterDataNetworkControllerCallback(
+                any());
+
+        // Data disconnected on sub 1, radio should power off now
+        doReturn(true).when(mDataNetworkController).areAllDataDisconnected();
+        callback1.getValue().onAnyDataNetworkExistingChanged(false);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+        verify(mDataNetworkController, times(1)).unregisterDataNetworkControllerCallback(any());
+        assertEquals(TelephonyManager.RADIO_POWER_OFF, mSimulatedCommands.getRadioState());
     }
 
     @Test
@@ -1413,7 +1466,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         mContextFixture.putBooleanResource(
                 R.bool.config_user_notification_of_restrictied_mobile_access, true);
         doReturn(new ApplicationInfo()).when(mContext).getApplicationInfo();
-        Drawable mockDrawable = mock(Drawable.class);
+        Drawable mockDrawable = Mockito.mock(Drawable.class);
         Resources mockResources = mContext.getResources();
         when(mockResources.getDrawable(anyInt(), any())).thenReturn(mockDrawable);
 
@@ -1445,7 +1498,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         mContextFixture.putBooleanResource(
                 R.bool.config_user_notification_of_restrictied_mobile_access, true);
         doReturn(new ApplicationInfo()).when(mContext).getApplicationInfo();
-        Drawable mockDrawable = mock(Drawable.class);
+        Drawable mockDrawable = Mockito.mock(Drawable.class);
         Resources mockResources = mContext.getResources();
         when(mockResources.getDrawable(anyInt(), any())).thenReturn(mockDrawable);
 
@@ -1478,7 +1531,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         mContextFixture.putBooleanResource(
                 R.bool.config_user_notification_of_restrictied_mobile_access, true);
         doReturn(new ApplicationInfo()).when(mContext).getApplicationInfo();
-        Drawable mockDrawable = mock(Drawable.class);
+        Drawable mockDrawable = Mockito.mock(Drawable.class);
         Resources mockResources = mContext.getResources();
         when(mockResources.getDrawable(anyInt(), any())).thenReturn(mockDrawable);
 
@@ -1510,7 +1563,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         mContextFixture.putBooleanResource(
                 R.bool.config_user_notification_of_restrictied_mobile_access, true);
         doReturn(new ApplicationInfo()).when(mContext).getApplicationInfo();
-        Drawable mockDrawable = mock(Drawable.class);
+        Drawable mockDrawable = Mockito.mock(Drawable.class);
         Resources mockResources = mContext.getResources();
         when(mockResources.getDrawable(anyInt(), any())).thenReturn(mockDrawable);
 
@@ -1544,7 +1597,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         mContextFixture.putBooleanResource(
                 R.bool.config_user_notification_of_restrictied_mobile_access, true);
         doReturn(new ApplicationInfo()).when(mContext).getApplicationInfo();
-        Drawable mockDrawable = mock(Drawable.class);
+        Drawable mockDrawable = Mockito.mock(Drawable.class);
         Resources mockResources = mContext.getResources();
         when(mockResources.getDrawable(anyInt(), any())).thenReturn(mockDrawable);
 
@@ -1721,6 +1774,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testImsRegisteredDelayShutDown() throws Exception {
+        doReturn(false).when(mPhone).isUsingNewDataStack();
         doReturn(true).when(mPhone).isPhoneTypeGsm();
         mContextFixture.putIntResource(
                 com.android.internal.R.integer.config_delay_for_ims_dereg_millis, 1000 /*ms*/);
@@ -1761,6 +1815,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testImsRegisteredDelayShutDownTimeout() throws Exception {
+        doReturn(false).when(mPhone).isUsingNewDataStack();
         doReturn(true).when(mPhone).isPhoneTypeGsm();
         mContextFixture.putIntResource(
                 com.android.internal.R.integer.config_delay_for_ims_dereg_millis, 1000 /*ms*/);
@@ -1814,12 +1869,6 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @SmallTest
     public void testSetTimeFromNITZStr_withoutAge() throws Exception {
         {
-            // Mock sending incorrect nitz str from RIL
-            mSimulatedCommands.triggerNITZupdate("38/06/20,00:00:00+0");
-            waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-            verify(mNitzStateMachine, times(0)).handleNitzReceived(any());
-        }
-        {
             // Mock sending correct nitz str from RIL with a zero ageMs
             String nitzStr = "15/06/20,00:00:00+0";
             NitzData expectedNitzData = NitzData.parse(nitzStr);
@@ -1843,13 +1892,6 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testSetTimeFromNITZStr_withAge() throws Exception {
-        {
-            // Mock sending incorrect nitz str from RIL with a non-zero ageMs
-            long ageMs = 60 * 1000;
-            mSimulatedCommands.triggerNITZupdate("38/06/20,00:00:00+0", ageMs);
-            waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-            verify(mNitzStateMachine, times(0)).handleNitzReceived(any());
-        }
         {
             // Mock sending correct nitz str from RIL with a non-zero ageMs
             String nitzStr = "21/08/15,00:00:00+0";
@@ -2205,7 +2247,6 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Test
     public void testUpdateNrFrequencyRangeFromPhysicalChannelConfigs() {
-        doReturn(true).when(mPhone).isUsingNewDataStack();
         when(mPhone.getDataNetworkController().isInternetNetwork(eq(3))).thenReturn(true);
         sendPhyChanConfigChange(new int[] {1000, 500}, TelephonyManager.NETWORK_TYPE_NR, 1,
                 new int[][]{{0, 1}, {2, 3}});
@@ -2258,7 +2299,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @SmallTest
     @Test
     public void testRilDataTechnologyChangeTransportPreference() {
-        when(mTransportManager.isAnyApnOnIwlan()).thenReturn(false);
+        when(mAccessNetworksManager.isAnyApnOnIwlan()).thenReturn(false);
 
         // Start state: Cell data only LTE + IWLAN
         CellIdentityLte cellIdentity =
@@ -2277,7 +2318,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                 mTestHandler, EVENT_DATA_RAT_CHANGED, null);
         // transport preference change for a PDN for IWLAN occurred, no registration change, but
         // trigger unrelated poll to pick up transport preference.
-        when(mTransportManager.isAnyApnOnIwlan()).thenReturn(true);
+        when(mAccessNetworksManager.isAnyApnOnIwlan()).thenReturn(true);
         changeRegStateWithIwlan(
                 // WWAN
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME, cellIdentity,

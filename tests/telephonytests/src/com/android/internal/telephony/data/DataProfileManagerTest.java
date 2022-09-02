@@ -36,10 +36,13 @@ import android.net.Uri;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Telephony;
+import android.telephony.AccessNetworkConstants;
 import android.telephony.NetworkRegistrationInfo;
+import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataProfile;
+import android.telephony.data.TrafficDescriptor;
 import android.telephony.data.TrafficDescriptor.OsAppId;
 import android.test.mock.MockContentProvider;
 import android.test.mock.MockContentResolver;
@@ -47,6 +50,7 @@ import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCallback;
 import com.android.internal.telephony.data.DataNetworkController.DataNetworkControllerCallback;
 import com.android.internal.telephony.data.DataProfileManager.DataProfileManagerCallback;
 
@@ -55,14 +59,17 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 import org.mockito.Mockito;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
@@ -73,7 +80,7 @@ public class DataProfileManagerTest extends TelephonyTest {
     private static final String TETHERING_APN = "DUN_APN";
     private static final String PLMN = "330123";
 
-    @Mock
+    // Mocked classes
     private DataProfileManagerCallback mDataProfileManagerCallback;
 
     private DataProfileManager mDataProfileManagerUT;
@@ -84,6 +91,8 @@ public class DataProfileManagerTest extends TelephonyTest {
     private int mPreferredApnId = 0;
 
     private DataNetworkControllerCallback mDataNetworkControllerCallback;
+
+    private DataConfigManagerCallback mDataConfigManagerCallback;
 
     private boolean mSimInserted = true;
 
@@ -142,7 +151,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                         0,                      // max_conns
                         0,                      // wait_time
                         0,                      // max_conns_time
-                        -1,                     // mtu
+                        0,                      // mtu
                         1280,                   // mtu_v4
                         1280,                   // mtu_v6
                         "",                     // mvno_type
@@ -281,9 +290,9 @@ public class DataProfileManagerTest extends TelephonyTest {
                         0,                      // max_conns
                         0,                      // wait_time
                         0,                      // max_conns_time
-                        -1,                     // mtu
-                        -1,                     // mtu_v4
-                        -1,                     // mtu_v6
+                        0,                      // mtu
+                        0,                      // mtu_v4
+                        0,                      // mtu_v6
                         "",                     // mvno_type
                         "",                     // mnvo_match_data
                         TelephonyManager.NETWORK_TYPE_BITMASK_LTE
@@ -295,6 +304,8 @@ public class DataProfileManagerTest extends TelephonyTest {
                         0                       // always_on
                 }
         );
+
+        private Set<Object> mDeletedApns = new HashSet<>();
 
         @Override
         public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs,
@@ -317,7 +328,9 @@ public class DataProfileManagerTest extends TelephonyTest {
                     MatrixCursor mc = new MatrixCursor(APN_COLUMNS);
                     if (mSimInserted) {
                         for (Object apnSetting : mAllApnSettings) {
-                            mc.addRow((Object[]) apnSetting);
+                            if (!mDeletedApns.contains(apnSetting)) {
+                                mc.addRow((Object[]) apnSetting);
+                            }
                         }
                     }
                     return mc;
@@ -332,11 +345,13 @@ public class DataProfileManagerTest extends TelephonyTest {
                 return mc;
             } else if (uri.isPathPrefixMatch(Telephony.Carriers.PREFERRED_APN_URI)) {
                 for (Object apnSetting : mAllApnSettings) {
-                    int id = (int) ((Object[]) apnSetting)[0];
-                    if (id == mPreferredApnId) {
-                        MatrixCursor mc = new MatrixCursor(APN_COLUMNS);
-                        mc.addRow((Object[]) apnSetting);
-                        return mc;
+                    if (!mDeletedApns.contains(apnSetting)) {
+                        int id = (int) ((Object[]) apnSetting)[0];
+                        if (id == mPreferredApnId) {
+                            MatrixCursor mc = new MatrixCursor(APN_COLUMNS);
+                            mc.addRow((Object[]) apnSetting);
+                            return mc;
+                        }
                     }
                 }
             }
@@ -360,9 +375,34 @@ public class DataProfileManagerTest extends TelephonyTest {
             logd("ApnSettingContentProvider: uri=" + uri + ", values=" + values);
             if (uri.isPathPrefixMatch(Telephony.Carriers.PREFERRED_APN_URI)) {
                 mPreferredApnId = values.getAsInteger(Telephony.Carriers.APN_ID);
+                if (mPreferredApnId != -1) {
+                    for (Object apnSetting : mAllApnSettings) {
+                        int id = (int) ((Object[]) apnSetting)[0];
+                        if (id == mPreferredApnId) {
+                            mPreferredApnSet = (int) ((Object[]) apnSetting)[28]; //update setId too
+                        }
+                    }
+                } else {
+                    mPreferredApnSet = 0; // db is emptied
+                }
                 logd("mPreferredApnId=" + mPreferredApnId);
             }
             return null;
+        }
+
+        public boolean removeApnByApnId(int apnId) {
+            for (Object apnSetting : mAllApnSettings) {
+                int id = (int) ((Object[]) apnSetting)[0];
+                if (apnId == id) {
+                    mDeletedApns.add(apnSetting);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public void restoreApnSettings() {
+            mDeletedApns.clear();
         }
     }
 
@@ -399,11 +439,17 @@ public class DataProfileManagerTest extends TelephonyTest {
         method.invoke(mDataProfileManagerUT, dataProfiles);
     }
 
+    private @NonNull List<DataProfile> getAllDataProfiles() throws Exception {
+        Field field = DataProfileManager.class.getDeclaredField("mAllDataProfiles");
+        field.setAccessible(true);
+        return (List<DataProfile>) field.get(mDataProfileManagerUT);
+    }
+
     @Before
     public void setUp() throws Exception {
         logd("DataProfileManagerTest +Setup!");
         super.setUp(getClass().getSimpleName());
-        doReturn(true).when(mPhone).isUsingNewDataStack();
+        mDataProfileManagerCallback = Mockito.mock(DataProfileManagerCallback.class);
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 Telephony.Carriers.CONTENT_URI.getAuthority(), mApnSettingContentProvider);
 
@@ -421,7 +467,11 @@ public class DataProfileManagerTest extends TelephonyTest {
         verify(mDataNetworkController).registerDataNetworkControllerCallback(
                         dataNetworkControllerCallbackCaptor.capture());
         mDataNetworkControllerCallback = dataNetworkControllerCallbackCaptor.getValue();
-        mDataProfileManagerUT.obtainMessage(1).sendToTarget();
+        ArgumentCaptor<DataConfigManagerCallback> dataConfigManagerCallbackCaptor =
+                ArgumentCaptor.forClass(DataConfigManagerCallback.class);
+        verify(mDataConfigManager).registerCallback(dataConfigManagerCallbackCaptor.capture());
+        mDataConfigManagerCallback = dataConfigManagerCallbackCaptor.getValue();
+        mDataConfigManagerCallback.onCarrierConfigChanged();
         processAllMessages();
 
         logd("DataProfileManagerTest -Setup!");
@@ -429,6 +479,9 @@ public class DataProfileManagerTest extends TelephonyTest {
 
     @After
     public void tearDown() throws Exception {
+        mDataProfileManagerUT = null;
+        mDataNetworkControllerCallback = null;
+        mDataConfigManagerCallback = null;
         super.tearDown();
     }
 
@@ -611,6 +664,44 @@ public class DataProfileManagerTest extends TelephonyTest {
     }
 
     @Test
+    public void testSetInitialAttachDataProfileMultipleRequests() throws Exception {
+        // Test: Modem Cleared IA, should always send IA to modem
+        // TODO(b/237444788): this case should be removed from U
+        mDataProfileManagerUT.obtainMessage(3 /* EVENT_SIM_REFRESH */).sendToTarget();
+        processAllMessages();
+
+        Field IADPField = DataProfileManager.class.getDeclaredField("mInitialAttachDataProfile");
+        IADPField.setAccessible(true);
+        DataProfile dp = (DataProfile) IADPField.get(mDataProfileManagerUT);
+
+        Mockito.clearInvocations(mMockedWwanDataServiceManager);
+        mDataProfileManagerUT.obtainMessage(3 /* EVENT_SIM_REFRESH */).sendToTarget();
+        processAllMessages();
+        DataProfile dp2 = (DataProfile) IADPField.get(mDataProfileManagerUT);
+
+        assertThat(Objects.equals(dp, dp2)).isTrue();
+        verify(mMockedWwanDataServiceManager)
+                .setInitialAttachApn(any(DataProfile.class), eq(false), eq(null));
+
+        // Test: Modem did NOT clear IA, should not send IA to modem even if IA stays the same
+        mDataProfileManagerUT.obtainMessage(2 /* EVENT_APN_DATABASE_CHANGED */).sendToTarget();
+        processAllMessages();
+
+        IADPField = DataProfileManager.class.getDeclaredField("mInitialAttachDataProfile");
+        IADPField.setAccessible(true);
+        dp = (DataProfile) IADPField.get(mDataProfileManagerUT);
+        Mockito.clearInvocations(mMockedWwanDataServiceManager);
+
+        mDataProfileManagerUT.obtainMessage(2 /* EVENT_APN_DATABASE_CHANGED */).sendToTarget();
+        processAllMessages();
+        dp2 = (DataProfile) IADPField.get(mDataProfileManagerUT);
+
+        assertThat(Objects.equals(dp, dp2)).isTrue();
+        verify(mMockedWwanDataServiceManager, Mockito.never())
+                .setInitialAttachApn(any(DataProfile.class), eq(false), eq(null));
+    }
+
+    @Test
     public void testSimRemoval() {
         Mockito.clearInvocations(mDataProfileManagerCallback);
         mSimInserted = false;
@@ -757,23 +848,225 @@ public class DataProfileManagerTest extends TelephonyTest {
     }
 
     @Test
-    public void testIsDataProfileValid() {
+    public void testDedupeDataProfiles3() throws Exception {
+        DataProfile dataProfile1 = new DataProfile.Builder()
+                .setApnSetting(new ApnSetting.Builder()
+                        .setEntryName("BTT Lastgenphone")
+                        .setId(1)
+                        .setOperatorNumeric("123456")
+                        .setApnName("lastgenphone")
+                        .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS
+                                | ApnSetting.TYPE_SUPL | ApnSetting.TYPE_FOTA)
+                        .setMmsc(Uri.parse("http://mmsc.mobile.btt.net"))
+                        .setMmsProxyAddress("proxy.mobile.btt.net")
+                        .setMmsProxyPort(80)
+                        .setMtuV4(1410)
+                        .setProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setRoamingProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setCarrierEnabled(true)
+                        .build())
+                .build();
+
+        DataProfile dataProfile2 = new DataProfile.Builder()
+                .setApnSetting(new ApnSetting.Builder()
+                        .setEntryName("BTT XCAP")
+                        .setId(5)
+                        .setOperatorNumeric("123456")
+                        .setApnName("lastgenphone")
+                        .setApnTypeBitmask(ApnSetting.TYPE_XCAP)
+                        .setProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setRoamingProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setCarrierEnabled(true)
+                        .build())
+                .build();
+
+        List<DataProfile> dataProfiles = new ArrayList<>(Arrays.asList(dataProfile2, dataProfile1));
+
+        logd("dp1.apnSetting, dp2.apnSetting similar="
+                + dataProfile1.getApnSetting().similar(dataProfile2.getApnSetting()));
+
+        dedupeDataProfiles(dataProfiles);
+        // After deduping, there should be only one.
+        assertThat(dataProfiles).hasSize(1);
+
+        DataProfile dataProfile = dataProfiles.get(0);
+        assertThat(dataProfile.getApnSetting()).isNotNull();
+
+
+        logd("After merged: " + dataProfile);
+        assertThat(dataProfile.getApnSetting().getApnTypeBitmask()).isEqualTo(
+                ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS | ApnSetting.TYPE_SUPL
+                        | ApnSetting.TYPE_FOTA | ApnSetting.TYPE_XCAP);
+    }
+
+    @Test
+    public void testDefaultEmergencyDataProfileValid() {
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)
                 .build(), mPhone);
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
                 tnr, TelephonyManager.NETWORK_TYPE_LTE);
-        assertThat(dataProfile.getApnSetting().getApnSetId()).isEqualTo(
-                Telephony.Carriers.NO_APN_SET_ID);
-        assertThat(mDataProfileManagerUT.isDataProfileValid(dataProfile)).isTrue();
 
-        tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)
-                .build(), mPhone);
+        assertThat(dataProfile.getApn()).isEqualTo("sos");
+        assertThat(dataProfile.getTrafficDescriptor().getDataNetworkName()).isEqualTo("sos");
+    }
+
+    @Test
+    public void testResetApn() {
+        mSimInserted = true;
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(), mPhone);
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE);
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
+        dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
+        dataProfile.setPreferred(true);
+        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(dataProfile));
+        processAllMessages();
+
+        // After internet connected, preferred APN should be set
+        assertThat(mDataProfileManagerUT.isAnyPreferredDataProfileExisting()).isTrue();
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
+
+        // APN reset
+        mPreferredApnId = -1;
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // preferred APN should set to be the prev preferred
+        assertThat(mDataProfileManagerUT.isAnyPreferredDataProfileExisting()).isTrue();
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
+
+        //APN reset and removed GENERAL_PURPOSE_APN(as if user created) from APN DB
+        mPreferredApnId = -1;
+        mApnSettingContentProvider.removeApnByApnId(1);
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // There should be no preferred APN after APN reset
+        assertThat(mDataProfileManagerUT.isAnyPreferredDataProfileExisting()).isFalse();
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isFalse();
+
+        // restore mApnSettingContentProvider
+        mApnSettingContentProvider.restoreApnSettings();
+    }
+
+    @Test
+    public void testResetApnWithPreferredConfig() {
+        // carrier configured preferred data profile should be picked
+        doReturn(GENERAL_PURPOSE_APN1).when(mDataConfigManager).getDefaultPreferredApn();
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(), mPhone);
+        mSimInserted = true;
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // The carrier configured data profile should be the preferred APN after APN reset
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE);
+
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN1);
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
+
+        // APN reset
+        mPreferredApnId = -1;
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        Mockito.clearInvocations(mDataConfigManager);
+        processAllMessages();
+
+        // The carrier configured data profile should be the preferred APN after APN reset
         dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
                 tnr, TelephonyManager.NETWORK_TYPE_LTE);
-        assertThat(dataProfile.getApnSetting().getApnSetId()).isEqualTo(
-                Telephony.Carriers.MATCH_ALL_APN_SET_ID);
-        assertThat(mDataProfileManagerUT.isDataProfileValid(dataProfile)).isTrue();
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN1);
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
+    }
+
+    @Test
+    public void testTetheringApnExisting() {
+        assertThat(mDataProfileManagerUT.isTetheringDataProfileExisting(
+                TelephonyManager.NETWORK_TYPE_NR)).isTrue();
+        assertThat(mDataProfileManagerUT.isTetheringDataProfileExisting(
+                TelephonyManager.NETWORK_TYPE_LTE)).isFalse();
+    }
+
+    @Test
+    public void testTetheringApnDisabledForRoaming() {
+        doReturn(true).when(mDataConfigManager).isTetheringProfileDisabledForRoaming();
+
+        assertThat(mDataProfileManagerUT.isTetheringDataProfileExisting(
+                TelephonyManager.NETWORK_TYPE_NR)).isTrue();
+
+        ServiceState ss = new ServiceState();
+
+        ss.addNetworkRegistrationInfo(new NetworkRegistrationInfo.Builder()
+                .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_NR)
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING)
+                .setDomain(NetworkRegistrationInfo.DOMAIN_PS)
+                .build());
+
+        ss.setDataRoamingFromRegistration(true);
+        doReturn(ss).when(mSST).getServiceState();
+        doReturn(ss).when(mPhone).getServiceState();
+
+        assertThat(mDataProfileManagerUT.isTetheringDataProfileExisting(
+                TelephonyManager.NETWORK_TYPE_NR)).isFalse();
+    }
+
+    @Test
+    public void testNoDefaultIms() throws Exception {
+        List<DataProfile> dataProfiles = getAllDataProfiles();
+
+        // Since the database already had IMS, there should not be default IMS created in the
+        // database.
+        assertThat(dataProfiles.stream()
+                .filter(dp -> dp.canSatisfy(NetworkCapabilities.NET_CAPABILITY_IMS))
+                .collect(Collectors.toList())).hasSize(1);
+    }
+
+    @Test
+    public void testDataProfileCompatibility() throws Exception {
+        DataProfile enterpriseDataProfile = new DataProfile.Builder()
+                .setTrafficDescriptor(new TrafficDescriptor(null,
+                        new TrafficDescriptor.OsAppId(TrafficDescriptor.OsAppId.ANDROID_OS_ID,
+                                "ENTERPRISE", 1).getBytes()))
+                .build();
+
+        // Make sure the TD only profile is always compatible.
+        assertThat(mDataProfileManagerUT.isDataProfileCompatible(enterpriseDataProfile)).isTrue();
+
+        // Make sure the profile which is slightly modified is also compatible.
+        DataProfile dataProfile1 = new DataProfile.Builder()
+                .setApnSetting(new ApnSetting.Builder()
+                        .setEntryName(GENERAL_PURPOSE_APN)
+                        .setId(1)
+                        .setApnName(GENERAL_PURPOSE_APN)
+                        .setProxyAddress("")
+                        .setMmsProxyAddress("")
+                        .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS
+                                | ApnSetting.TYPE_SUPL | ApnSetting.TYPE_IA | ApnSetting.TYPE_FOTA)
+                        .setUser("")
+                        .setPassword("")
+                        .setAuthType(ApnSetting.AUTH_TYPE_NONE)
+                        .setProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setRoamingProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                        .setCarrierEnabled(true)
+                        .setPersistent(true)
+                        .setMtuV4(1280)
+                        .setMtuV6(1280)
+                        .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_LTE
+                                | TelephonyManager.NETWORK_TYPE_BITMASK_NR))
+                        .setMvnoMatchData("")
+                        .build())
+                .build();
+
+        assertThat(mDataProfileManagerUT.isDataProfileCompatible(dataProfile1)).isTrue();
     }
 }
