@@ -106,6 +106,9 @@ public class DataProfileManager extends Handler {
     /** The preferred data profile used for internet. */
     private @Nullable DataProfile mPreferredDataProfile = null;
 
+    /** The last data profile that's successful for internet connection. */
+    private @Nullable DataProfile mLastInternetDataProfile = null;
+
     /** Preferred data profile set id. */
     private int mPreferredDataProfileSetId = Telephony.Carriers.NO_APN_SET_ID;
 
@@ -166,7 +169,12 @@ public class DataProfileManager extends Handler {
                     public void onInternetDataNetworkConnected(
                             @NonNull List<DataProfile> dataProfiles) {
                         DataProfileManager.this.onInternetDataNetworkConnected(dataProfiles);
-                    }});
+                    }
+                    @Override
+                    public void onInternetDataNetworkDisconnected() {
+                        DataProfileManager.this.onInternetDataNetworkDisconnected();
+                    }
+                });
         mDataConfigManager.registerCallback(new DataConfigManagerCallback(this::post) {
             @Override
             public void onCarrierConfigChanged() {
@@ -410,9 +418,17 @@ public class DataProfileManager extends Handler {
         DataProfile dataProfile = dataProfiles.stream()
                 .max(Comparator.comparingLong(DataProfile::getLastSetupTimestamp).reversed())
                 .orElse(null);
+        mLastInternetDataProfile = dataProfile;
         // Save the preferred data profile into database.
         setPreferredDataProfile(dataProfile);
         updateDataProfiles(ONLY_UPDATE_IA_IF_CHANGED);
+    }
+
+    /**
+     * Called when internet data is disconnected.
+     */
+    private void onInternetDataNetworkDisconnected() {
+        mLastInternetDataProfile = null;
     }
 
     /**
@@ -498,12 +514,12 @@ public class DataProfileManager extends Handler {
                     setPreferredDataProfile(preferredDataProfile);
                 } else {
                     preferredDataProfile = mAllDataProfiles.stream()
-                            .filter(dp -> areDataProfileSharingApn(dp, mPreferredDataProfile))
+                            .filter(dp -> areDataProfileSharingApn(dp, mLastInternetDataProfile))
                             .findFirst()
                             .orElse(null);
                     if (preferredDataProfile != null) {
                         log("updatePreferredDataProfile: preferredDB is empty and no carrier "
-                                + "default configured, setting preferred to be prev preferred DP.");
+                                + "default configured, setting preferred to be prev internet DP.");
                         setPreferredDataProfile(preferredDataProfile);
                     }
                 }
@@ -852,7 +868,7 @@ public class DataProfileManager extends Handler {
                         || b.getNetworkTypeBitmask()
                         == (int) TelephonyManager.NETWORK_TYPE_BITMASK_UNKNOWN
                         || (a.getNetworkTypeBitmask() & b.getNetworkTypeBitmask()) != 0)) {
-                    reportAnomaly("Found overlapped network type under the APN name"
+                    reportAnomaly("Found overlapped network type under the APN name "
                                     + a.getApnName(),
                             "9af73e18-b523-4dc5-adab-4bb24555d839");
                 }
