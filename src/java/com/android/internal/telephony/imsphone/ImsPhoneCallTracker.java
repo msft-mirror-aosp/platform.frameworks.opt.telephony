@@ -66,6 +66,7 @@ import android.telephony.TelephonyLocalConnection;
 import android.telephony.TelephonyManager;
 import android.telephony.emergency.EmergencyNumber;
 import android.telephony.ims.ImsCallProfile;
+import android.telephony.ims.ImsCallSession;
 import android.telephony.ims.ImsConferenceState;
 import android.telephony.ims.ImsMmTelManager;
 import android.telephony.ims.ImsReasonInfo;
@@ -506,6 +507,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         PENDING_RESUME_FOREGROUND_AFTER_FAILURE,
         // Pending holding a call to dial another outgoing call
         HOLDING_TO_DIAL_OUTGOING,
+        // Pending resuming the foreground call after it has completed an ongoing hold operation.
+        PENDING_RESUME_FOREGROUND_AFTER_HOLD
     }
 
     //***** Instance Variables
@@ -2068,9 +2071,15 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         //they were switched before holding
         ImsCall imsCall = mForegroundCall.getImsCall();
         if (imsCall != null) {
-            imsCall.resume();
-            mMetrics.writeOnImsCommand(mPhone.getPhoneId(), imsCall.getSession(),
-                    ImsCommand.IMS_CMD_RESUME);
+            if (!imsCall.isPendingHold()) {
+                imsCall.resume();
+                mMetrics.writeOnImsCommand(mPhone.getPhoneId(), imsCall.getSession(),
+                        ImsCommand.IMS_CMD_RESUME);
+            } else {
+                mHoldSwitchingState =
+                        HoldSwapState.PENDING_RESUME_FOREGROUND_AFTER_HOLD;
+                logHoldSwapState("resumeForegroundCall - unhold pending; resume request again");
+            }
         }
     }
 
@@ -2790,7 +2799,9 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
 
     private void maybeSetVideoCallProvider(ImsPhoneConnection conn, ImsCall imsCall) {
         android.telecom.Connection.VideoProvider connVideoProvider = conn.getVideoProvider();
-        if (connVideoProvider != null || imsCall.getCallSession().getVideoCallProvider() == null) {
+        ImsCallSession callSession = imsCall.getCallSession(); 
+        if (connVideoProvider != null || callSession == null
+            || callSession.getVideoCallProvider() == null) {
             return;
         }
 
@@ -3284,12 +3295,20 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
 
                 } else if (conn.isIncoming() && conn.getConnectTime() == 0
                         && cause != DisconnectCause.ANSWERED_ELSEWHERE) {
-
-                    if (conn.getDisconnectCause() == DisconnectCause.LOCAL) {
+                    // Two cases where the call is declared as rejected.
+                    // 1. The disconnect was initiated by the user.  I.e. the connection's
+                    // disconnect cause is LOCAL at this point.
+                    // 2. The network provided disconnect cause is INCOMING_REJECTED.  This will be
+                    // the case for ImsReasonInfo.CODE_USER_TERMINATED_BY_REMOTE and
+                    // ImsReasonInfo.CODE_REJECTED_ELSEWHERE.
+                    if (conn.getDisconnectCause() == DisconnectCause.LOCAL
+                            || cause == DisconnectCause.INCOMING_REJECTED) {
                         // If the user initiated a disconnect of this connection, then we will treat
                         // this is a rejected call.
-                        // Note; the record the fact that this is a local disconnect in
+                        // Note; we record the fact that this is a local disconnect in
                         // ImsPhoneConnection#onHangupLocal
+                        // Alternatively, the network can specify INCOMING_REJECTED as a result of
+                        // remote reject on another device; we'll still treat as rejected.
                         cause = DisconnectCause.INCOMING_REJECTED;
                     } else {
                         // Otherwise in all other cases consider it missed.
@@ -3449,7 +3468,12 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 // processCallStateChange above may have caused the mBackgroundCall and
                 // mForegroundCall references below to change meaning.  Watch out for this if you
                 // are reading through this code.
-                if (oldState == ImsPhoneCall.State.ACTIVE) {
+                if (mHoldSwitchingState
+                        == HoldSwapState.PENDING_RESUME_FOREGROUND_AFTER_HOLD) {
+                    sendEmptyMessage(EVENT_RESUME_NOW_FOREGROUND_CALL);
+                    mHoldSwitchingState = HoldSwapState.INACTIVE;
+                    mCallExpectedToResume = null;
+                } else if (oldState == ImsPhoneCall.State.ACTIVE) {
                     // Note: This case comes up when we have just held a call in response to a
                     // switchWaitingOrHoldingAndActive.  We now need to resume the background call.
                     if (mForegroundCall.getState() == ImsPhoneCall.State.HOLDING
@@ -3494,7 +3518,10 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
 
             synchronized (mSyncHold) {
                 ImsPhoneCall.State bgState = mBackgroundCall.getState();
-                if (reasonInfo.getCode() == ImsReasonInfo.CODE_LOCAL_CALL_TERMINATED) {
+                if (mHoldSwitchingState
+                        == HoldSwapState.PENDING_RESUME_FOREGROUND_AFTER_HOLD) {
+                    mHoldSwitchingState = HoldSwapState.INACTIVE;
+                } else if (reasonInfo.getCode() == ImsReasonInfo.CODE_LOCAL_CALL_TERMINATED) {
                     // disconnected while processing hold
                     if (mPendingMO != null) {
                         dialPendingMO();
@@ -4590,6 +4617,9 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 break;
             case HOLDING_TO_DIAL_OUTGOING:
                 holdSwapState = "HOLDING_TO_DIAL_OUTGOING";
+                break;
+            case PENDING_RESUME_FOREGROUND_AFTER_HOLD:
+                holdSwapState = "PENDING_RESUME_FOREGROUND_AFTER_HOLD";
                 break;
         }
         logi("holdSwapState set to " + holdSwapState + " at " + loc);

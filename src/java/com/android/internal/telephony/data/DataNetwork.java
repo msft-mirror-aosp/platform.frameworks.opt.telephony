@@ -231,12 +231,6 @@ public class DataNetwork extends StateMachine {
     /** Event for CSS indicator changed. */
     private static final int EVENT_CSS_INDICATOR_CHANGED = 24;
 
-    /** The default MTU for IPv4 network. */
-    private static final int DEFAULT_MTU_V4 = 1280;
-
-    /** The default MTU for IPv6 network. */
-    private static final int DEFAULT_MTU_V6 = 1280;
-
     /** Invalid context id. */
     private static final int INVALID_CID = -1;
 
@@ -634,10 +628,10 @@ public class DataNetwork extends StateMachine {
     private @NonNull DataAllowedReason mDataAllowedReason;
 
     /**
-     * PCO (Protocol Configuration Options) data received from the network. Key is the PCO id, value
-     * is the PCO content.
+     * PCO (Protocol Configuration Options) data received from the network. The first key is the
+     * cid of the PCO data, the second key is the PCO id, the value is the PCO data.
      */
-    private final @NonNull Map<Integer, PcoData> mPcoData = new ArrayMap<>();
+    private final @NonNull Map<Integer, Map<Integer, PcoData>> mPcoData = new ArrayMap<>();
 
     /** The QOS bearer sessions. */
     private final @NonNull List<QosBearerSession> mQosBearerSessions = new ArrayList<>();
@@ -989,6 +983,7 @@ public class DataNetwork extends StateMachine {
         public void enter() {
             logv("Registering all events.");
             mDataConfigManager.registerForConfigUpdate(getHandler(), EVENT_DATA_CONFIG_UPDATED);
+            mRil.registerForPcoData(getHandler(), EVENT_PCO_DATA_RECEIVED, null);
             mPhone.getDisplayInfoController().registerForTelephonyDisplayInfoChanged(
                     getHandler(), EVENT_DISPLAY_INFO_CHANGED, null);
             mPhone.getServiceStateTracker().registerForServiceStateChanged(getHandler(),
@@ -1041,6 +1036,7 @@ public class DataNetwork extends StateMachine {
             mPhone.getDisplayInfoController().unregisterForTelephonyDisplayInfoChanged(
                     getHandler());
             mDataConfigManager.unregisterForConfigUpdate(getHandler());
+            mRil.unregisterForPcoData(getHandler());
         }
 
         @Override
@@ -1087,9 +1083,13 @@ public class DataNetwork extends StateMachine {
                     updateNetworkCapabilities();
                     break;
                 }
+                case EVENT_PCO_DATA_RECEIVED: {
+                    AsyncResult ar = (AsyncResult) msg.obj;
+                    onPcoDataReceived((PcoData) ar.result);
+                    break;
+                }
                 case EVENT_BANDWIDTH_ESTIMATE_FROM_MODEM_CHANGED:
                 case EVENT_TEAR_DOWN_NETWORK:
-                case EVENT_PCO_DATA_RECEIVED:
                 case EVENT_STUCK_IN_TRANSIENT_STATE:
                 case EVENT_DISPLAY_INFO_CHANGED:
                 case EVENT_WAITING_FOR_TEARING_DOWN_CONDITION_MET:
@@ -1168,7 +1168,6 @@ public class DataNetwork extends StateMachine {
                     break;
                 case EVENT_START_HANDOVER:
                 case EVENT_TEAR_DOWN_NETWORK:
-                case EVENT_PCO_DATA_RECEIVED:
                 case EVENT_WAITING_FOR_TEARING_DOWN_CONDITION_MET:
                     // Defer the request until connected or disconnected.
                     log("Defer message " + eventToString(msg.what));
@@ -1235,6 +1234,13 @@ public class DataNetwork extends StateMachine {
                 }
             }
 
+            // If we've ever received PCO data before connected, now it's the time to
+            // process it.
+            mPcoData.getOrDefault(mCid.get(mTransport), Collections.emptyMap())
+                    .forEach((pcoId, pcoData) -> {
+                        onPcoDataChanged(pcoData);
+                    });
+
             notifyPreciseDataConnectionState();
             updateSuspendState();
         }
@@ -1285,10 +1291,6 @@ public class DataNetwork extends StateMachine {
                 case EVENT_SUBSCRIPTION_PLAN_OVERRIDE:
                     updateMeteredAndCongested();
                     break;
-                case EVENT_PCO_DATA_RECEIVED:
-                    ar = (AsyncResult) msg.obj;
-                    onPcoDataReceived((PcoData) ar.result);
-                    break;
                 case EVENT_DEACTIVATE_DATA_NETWORK_RESPONSE:
                     int resultCode = msg.arg1;
                     onDeactivateResponse(resultCode);
@@ -1300,8 +1302,6 @@ public class DataNetwork extends StateMachine {
                 case EVENT_VOICE_CALL_STARTED:
                 case EVENT_VOICE_CALL_ENDED:
                 case EVENT_CSS_INDICATOR_CHANGED:
-                    // We might entered non-VoPS network. Need to update the network capability to
-                    // remove MMTEL capability.
                     updateSuspendState();
                     updateNetworkCapabilities();
                     break;
@@ -1360,10 +1360,6 @@ public class DataNetwork extends StateMachine {
                             msg.getData().getParcelable(DataServiceManager.DATA_CALL_RESPONSE);
                     onHandoverResponse(resultCode, dataCallResponse,
                             (DataHandoverRetryEntry) msg.obj);
-                    break;
-                case EVENT_PCO_DATA_RECEIVED:
-                    AsyncResult ar = (AsyncResult) msg.obj;
-                    onPcoDataReceived((PcoData) ar.result);
                     break;
                 case EVENT_STUCK_IN_TRANSIENT_STATE:
                     reportAnomaly("Data service did not respond the handover request within "
@@ -1478,8 +1474,6 @@ public class DataNetwork extends StateMachine {
                 case EVENT_CSS_INDICATOR_CHANGED:
                 case EVENT_VOICE_CALL_STARTED:
                 case EVENT_VOICE_CALL_ENDED:
-                    // We might entered non-VoPS network. Need to update the network capability to
-                    // remove MMTEL capability.
                     updateSuspendState();
                     updateNetworkCapabilities();
                     break;
@@ -1555,7 +1549,6 @@ public class DataNetwork extends StateMachine {
     private void registerForWwanEvents() {
         registerForBandwidthUpdate();
         mKeepaliveTracker.registerForKeepaliveStatus();
-        mRil.registerForPcoData(this.getHandler(), EVENT_PCO_DATA_RECEIVED, null);
     }
 
     /**
@@ -1564,7 +1557,6 @@ public class DataNetwork extends StateMachine {
     private void unregisterForWwanEvents() {
         unregisterForBandwidthUpdate();
         mKeepaliveTracker.unregisterForKeepaliveStatus();
-        mRil.unregisterForPcoData(this.getHandler());
     }
 
     @Override
@@ -1811,14 +1803,13 @@ public class DataNetwork extends StateMachine {
             }
         }
 
-        // If voice call is on-going, do not change MMTEL capability, which is an immutable
-        // capability. Changing it will result in CS tearing down IMS network, and the voice
-        // call will drop.
-        if (shouldDelayImsTearDown() && mNetworkCapabilities != null
+        // Once we set the MMTEL capability, we should never remove it because it's an immutable
+        // capability defined by connectivity service. When the device enters from VoPS to non-VoPS,
+        // we should perform grace tear down from data network controller if needed.
+        if (mNetworkCapabilities != null
                 && mNetworkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_MMTEL)) {
             // Previous capability has MMTEL, so add it again.
             builder.addCapability(NetworkCapabilities.NET_CAPABILITY_MMTEL);
-            log("Delayed IMS tear down. Reporting MMTEL capability for now.");
         } else {
             // Always add MMTEL capability on IMS network unless network explicitly indicates VoPS
             // not supported.
@@ -2225,7 +2216,7 @@ public class DataNetwork extends StateMachine {
                 mtuV4 = mDataProfile.getApnSetting().getMtuV4();
             }
             if (mtuV4 <= 0) {
-                mtuV4 = DEFAULT_MTU_V4;
+                mtuV4 = mDataConfigManager.getDefaultMtu();
             }
         }
 
@@ -2237,7 +2228,7 @@ public class DataNetwork extends StateMachine {
                 mtuV6 = mDataProfile.getApnSetting().getMtuV6();
             }
             if (mtuV6 <= 0) {
-                mtuV6 = DEFAULT_MTU_V6;
+                mtuV6 = mDataConfigManager.getDefaultMtu();
             }
         }
 
@@ -2474,7 +2465,7 @@ public class DataNetwork extends StateMachine {
     public boolean shouldDelayImsTearDown() {
         return mDataConfigManager.isImsDelayTearDownEnabled()
                 && mNetworkCapabilities != null
-                && mNetworkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
+                && mNetworkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_MMTEL)
                 && mPhone.getImsPhone() != null
                 && mPhone.getImsPhone().getCallTracker().getState()
                 != PhoneConstants.State.IDLE;
@@ -2980,6 +2971,14 @@ public class DataNetwork extends StateMachine {
     }
 
     /**
+     * @return {@code true} if this network was setup for SUPL during emergency call. {@code false}
+     * otherwise.
+     */
+    public boolean isEmergencySupl() {
+        return mDataAllowedReason == DataAllowedReason.EMERGENCY_SUPL;
+    }
+
+    /**
      * Get precise data connection state
      *
      * @return The {@link PreciseDataConnectionState}
@@ -3114,8 +3113,6 @@ public class DataNetwork extends StateMachine {
             mDataProfile = mHandoverDataProfile;
             updateDataNetwork(response);
             if (mTransport != AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
-                // Handover from WWAN to WLAN
-                mPcoData.clear();
                 unregisterForWwanEvents();
             } else {
                 // Handover from WLAN to WWAN
@@ -3142,36 +3139,55 @@ public class DataNetwork extends StateMachine {
     }
 
     /**
-     * Called when receiving PCO (Protocol Configuration Options) data from the cellular network.
+     * Called when PCO data changes.
      *
-     * @param pcoData PCO data.
+     * @param pcoData The PCO data.
      */
-    private void onPcoDataReceived(@NonNull PcoData pcoData) {
-        if (pcoData.cid != getId()) return;
-        PcoData oldData = mPcoData.put(pcoData.pcoId, pcoData);
-        if (!Objects.equals(oldData, pcoData)) {
-            log("onPcoDataReceived: " + pcoData);
-            mDataNetworkCallback.invokeFromExecutor(
-                    () -> mDataNetworkCallback.onPcoDataChanged(DataNetwork.this));
-            if (mDataProfile.getApnSetting() != null) {
-                for (int apnType : mDataProfile.getApnSetting().getApnTypes()) {
-                    Intent intent = new Intent(TelephonyManager.ACTION_CARRIER_SIGNAL_PCO_VALUE);
-                    intent.putExtra(TelephonyManager.EXTRA_APN_TYPE, apnType);
-                    intent.putExtra(TelephonyManager.EXTRA_APN_PROTOCOL,
-                            ApnSetting.getProtocolIntFromString(pcoData.bearerProto));
-                    intent.putExtra(TelephonyManager.EXTRA_PCO_ID, pcoData.pcoId);
-                    intent.putExtra(TelephonyManager.EXTRA_PCO_VALUE, pcoData.contents);
-                    mPhone.getCarrierSignalAgent().notifyCarrierSignalReceivers(intent);
-                }
+    private void onPcoDataChanged(@NonNull PcoData pcoData) {
+        log("onPcoDataChanged: " + pcoData);
+        mDataNetworkCallback.invokeFromExecutor(
+                () -> mDataNetworkCallback.onPcoDataChanged(DataNetwork.this));
+        if (mDataProfile.getApnSetting() != null) {
+            for (int apnType : mDataProfile.getApnSetting().getApnTypes()) {
+                Intent intent = new Intent(TelephonyManager.ACTION_CARRIER_SIGNAL_PCO_VALUE);
+                intent.putExtra(TelephonyManager.EXTRA_APN_TYPE, apnType);
+                intent.putExtra(TelephonyManager.EXTRA_APN_PROTOCOL,
+                        ApnSetting.getProtocolIntFromString(pcoData.bearerProto));
+                intent.putExtra(TelephonyManager.EXTRA_PCO_ID, pcoData.pcoId);
+                intent.putExtra(TelephonyManager.EXTRA_PCO_VALUE, pcoData.contents);
+                mPhone.getCarrierSignalAgent().notifyCarrierSignalReceivers(intent);
             }
         }
     }
 
     /**
-     * @return The PCO data received from the network.
+     * Called when receiving PCO (Protocol Configuration Options) data from the cellular network.
+     *
+     * @param pcoData PCO data.
+     */
+    private void onPcoDataReceived(@NonNull PcoData pcoData) {
+        // Save all the PCO data received, even though it might be unrelated to this data network.
+        // The network might be still in connecting state. Save all now and use it when entering
+        // connected state.
+        log("onPcoDataReceived: " + pcoData);
+        PcoData oldData = mPcoData.computeIfAbsent(pcoData.cid, m -> new ArrayMap<>())
+                .put(pcoData.pcoId, pcoData);
+        if (getId() == INVALID_CID || pcoData.cid != getId()) return;
+        if (!Objects.equals(oldData, pcoData)) {
+            onPcoDataChanged(pcoData);
+        }
+    }
+
+    /**
+     * @return The PCO data map of the network. The key is the PCO id, the value is the PCO data.
+     * An empty map if PCO data is not available (or when the network is on IWLAN).
      */
     public @NonNull Map<Integer, PcoData> getPcoData() {
-        return mPcoData;
+        if (mTransport == AccessNetworkConstants.TRANSPORT_TYPE_WLAN
+                || mCid.get(mTransport) == INVALID_CID) {
+            return Collections.emptyMap();
+        }
+        return mPcoData.getOrDefault(mCid.get(mTransport), Collections.emptyMap());
     }
 
     /**
