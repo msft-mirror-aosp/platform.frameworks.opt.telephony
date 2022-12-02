@@ -441,6 +441,7 @@ public class LinkBandwidthEstimator extends Handler {
             return;
         }
         mIsOnDefaultRoute = isOnDefaultRoute;
+        logd("mIsOnDefaultRoute " + mIsOnDefaultRoute);
         handleTrafficStatsPollConditionChanged();
     }
 
@@ -465,6 +466,13 @@ public class LinkBandwidthEstimator extends Handler {
         if (mScreenOn && mIsOnDefaultRoute && mIsOnActiveData) {
             updateDataRatCellIdentityBandwidth();
             handleTrafficStatsPoll();
+        } else {
+            logd("Traffic status poll stopped");
+            if (mDataActivity != TelephonyManager.DATA_ACTIVITY_NONE) {
+                mDataActivity = TelephonyManager.DATA_ACTIVITY_NONE;
+                mLinkBandwidthEstimatorCallbacks.forEach(callback -> callback.invokeFromExecutor(
+                        () -> callback.onDataActivityChanged(mDataActivity)));
+            }
         }
     }
 
@@ -1175,8 +1183,7 @@ public class LinkBandwidthEstimator extends Handler {
             StringBuilder sb = new StringBuilder();
             sb.append("Plmn").append(mPlmn)
                     .append("Rat").append(mDataRat)
-                    .append("Tac").append(mTac)
-                    .toString();
+                    .append("Tac").append(mTac);
             return sb.toString();
         }
     }
