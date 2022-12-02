@@ -3131,7 +3131,7 @@ public class DataNetwork extends StateMachine {
                 && !mAttachedNetworkRequestList.isEmpty()) {
             TelephonyNetworkRequest networkRequest = mAttachedNetworkRequestList.get(0);
             DataProfile dataProfile = mDataNetworkController.getDataProfileManager()
-                    .getDataProfileForNetworkRequest(networkRequest, targetNetworkType);
+                    .getDataProfileForNetworkRequest(networkRequest, targetNetworkType, false);
             // Some carriers have different profiles between cellular and IWLAN. We need to
             // dynamically switch profile, but only when those profiles have same APN name.
             if (dataProfile != null && dataProfile.getApnSetting() != null
@@ -3219,7 +3219,7 @@ public class DataNetwork extends StateMachine {
     }
 
     /**
-     * Called when receiving PCO (Protocol Configuration Options) data from the cellular network.
+     * Called when PCO data changes.
      *
      * @param pcoData The PCO data.
      */
