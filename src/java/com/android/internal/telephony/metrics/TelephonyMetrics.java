@@ -290,14 +290,12 @@ public class TelephonyMetrics {
                     break;
                 case "--metricsproto":
                     pw.println(convertProtoToBase64String(buildProto()));
-                    pw.println(RcsStats.getInstance().buildLog());
                     if (reset) {
                         reset();
                     }
                     break;
                 case "--metricsprototext":
                     pw.println(buildProto().toString());
-                    pw.println(RcsStats.getInstance().buildProto().toString());
                     break;
             }
         }
@@ -749,8 +747,6 @@ public class TelephonyMetrics {
                     .setRadioState(mLastRadioState.get(key)).build();
             addTelephonyEvent(event);
         }
-
-        RcsStats.getInstance().reset();
     }
 
     /**
@@ -2198,6 +2194,13 @@ public class TelephonyMetrics {
             cq.rtpInactivityDetected = callQuality.isRtpInactivityDetected();
             cq.rxSilenceDetected = callQuality.isIncomingSilenceDetectedAtCallSetup();
             cq.txSilenceDetected = callQuality.isOutgoingSilenceDetectedAtCallSetup();
+            cq.voiceFrames = callQuality.getNumVoiceFrames();
+            cq.noDataFrames = callQuality.getNumNoDataFrames();
+            cq.rtpDroppedPackets = callQuality.getNumDroppedRtpPackets();
+            cq.minPlayoutDelayMillis = callQuality.getMinPlayoutDelayMillis();
+            cq.maxPlayoutDelayMillis = callQuality.getMaxPlayoutDelayMillis();
+            cq.rxRtpSidPackets = callQuality.getNumRtpSidPacketsReceived();
+            cq.rtpDuplicatePackets = callQuality.getNumRtpDuplicatePackets();
         }
         return cq;
     }

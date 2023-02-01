@@ -17,7 +17,6 @@
 package com.android.internal.telephony;
 
 import static com.android.internal.telephony.RILConstants.*;
-import static com.android.internal.util.Preconditions.checkNotNull;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -42,6 +41,7 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.os.Trace;
 import android.os.WorkSource;
 import android.provider.Settings;
 import android.sysprop.TelephonyProperties;
@@ -95,6 +95,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -541,11 +542,11 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
 
             if (mMockModem != null) {
+                mRadioVersion = RADIO_HAL_VERSION_UNKNOWN;
+                mMockModem = null;
                 for (int service = MIN_SERVICE_IDX; service <= MAX_SERVICE_IDX; service++) {
-                    mMockModem.unbindMockModemService(service);
                     resetProxyAndRequestList(service);
                 }
-                mMockModem = null;
             }
         }
 
@@ -676,8 +677,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
                     }
                 } else {
                     mDisabledRadioServices.get(RADIO_SERVICE).add(mPhoneId);
-                    riljLoge("getRadioProxy: mRadioProxy for "
-                            + HIDL_SERVICE_NAME[mPhoneId] + " is disabled");
+                    riljLoge("getRadioProxy: set mRadioProxy for "
+                            + HIDL_SERVICE_NAME[mPhoneId] + " as disabled");
                 }
             }
         } catch (RemoteException e) {
@@ -974,8 +975,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
                     }
                 } else {
                     mDisabledRadioServices.get(service).add(mPhoneId);
-                    riljLoge("getRadioServiceProxy: " + serviceToString(service) + " for "
-                            + HIDL_SERVICE_NAME[mPhoneId] + " is disabled");
+                    riljLoge("getRadioServiceProxy: set " + serviceToString(service) + " for "
+                            + HIDL_SERVICE_NAME[mPhoneId] + " as disabled");
                 }
             }
         } catch (RemoteException e) {
@@ -1162,6 +1163,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     private void addRequest(RILRequest rr) {
         acquireWakeLock(rr, FOR_WAKELOCK);
+        Trace.asyncTraceForTrackBegin(
+                Trace.TRACE_TAG_NETWORK, "RIL", RILUtils.requestToString(rr.mRequest), rr.mSerial);
         synchronized (mRequestList) {
             rr.mStartTimeMs = SystemClock.elapsedRealtime();
             mRequestList.append(rr.mSerial, rr);
@@ -4393,7 +4396,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     @Override
     public void setAllowedCarriers(CarrierRestrictionRules carrierRestrictionRules,
             Message result, WorkSource workSource) {
-        checkNotNull(carrierRestrictionRules, "Carrier restriction cannot be null.");
+        Objects.requireNonNull(carrierRestrictionRules, "Carrier restriction cannot be null.");
 
         RadioSimProxy simProxy = getRadioServiceProxy(RadioSimProxy.class, result);
         if (!simProxy.isEmpty()) {
@@ -4546,7 +4549,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     @Override
     public void setCarrierInfoForImsiEncryption(ImsiEncryptionInfo imsiEncryptionInfo,
             Message result) {
-        checkNotNull(imsiEncryptionInfo, "ImsiEncryptionInfo cannot be null.");
+        Objects.requireNonNull(imsiEncryptionInfo, "ImsiEncryptionInfo cannot be null.");
         RadioSimProxy simProxy = getRadioServiceProxy(RadioSimProxy.class, result);
         if (simProxy.isEmpty()) return;
         if (mRadioVersion.greaterOrEqual(RADIO_HAL_VERSION_1_1)) {
@@ -4576,7 +4579,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     @Override
     public void startNattKeepalive(int contextId, KeepalivePacketData packetData,
             int intervalMillis, Message result) {
-        checkNotNull(packetData, "KeepaliveRequest cannot be null.");
+        Objects.requireNonNull(packetData, "KeepaliveRequest cannot be null.");
         RadioDataProxy dataProxy = getRadioServiceProxy(RadioDataProxy.class, result);
         if (dataProxy.isEmpty()) return;
         if (mRadioVersion.greaterOrEqual(RADIO_HAL_VERSION_1_1)) {
@@ -5186,6 +5189,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                     + " ,error: " + error);
             return null;
         }
+        Trace.asyncTraceForTrackEnd(Trace.TRACE_TAG_NETWORK, "RIL", "" /* unused */, rr.mSerial);
 
         // Time logging for RIL command and storing it in TelephonyHistogram.
         addToRilHistogram(rr);
@@ -5732,43 +5736,43 @@ public class RIL extends BaseCommands implements CommandsInterface {
         int response = RIL_UNSOL_CDMA_INFO_REC;
         if (infoRec.record instanceof CdmaInformationRecords.CdmaDisplayInfoRec) {
             if (mDisplayInfoRegistrants != null) {
-                if (RILJ_LOGD) unsljLogRet(response, infoRec.record);
+                if (isLogOrTrace()) unsljLogRet(response, infoRec.record);
                 mDisplayInfoRegistrants.notifyRegistrants(
                         new AsyncResult(null, infoRec.record, null));
             }
         } else if (infoRec.record instanceof CdmaInformationRecords.CdmaSignalInfoRec) {
             if (mSignalInfoRegistrants != null) {
-                if (RILJ_LOGD) unsljLogRet(response, infoRec.record);
+                if (isLogOrTrace()) unsljLogRet(response, infoRec.record);
                 mSignalInfoRegistrants.notifyRegistrants(
                         new AsyncResult(null, infoRec.record, null));
             }
         } else if (infoRec.record instanceof CdmaInformationRecords.CdmaNumberInfoRec) {
             if (mNumberInfoRegistrants != null) {
-                if (RILJ_LOGD) unsljLogRet(response, infoRec.record);
+                if (isLogOrTrace()) unsljLogRet(response, infoRec.record);
                 mNumberInfoRegistrants.notifyRegistrants(
                         new AsyncResult(null, infoRec.record, null));
             }
         } else if (infoRec.record instanceof CdmaInformationRecords.CdmaRedirectingNumberInfoRec) {
             if (mRedirNumInfoRegistrants != null) {
-                if (RILJ_LOGD) unsljLogRet(response, infoRec.record);
+                if (isLogOrTrace()) unsljLogRet(response, infoRec.record);
                 mRedirNumInfoRegistrants.notifyRegistrants(
                         new AsyncResult(null, infoRec.record, null));
             }
         } else if (infoRec.record instanceof CdmaInformationRecords.CdmaLineControlInfoRec) {
             if (mLineControlInfoRegistrants != null) {
-                if (RILJ_LOGD) unsljLogRet(response, infoRec.record);
+                if (isLogOrTrace()) unsljLogRet(response, infoRec.record);
                 mLineControlInfoRegistrants.notifyRegistrants(
                         new AsyncResult(null, infoRec.record, null));
             }
         } else if (infoRec.record instanceof CdmaInformationRecords.CdmaT53ClirInfoRec) {
             if (mT53ClirInfoRegistrants != null) {
-                if (RILJ_LOGD) unsljLogRet(response, infoRec.record);
+                if (isLogOrTrace()) unsljLogRet(response, infoRec.record);
                 mT53ClirInfoRegistrants.notifyRegistrants(
                         new AsyncResult(null, infoRec.record, null));
             }
         } else if (infoRec.record instanceof CdmaInformationRecords.CdmaT53AudioControlInfoRec) {
             if (mT53AudCntrlInfoRegistrants != null) {
-                if (RILJ_LOGD) {
+                if (isLogOrTrace()) {
                     unsljLogRet(response, infoRec.record);
                 }
                 mT53AudCntrlInfoRegistrants.notifyRegistrants(
@@ -5790,26 +5794,48 @@ public class RIL extends BaseCommands implements CommandsInterface {
         Rlog.v(RILJ_LOG_TAG, msg + (" [PHONE" + mPhoneId + "]"));
     }
 
+    boolean isLogOrTrace() {
+        return RIL.RILJ_LOGD || Trace.isTagEnabled(Trace.TRACE_TAG_NETWORK);
+    }
+
+    boolean isLogvOrTrace() {
+        return RIL.RILJ_LOGV || Trace.isTagEnabled(Trace.TRACE_TAG_NETWORK);
+    }
+
     @UnsupportedAppUsage
     void unsljLog(int response) {
-        riljLog("[UNSL]< " + RILUtils.responseToString(response));
+        String logStr = RILUtils.responseToString(response);
+        if (RIL.RILJ_LOGD) {
+            riljLog("[UNSL]< " + logStr);
+        }
+        Trace.instantForTrack(Trace.TRACE_TAG_NETWORK, "RIL", logStr);
     }
 
     @UnsupportedAppUsage
     void unsljLogMore(int response, String more) {
-        riljLog("[UNSL]< " + RILUtils.responseToString(response) + " " + more);
+        String logStr = RILUtils.responseToString(response) + " " + more;
+        if (RIL.RILJ_LOGD) {
+            riljLog("[UNSL]< " + logStr);
+        }
+        Trace.instantForTrack(Trace.TRACE_TAG_NETWORK, "RIL", logStr);
     }
 
     @UnsupportedAppUsage
     void unsljLogRet(int response, Object ret) {
-        riljLog("[UNSL]< " + RILUtils.responseToString(response) + " "
-                + retToString(response, ret));
+        String logStr = RILUtils.responseToString(response) + " " + retToString(response, ret);
+        if (RIL.RILJ_LOGD) {
+            riljLog("[UNSL]< " + logStr);
+        }
+        Trace.instantForTrack(Trace.TRACE_TAG_NETWORK, "RIL", logStr);
     }
 
     @UnsupportedAppUsage
     void unsljLogvRet(int response, Object ret) {
-        riljLogv("[UNSL]< " + RILUtils.responseToString(response) + " "
-                + retToString(response, ret));
+        String logStr = RILUtils.responseToString(response) + " " + retToString(response, ret);
+        if (RIL.RILJ_LOGV) {
+            riljLogv("[UNSL]< " + logStr);
+        }
+        Trace.instantForTrack(Trace.TRACE_TAG_NETWORK, "RIL", logStr);
     }
 
     @Override

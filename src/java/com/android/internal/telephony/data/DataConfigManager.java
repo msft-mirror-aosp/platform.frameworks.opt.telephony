@@ -60,6 +60,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -134,8 +135,7 @@ public class DataConfigManager extends Handler {
     private static final String DATA_CONFIG_NETWORK_TYPE_IDEN = "iDEN";
 
     /** Network type LTE. Should not be used outside of DataConfigManager. */
-    // TODO: Public only for use by DcTracker. This should be private once DcTracker is removed.
-    public static final String DATA_CONFIG_NETWORK_TYPE_LTE = "LTE";
+    private static final String DATA_CONFIG_NETWORK_TYPE_LTE = "LTE";
 
     /** Network type HSPA+. Should not be used outside of DataConfigManager. */
     private static final String DATA_CONFIG_NETWORK_TYPE_HSPAP = "HSPA+";
@@ -153,12 +153,10 @@ public class DataConfigManager extends Handler {
     private static final String DATA_CONFIG_NETWORK_TYPE_LTE_CA = "LTE_CA";
 
     /** Network type NR_NSA. Should not be used outside of DataConfigManager. */
-    // TODO: Public only for use by DcTracker. This should be private once DcTracker is removed.
-    public static final String DATA_CONFIG_NETWORK_TYPE_NR_NSA = "NR_NSA";
+    private static final String DATA_CONFIG_NETWORK_TYPE_NR_NSA = "NR_NSA";
 
     /** Network type NR_NSA_MMWAVE. Should not be used outside of DataConfigManager. */
-    // TODO: Public only for use by DcTracker. This should be private once DcTracker is removed.
-    public static final String DATA_CONFIG_NETWORK_TYPE_NR_NSA_MMWAVE = "NR_NSA_MMWAVE";
+    private static final String DATA_CONFIG_NETWORK_TYPE_NR_NSA_MMWAVE = "NR_NSA_MMWAVE";
 
     /** Network type NR_SA. Should not be used outside of DataConfigManager. */
     private static final String DATA_CONFIG_NETWORK_TYPE_NR_SA = "NR_SA";
@@ -234,11 +232,6 @@ public class DataConfigManager extends Handler {
     private EventFrequency mNetworkUnwantedAnomalyReportThreshold;
 
     /**
-     * Anomaly report thresholds for frequent APN type change at {@link AccessNetworksManager}
-     */
-    private EventFrequency mQnsFrequentApnTypeChangeAnomalyReportThreshold;
-
-    /**
      * {@code true} if enabled anomaly detection for param when QNS wants to change preferred
      * network at {@link AccessNetworksManager}.
      */
@@ -288,6 +281,8 @@ public class DataConfigManager extends Handler {
     /** The network types that only support single data networks */
     private @NonNull final @NetworkType List<Integer> mSingleDataNetworkTypeList =
             new ArrayList<>();
+    private @NonNull final @NetCapability Set<Integer> mCapabilitiesExemptFromSingleDataList =
+            new HashSet<>();
     /** The network types that support temporarily not metered */
     private @NonNull final @DataConfigNetworkType Set<String> mUnmeteredNetworkTypes =
             new HashSet<>();
@@ -419,8 +414,6 @@ public class DataConfigManager extends Handler {
                 properties.getString(KEY_ANOMALY_NETWORK_UNWANTED, null), 0, 12);
         mSetupDataCallAnomalyReportThreshold = parseSlidingWindowCounterThreshold(
                 properties.getString(KEY_ANOMALY_SETUP_DATA_CALL_FAILURE, null), 0, 12);
-        mQnsFrequentApnTypeChangeAnomalyReportThreshold = parseSlidingWindowCounterThreshold(
-                properties.getString(KEY_ANOMALY_QNS_CHANGE_NETWORK, null), 0, 5);
         mIsInvalidQnsParamAnomalyReportEnabled = properties.getBoolean(
                 KEY_ANOMALY_QNS_PARAM, false);
         mNetworkConnectingTimeout = properties.getInt(
@@ -458,13 +451,13 @@ public class DataConfigManager extends Handler {
         updateNetworkCapabilityPriority();
         updateDataRetryRules();
         updateMeteredApnTypes();
-        updateSingleDataNetworkTypeList();
+        updateSingleDataNetworkTypeAndCapabilityExemption();
         updateUnmeteredNetworkTypes();
         updateBandwidths();
         updateTcpBuffers();
         updateHandoverRules();
 
-        log("Data config updated. Config is " + (isConfigCarrierSpecific() ? "" : "not ")
+        log("Carrier config updated. Config is " + (isConfigCarrierSpecific() ? "" : "not ")
                 + "carrier specific.");
     }
 
@@ -478,7 +471,8 @@ public class DataConfigManager extends Handler {
                     CarrierConfigManager.KEY_TELEPHONY_NETWORK_CAPABILITY_PRIORITIES_STRING_ARRAY);
             if (capabilityPriorityStrings != null) {
                 for (String capabilityPriorityString : capabilityPriorityStrings) {
-                    capabilityPriorityString = capabilityPriorityString.trim().toUpperCase();
+                    capabilityPriorityString =
+                            capabilityPriorityString.trim().toUpperCase(Locale.ROOT);
                     String[] tokens = capabilityPriorityString.split(":");
                     if (tokens.length != 2) {
                         loge("Invalid config \"" + capabilityPriorityString + "\"");
@@ -649,14 +643,21 @@ public class DataConfigManager extends Handler {
     /**
      * Update the network types for only single data networks from the carrier config.
      */
-    private void updateSingleDataNetworkTypeList() {
+    private void updateSingleDataNetworkTypeAndCapabilityExemption() {
         synchronized (this) {
             mSingleDataNetworkTypeList.clear();
+            mCapabilitiesExemptFromSingleDataList.clear();
             int[] singleDataNetworkTypeList = mCarrierConfig.getIntArray(
                     CarrierConfigManager.KEY_ONLY_SINGLE_DC_ALLOWED_INT_ARRAY);
             if (singleDataNetworkTypeList != null) {
-                Arrays.stream(singleDataNetworkTypeList)
-                        .forEach(mSingleDataNetworkTypeList::add);
+                Arrays.stream(singleDataNetworkTypeList).forEach(mSingleDataNetworkTypeList::add);
+            }
+
+            int[] singleDataCapabilitiesExemptList = mCarrierConfig.getIntArray(
+                    CarrierConfigManager.KEY_CAPABILITIES_EXEMPT_FROM_SINGLE_DC_CHECK_INT_ARRAY);
+            if (singleDataCapabilitiesExemptList != null) {
+                Arrays.stream(singleDataCapabilitiesExemptList)
+                        .forEach(mCapabilitiesExemptFromSingleDataList::add);
             }
         }
     }
@@ -666,6 +667,14 @@ public class DataConfigManager extends Handler {
      */
     public @NonNull @NetworkType List<Integer> getNetworkTypesOnlySupportSingleDataNetwork() {
         return Collections.unmodifiableList(mSingleDataNetworkTypeList);
+    }
+
+    /**
+     * @return The list of {@link android.net.NetworkCapabilities.NetCapability} that every of which
+     * is exempt from the single PDN check.
+     */
+    public @NonNull @NetCapability Set<Integer> getCapabilitiesExemptFromSingleDataNetwork() {
+        return Collections.unmodifiableSet(mCapabilitiesExemptFromSingleDataList);
     }
 
     /**
@@ -852,15 +861,6 @@ public class DataConfigManager extends Handler {
     }
 
     /**
-     * Anomaly report thresholds for frequent QNS change of preferred network
-     * at {@link AccessNetworksManager}
-     * @return EventFrequency to trigger the anomaly report
-     */
-    public @NonNull EventFrequency getAnomalyQnsChangeThreshold() {
-        return mQnsFrequentApnTypeChangeAnomalyReportThreshold;
-    }
-
-    /**
      * @return {@code true} if enabled anomaly report for invalid param when QNS wants to change
      * preferred network at {@link AccessNetworksManager}.
      */
@@ -985,9 +985,8 @@ public class DataConfigManager extends Handler {
      * @param displayInfo The {@link TelephonyDisplayInfo} used to determine the type.
      * @return The equivalent {@link DataConfigNetworkType}.
      */
-    public static @NonNull @DataConfigNetworkType String getDataConfigNetworkType(
+    private static @NonNull @DataConfigNetworkType String getDataConfigNetworkType(
             @NonNull TelephonyDisplayInfo displayInfo) {
-        // TODO: Make method private once DataConnection is removed
         int networkType = displayInfo.getNetworkType();
         switch (displayInfo.getOverrideNetworkType()) {
             case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED:
@@ -1275,8 +1274,6 @@ public class DataConfigManager extends Handler {
         pw.println("mSetupDataCallAnomalyReport=" + mSetupDataCallAnomalyReportThreshold);
         pw.println("mNetworkUnwantedAnomalyReport=" + mNetworkUnwantedAnomalyReportThreshold);
         pw.println("mImsReleaseRequestAnomalyReport=" + mImsReleaseRequestAnomalyReportThreshold);
-        pw.println("mQnsFrequentApnTypeChangeAnomalyReportThreshold="
-                + mQnsFrequentApnTypeChangeAnomalyReportThreshold);
         pw.println("mIsInvalidQnsParamAnomalyReportEnabled="
                 + mIsInvalidQnsParamAnomalyReportEnabled);
         pw.println("mNetworkConnectingTimeout=" + mNetworkConnectingTimeout);
@@ -1289,6 +1286,9 @@ public class DataConfigManager extends Handler {
                 .map(ApnSetting::getApnTypeString).collect(Collectors.joining(",")));
         pw.println("Single data network types=" + mSingleDataNetworkTypeList.stream()
                 .map(TelephonyManager::getNetworkTypeName).collect(Collectors.joining(",")));
+        pw.println("Capabilities exempt from single PDN=" + mCapabilitiesExemptFromSingleDataList
+                .stream().map(DataUtils::networkCapabilityToString)
+                .collect(Collectors.joining(",")));
         pw.println("Unmetered network types=" + String.join(",", mUnmeteredNetworkTypes));
         pw.println("Roaming unmetered network types="
                 + String.join(",", mRoamingUnmeteredNetworkTypes));
