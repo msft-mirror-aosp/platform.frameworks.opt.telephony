@@ -21,6 +21,7 @@ import android.hardware.radio.RadioError;
 import android.hardware.radio.V1_0.DataRegStateResult;
 import android.hardware.radio.V1_0.SetupDataCallResult;
 import android.hardware.radio.V1_0.VoiceRegStateResult;
+import android.hardware.radio.modem.ImeiInfo;
 import android.net.KeepalivePacketData;
 import android.net.LinkProperties;
 import android.os.AsyncResult;
@@ -66,6 +67,8 @@ import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.RILUtils;
 import com.android.internal.telephony.RadioCapability;
 import com.android.internal.telephony.SmsResponse;
+import com.android.internal.telephony.SrvccConnection;
+import com.android.internal.telephony.test.SimulatedCommandsVerifier;
 import com.android.internal.telephony.UUSInfo;
 import com.android.internal.telephony.cdma.CdmaSmsBroadcastConfigInfo;
 import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
@@ -181,12 +184,19 @@ public class SimulatedCommands extends BaseCommands
     private boolean mDcSuccess = true;
     private SetupDataCallResult mSetupDataCallResult;
     private boolean mIsRadioPowerFailResponse = false;
+    private boolean mIsReportSmsMemoryStatusFailResponse = false;
 
     public boolean mSetRadioPowerForEmergencyCall;
     public boolean mSetRadioPowerAsSelectedPhoneForEmergencyCall;
 
+    public boolean mCallWaitActivated = false;
+    private SrvccConnection[] mSrvccConnections;
+
     // mode for Icc Sim Authentication
     private int mAuthenticationMode;
+
+    private int[] mImsRegistrationInfo = new int[4];
+
     //***** Constructor
     public
     SimulatedCommands() {
@@ -1298,8 +1308,17 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void reportSmsMemoryStatus(boolean available, Message result) {
-        resultSuccess(result, null);
+        if (!mIsReportSmsMemoryStatusFailResponse) {
+            resultSuccess(result, null);
+        } else {
+            CommandException ex = new CommandException(CommandException.Error.GENERIC_FAILURE);
+            resultFail(result, null, ex);
+        }
         SimulatedCommandsVerifier.getInstance().reportSmsMemoryStatus(available, result);
+    }
+
+    public void setReportSmsMemoryStatusFailResponse(boolean fail) {
+        mIsReportSmsMemoryStatusFailResponse = fail;
     }
 
     @Override
@@ -1422,6 +1441,14 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void queryCallWaiting(int serviceClass, Message response) {
+        if (response != null && serviceClass == SERVICE_CLASS_NONE) {
+            int[] r = new int[2];
+            r[0] = (mCallWaitActivated ? 1 : 0);
+            r[1] = (mCallWaitActivated ? SERVICE_CLASS_VOICE : SERVICE_CLASS_NONE);
+            resultSuccess(response, r);
+            return;
+        }
+
         unimplemented(response);
     }
 
@@ -1430,11 +1457,15 @@ public class SimulatedCommands extends BaseCommands
      * @param serviceClass is a sum of SERVICE_CLASS_*
      * @param response is callback message
      */
-
     @Override
     public void setCallWaiting(boolean enable, int serviceClass,
             Message response) {
-        unimplemented(response);
+        if ((serviceClass & SERVICE_CLASS_VOICE) == SERVICE_CLASS_VOICE) {
+            mCallWaitActivated = enable;
+        }
+        if (response != null) {
+            resultSuccess(response, null);
+        }
     }
 
     /**
@@ -1782,6 +1813,16 @@ public class SimulatedCommands extends BaseCommands
     }
 
     @Override
+    public void getImei(Message response) {
+        SimulatedCommandsVerifier.getInstance().getImei(response);
+        ImeiInfo imeiInfo = new ImeiInfo();
+        imeiInfo.imei = FAKE_IMEI;
+        imeiInfo.svn = FAKE_IMEISV;
+        imeiInfo.type = ImeiInfo.ImeiType.SECONDARY;
+        resultSuccess(response, imeiInfo);
+    }
+
+    @Override
     public void
     getCDMASubscription(Message result) {
         String ret[] = new String[5];
@@ -2067,11 +2108,27 @@ public class SimulatedCommands extends BaseCommands
 
     @Override
     public void setInitialAttachApn(DataProfile dataProfile, boolean isRoaming, Message result) {
+        SimulatedCommandsVerifier.getInstance().setInitialAttachApn(dataProfile, isRoaming, result);
+        resultSuccess(result, null);
     }
 
     @Override
     public void setDataProfile(DataProfile[] dps, boolean isRoaming, Message result) {
+        SimulatedCommandsVerifier.getInstance().setDataProfile(dps, isRoaming, result);
+        resultSuccess(result, null);
     }
+
+    @Override
+    public void startHandover(Message result, int callId) {
+        SimulatedCommandsVerifier.getInstance().startHandover(result, callId);
+        resultSuccess(result, null);
+    };
+
+    @Override
+    public void cancelHandover(Message result, int callId) {
+        SimulatedCommandsVerifier.getInstance().cancelHandover(result, callId);
+        resultSuccess(result, null);
+    };
 
     public void setImsRegistrationState(int[] regState) {
         mImsRegState = regState;
@@ -2124,6 +2181,11 @@ public class SimulatedCommands extends BaseCommands
         }else {
             resultFail(response, null, new RuntimeException("IccIoResult not set"));
         }
+    }
+
+    @Override
+    public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction,
+            int p1, int p2, int p3, String data, boolean isEs10Command, Message response) {
     }
 
     @Override
@@ -2348,6 +2410,18 @@ public class SimulatedCommands extends BaseCommands
     }
 
     @Override
+    public void registerForNotAvailable(Handler h, int what, Object obj) {
+        SimulatedCommandsVerifier.getInstance().registerForNotAvailable(h, what, obj);
+        super.registerForNotAvailable(h, what, obj);
+    }
+
+    @Override
+    public void unregisterForNotAvailable(Handler h) {
+        SimulatedCommandsVerifier.getInstance().unregisterForNotAvailable(h);
+        super.unregisterForNotAvailable(h);
+    }
+
+    @Override
     public void registerForModemReset(Handler h, int what, Object obj) {
         SimulatedCommandsVerifier.getInstance().registerForModemReset(h, what, obj);
         super.registerForModemReset(h, what, obj);
@@ -2368,6 +2442,9 @@ public class SimulatedCommands extends BaseCommands
     @Override
     public void setSignalStrengthReportingCriteria(List<SignalThresholdInfo> signalThresholdInfos,
             Message result) {
+        SimulatedCommandsVerifier.getInstance().setSignalStrengthReportingCriteria(
+                signalThresholdInfos, result);
+        resultSuccess(result, null);
     }
 
     @Override
@@ -2516,5 +2593,27 @@ public class SimulatedCommands extends BaseCommands
     public void triggerPcoData(int cid, String bearerProto, int pcoId, byte[] contents) {
         PcoData response = new PcoData(cid, bearerProto, pcoId, contents);
         mPcoDataRegistrants.notifyRegistrants(new AsyncResult(null, response, null));
+    }
+
+    @Override
+    public void setSrvccCallInfo(SrvccConnection[] srvccConnections, Message result) {
+        mSrvccConnections = srvccConnections;
+    }
+
+    public SrvccConnection[] getSrvccConnections() {
+        return mSrvccConnections;
+    }
+
+    @Override
+    public void updateImsRegistrationInfo(int regState,
+            int imsRadioTech, int suggestedAction, int capabilities, Message result) {
+        mImsRegistrationInfo[0] = regState;
+        mImsRegistrationInfo[1] = imsRadioTech;
+        mImsRegistrationInfo[2] = suggestedAction;
+        mImsRegistrationInfo[3] = capabilities;
+    }
+
+    public int[] getImsRegistrationInfo() {
+        return mImsRegistrationInfo;
     }
 }

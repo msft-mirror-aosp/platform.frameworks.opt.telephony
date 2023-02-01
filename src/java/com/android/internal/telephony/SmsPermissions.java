@@ -23,9 +23,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Binder;
 import android.os.Build;
+import android.os.UserHandle;
 import android.service.carrier.CarrierMessagingService;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.telephony.Rlog;
 
 /**
@@ -132,7 +134,15 @@ public class SmsPermissions {
      */
     public boolean checkCallingOrSelfCanGetSmscAddress(String callingPackage, String message) {
         // Allow it to the default SMS app always.
-        if (!isCallerDefaultSmsPackage(callingPackage)) {
+        boolean isDefaultSmsPackage;
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            isDefaultSmsPackage = isCallerDefaultSmsPackage(callingPackage);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+
+        if (!isDefaultSmsPackage) {
             TelephonyPermissions
                         .enforceCallingOrSelfReadPrivilegedPhoneStatePermissionOrCarrierPrivilege(
                                 mContext, mPhone.getSubId(), message);
@@ -151,7 +161,15 @@ public class SmsPermissions {
      */
     public boolean checkCallingOrSelfCanSetSmscAddress(String callingPackage, String message) {
         // Allow it to the default SMS app always.
-        if (!isCallerDefaultSmsPackage(callingPackage)) {
+        boolean isDefaultSmsPackage;
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            isDefaultSmsPackage = isCallerDefaultSmsPackage(callingPackage);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+
+        if (!isDefaultSmsPackage) {
             // Allow it with MODIFY_PHONE_STATE or Carrier Privileges
             TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(
                     mContext, mPhone.getSubId(), message);
@@ -163,7 +181,9 @@ public class SmsPermissions {
     @VisibleForTesting
     public boolean isCallerDefaultSmsPackage(String packageName) {
         if (packageNameMatchesCallingUid(packageName)) {
-            return SmsApplication.isDefaultSmsApplication(mContext, packageName);
+            UserHandle userHandle = TelephonyUtils.getSubscriptionUserHandle(mContext,
+                    mPhone.getSubId());
+            return SmsApplication.isDefaultSmsApplicationAsUser(mContext, packageName, userHandle);
         }
         return false;
     }

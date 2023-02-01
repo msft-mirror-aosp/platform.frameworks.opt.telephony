@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony;
 
+import static android.telephony.TelephonyManager.HAL_SERVICE_NETWORK;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.BroadcastReceiver;
@@ -46,6 +48,7 @@ import android.util.LocalLog;
 import android.util.Pair;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.util.ArrayUtils;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.telephony.Rlog;
@@ -56,6 +59,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
@@ -227,6 +231,11 @@ public class SignalStrengthController extends Handler {
                 while (it.hasNext()) {
                     SignalRequestRecord srr = it.next();
                     if (srr.mRequest.getLiveToken().equals(record.mRequest.getLiveToken())) {
+                        try {
+                            srr.mRequest.getLiveToken().unlinkToDeath(srr, 0);
+                        } catch (NoSuchElementException ignored) {
+                            // Either never linked or has already unlinked, ignore anyway
+                        }
                         it.remove();
                     }
                 }
@@ -351,9 +360,16 @@ public class SignalStrengthController extends Handler {
                 || (curTime - mSignalStrengthUpdatedTime > SIGNAL_STRENGTH_REFRESH_THRESHOLD_IN_MS);
         if (!isStale) return false;
 
-        List<SubscriptionInfo> subInfoList = SubscriptionController.getInstance()
-                .getActiveSubscriptionInfoList(mPhone.getContext().getOpPackageName(),
-                        mPhone.getContext().getAttributionTag());
+        List<SubscriptionInfo> subInfoList;
+        if (mPhone.isSubscriptionManagerServiceEnabled()) {
+            subInfoList = SubscriptionManagerService.getInstance().getActiveSubscriptionInfoList(
+                    mPhone.getContext().getOpPackageName(),
+                    mPhone.getContext().getAttributionTag());
+        } else {
+            subInfoList = SubscriptionController.getInstance()
+                    .getActiveSubscriptionInfoList(mPhone.getContext().getOpPackageName(),
+                            mPhone.getContext().getAttributionTag());
+        }
 
         if (!ArrayUtils.isEmpty(subInfoList)) {
             for (SubscriptionInfo info : subInfoList) {
@@ -417,7 +433,7 @@ public class SignalStrengthController extends Handler {
                             (lteMeasurementEnabled & CellSignalStrengthLte.USE_RSRP) != 0));
         }
 
-        if (mPhone.getHalVersion().greaterOrEqual(RIL.RADIO_HAL_VERSION_1_5)) {
+        if (mPhone.getHalVersion(HAL_SERVICE_NETWORK).greaterOrEqual(RIL.RADIO_HAL_VERSION_1_5)) {
             int[] lteRsrqThresholds = mCarrierConfig.getIntArray(
                     CarrierConfigManager.KEY_LTE_RSRQ_THRESHOLDS_INT_ARRAY);
             if (lteRsrqThresholds != null) {
@@ -474,6 +490,18 @@ public class SignalStrengthController extends Handler {
                                 AccessNetworkConstants.AccessNetworkType.NGRAN,
                                 (nrMeasurementEnabled & CellSignalStrengthNr.USE_SSSINR) != 0));
             }
+
+            int[] wcdmaEcnoThresholds = mCarrierConfig.getIntArray(
+                    CarrierConfigManager.KEY_WCDMA_ECNO_THRESHOLDS_INT_ARRAY);
+            if (wcdmaEcnoThresholds != null) {
+                signalThresholdInfos.add(
+                        createSignalThresholdsInfo(
+                                SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_ECNO,
+                                wcdmaEcnoThresholds,
+                                AccessNetworkConstants.AccessNetworkType.UTRAN,
+                                false));
+            }
+
         }
 
         consolidatedAndSetReportingCriteria(signalThresholdInfos);
@@ -507,7 +535,7 @@ public class SignalStrengthController extends Handler {
                         AccessNetworkConstants.AccessNetworkType.CDMA2000,
                         true));
 
-        if (mPhone.getHalVersion().greaterOrEqual(RIL.RADIO_HAL_VERSION_1_5)) {
+        if (mPhone.getHalVersion(HAL_SERVICE_NETWORK).greaterOrEqual(RIL.RADIO_HAL_VERSION_1_5)) {
             signalThresholdInfos.add(
                     createSignalThresholdsInfo(
                             SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRQ,
@@ -540,6 +568,12 @@ public class SignalStrengthController extends Handler {
                             AccessNetworkThresholds.NGRAN_SSSINR,
                             AccessNetworkConstants.AccessNetworkType.NGRAN,
                             false));
+            signalThresholdInfos.add(
+                    createSignalThresholdsInfo(
+                            SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_ECNO,
+                            AccessNetworkThresholds.UTRAN_ECNO,
+                            AccessNetworkConstants.AccessNetworkType.UTRAN,
+                            false));
         }
 
         consolidatedAndSetReportingCriteria(signalThresholdInfos);
@@ -552,12 +586,13 @@ public class SignalStrengthController extends Handler {
         for (SignalThresholdInfo signalThresholdInfo : signalThresholdInfos) {
             final int ran = signalThresholdInfo.getRadioAccessNetworkType();
             final int measurementType = signalThresholdInfo.getSignalMeasurementType();
-            final boolean isEnabledForSystem = signalThresholdInfo.isEnabled();
+            final boolean isEnabledForSystem =
+                    signalThresholdInfo.isEnabled() && shouldHonorSystemThresholds();
             int[] consolidatedThresholds =
                     getConsolidatedSignalThresholds(
                             ran,
                             measurementType,
-                            isEnabledForSystem && shouldHonorSystemThresholds()
+                            isEnabledForSystem
                                     ? signalThresholdInfo.getThresholds()
                                     : new int[]{},
                             ALIGNMENT_HYSTERESIS_DB);
@@ -567,12 +602,14 @@ public class SignalStrengthController extends Handler {
                             measurementType,
                             mPhone.getSubId(),
                             mPhone.isDeviceIdle());
+            int hysteresisDb = getMinimumHysteresisDb(isEnabledForAppRequest, ran, measurementType,
+                    consolidatedThresholds);
             consolidatedSignalThresholdInfos.add(
                     new SignalThresholdInfo.Builder()
                             .setRadioAccessNetworkType(ran)
                             .setSignalMeasurementType(measurementType)
                             .setHysteresisMs(REPORTING_HYSTERESIS_MILLIS)
-                            .setHysteresisDb(REPORTING_HYSTERESIS_DB)
+                            .setHysteresisDb(hysteresisDb)
                             .setThresholds(consolidatedThresholds, true /*isSystem*/)
                             .setIsEnabled(isEnabledForSystem || isEnabledForAppRequest)
                             .build());
@@ -581,6 +618,126 @@ public class SignalStrengthController extends Handler {
 
         localLog("setSignalStrengthReportingCriteria consolidatedSignalThresholdInfos="
                         + consolidatedSignalThresholdInfos);
+    }
+
+    /**
+     * Return the minimum hysteresis dB from all available sources:
+     * - system default
+     * - value set by client through API
+     * - threshold delta
+     */
+    @VisibleForTesting
+    public int getMinimumHysteresisDb(boolean isEnabledForAppRequest, int ran, int measurementType,
+              final int[] consolidatedThresholdList) {
+
+        int currHysteresisDb = getHysteresisDbFromCarrierConfig(ran, measurementType);
+
+        if (isEnabledForAppRequest) {
+            // Get minimum hysteresisDb at api
+            int apiHysteresisDb =
+                    getHysteresisDbFromSignalThresholdInfoRequests(ran, measurementType);
+
+            // Choose minimum of hysteresisDb between api Vs current system/cc value set
+            currHysteresisDb = Math.min(currHysteresisDb, apiHysteresisDb);
+
+            // Hal Req: choose hysteresis db value to be smaller of smallest of threshold delta
+            currHysteresisDb =  computeHysteresisDbOnSmallestThresholdDelta(
+                    currHysteresisDb, consolidatedThresholdList);
+        }
+        return currHysteresisDb;
+    }
+
+    /**
+     * Get the hysteresis db value from Signal Requests
+     * Note: Based on the current use case, there does not exist multile App signal threshold info
+     * requests with hysteresis db value, so this logic picks the latest hysteresis db value set.
+     *
+     * TODO(b/262655157): Support Multiple App Hysteresis DB value customisation
+     */
+    private int getHysteresisDbFromSignalThresholdInfoRequests(
+            @AccessNetworkConstants.RadioAccessNetworkType int ran,
+            @SignalThresholdInfo.SignalMeasurementType int measurement) {
+        int apiHysteresisDb = REPORTING_HYSTERESIS_DB;
+        for (SignalRequestRecord record : mSignalRequestRecords) {
+            for (SignalThresholdInfo info : record.mRequest.getSignalThresholdInfos()) {
+                if (isRanAndSignalMeasurementTypeMatch(ran, measurement, info)) {
+                    if (info.getHysteresisDb() >= 0) {
+                        apiHysteresisDb = info.getHysteresisDb();
+                    }
+                }
+            }
+        }
+        return apiHysteresisDb;
+    }
+
+    private int getHysteresisDbFromCarrierConfig(int ran, int measurement) {
+        int configHysteresisDb = REPORTING_HYSTERESIS_DB;
+        String configKey = null;
+
+        switch (ran) {
+            case AccessNetworkConstants.AccessNetworkType.GERAN:
+                if (measurement == SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSI) {
+                    configKey = CarrierConfigManager.KEY_GERAN_RSSI_HYSTERESIS_DB_INT;
+                }
+                break;
+            case AccessNetworkConstants.AccessNetworkType.UTRAN:
+                if (measurement == SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSCP) {
+                    configKey = CarrierConfigManager.KEY_UTRAN_RSCP_HYSTERESIS_DB_INT;
+                } else if (measurement == SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_ECNO) {
+                    configKey = CarrierConfigManager.KEY_UTRAN_ECNO_HYSTERESIS_DB_INT;
+                }
+                break;
+            case AccessNetworkConstants.AccessNetworkType.EUTRAN:
+                if (measurement == SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRP) {
+                    configKey = CarrierConfigManager.KEY_EUTRAN_RSRP_HYSTERESIS_DB_INT;
+                } else if (measurement == SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSRQ) {
+                    configKey = CarrierConfigManager.KEY_EUTRAN_RSRQ_HYSTERESIS_DB_INT;
+                } else if (measurement == SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_RSSNR) {
+                    configKey = CarrierConfigManager.KEY_EUTRAN_RSSNR_HYSTERESIS_DB_INT;
+                }
+                break;
+            case AccessNetworkConstants.AccessNetworkType.NGRAN:
+                if (measurement == SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRP) {
+                    configKey = CarrierConfigManager.KEY_NGRAN_SSRSRP_HYSTERESIS_DB_INT;
+                } else if (measurement == SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSRSRQ) {
+                    configKey = CarrierConfigManager.KEY_NGRAN_SSRSRQ_HYSTERESIS_DB_INT;
+                } else if (measurement == SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSSINR) {
+                    configKey = CarrierConfigManager.KEY_NGRAN_SSSINR_HYSTERESIS_DB_INT;
+                }
+                break;
+            default:
+                localLog("No matching configuration");
+        }
+        if (configKey != null) {
+            configHysteresisDb = mCarrierConfig.getInt(configKey, REPORTING_HYSTERESIS_DB);
+        }
+        return configHysteresisDb >= SignalThresholdInfo.HYSTERESIS_DB_MINIMUM
+                ? configHysteresisDb : REPORTING_HYSTERESIS_DB;
+    }
+
+    /**
+     * This method computes the hysteresis db value between smaller of the smallest Threshold Delta
+     * and system / cc / api hysteresis db value determined.
+     *
+     * @param currMinHysteresisDb  smaller value between system / cc / api hysteresis db value
+     * @param signalThresholdInfoArray consolidated threshold info with App request consolidated.
+     * @return current minimum hysteresis db value computed between above params.
+     *
+     */
+    private int computeHysteresisDbOnSmallestThresholdDelta(
+            int currMinHysteresisDb, final int[] signalThresholdInfoArray) {
+        int index = 0;
+        if (signalThresholdInfoArray.length > 1) {
+            while (index != signalThresholdInfoArray.length - 1) {
+                if (signalThresholdInfoArray[index + 1] - signalThresholdInfoArray[index]
+                        < currMinHysteresisDb) {
+                    currMinHysteresisDb =
+                            signalThresholdInfoArray[index + 1] - signalThresholdInfoArray[index];
+                }
+                index++;
+            }
+        }
+        return currMinHysteresisDb;
     }
 
     void setSignalStrengthDefaultValues() {
@@ -731,7 +888,11 @@ public class SignalStrengthController extends Handler {
                         && srr.mRequest.isSystemThresholdReportingRequestedWhileIdle());
     }
 
-    void onDeviceIdleStateChanged(boolean isDeviceIdle) {
+    /**
+     * Get notified when device idle state changed
+     */
+    @VisibleForTesting
+    public void onDeviceIdleStateChanged(boolean isDeviceIdle) {
         sendMessage(obtainMessage(EVENT_ON_DEVICE_IDLE_STATE_CHANGED, isDeviceIdle));
 
         localLog("onDeviceIdleStateChanged isDeviceIdle=" + isDeviceIdle);
@@ -1096,6 +1257,16 @@ public class SignalStrengthController extends Handler {
                 5, /* SIGNAL_STRENGTH_MODERATE */
                 15, /* SIGNAL_STRENGTH_GOOD */
                 30  /* SIGNAL_STRENGTH_GREAT */
+        };
+
+        /**
+         * List of dBm thresholds for UTRAN {@link AccessNetworkConstants.AccessNetworkType} ECNO
+         */
+        public static final int[] UTRAN_ECNO = new int[]{
+                -24, /* SIGNAL_STRENGTH_POOR */
+                -14, /* SIGNAL_STRENGTH_MODERATE */
+                -6, /* SIGNAL_STRENGTH_GOOD */
+                1  /* SIGNAL_STRENGTH_GREAT */
         };
     }
 

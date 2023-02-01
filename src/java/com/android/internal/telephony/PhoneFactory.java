@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony;
 
+import static android.telephony.TelephonyManager.HAL_SERVICE_RADIO;
+
 import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_CDMA;
 import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_CDMA_LTE;
 
@@ -32,6 +34,7 @@ import android.os.Build;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.preference.PreferenceManager;
+import android.provider.DeviceConfig;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
 import android.telephony.AnomalyReporter;
@@ -50,6 +53,7 @@ import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneFactory;
 import com.android.internal.telephony.metrics.MetricsCollector;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.util.NotificationChannelController;
 import com.android.internal.util.IndentingPrintWriter;
@@ -83,6 +87,7 @@ public class PhoneFactory {
     private static IntentBroadcaster sIntentBroadcaster;
     private static @Nullable EuiccController sEuiccController;
     private static @Nullable EuiccCardController sEuiccCardController;
+    private static SubscriptionManagerService sSubscriptionManagerService;
 
     static private SubscriptionInfoUpdater sSubInfoRecordUpdater = null;
 
@@ -102,6 +107,8 @@ public class PhoneFactory {
     private static MetricsCollector sMetricsCollector;
     private static RadioInterfaceCapabilityController sRadioHalCapabilities;
 
+    private static boolean sSubscriptionManagerServiceEnabled = false;
+
     //***** Class Methods
 
     public static void makeDefaultPhones(Context context) {
@@ -117,6 +124,13 @@ public class PhoneFactory {
         synchronized (sLockProxyPhones) {
             if (!sMadeDefaults) {
                 sContext = context;
+
+                // This is a temp flag which will be removed before U AOSP public release.
+                sSubscriptionManagerServiceEnabled = context.getResources().getBoolean(
+                        com.android.internal.R.bool.config_using_subscription_manager_service)
+                        || DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_TELEPHONY,
+                        "enable_subscription_manager_service", false);
+
                 // create the telephony device controller.
                 TelephonyDevController.create();
 
@@ -179,7 +193,7 @@ public class PhoneFactory {
 
                 if (numPhones > 0) {
                     final RadioConfig radioConfig = RadioConfig.make(context,
-                            sCommandsInterfaces[0].getHalVersion());
+                            sCommandsInterfaces[0].getHalVersion(HAL_SERVICE_RADIO));
                     sRadioHalCapabilities = RadioInterfaceCapabilityController.init(radioConfig,
                             sCommandsInterfaces[0]);
                 } else {
@@ -194,12 +208,24 @@ public class PhoneFactory {
                 // call getInstance()
                 sUiccController = UiccController.make(context);
 
-                Rlog.i(LOG_TAG, "Creating SubscriptionController");
-                TelephonyComponentFactory.getInstance().inject(SubscriptionController.class.
-                        getName()).initSubscriptionController(context);
+
+                if (isSubscriptionManagerServiceEnabled()) {
+                    Rlog.i(LOG_TAG, "Creating SubscriptionManagerService");
+                    sSubscriptionManagerService = new SubscriptionManagerService(context,
+                            Looper.myLooper());
+                } else {
+                    Rlog.i(LOG_TAG, "Creating SubscriptionController");
+                    TelephonyComponentFactory.getInstance().inject(SubscriptionController.class
+                            .getName()).initSubscriptionController(context);
+                }
+
+                SubscriptionController sc = null;
+                if (!isSubscriptionManagerServiceEnabled()) {
+                    sc = SubscriptionController.getInstance();
+                }
+
                 TelephonyComponentFactory.getInstance().inject(MultiSimSettingController.class.
-                        getName()).initMultiSimSettingController(context,
-                        SubscriptionController.getInstance());
+                        getName()).initMultiSimSettingController(context, sc);
 
                 if (context.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_TELEPHONY_EUICC)) {
@@ -231,13 +257,15 @@ public class PhoneFactory {
 
                 sMadeDefaults = true;
 
-                Rlog.i(LOG_TAG, "Creating SubInfoRecordUpdater ");
-                HandlerThread pfhandlerThread = new HandlerThread("PhoneFactoryHandlerThread");
-                pfhandlerThread.start();
-                sSubInfoRecordUpdater = TelephonyComponentFactory.getInstance().inject(
-                        SubscriptionInfoUpdater.class.getName()).
-                        makeSubscriptionInfoUpdater(pfhandlerThread.
-                        getLooper(), context, SubscriptionController.getInstance());
+                if (!isSubscriptionManagerServiceEnabled()) {
+                    Rlog.i(LOG_TAG, "Creating SubInfoRecordUpdater ");
+                    HandlerThread pfhandlerThread = new HandlerThread("PhoneFactoryHandlerThread");
+                    pfhandlerThread.start();
+                    sSubInfoRecordUpdater = TelephonyComponentFactory.getInstance().inject(
+                            SubscriptionInfoUpdater.class.getName())
+                            .makeSubscriptionInfoUpdater(pfhandlerThread.getLooper(), context,
+                                    SubscriptionController.getInstance());
+                }
 
                 // Only bring up IMS if the device supports having an IMS stack.
                 if (context.getPackageManager().hasSystemFeature(
@@ -275,6 +303,14 @@ public class PhoneFactory {
                 }
             }
         }
+    }
+
+    /**
+     * @return {@code true} if the new {@link SubscriptionManagerService} is enabled, otherwise the
+     * old {@link SubscriptionController} is used.
+     */
+    public static boolean isSubscriptionManagerServiceEnabled() {
+        return sSubscriptionManagerServiceEnabled;
     }
 
     /**
@@ -433,6 +469,9 @@ public class PhoneFactory {
     /* Gets the default subscription */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static int getDefaultSubscription() {
+        if (isSubscriptionManagerServiceEnabled()) {
+            return SubscriptionManagerService.getInstance().getDefaultSubId();
+        }
         return SubscriptionController.getInstance().getDefaultSubId();
     }
 
@@ -576,21 +615,34 @@ public class PhoneFactory {
         pw.decreaseIndent();
         pw.println("++++++++++++++++++++++++++++++++");
 
-        pw.println("SubscriptionController:");
-        pw.increaseIndent();
-        try {
-            SubscriptionController.getInstance().dump(fd, pw, args);
-        } catch (Exception e) {
-            e.printStackTrace();
+        if (!isSubscriptionManagerServiceEnabled()) {
+            pw.println("SubscriptionController:");
+            pw.increaseIndent();
+            try {
+                SubscriptionController.getInstance().dump(fd, pw, args);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            pw.flush();
+            pw.decreaseIndent();
+            pw.println("++++++++++++++++++++++++++++++++");
+
+            pw.println("SubInfoRecordUpdater:");
+            pw.increaseIndent();
+            try {
+                sSubInfoRecordUpdater.dump(fd, pw, args);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
         pw.flush();
         pw.decreaseIndent();
         pw.println("++++++++++++++++++++++++++++++++");
 
-        pw.println("SubInfoRecordUpdater:");
+        pw.println("sRadioHalCapabilities:");
         pw.increaseIndent();
         try {
-            sSubInfoRecordUpdater.dump(fd, pw, args);
+            sRadioHalCapabilities.dump(fd, pw, args);
         } catch (Exception e) {
             e.printStackTrace();
         }

@@ -17,7 +17,7 @@
 package com.android.internal.telephony.data;
 
 import static android.telephony.AccessNetworkConstants.TRANSPORT_TYPE_WWAN;
-import static android.telephony.CarrierConfigManager.KEY_DATA_SWITCH_VALIDATION_MIN_GAP_LONG;
+import static android.telephony.CarrierConfigManager.KEY_DATA_SWITCH_VALIDATION_MIN_INTERVAL_MILLIS_LONG;
 import static android.telephony.NetworkRegistrationInfo.DOMAIN_PS;
 
 import android.content.Context;
@@ -43,6 +43,8 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.nano.TelephonyProto.TelephonyEvent;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 
 import java.util.Comparator;
 import java.util.HashMap;
@@ -164,9 +166,17 @@ public class CellularNetworkValidator {
 
         private String getValidationNetworkIdentity(int subId) {
             if (!SubscriptionManager.isUsableSubscriptionId(subId)) return null;
-            SubscriptionController subController = SubscriptionController.getInstance();
-            if (subController == null) return null;
-            Phone phone = PhoneFactory.getPhone(subController.getPhoneId(subId));
+            Phone phone;
+            if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
+                if (SubscriptionManagerService.getInstance() == null) return null;
+                phone = PhoneFactory.getPhone(SubscriptionManagerService.getInstance()
+                        .getPhoneId(subId));
+            } else {
+                SubscriptionController subController = SubscriptionController.getInstance();
+                if (subController == null) return null;
+                phone = PhoneFactory.getPhone(subController.getPhoneId(subId));
+            }
+
             if (phone == null || phone.getServiceState() == null) return null;
 
             NetworkRegistrationInfo regInfo = phone.getServiceState().getNetworkRegistrationInfo(
@@ -192,7 +202,7 @@ public class CellularNetworkValidator {
             if (configManager != null) {
                 PersistableBundle b = configManager.getConfigForSubId(subId);
                 if (b != null) {
-                    ttl = b.getLong(KEY_DATA_SWITCH_VALIDATION_MIN_GAP_LONG);
+                    ttl = b.getLong(KEY_DATA_SWITCH_VALIDATION_MIN_INTERVAL_MILLIS_LONG);
                 }
             }
             // Ttl can't be bigger than one day for now.
@@ -257,10 +267,20 @@ public class CellularNetworkValidator {
         // If it's already validating the same subscription, do nothing.
         if (subId == mSubId) return;
 
-        if (!SubscriptionController.getInstance().isActiveSubId(subId)) {
-            logd("Failed to start validation. Inactive subId " + subId);
-            callback.onValidationDone(false, subId);
-            return;
+        if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
+            SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
+                    .getSubscriptionInfoInternal(subId);
+            if (subInfo == null || !subInfo.isActive()) {
+                logd("Failed to start validation. Inactive subId " + subId);
+                callback.onValidationDone(false, subId);
+                return;
+            }
+        } else {
+            if (!SubscriptionController.getInstance().isActiveSubId(subId)) {
+                logd("Failed to start validation. Inactive subId " + subId);
+                callback.onValidationDone(false, subId);
+                return;
+            }
         }
 
         if (isValidating()) {

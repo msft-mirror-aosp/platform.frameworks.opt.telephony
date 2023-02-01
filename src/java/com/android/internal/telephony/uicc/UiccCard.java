@@ -24,6 +24,7 @@ import android.text.TextUtils;
 
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.uicc.IccCardStatus.CardState;
+import com.android.internal.telephony.uicc.IccSlotStatus.MultipleEnabledProfilesMode;
 import com.android.internal.telephony.uicc.euicc.EuiccCard;
 import com.android.internal.telephony.uicc.euicc.EuiccPort;
 import com.android.telephony.Rlog;
@@ -31,6 +32,7 @@ import com.android.telephony.Rlog;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 
 /**
  * {@hide}
@@ -50,16 +52,19 @@ public class UiccCard {
     private CardState mCardState;
     protected String mCardId;
     protected boolean mIsSupportsMultipleEnabledProfiles;
+    protected MultipleEnabledProfilesMode mSupportedMepMode;
 
-    protected HashMap<Integer, UiccPort> mUiccPorts = new HashMap<>();
+    protected LinkedHashMap<Integer, UiccPort> mUiccPorts = new LinkedHashMap<>();
     private HashMap<Integer, Integer> mPhoneIdToPortIdx = new HashMap<>();
 
     public UiccCard(Context c, CommandsInterface ci, IccCardStatus ics, int phoneId, Object lock,
-            boolean isSupportsMultipleEnabledProfiles) {
+            boolean isSupportsMultipleEnabledProfiles,
+            MultipleEnabledProfilesMode supportedMepMode) {
         if (DBG) log("Creating");
         mCardState = ics.mCardState;
         mLock = lock;
         mIsSupportsMultipleEnabledProfiles = isSupportsMultipleEnabledProfiles;
+        mSupportedMepMode = supportedMepMode;
         update(c, ci, ics, phoneId);
     }
 
@@ -109,7 +114,7 @@ public class UiccCard {
                 if (port == null) {
                     if (this instanceof EuiccCard) {
                         port = new EuiccPort(c, ci, ics, phoneId, mLock, this,
-                                mIsSupportsMultipleEnabledProfiles); // eSim
+                                mIsSupportsMultipleEnabledProfiles, mSupportedMepMode); // eSim
                     } else {
                         port = new UiccPort(c, ci, ics, phoneId, mLock, this); // pSim
                     }
@@ -143,13 +148,16 @@ public class UiccCard {
 
 
     /**
-     * Updates MEP(Multiple Enabled Profile) support flag.
+     * Updates MEP(Multiple Enabled Profile) support and supported mode flags.
      *
      * <p>If IccSlotStatus comes later, the number of ports reported is only known after the
      * UiccCard creation which will impact UICC MEP capability.
      */
-    public void updateSupportMultipleEnabledProfile(boolean supported) {
+    public void updateSupportMepProperties(boolean supported,
+            MultipleEnabledProfilesMode supportedMepMode) {
+        // TODO(b/262449536): Handle with single MEP flag to avoid inconsistency.
         mIsSupportsMultipleEnabledProfiles = supported;
+        mSupportedMepMode = supportedMepMode;
     }
 
     @UnsupportedAppUsage
@@ -213,7 +221,7 @@ public class UiccCard {
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         pw.println("UiccCard:");
         pw.println(" mCardState=" + mCardState);
-        pw.println(" mCardId=" + mCardId);
+        pw.println(" mCardId=" + Rlog.pii(LOG_TAG, mCardId));
         pw.println(" mNumberOfPorts=" + mUiccPorts.size());
         pw.println( "mIsSupportsMultipleEnabledProfiles=" + mIsSupportsMultipleEnabledProfiles);
         pw.println();

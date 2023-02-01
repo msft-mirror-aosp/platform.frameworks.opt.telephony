@@ -312,7 +312,8 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     @VisibleForTesting
     public interface SubscriptionManagerProxy {
         /**
-         * Mock-able interface for {@link SubscriptionManager#getSubId(int)} used for testing.
+         * Mock-able interface for {@link SubscriptionManager#getSubscriptionId(int)} used for
+         * testing.
          */
         int getSubId(int slotId);
         /**
@@ -346,12 +347,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     private SubscriptionManagerProxy mSubscriptionManagerProxy = new SubscriptionManagerProxy() {
         @Override
         public int getSubId(int slotId) {
-            int[] subIds = SubscriptionManager.getSubId(slotId);
-            if (subIds != null) {
-                // This is done in all other places getSubId is used.
-                return subIds[0];
-            }
-            return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+            return SubscriptionManager.getSubscriptionId(slotId);
         }
 
         @Override
@@ -739,6 +735,15 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     public void disableIms(int slotId) {
         getImsServiceControllers(slotId).forEach(
                 (controller) -> controller.disableIms(slotId, getSubId(slotId)));
+    }
+
+    /**
+     * Notify ImsService to disable IMS for the framework.
+     * And notify ImsService back to enable IMS for the framework.
+     */
+    public void resetIms(int slotId) {
+        getImsServiceControllers(slotId).forEach(
+                (controller) -> controller.resetIms(slotId, getSubId(slotId)));
     }
 
     /**

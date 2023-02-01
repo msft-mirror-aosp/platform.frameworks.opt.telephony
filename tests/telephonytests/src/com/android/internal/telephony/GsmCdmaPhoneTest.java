@@ -16,17 +16,24 @@
 
 package com.android.internal.telephony;
 
+import static com.android.internal.telephony.CellBroadcastConfigTracker.mergeRangesAsNeeded;
 import static com.android.internal.telephony.CommandsInterface.CF_ACTION_ENABLE;
 import static com.android.internal.telephony.CommandsInterface.CF_REASON_UNCONDITIONAL;
 import static com.android.internal.telephony.Phone.EVENT_ICC_CHANGED;
+import static com.android.internal.telephony.Phone.EVENT_IMS_DEREGISTRATION_TRIGGERED;
+import static com.android.internal.telephony.Phone.EVENT_RADIO_AVAILABLE;
+import static com.android.internal.telephony.Phone.EVENT_SET_NULL_CIPHER_AND_INTEGRITY_DONE;
 import static com.android.internal.telephony.Phone.EVENT_SRVCC_STATE_CHANGED;
 import static com.android.internal.telephony.Phone.EVENT_UICC_APPS_ENABLEMENT_STATUS_CHANGED;
 import static com.android.internal.telephony.TelephonyTestUtils.waitForMs;
+import static com.android.internal.telephony.test.SimulatedCommands.FAKE_IMEI;
+import static com.android.internal.telephony.test.SimulatedCommands.FAKE_IMEISV;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
@@ -49,36 +56,52 @@ import static org.mockito.Mockito.when;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.hardware.radio.modem.ImeiInfo;
 import android.os.AsyncResult;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.Process;
+import android.os.UserManager;
 import android.os.WorkSource;
 import android.preference.PreferenceManager;
+import android.provider.DeviceConfig;
 import android.telecom.VideoProfile;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
+import android.telephony.CellBroadcastIdRange;
 import android.telephony.CellIdentity;
 import android.telephony.CellIdentityCdma;
 import android.telephony.CellIdentityGsm;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkRegistrationInfo;
+import android.telephony.RadioAccessFamily;
 import android.telephony.ServiceState;
+import android.telephony.SmsCbMessage;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.telephony.ims.stub.ImsRegistrationImplBase;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
+import android.util.Log;
 
 import androidx.test.filters.FlakyTest;
 
+import com.android.internal.telephony.cdma.CdmaSmsBroadcastConfigInfo;
+import com.android.internal.telephony.domainselection.DomainSelectionResolver;
+import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
 import com.android.internal.telephony.imsphone.ImsPhone;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.test.SimulatedCommands;
 import com.android.internal.telephony.test.SimulatedCommandsVerifier;
+import com.android.internal.telephony.uicc.AdnRecord;
+import com.android.internal.telephony.uicc.AdnRecordCache;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus;
 import com.android.internal.telephony.uicc.IccCardStatus;
+import com.android.internal.telephony.uicc.IccConstants;
 import com.android.internal.telephony.uicc.IccRecords;
 import com.android.internal.telephony.uicc.IccVmNotSupportedException;
 import com.android.internal.telephony.uicc.UiccController;
@@ -96,20 +119,29 @@ import org.mockito.InOrder;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class GsmCdmaPhoneTest extends TelephonyTest {
+    private static final String LOG_TAG = "GsmCdmaPhoneTest";
     private static final String TEST_EMERGENCY_NUMBER = "555";
 
     // Mocked classes
     private Handler mTestHandler;
     private UiccSlot mUiccSlot;
     private CommandsInterface mMockCi;
+    private AdnRecordCache adnRecordCache;
+    private DomainSelectionResolver mDomainSelectionResolver;
 
     //mPhoneUnderTest
     private GsmCdmaPhone mPhoneUT;
+
+    // Ideally we would use TestableDeviceConfig, but that's not doable because the Settings
+    // app is not currently debuggable. For now, we use the real device config and ensure that
+    // we reset the cellular_security namespace property to its pre-test value after every test.
+    private DeviceConfig.Properties mPreTestProperties;
 
     private static final int EVENT_EMERGENCY_CALLBACK_MODE_EXIT = 1;
     private static final int EVENT_EMERGENCY_CALL_TOGGLE = 2;
@@ -134,12 +166,18 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mPreTestProperties = DeviceConfig.getProperties(
+                TelephonyManager.PROPERTY_ENABLE_NULL_CIPHER_TOGGLE);
         mTestHandler = Mockito.mock(Handler.class);
         mUiccSlot = Mockito.mock(UiccSlot.class);
         mUiccPort = Mockito.mock(UiccPort.class);
         mMockCi = Mockito.mock(CommandsInterface.class);
+        adnRecordCache = Mockito.mock(AdnRecordCache.class);
+        mDomainSelectionResolver = Mockito.mock(DomainSelectionResolver.class);
         doReturn(false).when(mSST).isDeviceShuttingDown();
         doReturn(true).when(mImsManager).isVolteEnabledByPlatform();
+        doReturn(false).when(mDomainSelectionResolver).isDomainSelectionSupported();
+        DomainSelectionResolver.setDomainSelectionResolver(mDomainSelectionResolver);
 
         mPhoneUT = new GsmCdmaPhone(mContext, mSimulatedCommands, mNotifier, true, 0,
             PhoneConstants.PHONE_TYPE_GSM, mTelephonyComponentFactory, (c, p) -> mImsManager);
@@ -157,6 +195,14 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     public void tearDown() throws Exception {
         mPhoneUT.removeCallbacksAndMessages(null);
         mPhoneUT = null;
+        DomainSelectionResolver.setDomainSelectionResolver(null);
+        try {
+            DeviceConfig.setProperties(mPreTestProperties);
+        } catch (DeviceConfig.BadConfigException e) {
+            Log.e(LOG_TAG,
+                    "Failed to reset DeviceConfig to pre-test state. Test results may be impacted. "
+                            + e.getMessage());
+        }
         super.tearDown();
     }
 
@@ -953,7 +999,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         verify(mTelephonyManager).setBasebandVersionForPhone(eq(mPhoneUT.getPhoneId()),
                 nullable(String.class));
         // IMEI
-        assertEquals(SimulatedCommands.FAKE_IMEI, mPhoneUT.getImei());
+        assertEquals(FAKE_IMEI, mPhoneUT.getImei());
         // IMEISV
         assertEquals(SimulatedCommands.FAKE_IMEISV, mPhoneUT.getDeviceSvn());
         // radio capability
@@ -979,7 +1025,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         verify(mTelephonyManager, times(2)).setBasebandVersionForPhone(eq(mPhoneUT.getPhoneId()),
                 nullable(String.class));
         // device identity
-        assertEquals(SimulatedCommands.FAKE_IMEI, mPhoneUT.getImei());
+        assertEquals(FAKE_IMEI, mPhoneUT.getImei());
         assertEquals(SimulatedCommands.FAKE_IMEISV, mPhoneUT.getDeviceSvn());
         assertEquals(SimulatedCommands.FAKE_ESN, mPhoneUT.getEsn());
         assertEquals(SimulatedCommands.FAKE_MEID, mPhoneUT.getMeid());
@@ -1051,13 +1097,13 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
         // invalid subId
         doReturn(SubscriptionManager.INVALID_SUBSCRIPTION_ID).when(mSubscriptionController).
-                getSubIdUsingPhoneId(anyInt());
+                getSubId(anyInt());
         assertEquals(false, mPhoneUT.getCallForwardingIndicator());
 
         // valid subId, sharedPreference not present
         int subId1 = 0;
         int subId2 = 1;
-        doReturn(subId1).when(mSubscriptionController).getSubIdUsingPhoneId(anyInt());
+        doReturn(subId1).when(mSubscriptionController).getSubId(anyInt());
         assertEquals(false, mPhoneUT.getCallForwardingIndicator());
 
         // old sharedPreference present
@@ -1079,7 +1125,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         assertEquals(true, mPhoneUT.getCallForwardingIndicator());
 
         // check for another subId
-        doReturn(subId2).when(mSubscriptionController).getSubIdUsingPhoneId(anyInt());
+        doReturn(subId2).when(mSubscriptionController).getSubId(anyInt());
         assertEquals(false, mPhoneUT.getCallForwardingIndicator());
 
         // set value for the new subId in sharedPreference
@@ -1088,7 +1134,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         assertEquals(true, mPhoneUT.getCallForwardingIndicator());
 
         // switching back to previous subId, stored value should still be available
-        doReturn(subId1).when(mSubscriptionController).getSubIdUsingPhoneId(anyInt());
+        doReturn(subId1).when(mSubscriptionController).getSubId(anyInt());
         assertEquals(true, mPhoneUT.getCallForwardingIndicator());
 
         // cleanup
@@ -1291,11 +1337,12 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     public void testSetRadioPower() throws Exception {
         mPhoneUT.setRadioPower(false);
         verify(mSST).setRadioPowerForReason(false, false, false, false,
-                Phone.RADIO_POWER_REASON_USER);
+                TelephonyManager.RADIO_POWER_REASON_USER);
 
         // Turn on radio for emergency call.
         mPhoneUT.setRadioPower(true, true, false, true);
-        verify(mSST).setRadioPowerForReason(true, true, false, true, Phone.RADIO_POWER_REASON_USER);
+        verify(mSST).setRadioPowerForReason(true, true, false, true,
+                TelephonyManager.RADIO_POWER_REASON_USER);
     }
 
     @Test
@@ -1303,12 +1350,12 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     public void testSetRadioPowerOnForTestEmergencyCall() {
         mPhoneUT.setRadioPower(false);
         verify(mSST).setRadioPowerForReason(false, false, false, false,
-                Phone.RADIO_POWER_REASON_USER);
+                TelephonyManager.RADIO_POWER_REASON_USER);
 
         mPhoneUT.setRadioPowerOnForTestEmergencyCall(false);
         verify(mSST).clearAllRadioOffReasons();
         verify(mSST).setRadioPowerForReason(eq(true), eq(false), anyBoolean(), eq(false),
-                eq(Phone.RADIO_POWER_REASON_USER));
+                eq(TelephonyManager.RADIO_POWER_REASON_USER));
     }
 
     @Test
@@ -1494,7 +1541,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @SmallTest
     public void testLoadAllowedNetworksFromSubscriptionDatabase_loadTheNullValue_isLoadedTrue() {
         int subId = 1;
-        doReturn(subId).when(mSubscriptionController).getSubIdUsingPhoneId(anyInt());
+        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
 
         doReturn(null).when(mSubscriptionController).getSubscriptionProperty(anyInt(),
                 eq(SubscriptionManager.ALLOWED_NETWORK_TYPES));
@@ -1508,7 +1555,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @SmallTest
     public void testLoadAllowedNetworksFromSubscriptionDatabase_subIdNotValid_isLoadedFalse() {
         int subId = -1;
-        doReturn(subId).when(mSubscriptionController).getSubIdUsingPhoneId(anyInt());
+        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
 
         when(mSubscriptionController.getSubscriptionProperty(anyInt(),
                 eq(SubscriptionManager.ALLOWED_NETWORK_TYPES))).thenReturn(null);
@@ -1517,6 +1564,74 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         mPhoneUT.loadAllowedNetworksFromSubscriptionDatabase();
 
         assertEquals(false, mPhoneUT.isAllowedNetworkTypesLoadedFromDb());
+    }
+
+    @Test
+    public void testLoadAllowedNetworksFromSubscriptionDatabase_allValidData() {
+        int subId = 1;
+        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
+
+        // 13 == TelephonyManager.NETWORK_TYPE_LTE
+        // NR_BITMASK == 4096 == 1 << (13 - 1)
+        String validSerializedNetworkMap = "user=4096,power=4096,carrier=4096,enable_2g=4096";
+        doReturn(validSerializedNetworkMap).when(mSubscriptionController).getSubscriptionProperty(
+                anyInt(), eq(SubscriptionManager.ALLOWED_NETWORK_TYPES));
+
+        assertFalse(mPhoneUT.isAllowedNetworkTypesLoadedFromDb());
+        mPhoneUT.loadAllowedNetworksFromSubscriptionDatabase();
+        assertTrue(mPhoneUT.isAllowedNetworkTypesLoadedFromDb());
+
+        for (int i = 0; i < 4; ++i) {
+            assertEquals(TelephonyManager.NETWORK_TYPE_BITMASK_LTE,
+                    mPhoneUT.getAllowedNetworkTypes(i));
+        }
+    }
+
+    @Test
+    public void testLoadAllowedNetworksFromSubscriptionDatabase_invalidKeys() {
+        int subId = 1;
+        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
+
+        // 13 == TelephonyManager.NETWORK_TYPE_LTE
+        // NR_BITMASK == 4096 == 1 << (13 - 1)
+        String validSerializedNetworkMap =
+                "user=4096,power=4096,carrier=4096,enable_2g=4096,-1=4096";
+        doReturn(validSerializedNetworkMap).when(mSubscriptionController).getSubscriptionProperty(
+                anyInt(), eq(SubscriptionManager.ALLOWED_NETWORK_TYPES));
+
+        assertFalse(mPhoneUT.isAllowedNetworkTypesLoadedFromDb());
+        mPhoneUT.loadAllowedNetworksFromSubscriptionDatabase();
+        assertTrue(mPhoneUT.isAllowedNetworkTypesLoadedFromDb());
+
+        for (int i = 0; i < 4; ++i) {
+            assertEquals(TelephonyManager.NETWORK_TYPE_BITMASK_LTE,
+                    mPhoneUT.getAllowedNetworkTypes(i));
+        }
+    }
+
+    @Test
+    public void testLoadAllowedNetworksFromSubscriptionDatabase_invalidValues() {
+        int subId = 1;
+        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
+
+        // 19 == TelephonyManager.NETWORK_TYPE_NR
+        // NR_BITMASK == 524288 == 1 << 19
+        String validSerializedNetworkMap = "user=4096,power=4096,carrier=4096,enable_2g=-1";
+        doReturn(validSerializedNetworkMap).when(mSubscriptionController).getSubscriptionProperty(
+                anyInt(), eq(SubscriptionManager.ALLOWED_NETWORK_TYPES));
+
+        mPhoneUT.loadAllowedNetworksFromSubscriptionDatabase();
+
+        for (int i = 0; i < 3; ++i) {
+            assertEquals(TelephonyManager.NETWORK_TYPE_BITMASK_LTE,
+                    mPhoneUT.getAllowedNetworkTypes(i));
+        }
+
+        long defaultAllowedNetworkTypes = RadioAccessFamily.getRafFromNetworkType(
+                RILConstants.PREFERRED_NETWORK_MODE);
+        assertEquals(defaultAllowedNetworkTypes, mPhoneUT.getAllowedNetworkTypes(
+                TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_ENABLE_2G));
+
     }
 
     /**
@@ -1599,7 +1714,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
         doReturn(true).when(mTelephonyManager).isEmergencyNumber(anyString());
         doReturn(isEmergencyPerDialedSim).when(mEmergencyNumberTracker).isEmergencyNumber(
-                anyString(), anyBoolean());
+                anyString());
 
         mPhoneUT.setImsPhone(mImsPhone);
     }
@@ -1651,10 +1766,23 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
 
     private SubscriptionInfo makeSubscriptionInfo(boolean isOpportunistic, int usageSetting) {
-        return new SubscriptionInfo(
-                 1, "xxxxxxxxx", 1, "Android Test", "Android Test", 0, 0, "8675309", 0,
-                null, "001", "01", "us", true, null, null, 0, isOpportunistic, null, false,
-                1, 1, 0, null, null, true, 0, usageSetting);
+        return new SubscriptionInfo.Builder()
+                .setId(1)
+                .setIccId("xxxxxxxxx")
+                .setSimSlotIndex(1)
+                .setDisplayName("Android Test")
+                .setDisplayName("Android Test")
+                .setDisplayNameSource(SubscriptionManager.NAME_SOURCE_CARRIER)
+                .setNumber("8675309")
+                .setMcc("001")
+                .setMnc("01")
+                .setCountryIso("us")
+                .setEmbedded(true)
+                .setOpportunistic(isOpportunistic)
+                .setCarrierId(1)
+                .setProfileClass(SubscriptionManager.PROFILE_CLASS_PROVISIONING)
+                .setUsageSetting(usageSetting)
+                .build();
     }
 
     @Test
@@ -1725,5 +1853,932 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                         new int[]{SubscriptionManager.USAGE_SETTING_VOICE_CENTRIC}, null)));
         processAllMessages();
         verify(mMockCi, never()).setUsageSetting(any(), anyInt());
+    }
+
+    public void fdnCheckSetup() {
+        // FDN check setup
+        mPhoneUT.mCi = mMockCi;
+        doReturn(adnRecordCache).when(mSimRecords).getAdnCache();
+        doReturn(mUiccProfile).when(mUiccController).getUiccProfileForPhone(anyInt());
+        doReturn(true).when(mUiccCardApplication3gpp).getIccFdnAvailable();
+        doReturn(true).when(mUiccCardApplication3gpp).getIccFdnEnabled();
+    }
+
+    @Test
+    public void testGetCallForwardingOption_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "*#21");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.getCallForwardingOption(CommandsInterface.CF_REASON_UNCONDITIONAL, message);
+        processAllMessages();
+        verify(mMockCi).queryCallForwardStatus(eq(CommandsInterface.CF_REASON_UNCONDITIONAL),
+                eq(CommandsInterface.SERVICE_CLASS_VOICE), any(), any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.getCallForwardingOption(CommandsInterface.CF_REASON_UNCONDITIONAL, message);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testSetCallForwardingOption_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "**21");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.setCallForwardingOption(CommandsInterface.CF_ACTION_REGISTRATION,
+                CommandsInterface.CF_REASON_UNCONDITIONAL, "123", 0,
+                message);
+        processAllMessages();
+        verify(mMockCi).setCallForward(eq(CommandsInterface.CF_ACTION_REGISTRATION),
+                eq(CommandsInterface.CF_REASON_UNCONDITIONAL),
+                eq(CommandsInterface.SERVICE_CLASS_VOICE), eq("123"), eq(0), any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.setCallForwardingOption(CommandsInterface.CF_ACTION_REGISTRATION,
+                CommandsInterface.CF_REASON_UNCONDITIONAL, "", 0, message);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testGetCallBarring_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "*#330");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.getCallBarring(CommandsInterface.CB_FACILITY_BA_ALL, "", message,
+                CommandsInterface.SERVICE_CLASS_VOICE);
+        processAllMessages();
+        verify(mMockCi).queryFacilityLock(eq(CommandsInterface.CB_FACILITY_BA_ALL), any(),
+                eq(CommandsInterface.SERVICE_CLASS_VOICE), any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.getCallBarring(CommandsInterface.CB_FACILITY_BA_ALL, "", message,
+                CommandsInterface.SERVICE_CLASS_VOICE);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testSetCallBarring_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "*330");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.setCallBarring(CommandsInterface.CB_FACILITY_BA_ALL, true, "",
+                message, CommandsInterface.SERVICE_CLASS_VOICE);
+        processAllMessages();
+        verify(mMockCi).setFacilityLock(eq(CommandsInterface.CB_FACILITY_BA_ALL),
+                eq(true), any(), eq(CommandsInterface.SERVICE_CLASS_VOICE), any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.setCallBarring(CommandsInterface.CB_FACILITY_BA_ALL, true, "",
+                message, CommandsInterface.SERVICE_CLASS_VOICE);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testChangeCallBarringPassword_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "**03*330");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.changeCallBarringPassword(CommandsInterface.CB_FACILITY_BA_ALL, "",
+                "", message);
+        processAllMessages();
+        verify(mMockCi).changeBarringPassword(eq(CommandsInterface.CB_FACILITY_BA_ALL), any(),
+                any(), any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.changeCallBarringPassword(CommandsInterface.CB_FACILITY_BA_ALL, "",
+                "", message);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testGetOutgoingCallerIdDisplay_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "*#31");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.getOutgoingCallerIdDisplay(message);
+        processAllMessages();
+        verify(mMockCi).getCLIR(any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.getOutgoingCallerIdDisplay(message);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testSetOutgoingCallerIdDisplay_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "*31");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.setOutgoingCallerIdDisplay(CommandsInterface.CLIR_SUPPRESSION, message);
+        processAllMessages();
+        verify(mMockCi).setCLIR(eq(CommandsInterface.CLIR_SUPPRESSION), any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.setOutgoingCallerIdDisplay(CommandsInterface.CLIR_SUPPRESSION, message);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testQueryCLIP_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "*#30");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.queryCLIP(message);
+        processAllMessages();
+        verify(mMockCi).queryCLIP(any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.queryCLIP(message);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testGetCallWaiting_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "*#43");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.getCallWaiting(message);
+        processAllMessages();
+        verify(mMockCi).queryCallWaiting(eq(CommandsInterface.SERVICE_CLASS_NONE), any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.getCallWaiting(message);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testSetCallWaiting_FdnCheck() {
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+        Message message = Message.obtain(mTestHandler);
+
+        // FDN check success - no exception is returned
+        AdnRecord adnRecord = new AdnRecord(null, "*43");
+        fdnList.add(0, adnRecord);
+        mPhoneUT.setCallWaiting(true, CommandsInterface.SERVICE_CLASS_VOICE, message);
+        processAllMessages();
+        verify(mMockCi).setCallWaiting(eq(true), eq(CommandsInterface.SERVICE_CLASS_VOICE),
+                any());
+        // FDN check failure - returns CommandException in onComplete
+        fdnList.remove(0);
+        mPhoneUT.setCallWaiting(true, CommandsInterface.SERVICE_CLASS_VOICE, message);
+        processAllMessages();
+        AsyncResult ar = (AsyncResult) message.obj;
+        assertTrue(ar.exception instanceof CommandException);
+        assertEquals(((CommandException) ar.exception).getCommandError(),
+                CommandException.Error.FDN_CHECK_FAILURE);
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testDial_fdnCheck() throws Exception {
+        // dial setup
+        mSST.mSS = mServiceState;
+        doReturn(ServiceState.STATE_IN_SERVICE).when(mServiceState).getState();
+        mCT.mForegroundCall = mGsmCdmaCall;
+        mCT.mBackgroundCall = mGsmCdmaCall;
+        mCT.mRingingCall = mGsmCdmaCall;
+        doReturn(GsmCdmaCall.State.IDLE).when(mGsmCdmaCall).getState();
+        replaceInstance(Phone.class, "mImsPhone", mPhoneUT, mImsPhone);
+
+        // FDN check setup
+        fdnCheckSetup();
+        ArrayList<AdnRecord> fdnList = new ArrayList<>();
+        doReturn(fdnList).when(adnRecordCache).getRecordsIfLoaded(IccConstants.EF_FDN);
+
+        // FDN check success - no exception is returned
+        AdnRecord dialRecord = new AdnRecord(null, "1234567890");
+        fdnList.add(0, dialRecord);
+        Connection connection = mPhoneUT.dial("1234567890",
+                new PhoneInternalInterface.DialArgs.Builder().build());
+        verify(mCT).dialGsm(eq("1234567890"), any(PhoneInternalInterface.DialArgs.class));
+
+        // FDN check failure - returns CallStateException
+        fdnList.remove(0);
+        try {
+            connection = mPhoneUT.dial("1234567890",
+                    new PhoneInternalInterface.DialArgs.Builder().build());
+            fail("Expected CallStateException with ERROR_FDN_BLOCKED thrown.");
+        } catch (CallStateException e) {
+            assertEquals(CallStateException.ERROR_FDN_BLOCKED, e.getError());
+        }
+
+        // clean up
+        fdnCheckCleanup();
+    }
+
+    @Test
+    public void testHandleNullCipherAndIntegrityEnabled_radioFeatureUnsupported() {
+        DeviceConfig.setProperty(DeviceConfig.NAMESPACE_CELLULAR_SECURITY,
+                TelephonyManager.PROPERTY_ENABLE_NULL_CIPHER_TOGGLE, Boolean.TRUE.toString(),
+                false);
+        mPhoneUT.mCi = mMockCi;
+        assertFalse(mPhoneUT.isNullCipherAndIntegritySupported());
+
+        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(EVENT_RADIO_AVAILABLE,
+                new AsyncResult(null, new int[]{ServiceState.RIL_RADIO_TECHNOLOGY_GSM}, null)));
+        processAllMessages();
+
+        verify(mMockCi, times(1)).setNullCipherAndIntegrityEnabled(anyBoolean(),
+                any(Message.class));
+
+        // Some ephemeral error occurred in the modem, but the feature was supported
+        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(EVENT_SET_NULL_CIPHER_AND_INTEGRITY_DONE,
+                new AsyncResult(null, null,
+                        new CommandException(CommandException.Error.REQUEST_NOT_SUPPORTED))));
+        processAllMessages();
+        assertFalse(mPhoneUT.isNullCipherAndIntegritySupported());
+    }
+
+    @Test
+    public void testHandleNullCipherAndIntegrityEnabled_radioSupportsFeature() {
+        DeviceConfig.setProperty(DeviceConfig.NAMESPACE_CELLULAR_SECURITY,
+                TelephonyManager.PROPERTY_ENABLE_NULL_CIPHER_TOGGLE, Boolean.TRUE.toString(),
+                false);
+        mPhoneUT.mCi = mMockCi;
+        assertFalse(mPhoneUT.isNullCipherAndIntegritySupported());
+
+        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(EVENT_RADIO_AVAILABLE,
+                new AsyncResult(null, new int[]{ServiceState.RIL_RADIO_TECHNOLOGY_GSM}, null)));
+        processAllMessages();
+
+        verify(mMockCi, times(1)).setNullCipherAndIntegrityEnabled(anyBoolean(),
+                any(Message.class));
+
+        // Some ephemeral error occurred in the modem, but the feature was supported
+        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(EVENT_SET_NULL_CIPHER_AND_INTEGRITY_DONE,
+                new AsyncResult(null, null, null)));
+        processAllMessages();
+        assertTrue(mPhoneUT.isNullCipherAndIntegritySupported());
+    }
+
+    @Test
+    public void testHandleNullCipherAndIntegrityEnabled_featureFlagOn() {
+        DeviceConfig.setProperty(DeviceConfig.NAMESPACE_CELLULAR_SECURITY,
+                TelephonyManager.PROPERTY_ENABLE_NULL_CIPHER_TOGGLE, Boolean.TRUE.toString(),
+                false);
+        mPhoneUT.mCi = mMockCi;
+
+        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(EVENT_RADIO_AVAILABLE,
+                new AsyncResult(null, new int[]{ServiceState.RIL_RADIO_TECHNOLOGY_GSM}, null)));
+        processAllMessages();
+
+        verify(mMockCi, times(1)).setNullCipherAndIntegrityEnabled(anyBoolean(),
+                any(Message.class));
+    }
+
+    @Test
+    public void testHandleNullCipherAndIntegrityEnabled_featureFlagOff() {
+        mPhoneUT.mCi = mMockCi;
+        DeviceConfig.setProperty(DeviceConfig.NAMESPACE_CELLULAR_SECURITY,
+                TelephonyManager.PROPERTY_ENABLE_NULL_CIPHER_TOGGLE, Boolean.FALSE.toString(),
+                false);
+
+        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(EVENT_RADIO_AVAILABLE,
+                new AsyncResult(null, new int[]{ServiceState.RIL_RADIO_TECHNOLOGY_GSM}, null)));
+        processAllMessages();
+
+        verify(mMockCi, times(0)).setNullCipherAndIntegrityEnabled(anyBoolean(),
+                any(Message.class));
+    }
+
+    public void fdnCheckCleanup() {
+        doReturn(false).when(mUiccCardApplication3gpp).getIccFdnAvailable();
+        doReturn(false).when(mUiccCardApplication3gpp).getIccFdnEnabled();
+    }
+
+    @Test
+    @SmallTest
+    public void testTriggerImsDeregistration() throws Exception {
+        replaceInstance(Phone.class, "mImsPhone", mPhoneUT, mImsPhone);
+
+        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(EVENT_IMS_DEREGISTRATION_TRIGGERED,
+                new AsyncResult(null,
+                        new int[]{ImsRegistrationImplBase.REASON_SIM_REFRESH}, null)));
+        processAllMessages();
+
+        verify(mImsPhone, times(1)).triggerImsDeregistration(
+                eq(ImsRegistrationImplBase.REASON_SIM_REFRESH));
+    }
+
+    @Test
+    public void testDomainSelectionEmergencyCallCs() throws CallStateException {
+        setupEmergencyCallScenario(false /* USE_ONLY_DIALED_SIM_ECC_LIST */,
+                false /* isEmergencyOnDialedSim */);
+
+        Bundle extras = new Bundle();
+        extras.putInt(PhoneConstants.EXTRA_DIAL_DOMAIN, NetworkRegistrationInfo.DOMAIN_CS);
+        ImsPhone.ImsDialArgs dialArgs = new ImsPhone.ImsDialArgs.Builder()
+                .setIntentExtras(extras)
+                .build();
+        mPhoneUT.dial(TEST_EMERGENCY_NUMBER, dialArgs);
+
+        verify(mCT).dialGsm(anyString(), any(PhoneInternalInterface.DialArgs.class));
+    }
+
+    @Test
+    public void testDomainSelectionEmergencyCallPs() throws CallStateException {
+        setupEmergencyCallScenario(false /* USE_ONLY_DIALED_SIM_ECC_LIST */,
+                false /* isEmergencyOnDialedSim */);
+
+        doReturn(false).when(mImsPhone).isImsAvailable();
+
+        Bundle extras = new Bundle();
+        extras.putInt(PhoneConstants.EXTRA_DIAL_DOMAIN, NetworkRegistrationInfo.DOMAIN_PS);
+        ImsPhone.ImsDialArgs dialArgs = new ImsPhone.ImsDialArgs.Builder()
+                .setIntentExtras(extras)
+                .build();
+        mPhoneUT.dial(TEST_EMERGENCY_NUMBER, dialArgs);
+
+        verify(mImsPhone).dial(anyString(), any(PhoneInternalInterface.DialArgs.class));
+    }
+
+    @Test
+    public void testDomainSelectionDialCs() throws Exception {
+        doReturn(true).when(mImsPhone).isImsAvailable();
+        doReturn(true).when(mImsManager).isVolteEnabledByPlatform();
+        doReturn(true).when(mImsManager).isEnhanced4gLteModeSettingEnabledByUser();
+        doReturn(true).when(mImsManager).isNonTtyOrTtyOnVolteEnabled();
+        doReturn(true).when(mImsPhone).isVoiceOverCellularImsEnabled();
+        doReturn(true).when(mImsPhone).isUtEnabled();
+
+        replaceInstance(Phone.class, "mImsPhone", mPhoneUT, mImsPhone);
+
+        Bundle extras = new Bundle();
+        extras.putInt(PhoneConstants.EXTRA_DIAL_DOMAIN, NetworkRegistrationInfo.DOMAIN_CS);
+        ImsPhone.ImsDialArgs dialArgs = new ImsPhone.ImsDialArgs.Builder()
+                .setIntentExtras(extras)
+                .build();
+        Connection connection = mPhoneUT.dial("1234567890", dialArgs);
+        verify(mCT).dialGsm(eq("1234567890"), any(PhoneInternalInterface.DialArgs.class));
+    }
+
+    @Test
+    public void testDomainSelectionDialPs() throws Exception {
+        mSST.mSS = mServiceState;
+        doReturn(ServiceState.STATE_IN_SERVICE).when(mServiceState).getState();
+
+        mCT.mForegroundCall = mGsmCdmaCall;
+        mCT.mBackgroundCall = mGsmCdmaCall;
+        mCT.mRingingCall = mGsmCdmaCall;
+        doReturn(GsmCdmaCall.State.IDLE).when(mGsmCdmaCall).getState();
+
+        replaceInstance(Phone.class, "mImsPhone", mPhoneUT, mImsPhone);
+
+        Bundle extras = new Bundle();
+        extras.putInt(PhoneConstants.EXTRA_DIAL_DOMAIN, NetworkRegistrationInfo.DOMAIN_PS);
+        ImsPhone.ImsDialArgs dialArgs = new ImsPhone.ImsDialArgs.Builder()
+                .setIntentExtras(extras)
+                .build();
+        Connection connection = mPhoneUT.dial("1234567890", dialArgs);
+        verify(mImsPhone).dial(eq("1234567890"), any(PhoneInternalInterface.DialArgs.class));
+    }
+
+    @Test
+    @SmallTest
+    public void testSetCellBroadcastIdRangesSuccess() throws Exception {
+        final int[][] channelValues = {
+            {0, 999}, {1000, 1003}, {1004, 0x0FFF}, {0x1000, 0x10FF}, {0x1100, 0x112F},
+            {0x1130, 0x1900}, {0x1901, 0x9FFF}, {0xA000, 0xFFFE}, {0xFFFF, 0xFFFF}};
+        List<CellBroadcastIdRange> ranges = new ArrayList<>();
+        for (int i = 0; i < channelValues.length; i++) {
+            ranges.add(new CellBroadcastIdRange(channelValues[i][0], channelValues[i][1],
+                    SmsCbMessage.MESSAGE_FORMAT_3GPP, i > 0 ? true : false));
+        }
+
+        List<SmsBroadcastConfigInfo> gsmConfigs = new ArrayList<>();
+        gsmConfigs.add(new SmsBroadcastConfigInfo(0, 999, 0, 255, false));
+        gsmConfigs.add(new SmsBroadcastConfigInfo(1000, 0xFFFF, 0, 255, true));
+
+        ArgumentCaptor<SmsBroadcastConfigInfo[]> gsmCaptor = ArgumentCaptor.forClass(
+                SmsBroadcastConfigInfo[].class);
+        ArgumentCaptor<Message> msgCaptor = ArgumentCaptor.forClass(Message.class);
+
+        mPhoneUT.mCi = mMockCi;
+
+        mPhoneUT.setCellBroadcastIdRanges(ranges, r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_SUCCESS == r));
+        waitForMs(100);
+
+        verify(mMockCi, times(1)).setGsmBroadcastConfig(gsmCaptor.capture(), msgCaptor.capture());
+        List<SmsBroadcastConfigInfo> gsmArgs = Arrays.asList(
+                (SmsBroadcastConfigInfo[]) gsmCaptor.getValue());
+        assertEquals(gsmConfigs, gsmArgs);
+
+        Message msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(1)).setGsmBroadcastActivation(eq(true), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, never()).setCdmaBroadcastConfig(any(), any());
+        verify(mMockCi, never()).setCdmaBroadcastActivation(anyBoolean(), any());
+
+        assertEquals(mPhoneUT.getCellBroadcastIdRanges(), mergeRangesAsNeeded(ranges));
+
+        //Verify to set cdma config and activate, but no more for gsm as no change
+        for (int i = 0; i < channelValues.length; i++) {
+            ranges.add(new CellBroadcastIdRange(channelValues[i][0], channelValues[i][1],
+                    SmsCbMessage.MESSAGE_FORMAT_3GPP2, i > 0 ? true : false));
+        }
+        List<CdmaSmsBroadcastConfigInfo> cdmaConfigs = new ArrayList<>();
+        cdmaConfigs.add(new CdmaSmsBroadcastConfigInfo(0, 999, 1, false));
+        cdmaConfigs.add(new CdmaSmsBroadcastConfigInfo(1000, 0xFFFF, 1, true));
+        ArgumentCaptor<CdmaSmsBroadcastConfigInfo[]> cdmaCaptor = ArgumentCaptor.forClass(
+                CdmaSmsBroadcastConfigInfo[].class);
+
+        mPhoneUT.setCellBroadcastIdRanges(ranges, r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_SUCCESS == r));
+        waitForMs(100);
+
+        verify(mMockCi, times(1)).setGsmBroadcastConfig(any(), any());
+        verify(mMockCi, times(1)).setCdmaBroadcastConfig(cdmaCaptor.capture(), msgCaptor.capture());
+        List<CdmaSmsBroadcastConfigInfo> cdmaArgs = Arrays.asList(
+                (CdmaSmsBroadcastConfigInfo[]) cdmaCaptor.getValue());
+        assertEquals(cdmaConfigs, cdmaArgs);
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(1)).setGsmBroadcastActivation(anyBoolean(), any());
+        verify(mMockCi, times(1)).setCdmaBroadcastActivation(eq(true), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        assertEquals(mPhoneUT.getCellBroadcastIdRanges(), mergeRangesAsNeeded(ranges));
+
+        // Verify not to set cdma or gsm config as the config is not changed
+        mPhoneUT.setCellBroadcastIdRanges(ranges, r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_SUCCESS == r));
+        waitForMs(100);
+
+        verify(mMockCi, times(1)).setCdmaBroadcastConfig(any(), any());
+        verify(mMockCi, times(1)).setCdmaBroadcastActivation(anyBoolean(), any());
+        verify(mMockCi, times(1)).setGsmBroadcastConfig(any(), any());
+        verify(mMockCi, times(1)).setGsmBroadcastActivation(anyBoolean(), any());
+
+        assertEquals(mPhoneUT.getCellBroadcastIdRanges(), mergeRangesAsNeeded(ranges));
+
+        // Verify to reset ranges with empty ranges list
+        mPhoneUT.setCellBroadcastIdRanges(new ArrayList<>(), r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_SUCCESS == r));
+
+        waitForMs(100);
+
+        verify(mMockCi, times(2)).setGsmBroadcastConfig(gsmCaptor.capture(), msgCaptor.capture());
+        assertEquals(0, ((SmsBroadcastConfigInfo[]) gsmCaptor.getValue()).length);
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        // Verify to deavtivate gsm broadcast on empty ranges
+        verify(mMockCi, times(1)).setGsmBroadcastActivation(eq(false), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(2)).setCdmaBroadcastConfig(cdmaCaptor.capture(), msgCaptor.capture());
+        assertEquals(0, ((CdmaSmsBroadcastConfigInfo[]) cdmaCaptor.getValue()).length);
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        processAllMessages();
+        waitForMs(100);
+
+        // Verify to deavtivate cdma broadcast on empty ranges
+        verify(mMockCi, times(1)).setCdmaBroadcastActivation(eq(false), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        processAllMessages();
+        waitForMs(100);
+
+        assertTrue(mPhoneUT.getCellBroadcastIdRanges().isEmpty());
+
+        //Verify to set gsm and cdma config then activate again
+        mPhoneUT.setCellBroadcastIdRanges(ranges, r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_SUCCESS == r));
+
+        waitForMs(100);
+
+        verify(mMockCi, times(3)).setGsmBroadcastConfig(gsmCaptor.capture(), msgCaptor.capture());
+        gsmArgs = Arrays.asList((SmsBroadcastConfigInfo[]) gsmCaptor.getValue());
+        assertEquals(gsmConfigs, gsmArgs);
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(2)).setGsmBroadcastActivation(eq(true), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(3)).setCdmaBroadcastConfig(cdmaCaptor.capture(), msgCaptor.capture());
+        cdmaArgs = Arrays.asList((CdmaSmsBroadcastConfigInfo[]) cdmaCaptor.getValue());
+        assertEquals(cdmaConfigs, cdmaArgs);
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(2)).setCdmaBroadcastActivation(eq(true), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        assertEquals(mPhoneUT.getCellBroadcastIdRanges(), mergeRangesAsNeeded(ranges));
+    }
+
+    @Test
+    @SmallTest
+    public void testSetCellBroadcastIdRangesFailure() throws Exception {
+        List<CellBroadcastIdRange> ranges = new ArrayList<>();
+
+        // Verify to throw exception for invalid ranges
+        ranges.add(new CellBroadcastIdRange(0, 999, SmsCbMessage.MESSAGE_FORMAT_3GPP, true));
+        ranges.add(new CellBroadcastIdRange(0, 999, SmsCbMessage.MESSAGE_FORMAT_3GPP, false));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> mPhoneUT.setCellBroadcastIdRanges(ranges, r -> {}));
+
+        ArgumentCaptor<Message> msgCaptor = ArgumentCaptor.forClass(Message.class);
+        ranges.clear();
+        ranges.add(new CellBroadcastIdRange(0, 999, SmsCbMessage.MESSAGE_FORMAT_3GPP, true));
+        ranges.add(new CellBroadcastIdRange(0, 999, SmsCbMessage.MESSAGE_FORMAT_3GPP2, true));
+        mPhoneUT.mCi = mMockCi;
+
+        // Verify the result on setGsmBroadcastConfig failure
+        mPhoneUT.setCellBroadcastIdRanges(ranges, r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_FAIL_CONFIG == r));
+        waitForMs(100);
+
+        verify(mMockCi, times(1)).setGsmBroadcastConfig(any(), msgCaptor.capture());
+
+        Message msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg).exception = new RuntimeException();
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(0)).setGsmBroadcastActivation(anyBoolean(), any());
+        verify(mMockCi, times(0)).setCdmaBroadcastConfig(any(), any());
+        verify(mMockCi, times(0)).setCdmaBroadcastActivation(anyBoolean(), any());
+        assertTrue(mPhoneUT.getCellBroadcastIdRanges().isEmpty());
+
+        // Verify the result on setGsmBroadcastActivation failure
+        mPhoneUT.setCellBroadcastIdRanges(ranges, r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_FAIL_ACTIVATION == r));
+        waitForMs(100);
+
+        verify(mMockCi, times(2)).setGsmBroadcastConfig(any(), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(1)).setGsmBroadcastActivation(anyBoolean(), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg).exception = new RuntimeException();
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(0)).setCdmaBroadcastConfig(any(), any());
+        verify(mMockCi, times(0)).setCdmaBroadcastActivation(anyBoolean(), any());
+        assertTrue(mPhoneUT.getCellBroadcastIdRanges().isEmpty());
+
+        // Verify the result on setCdmaBroadcastConfig failure
+        mPhoneUT.setCellBroadcastIdRanges(ranges, r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_FAIL_CONFIG == r));
+        waitForMs(100);
+
+        verify(mMockCi, times(3)).setGsmBroadcastConfig(any(), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(2)).setGsmBroadcastActivation(anyBoolean(), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(1)).setCdmaBroadcastConfig(any(), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg).exception = new RuntimeException();
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(0)).setCdmaBroadcastActivation(anyBoolean(), any());
+
+        List<CellBroadcastIdRange> ranges3gpp = new ArrayList<>();
+        ranges3gpp.add(new CellBroadcastIdRange(0, 999, SmsCbMessage.MESSAGE_FORMAT_3GPP, true));
+
+        assertEquals(mPhoneUT.getCellBroadcastIdRanges(), ranges3gpp);
+
+        // Verify the result on setCdmaBroadcastActivation failure
+        mPhoneUT.setCellBroadcastIdRanges(ranges, r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_FAIL_ACTIVATION == r));
+        waitForMs(200);
+
+        // Verify no more calls as there is no change of ranges for 3gpp
+        verify(mMockCi, times(3)).setGsmBroadcastConfig(any(), any());
+        verify(mMockCi, times(2)).setGsmBroadcastActivation(anyBoolean(), any());
+        verify(mMockCi, times(2)).setCdmaBroadcastConfig(any(), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg);
+        msg.sendToTarget();
+        waitForMs(100);
+
+        verify(mMockCi, times(1)).setCdmaBroadcastActivation(anyBoolean(), msgCaptor.capture());
+
+        msg = msgCaptor.getValue();
+        assertNotNull(msg);
+        AsyncResult.forMessage(msg).exception = new RuntimeException();
+        msg.sendToTarget();
+        waitForMs(100);
+
+        assertEquals(mPhoneUT.getCellBroadcastIdRanges(), ranges3gpp);
+    }
+
+    @Test
+    @SmallTest
+    public void testMergeCellBroadcastIdRangesAsNeeded() {
+        final int[][] channelValues = {
+                {0, 999}, {1000, 1003}, {1004, 0x0FFF}, {0x1000, 0x10FF}, {0x1100, 0x112F},
+                {0x1130, 0x1900}, {0x1901, 0x9FFF}, {0xA000, 0xFFFE}, {0xFFFF, 0xFFFF}};
+        final int[] typeValues = {
+                SmsCbMessage.MESSAGE_FORMAT_3GPP, SmsCbMessage.MESSAGE_FORMAT_3GPP2};
+        final boolean[] enabledValues = {true, false};
+
+        List<CellBroadcastIdRange> ranges = new ArrayList<>();
+        for (int i = 0; i < channelValues.length; i++) {
+            ranges.add(new CellBroadcastIdRange(channelValues[i][0], channelValues[i][1],
+                    typeValues[0], enabledValues[0]));
+        }
+
+        ranges = mergeRangesAsNeeded(ranges);
+
+        assertEquals(ranges.size(), 1);
+        assertEquals(ranges.get(0).getStartId(), channelValues[0][0]);
+        assertEquals(ranges.get(0).getEndId(), channelValues[channelValues.length - 1][0]);
+
+        // Verify not to merge the ranges with different types.
+        ranges.clear();
+        for (int i = 0; i < channelValues.length; i++) {
+            ranges.add(new CellBroadcastIdRange(channelValues[i][0], channelValues[i][1],
+                    typeValues[0], enabledValues[0]));
+            ranges.add(new CellBroadcastIdRange(channelValues[i][0], channelValues[i][1],
+                    typeValues[1], enabledValues[0]));
+        }
+
+        ranges = mergeRangesAsNeeded(ranges);
+
+        assertEquals(ranges.size(), 2);
+        assertEquals(ranges.get(0).getStartId(), channelValues[0][0]);
+        assertEquals(ranges.get(0).getEndId(), channelValues[channelValues.length - 1][0]);
+        assertEquals(ranges.get(1).getStartId(), channelValues[0][0]);
+        assertEquals(ranges.get(1).getEndId(), channelValues[channelValues.length - 1][0]);
+        assertTrue(ranges.get(0).getType() != ranges.get(1).getType());
+
+        // Verify to throw IllegalArgumentException if the same range is enabled and disabled
+        // in the range list.
+        final List<CellBroadcastIdRange> ranges2 = new ArrayList<>();
+        for (int i = 0; i < channelValues.length; i++) {
+            ranges2.add(new CellBroadcastIdRange(channelValues[i][0], channelValues[i][1],
+                    typeValues[0], enabledValues[0]));
+            ranges2.add(new CellBroadcastIdRange(channelValues[i][0], channelValues[i][1],
+                    typeValues[0], enabledValues[1]));
+        }
+
+        assertThrows(IllegalArgumentException.class, () ->
+                mergeRangesAsNeeded(ranges2));
+    }
+
+    @Test
+    public void getImeiType_primary() {
+        Message message = mPhoneUT.obtainMessage(Phone.EVENT_GET_DEVICE_IMEI_DONE);
+        ImeiInfo imeiInfo = new ImeiInfo();
+        imeiInfo.imei = FAKE_IMEI;
+        imeiInfo.svn = FAKE_IMEISV;
+        imeiInfo.type = ImeiInfo.ImeiType.PRIMARY;
+        AsyncResult.forMessage(message, imeiInfo, null);
+        mPhoneUT.handleMessage(message);
+        assertEquals(Phone.IMEI_TYPE_PRIMARY, mPhoneUT.getImeiType());
+        assertEquals(FAKE_IMEI, mPhoneUT.getImei());
+    }
+
+    @Test
+    public void getImeiType_Secondary() {
+        Message message = mPhoneUT.obtainMessage(Phone.EVENT_GET_DEVICE_IMEI_DONE);
+        ImeiInfo imeiInfo = new ImeiInfo();
+        imeiInfo.imei = FAKE_IMEI;
+        imeiInfo.svn = FAKE_IMEISV;
+        imeiInfo.type = ImeiInfo.ImeiType.SECONDARY;
+        AsyncResult.forMessage(message, imeiInfo, null);
+        mPhoneUT.handleMessage(message);
+        assertEquals(Phone.IMEI_TYPE_SECONDARY, mPhoneUT.getImeiType());
+        assertEquals(FAKE_IMEI, mPhoneUT.getImei());
+    }
+
+    @Test
+    public void getImei() {
+        assertTrue(mPhoneUT.isPhoneTypeGsm());
+        Message message = mPhoneUT.obtainMessage(Phone.EVENT_RADIO_AVAILABLE);
+        mPhoneUT.handleMessage(message);
+        verify(mSimulatedCommandsVerifier, times(2)).getImei(nullable(Message.class));
+    }
+
+    @Test
+    public void testSetAllowedNetworkTypes_admin2gRestrictionHonored() throws Exception {
+        // circumvent loading/saving to sim db. it's not behavior under test.
+        TelephonyManager.setupISubForTest(Mockito.mock(SubscriptionManagerService.class));
+        TelephonyManager.enableServiceHandleCaching();
+        mPhoneUT.loadAllowedNetworksFromSubscriptionDatabase();
+
+        // 2g is disabled by admin
+        UserManager userManagerMock = mContext.getSystemService(UserManager.class);
+        when(userManagerMock.hasUserRestriction(UserManager.DISALLOW_CELLULAR_2G)).thenReturn(true);
+        mContext.sendBroadcast(new Intent(UserManager.ACTION_USER_RESTRICTIONS_CHANGED));
+
+        // carrier requests 2g to be enabled
+        mPhoneUT.setAllowedNetworkTypes(TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_CARRIER,
+                TelephonyManager.NETWORK_CLASS_BITMASK_2G, null);
+
+        // Assert that 2g was not passed as an allowed network type to the modem
+        ArgumentCaptor<Integer> captureBitMask = ArgumentCaptor.forClass(Integer.class);
+        // One call for the admin restriction update, another by this test
+        verify(mSimulatedCommandsVerifier, times(2)).setAllowedNetworkTypesBitmap(
+                captureBitMask.capture(),
+                nullable(Message.class));
+        assertEquals(0, captureBitMask.getValue() & TelephonyManager.NETWORK_CLASS_BITMASK_2G);
     }
 }

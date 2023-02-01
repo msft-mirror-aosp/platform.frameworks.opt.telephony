@@ -16,7 +16,10 @@
 
 package com.android.internal.telephony.metrics;
 
+import static android.telephony.TelephonyManager.NETWORK_TYPE_BITMASK_GPRS;
+import static android.telephony.TelephonyManager.NETWORK_TYPE_BITMASK_GSM;
 import static android.text.format.DateUtils.DAY_IN_MILLIS;
+import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 
 import static com.android.internal.telephony.TelephonyStatsLog.GBA_EVENT__FAILED_REASON__FEATURE_NOT_READY;
 import static com.android.internal.telephony.TelephonyStatsLog.GBA_EVENT__FAILED_REASON__UNKNOWN;
@@ -28,10 +31,8 @@ import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSIO
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MO;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MT;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_EXTREMELY_FAST;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_VERY_FAST;
-import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_VERY_SLOW;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -43,6 +44,7 @@ import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import android.annotation.Nullable;
 import android.content.Context;
@@ -67,6 +69,7 @@ import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationFeat
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationServiceDescStats;
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationStats;
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationTermination;
+import com.android.internal.telephony.nano.PersistAtomsProto.OutgoingShortCodeSms;
 import com.android.internal.telephony.nano.PersistAtomsProto.PersistAtoms;
 import com.android.internal.telephony.nano.PersistAtomsProto.PresenceNotifyEvent;
 import com.android.internal.telephony.nano.PersistAtomsProto.RcsAcsProvisioningStats;
@@ -223,14 +226,16 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     private SipTransportSession mSipTransportSession2;
     private SipTransportSession[] mSipTransportSession;
 
+    private OutgoingShortCodeSms mOutgoingShortCodeSms1;
+    private OutgoingShortCodeSms mOutgoingShortCodeSms2;
+    private OutgoingShortCodeSms[] mOutgoingShortCodeSms;
+
     private void makeTestData() {
         // MO call with SRVCC (LTE to UMTS)
         mCall1Proto = new VoiceCallSession();
         mCall1Proto.bearerAtStart = VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
         mCall1Proto.bearerAtEnd = VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_CS;
         mCall1Proto.direction = VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MO;
-        mCall1Proto.setupDuration =
-                VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_VERY_FAST;
         mCall1Proto.setupFailed = false;
         mCall1Proto.disconnectReasonCode = DisconnectCause.LOCAL;
         mCall1Proto.disconnectExtraCode = 0;
@@ -259,8 +264,6 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mCall2Proto.bearerAtStart = VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
         mCall2Proto.bearerAtEnd = VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
         mCall2Proto.direction = VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MT;
-        mCall2Proto.setupDuration =
-                VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_VERY_FAST;
         mCall2Proto.setupFailed = false;
         mCall2Proto.disconnectReasonCode = ImsReasonInfo.CODE_USER_TERMINATED_BY_REMOTE;
         mCall2Proto.disconnectExtraCode = 0;
@@ -288,8 +291,6 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mCall3Proto.bearerAtStart = VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
         mCall3Proto.bearerAtEnd = VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
         mCall3Proto.direction = VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MT;
-        mCall3Proto.setupDuration =
-                VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_EXTREMELY_FAST;
         mCall3Proto.setupFailed = false;
         mCall3Proto.disconnectReasonCode = ImsReasonInfo.CODE_USER_TERMINATED;
         mCall3Proto.disconnectExtraCode = 0;
@@ -316,8 +317,6 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mCall4Proto.bearerAtStart = VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_CS;
         mCall4Proto.bearerAtEnd = VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_CS;
         mCall4Proto.direction = VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MO;
-        mCall4Proto.setupDuration =
-                VOICE_CALL_SESSION__SETUP_DURATION__CALL_SETUP_DURATION_VERY_SLOW;
         mCall4Proto.setupFailed = true;
         mCall4Proto.disconnectReasonCode = DisconnectCause.NORMAL;
         mCall4Proto.disconnectExtraCode = 0;
@@ -552,6 +551,8 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mDataCallSession0.setupFailed = false;
         mDataCallSession0.durationMinutes = 20;
         mDataCallSession0.ongoing = true;
+        mDataCallSession0.handoverFailureCauses = new int[]{3, 2, 1};
+        mDataCallSession0.handoverFailureRat = new int[]{5, 5, 6};
 
         mDataCallSession1 = new DataCallSession();
         mDataCallSession1.dimension = 222;
@@ -864,6 +865,19 @@ public class PersistAtomsStorageTest extends TelephonyTest {
 
         mSipTransportSession =
                 new SipTransportSession[] {mSipTransportSession1, mSipTransportSession2};
+
+        mOutgoingShortCodeSms1 = new OutgoingShortCodeSms();
+        mOutgoingShortCodeSms1.category = 1;
+        mOutgoingShortCodeSms1.xmlVersion = 30;
+        mOutgoingShortCodeSms1.shortCodeSmsCount = 1;
+
+        mOutgoingShortCodeSms2 = new OutgoingShortCodeSms();
+        mOutgoingShortCodeSms2.category = 2;
+        mOutgoingShortCodeSms2.xmlVersion  = 31;
+        mOutgoingShortCodeSms2.shortCodeSmsCount = 1;
+
+        mOutgoingShortCodeSms = new OutgoingShortCodeSms[] {mOutgoingShortCodeSms1,
+                mOutgoingShortCodeSms2};
     }
 
     private static class TestablePersistAtomsStorage extends PersistAtomsStorage {
@@ -1002,6 +1016,9 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSipTransportSession1 = null;
         mSipTransportSession2 = null;
         mSipTransportSession = null;
+        mOutgoingShortCodeSms1 = null;
+        mOutgoingShortCodeSms2 = null;
+        mOutgoingShortCodeSms = null;
         super.tearDown();
     }
 
@@ -1813,6 +1830,12 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         assertProtoArrayEqualsIgnoringOrder(
                 new DataCallSession[]{mDataCallSession0, mDataCallSession1},
                 dataCalls);
+        for (DataCallSession dataCallSession : dataCalls) {
+            if (dataCallSession.dimension == mDataCallSession0.dimension) {
+                assertArrayEquals(new int[]{1, 2, 3}, dataCallSession.handoverFailureCauses);
+                assertArrayEquals(new int[]{6, 5, 5}, dataCallSession.handoverFailureRat);
+            }
+        }
     }
 
     @Test
@@ -1846,11 +1869,15 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         newDataCallSession0.ratAtEnd = TelephonyManager.NETWORK_TYPE_LTE;
         newDataCallSession0.durationMinutes = 10;
         newDataCallSession0.ratSwitchCount = 5;
+        newDataCallSession0.handoverFailureCauses = new int[]{4};
+        newDataCallSession0.handoverFailureRat = new int[]{4};
         DataCallSession totalDataCallSession0 = copyOf(newDataCallSession0);
         totalDataCallSession0.durationMinutes =
                 mDataCallSession0.durationMinutes + newDataCallSession0.durationMinutes;
         totalDataCallSession0.ratSwitchCount =
                 mDataCallSession0.ratSwitchCount + newDataCallSession0.ratSwitchCount;
+        totalDataCallSession0.handoverFailureCauses = new int[]{1, 2, 3, 4};
+        totalDataCallSession0.handoverFailureRat = new int[]{6, 5, 5, 4};
 
         mPersistAtomsStorage.addDataCallSession(mDataCallSession0);
         mPersistAtomsStorage.addDataCallSession(newDataCallSession0);
@@ -2090,13 +2117,16 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     @Test
     @SmallTest
     public void addRcsAcsProvisioningStats_updateExistingEntries() throws Exception {
+        final int maxCount = 5;
+        final long duration = START_TIME_MILLIS;
         createEmptyTestFile();
 
         mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
 
         // store 5 same atoms (1Proto), but only 1 atoms stored with count 5, total time 2000L * 5
         // store 5 same atoms (2Proto), but only 1 atoms stored with count 5, total time 2000L * 5
-        for (int i = 0; i < 5; i++) {
+
+        for (int i = 0; i < maxCount; i++) {
             mPersistAtomsStorage
                     .addRcsAcsProvisioningStats(copyOf(mRcsAcsProvisioningStats1Proto));
             mPersistAtomsStorage.incTimeMillis(100L);
@@ -2107,6 +2137,7 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         // add one more atoms (2Proto), count 6, total time 2000L * 6
         mPersistAtomsStorage
                 .addRcsAcsProvisioningStats(copyOf(mRcsAcsProvisioningStats2Proto));
+        mPersistAtomsStorage.incTimeMillis(100L);
 
         verifyCurrentStateSavedToFileOnce();
 
@@ -2114,9 +2145,11 @@ public class PersistAtomsStorageTest extends TelephonyTest {
                 mPersistAtomsStorage.getRcsAcsProvisioningStats(0L);
 
         // atom (1Proto) : count = 5, time = 2000L * 5
-        assertHasStatsAndCountDuration(result, mRcsAcsProvisioningStats1Proto, 5, 2000L * 5);
+        assertHasStatsAndCountDuration(
+                result, mRcsAcsProvisioningStats1Proto, 5, duration * maxCount);
         // atom (2Proto) : count = 6, time = 2000L * 6
-        assertHasStatsAndCountDuration(result, mRcsAcsProvisioningStats2Proto, 6, 2000L * 6);
+        assertHasStatsAndCountDuration(
+                result, mRcsAcsProvisioningStats2Proto, 6, duration * (maxCount + 1));
     }
 
     @Test
@@ -2139,27 +2172,27 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         createTestFile(START_TIME_MILLIS);
 
         mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
-        mPersistAtomsStorage.incTimeMillis(100L);
+        mPersistAtomsStorage.incTimeMillis(DAY_IN_MILLIS);
         RcsAcsProvisioningStats[] statses1 =
-                mPersistAtomsStorage.getRcsAcsProvisioningStats(50L);
-        mPersistAtomsStorage.incTimeMillis(100L);
+                mPersistAtomsStorage.getRcsAcsProvisioningStats(DAY_IN_MILLIS - HOUR_IN_MILLIS);
+        mPersistAtomsStorage.incTimeMillis(DAY_IN_MILLIS);
         RcsAcsProvisioningStats[] statses2 =
-                mPersistAtomsStorage.getRcsAcsProvisioningStats(50L);
+                mPersistAtomsStorage.getRcsAcsProvisioningStats(DAY_IN_MILLIS - HOUR_IN_MILLIS);
 
         // first results of get should have two atoms, second should be empty
         // pull timestamp should be updated and saved
         assertProtoArrayEqualsIgnoringOrder(mRcsAcsProvisioningStatses, statses1);
         assertProtoArrayEquals(new RcsAcsProvisioningStats[0], statses2);
         assertEquals(
-                START_TIME_MILLIS + 200L,
+                START_TIME_MILLIS + 2 * DAY_IN_MILLIS,
                 mPersistAtomsStorage.getAtomsProto()
                         .rcsAcsProvisioningStatsPullTimestampMillis);
         InOrder inOrder = inOrder(mTestFileOutputStream);
         assertEquals(
-                START_TIME_MILLIS + 100L,
+                START_TIME_MILLIS + DAY_IN_MILLIS,
                 getAtomsWritten(inOrder).rcsAcsProvisioningStatsPullTimestampMillis);
         assertEquals(
-                START_TIME_MILLIS + 200L,
+                START_TIME_MILLIS + 2 * DAY_IN_MILLIS,
                 getAtomsWritten(inOrder).rcsAcsProvisioningStatsPullTimestampMillis);
         inOrder.verifyNoMoreInteractions();
     }
@@ -2300,6 +2333,121 @@ public class PersistAtomsStorageTest extends TelephonyTest {
                     mImsRegistrationStatsWifi0
                 },
                 serviceStates);
+    }
+
+    @Test
+    public void getRcsAcsProvisioningStats_24h_normalization() throws Exception {
+        // in case pulling interval is greater than a day
+        final long stateTimer = HOUR_IN_MILLIS;
+        final long weightFactor = 2;
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        RcsAcsProvisioningStats mSubjectStats = copyOf(mRcsAcsProvisioningStats1Proto);
+
+        mSubjectStats.stateTimerMillis = stateTimer;
+        mPersistAtomsStorage.addRcsAcsProvisioningStats(mSubjectStats);
+        mPersistAtomsStorage.incTimeMillis(DAY_IN_MILLIS * weightFactor);
+
+        RcsAcsProvisioningStats[] savedStats =
+                mPersistAtomsStorage.getRcsAcsProvisioningStats(0L);
+
+        assertEquals(
+                (START_TIME_MILLIS + stateTimer) / weightFactor, savedStats[0].stateTimerMillis);
+
+        // in case pulling interval is smaller than a day
+        long incTimeMillis = DAY_IN_MILLIS * 23 / 24 + 1;
+        mSubjectStats = copyOf(mRcsAcsProvisioningStats1Proto);
+        mSubjectStats.stateTimerMillis = stateTimer;
+        mPersistAtomsStorage.addRcsAcsProvisioningStats(mSubjectStats);
+        mPersistAtomsStorage.incTimeMillis(incTimeMillis);
+        savedStats =
+                mPersistAtomsStorage.getRcsAcsProvisioningStats(0L);
+
+
+        assertEquals(stateTimer, savedStats[0].stateTimerMillis);
+    }
+
+    @Test
+    public void getSipDelegateStats_24h_normalization() throws Exception {
+        final long stateTimer = HOUR_IN_MILLIS;
+        final long weightFactor = 2;
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        SipDelegateStats mSubjectStats = copyOf(mSipDelegateStats1);
+        mSubjectStats.uptimeMillis = stateTimer;
+        mPersistAtomsStorage.addSipDelegateStats(mSubjectStats);
+        mPersistAtomsStorage.incTimeMillis(DAY_IN_MILLIS * weightFactor);
+        SipDelegateStats[] savedStats =
+                mPersistAtomsStorage.getSipDelegateStats(0L);
+        for (SipDelegateStats stat : savedStats) {
+            if (stat.destroyReason
+                    == SipDelegateManager.SIP_DELEGATE_DESTROY_REASON_REQUESTED_BY_APP) {
+                assertEquals(stateTimer / weightFactor, stat.uptimeMillis);
+            }
+        }
+
+        long incTimeMillis = DAY_IN_MILLIS * 23 / 24 + 1;
+        mSubjectStats = copyOf(mSipDelegateStats1);
+        mSubjectStats.uptimeMillis = stateTimer;
+        mPersistAtomsStorage.addSipDelegateStats(mSubjectStats);
+        mPersistAtomsStorage.incTimeMillis(incTimeMillis);
+        savedStats =
+                mPersistAtomsStorage.getSipDelegateStats(0L);
+        for (SipDelegateStats stat : savedStats) {
+            if (stat.destroyReason
+                    == SipDelegateManager.SIP_DELEGATE_DESTROY_REASON_REQUESTED_BY_APP) {
+                assertEquals(stateTimer, stat.uptimeMillis);
+            }
+        }
+    }
+
+    @Test
+    public void getSipTransportFeatureTagStats_24h_normalization() throws Exception {
+        final long stateTimer = HOUR_IN_MILLIS;
+        final long weightFactor = 2;
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        SipTransportFeatureTagStats mSubjectStats = copyOf(mSipTransportFeatureTagStats1);
+        mSubjectStats.associatedMillis = stateTimer;
+        mPersistAtomsStorage.addSipTransportFeatureTagStats(mSubjectStats);
+        mPersistAtomsStorage.incTimeMillis(DAY_IN_MILLIS * weightFactor);
+        SipTransportFeatureTagStats[] savedStats =
+                mPersistAtomsStorage.getSipTransportFeatureTagStats(0L);
+        assertEquals((stateTimer) / weightFactor, savedStats[0].associatedMillis);
+
+        long incTimeMillis = DAY_IN_MILLIS * 23 / 24 + 1;
+        mSubjectStats = copyOf(mSipTransportFeatureTagStats1);
+        mSubjectStats.associatedMillis = stateTimer;
+        mPersistAtomsStorage.addSipTransportFeatureTagStats(mSubjectStats);
+        mPersistAtomsStorage.incTimeMillis(incTimeMillis);
+        savedStats =
+                mPersistAtomsStorage.getSipTransportFeatureTagStats(0L);
+        assertEquals(stateTimer, savedStats[0].associatedMillis);
+    }
+
+    @Test
+    public void getImsRegistrationServiceDescStats_24h_normalization() throws Exception {
+        final long stateTimer = HOUR_IN_MILLIS;
+        final long weightFactor = 2;
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        ImsRegistrationServiceDescStats mSubjectStats = copyOf(mImsRegistrationServiceIm);
+        mSubjectStats.publishedMillis = stateTimer;
+        mPersistAtomsStorage.addImsRegistrationServiceDescStats(mSubjectStats);
+        mPersistAtomsStorage.incTimeMillis(DAY_IN_MILLIS * weightFactor);
+        ImsRegistrationServiceDescStats[] savedStats =
+                mPersistAtomsStorage.getImsRegistrationServiceDescStats(0L);
+        assertEquals(
+                (START_TIME_MILLIS + stateTimer) / weightFactor, savedStats[0].publishedMillis);
+
+        long incTimeMillis = DAY_IN_MILLIS * 23 / 24 + 1;
+        mSubjectStats = copyOf(mImsRegistrationServiceIm);
+        mSubjectStats.publishedMillis = stateTimer;
+        mPersistAtomsStorage.addImsRegistrationServiceDescStats(mSubjectStats);
+        mPersistAtomsStorage.incTimeMillis(incTimeMillis);
+        savedStats =
+                mPersistAtomsStorage.getImsRegistrationServiceDescStats(0L);
+        assertEquals(stateTimer, savedStats[0].publishedMillis);
     }
 
     @Test
@@ -3108,6 +3256,306 @@ public class PersistAtomsStorageTest extends TelephonyTest {
                         newSipTransportSession}, outputs);
     }
 
+    @Test
+    @SmallTest
+    public void getUnmeteredNetworks_noExistingEntry() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+
+        assertEquals(0L, mPersistAtomsStorage.getUnmeteredNetworks(1, 0));
+
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    @SmallTest
+    public void getUnmeteredNetworks() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+
+        mPersistAtomsStorage.addUnmeteredNetworks(0, 0, NETWORK_TYPE_BITMASK_GPRS);
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(NETWORK_TYPE_BITMASK_GPRS, mPersistAtomsStorage.getUnmeteredNetworks(0, 0));
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(0L, mPersistAtomsStorage.getUnmeteredNetworks(0, 0));
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    @SmallTest
+    public void getUnmeteredNetworks_carrierIdMismatch() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+
+        mPersistAtomsStorage.addUnmeteredNetworks(0, 0, NETWORK_TYPE_BITMASK_GPRS);
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(0L, mPersistAtomsStorage.getUnmeteredNetworks(0, 1));
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(0L, mPersistAtomsStorage.getUnmeteredNetworks(0, 0));
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    @SmallTest
+    public void addUnmeteredNetworks() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+
+        mPersistAtomsStorage.addUnmeteredNetworks(0, 0, NETWORK_TYPE_BITMASK_GPRS);
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        mPersistAtomsStorage.addUnmeteredNetworks(0, 0, NETWORK_TYPE_BITMASK_GSM);
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(
+                NETWORK_TYPE_BITMASK_GPRS | NETWORK_TYPE_BITMASK_GSM,
+                mPersistAtomsStorage.getUnmeteredNetworks(0, 0));
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(0, mPersistAtomsStorage.getUnmeteredNetworks(0, 0));
+        inOrder.verifyNoMoreInteractions();
+
+        mPersistAtomsStorage.addUnmeteredNetworks(1, 2, NETWORK_TYPE_BITMASK_GPRS);
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        mPersistAtomsStorage.addUnmeteredNetworks(1, 2, NETWORK_TYPE_BITMASK_GSM);
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(
+                NETWORK_TYPE_BITMASK_GPRS | NETWORK_TYPE_BITMASK_GSM,
+                mPersistAtomsStorage.getUnmeteredNetworks(1, 2));
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(0, mPersistAtomsStorage.getUnmeteredNetworks(1, 2));
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    @SmallTest
+    public void addUnmeteredNetworks_carrierIdMismatch() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+
+        mPersistAtomsStorage.addUnmeteredNetworks(0, 0, NETWORK_TYPE_BITMASK_GPRS);
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        mPersistAtomsStorage.addUnmeteredNetworks(0, 1, NETWORK_TYPE_BITMASK_GSM);
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(NETWORK_TYPE_BITMASK_GSM, mPersistAtomsStorage.getUnmeteredNetworks(0, 1));
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(0L, mPersistAtomsStorage.getUnmeteredNetworks(0, 1));
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    @SmallTest
+    public void addUnmeteredNetworks_sameBitmask() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+
+        mPersistAtomsStorage.addUnmeteredNetworks(0, 0, NETWORK_TYPE_BITMASK_GPRS);
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+
+        mPersistAtomsStorage.addUnmeteredNetworks(0, 0, NETWORK_TYPE_BITMASK_GPRS);
+        inOrder.verifyNoMoreInteractions();
+
+        assertEquals(NETWORK_TYPE_BITMASK_GPRS, mPersistAtomsStorage.getUnmeteredNetworks(0, 0));
+        inOrder.verify(mTestFileOutputStream, times(1))
+                .write(eq(PersistAtoms.toByteArray(mPersistAtomsStorage.getAtomsProto())));
+        inOrder.verify(mTestFileOutputStream, times(1)).close();
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    public void addOutgoingShortCodeSms_emptyProto() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addOutgoingShortCodeSms(mOutgoingShortCodeSms1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // OutgoingShortCodeSms should be added successfully, changes should be saved.
+        verifyCurrentStateSavedToFileOnce();
+        OutgoingShortCodeSms[] expectedList = new OutgoingShortCodeSms[] {mOutgoingShortCodeSms1};
+        assertProtoArrayEquals(expectedList,
+                mPersistAtomsStorage.getOutgoingShortCodeSms(0L));
+    }
+
+    @Test
+    public void addOutgoingShortCodeSms_withExistingEntries() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addOutgoingShortCodeSms(mOutgoingShortCodeSms1);
+        mPersistAtomsStorage.addOutgoingShortCodeSms(mOutgoingShortCodeSms2);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // OutgoingShortCodeSms should be added successfully.
+        verifyCurrentStateSavedToFileOnce();
+        OutgoingShortCodeSms[] expectedList = new OutgoingShortCodeSms[] {mOutgoingShortCodeSms1,
+                mOutgoingShortCodeSms2};
+        assertProtoArrayEqualsIgnoringOrder(expectedList,
+                mPersistAtomsStorage.getOutgoingShortCodeSms(0L));
+    }
+
+    @Test
+    public void addOutgoingShortCodeSms_updateExistingEntries() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        // Add copy of mOutgoingShortCodeSms1.
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addOutgoingShortCodeSms(copyOf(mOutgoingShortCodeSms1));
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // mOutgoingShortCodeSms1's short code sms count should be increased by 1.
+        verifyCurrentStateSavedToFileOnce();
+        OutgoingShortCodeSms newOutgoingShortCodeSms1 = copyOf(mOutgoingShortCodeSms1);
+        newOutgoingShortCodeSms1.shortCodeSmsCount = 2;
+        OutgoingShortCodeSms[] expectedList = new OutgoingShortCodeSms[] {newOutgoingShortCodeSms1,
+                mOutgoingShortCodeSms2};
+        assertProtoArrayEqualsIgnoringOrder(expectedList,
+                mPersistAtomsStorage.getOutgoingShortCodeSms(0L));
+    }
+
+    @Test
+    public void addOutgoingShortCodeSms_tooManyEntries() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+
+        // Store mOutgoingShortCodeSms1 11 times.
+        for (int i = 0; i < 11; i++) {
+            mPersistAtomsStorage.addOutgoingShortCodeSms(mOutgoingShortCodeSms1);
+            mPersistAtomsStorage.incTimeMillis(100L);
+        }
+        // Store mOutgoingShortCodeSms2 1 time.
+        mPersistAtomsStorage.addOutgoingShortCodeSms(mOutgoingShortCodeSms2);
+
+        verifyCurrentStateSavedToFileOnce();
+        OutgoingShortCodeSms[] result = mPersistAtomsStorage
+                .getOutgoingShortCodeSms(0L);
+        assertHasStatsAndCount(result, mOutgoingShortCodeSms1, 11);
+        assertHasStatsAndCount(result, mOutgoingShortCodeSms2, 1);
+    }
+
+    @Test
+    public void getOutgoingShortCodeSms_tooFrequent() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        // Pull interval less than minimum.
+        mPersistAtomsStorage.incTimeMillis(50L);
+        OutgoingShortCodeSms[] outgoingShortCodeSmsList = mPersistAtomsStorage
+                .getOutgoingShortCodeSms(100L);
+        // Should be denied.
+        assertNull(outgoingShortCodeSmsList);
+    }
+
+    @Test
+    public void getOutgoingShortCodeSms_withSavedAtoms() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.incTimeMillis(100L);
+        OutgoingShortCodeSms[] outgoingShortCodeSmsList1 = mPersistAtomsStorage
+                .getOutgoingShortCodeSms(50L);
+        mPersistAtomsStorage.incTimeMillis(100L);
+        OutgoingShortCodeSms[] outgoingShortCodeSmsList2 = mPersistAtomsStorage
+                .getOutgoingShortCodeSms(50L);
+
+        // First set of results should be equal to file contents.
+        OutgoingShortCodeSms[] expectedOutgoingShortCodeSmsList =
+                new OutgoingShortCodeSms[] {mOutgoingShortCodeSms1, mOutgoingShortCodeSms2};
+        assertProtoArrayEqualsIgnoringOrder(expectedOutgoingShortCodeSmsList,
+                outgoingShortCodeSmsList1);
+        // Second set of results should be empty.
+        assertProtoArrayEquals(new OutgoingShortCodeSms[0], outgoingShortCodeSmsList2);
+        // Corresponding pull timestamp should be updated and saved.
+        assertEquals(START_TIME_MILLIS + 200L, mPersistAtomsStorage
+                .getAtomsProto().outgoingShortCodeSmsPullTimestampMillis);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+        assertEquals(START_TIME_MILLIS + 100L,
+                getAtomsWritten(inOrder).outgoingShortCodeSmsPullTimestampMillis);
+        assertEquals(START_TIME_MILLIS + 200L,
+                getAtomsWritten(inOrder).outgoingShortCodeSmsPullTimestampMillis);
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    @SmallTest
+    public void clearAtoms() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addCompleteSipTransportSession(copyOf(mSipTransportSession1));
+        mPersistAtomsStorage.incTimeMillis(100L);
+        verifyCurrentStateSavedToFileOnce();
+
+        mPersistAtomsStorage.addUceEventStats(mUceEventStats1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+        verifyCurrentStateSavedToFileOnce();
+
+        mPersistAtomsStorage.clearAtoms();
+        verifyCurrentStateSavedToFileOnce();
+        UceEventStats[] uceEventStats = mPersistAtomsStorage.getUceEventStats(0L);
+        assertEquals(null, uceEventStats);
+        SipTransportSession[] sipTransportSession = mPersistAtomsStorage.getSipTransportSession(0L);
+        assertEquals(null, sipTransportSession);
+    }
+
     /* Utilities */
 
     private void createEmptyTestFile() throws Exception {
@@ -3158,6 +3606,8 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         atoms.sipMessageResponse = mSipMessageResponse;
         atoms.sipTransportSessionPullTimestampMillis = lastPullTimeMillis;
         atoms.sipTransportSession = mSipTransportSession;
+        atoms.outgoingShortCodeSms = mOutgoingShortCodeSms;
+        atoms.outgoingShortCodeSmsPullTimestampMillis = lastPullTimeMillis;
         FileOutputStream stream = new FileOutputStream(mTestFile);
         stream.write(PersistAtoms.toByteArray(atoms));
         stream.close();
@@ -3274,6 +3724,11 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     private static SipTransportSession copyOf(SipTransportSession source)
             throws Exception {
         return SipTransportSession.parseFrom(MessageNano.toByteArray(source));
+    }
+
+    private static OutgoingShortCodeSms copyOf(OutgoingShortCodeSms source)
+            throws Exception {
+        return OutgoingShortCodeSms.parseFrom(MessageNano.toByteArray(source));
     }
 
     private void assertAllPullTimestampEquals(long timestamp) {
@@ -3551,6 +4006,20 @@ public class PersistAtomsStorageTest extends TelephonyTest {
                     && stats.sipMessageDirection == expectedStats.sipMessageDirection
                     && stats.sipResponse == expectedStats.sipResponse) {
                 actualCount = stats.sessionCount;
+            }
+        }
+        assertEquals(expectedCount, actualCount);
+    }
+
+    private static void assertHasStatsAndCount(
+            OutgoingShortCodeSms[] outgoingShortCodeSmsList,
+            @Nullable OutgoingShortCodeSms expectedOutgoingShortCodeSms, int expectedCount) {
+        assertNotNull(outgoingShortCodeSmsList);
+        int actualCount = -1;
+        for (OutgoingShortCodeSms outgoingShortCodeSms : outgoingShortCodeSmsList) {
+            if (outgoingShortCodeSms.category == expectedOutgoingShortCodeSms.category
+                    && outgoingShortCodeSms.xmlVersion == expectedOutgoingShortCodeSms.xmlVersion) {
+                actualCount = outgoingShortCodeSms.shortCodeSmsCount;
             }
         }
         assertEquals(expectedCount, actualCount);

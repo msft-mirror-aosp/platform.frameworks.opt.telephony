@@ -37,6 +37,7 @@ import android.os.ParcelUuid;
 import android.os.PersistableBundle;
 import android.os.UserHandle;
 import android.preference.PreferenceManager;
+import android.provider.DeviceConfig;
 import android.service.carrier.CarrierIdentifier;
 import android.service.euicc.EuiccProfileInfo;
 import android.service.euicc.EuiccService;
@@ -46,7 +47,6 @@ import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.SubscriptionManager.UsageSetting;
 import android.telephony.TelephonyManager;
-import android.telephony.TelephonyManager.SimState;
 import android.telephony.UiccAccessRule;
 import android.telephony.euicc.EuiccManager;
 import android.text.TextUtils;
@@ -94,6 +94,8 @@ public class SubscriptionInfoUpdater extends Handler {
     private static final int EVENT_REFRESH_EMBEDDED_SUBSCRIPTIONS = 12;
     private static final int EVENT_MULTI_SIM_CONFIG_CHANGED = 13;
     private static final int EVENT_INACTIVE_SLOT_ICC_STATE_CHANGED = 14;
+    /** Device config changed. */
+    private static final int EVENT_DEVICE_CONFIG_CHANGED = 15;
 
     private static final String ICCID_STRING_FOR_NO_SIM = "";
 
@@ -116,6 +118,10 @@ public class SubscriptionInfoUpdater extends Handler {
     private SubscriptionManager mSubscriptionManager = null;
     private EuiccManager mEuiccManager;
     private Handler mBackgroundHandler;
+    /** DeviceConfig key for whether work profile telephony feature is enabled. */
+    private static final String KEY_ENABLE_WORK_PROFILE_TELEPHONY = "enable_work_profile_telephony";
+    /** {@code true} if the work profile telephony feature is enabled otherwise {@code false}. */
+    private static boolean mIsWorkProfileTelephonyEnabled = false;
 
     // The current foreground user ID.
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
@@ -176,6 +182,16 @@ public class SubscriptionInfoUpdater extends Handler {
 
         PhoneConfigurationManager.registerForMultiSimConfigChange(
                 this, EVENT_MULTI_SIM_CONFIG_CHANGED, null);
+
+        mIsWorkProfileTelephonyEnabled = DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_TELEPHONY,
+                KEY_ENABLE_WORK_PROFILE_TELEPHONY, false);
+        DeviceConfig.addOnPropertiesChangedListener(DeviceConfig.NAMESPACE_TELEPHONY, this::post,
+                properties -> {
+                    if (TextUtils.equals(DeviceConfig.NAMESPACE_TELEPHONY,
+                            properties.getNamespace())) {
+                        sendEmptyMessage(EVENT_DEVICE_CONFIG_CHANGED);
+                    }
+                });
     }
 
     private void initializeCarrierApps() {
@@ -359,6 +375,18 @@ public class SubscriptionInfoUpdater extends Handler {
 
             case EVENT_MULTI_SIM_CONFIG_CHANGED:
                 onMultiSimConfigChanged();
+                break;
+
+            case EVENT_DEVICE_CONFIG_CHANGED:
+                boolean isWorkProfileTelephonyEnabled = DeviceConfig.getBoolean(
+                        DeviceConfig.NAMESPACE_TELEPHONY, KEY_ENABLE_WORK_PROFILE_TELEPHONY,
+                        false);
+                if (isWorkProfileTelephonyEnabled != mIsWorkProfileTelephonyEnabled) {
+                    logd("EVENT_DEVICE_CONFIG_CHANGED: isWorkProfileTelephonyEnabled changed from "
+                            + mIsWorkProfileTelephonyEnabled + " to "
+                            + isWorkProfileTelephonyEnabled);
+                    mIsWorkProfileTelephonyEnabled = isWorkProfileTelephonyEnabled;
+                }
                 break;
 
             default:
@@ -612,7 +640,8 @@ public class SubscriptionInfoUpdater extends Handler {
 
         /**
          * The sim loading sequence will be
-         *  1. ACTION_SUBINFO_CONTENT_CHANGE happens through updateSubscriptionInfoByIccId() above.
+         *  1. OnSubscriptionsChangedListener is called through updateSubscriptionInfoByIccId()
+         *  above.
          *  2. ACTION_SIM_STATE_CHANGED/ACTION_SIM_CARD_STATE_CHANGED
          *  /ACTION_SIM_APPLICATION_STATE_CHANGED
          *  3. ACTION_SUBSCRIPTION_CARRIER_IDENTITY_CHANGED
@@ -821,7 +850,7 @@ public class SubscriptionInfoUpdater extends Handler {
         // If SIM is not absent, insert new record or update existing record.
         if (!ICCID_STRING_FOR_NO_SIM.equals(sIccId[phoneId]) && sIccId[phoneId] != null) {
             logd("updateSubscriptionInfoByIccId: adding subscription info record: iccid: "
-                    + sIccId[phoneId] + ", phoneId:" + phoneId);
+                    + Rlog.pii(LOG_TAG, sIccId[phoneId]) + ", phoneId:" + phoneId);
             mSubscriptionManager.addSubscriptionInfoRecord(sIccId[phoneId], phoneId);
         }
 
@@ -900,6 +929,14 @@ public class SubscriptionInfoUpdater extends Handler {
      */
     public static boolean isSubInfoInitialized() {
         return sIsSubInfoInitialized;
+    }
+
+    /**
+     * Whether work profile telephony feature is enabled or not.
+     * return {@code true} if work profile telephony feature is enabled.
+     */
+    public static boolean isWorkProfileTelephonyEnabled() {
+        return mIsWorkProfileTelephonyEnabled;
     }
 
     /**
@@ -1017,7 +1054,7 @@ public class SubscriptionInfoUpdater extends Handler {
                 mSubscriptionController.insertEmptySubInfoRecord(
                         embeddedProfile.getIccid(), SubscriptionManager.SIM_NOT_INSERTED);
             } else {
-                nameSource = existingSubscriptions.get(index).getNameSource();
+                nameSource = existingSubscriptions.get(index).getDisplayNameSource();
                 prevCarrierId = existingSubscriptions.get(index).getCarrierId();
                 existingSubscriptions.remove(index);
             }
@@ -1165,7 +1202,7 @@ public class SubscriptionInfoUpdater extends Handler {
             return;
         }
 
-        int currentSubId = mSubscriptionController.getSubIdUsingPhoneId(phoneId);
+        int currentSubId = mSubscriptionController.getSubId(phoneId);
         if (!SubscriptionManager.isValidSubscriptionId(currentSubId)
                 || currentSubId == SubscriptionManager.DEFAULT_SUBSCRIPTION_ID) {
             if (DBG) logd("No subscription is active for phone being updated");
@@ -1194,7 +1231,8 @@ public class SubscriptionInfoUpdater extends Handler {
             loge("Cannot manage subId=" + currentSubId + ", carrierPackage=" + configPackageName);
         } else {
             boolean isOpportunistic = config.getBoolean(
-                    CarrierConfigManager.KEY_IS_OPPORTUNISTIC_SUBSCRIPTION_BOOL, false);
+                    CarrierConfigManager.KEY_IS_OPPORTUNISTIC_SUBSCRIPTION_BOOL,
+                    currentSubInfo.isOpportunistic());
             if (currentSubInfo.isOpportunistic() != isOpportunistic) {
                 if (DBG) logd("Set SubId=" + currentSubId + " isOpportunistic=" + isOpportunistic);
                 cv.put(SubscriptionManager.IS_OPPORTUNISTIC, isOpportunistic ? "1" : "0");
@@ -1299,9 +1337,9 @@ public class SubscriptionInfoUpdater extends Handler {
             if (slot != null) {
                 i.putExtra(PhoneConstants.PORT_KEY, slot.getPortIndexFromPhoneId(phoneId));
             }
-            logd("Broadcasting intent ACTION_SIM_CARD_STATE_CHANGED " + simStateString(state)
-                    + " for phone: " + phoneId + " slot: " + slotId + " port: "
-                    + slot.getPortIndexFromPhoneId(phoneId));
+            logd("Broadcasting intent ACTION_SIM_CARD_STATE_CHANGED "
+                    + TelephonyManager.simStateToString(state) + " for phone: " + phoneId
+                    + " slot: " + slotId + " port: " + slot.getPortIndexFromPhoneId(phoneId));
             sContext.sendBroadcast(i, Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
             TelephonyMetrics.getInstance().updateSimState(phoneId, state);
         }
@@ -1331,48 +1369,11 @@ public class SubscriptionInfoUpdater extends Handler {
             if (slot != null) {
                 i.putExtra(PhoneConstants.PORT_KEY, slot.getPortIndexFromPhoneId(phoneId));
             }
-            logd("Broadcasting intent ACTION_SIM_APPLICATION_STATE_CHANGED " + simStateString(state)
-                    + " for phone: " + phoneId + " slot: " + slotId + "port: "
-                    + slot.getPortIndexFromPhoneId(phoneId));
+            logd("Broadcasting intent ACTION_SIM_APPLICATION_STATE_CHANGED "
+                    + TelephonyManager.simStateToString(state) + " for phone: " + phoneId
+                    + " slot: " + slotId + "port: " + slot.getPortIndexFromPhoneId(phoneId));
             sContext.sendBroadcast(i, Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
             TelephonyMetrics.getInstance().updateSimState(phoneId, state);
-        }
-    }
-
-    /**
-     * Convert SIM state into string
-     *
-     * @param state SIM state
-     * @return SIM state in string format
-     */
-    public static String simStateString(@SimState int state) {
-        switch (state) {
-            case TelephonyManager.SIM_STATE_UNKNOWN:
-                return "UNKNOWN";
-            case TelephonyManager.SIM_STATE_ABSENT:
-                return "ABSENT";
-            case TelephonyManager.SIM_STATE_PIN_REQUIRED:
-                return "PIN_REQUIRED";
-            case TelephonyManager.SIM_STATE_PUK_REQUIRED:
-                return "PUK_REQUIRED";
-            case TelephonyManager.SIM_STATE_NETWORK_LOCKED:
-                return "NETWORK_LOCKED";
-            case TelephonyManager.SIM_STATE_READY:
-                return "READY";
-            case TelephonyManager.SIM_STATE_NOT_READY:
-                return "NOT_READY";
-            case TelephonyManager.SIM_STATE_PERM_DISABLED:
-                return "PERM_DISABLED";
-            case TelephonyManager.SIM_STATE_CARD_IO_ERROR:
-                return "CARD_IO_ERROR";
-            case TelephonyManager.SIM_STATE_CARD_RESTRICTED:
-                return "CARD_RESTRICTED";
-            case TelephonyManager.SIM_STATE_LOADED:
-                return "LOADED";
-            case TelephonyManager.SIM_STATE_PRESENT:
-                return "PRESENT";
-            default:
-                return "INVALID";
         }
     }
 

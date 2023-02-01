@@ -20,6 +20,7 @@ import static com.android.internal.telephony.TelephonyStatsLog.PIN_STORAGE_EVENT
 import static com.android.internal.telephony.TelephonyStatsLog.PIN_STORAGE_EVENT__EVENT__PIN_VERIFICATION_FAILURE;
 import static com.android.internal.telephony.TelephonyStatsLog.PIN_STORAGE_EVENT__EVENT__PIN_VERIFICATION_SUCCESS;
 
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.usage.UsageStatsManager;
@@ -35,6 +36,7 @@ import android.os.AsyncResult;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.Message;
+import android.os.ParcelUuid;
 import android.os.PersistableBundle;
 import android.os.Registrant;
 import android.os.RegistrantList;
@@ -64,6 +66,8 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyStatsLog;
 import com.android.internal.telephony.cat.CatService;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppType;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.PersoSubState;
 import com.android.internal.telephony.uicc.IccCardStatus.CardState;
@@ -77,6 +81,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -120,6 +125,8 @@ public class UiccProfile extends IccCard {
 
     private final int mPhoneId;
     private final PinStorage mPinStorage;
+
+    private final CarrierConfigManager mCarrierConfigManager;
 
     private static final int EVENT_RADIO_OFF_OR_UNAVAILABLE = 1;
     private static final int EVENT_ICC_LOCKED = 2;
@@ -181,14 +188,19 @@ public class UiccProfile extends IccCard {
     };
     private boolean mUserUnlockReceiverRegistered;
 
-    private final BroadcastReceiver mCarrierConfigChangedReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (intent.getAction().equals(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED)) {
-                mHandler.sendMessage(mHandler.obtainMessage(EVENT_CARRIER_CONFIG_CHANGED));
-            }
-        }
-    };
+    private final CarrierConfigManager.CarrierConfigChangeListener mCarrierConfigChangeListener =
+            new CarrierConfigManager.CarrierConfigChangeListener() {
+                @Override
+                public void onCarrierConfigChanged(int logicalSlotIndex, int subscriptionId,
+                        int carrierId, int specificCarrierId) {
+                    if (logicalSlotIndex == mPhoneId) {
+                        log("onCarrierConfigChanged: slotIndex=" + logicalSlotIndex
+                                + ", subId=" + subscriptionId + ", carrierId=" + carrierId);
+                        handleCarrierNameOverride();
+                        handleSimCountryIsoOverride();
+                    }
+                }
+            };
 
     @VisibleForTesting
     public final Handler mHandler = new Handler() {
@@ -337,9 +349,10 @@ public class UiccProfile extends IccCard {
         ci.registerForOffOrNotAvailable(mHandler, EVENT_RADIO_OFF_OR_UNAVAILABLE, null);
         resetProperties();
 
-        IntentFilter intentfilter = new IntentFilter();
-        intentfilter.addAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        c.registerReceiver(mCarrierConfigChangedReceiver, intentfilter);
+        mCarrierConfigManager = c.getSystemService(CarrierConfigManager.class);
+        // Listener callback directly handles config change and thus runs on handler thread
+        mCarrierConfigManager.registerCarrierConfigChangeListener(mHandler::post,
+                mCarrierConfigChangeListener);
     }
 
     /**
@@ -372,7 +385,11 @@ public class UiccProfile extends IccCard {
             InstallCarrierAppUtils.unregisterPackageInstallReceiver(mContext);
 
             mCi.unregisterForOffOrNotAvailable(mHandler);
-            mContext.unregisterReceiver(mCarrierConfigChangedReceiver);
+
+            if (mCarrierConfigManager != null && mCarrierConfigChangeListener != null) {
+                mCarrierConfigManager.unregisterCarrierConfigChangeListener(
+                        mCarrierConfigChangeListener);
+            }
 
             if (mCatService != null) mCatService.dispose();
             for (UiccCardApplication app : mUiccApplications) {
@@ -431,8 +448,7 @@ public class UiccProfile extends IccCard {
      * if an override is provided.
      */
     private void handleCarrierNameOverride() {
-        SubscriptionController subCon = SubscriptionController.getInstance();
-        final int subId = subCon.getSubIdUsingPhoneId(mPhoneId);
+        final int subId = SubscriptionManager.getSubscriptionId(mPhoneId);
         if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
             loge("subId not valid for Phone " + mPhoneId);
             return;
@@ -445,7 +461,15 @@ public class UiccProfile extends IccCard {
             return;
         }
 
-        PersistableBundle config = configLoader.getConfigForSubId(subId);
+        PersistableBundle config =
+                getCarrierConfigSubset(
+                        subId,
+                        CarrierConfigManager.KEY_CARRIER_NAME_OVERRIDE_BOOL,
+                        CarrierConfigManager.KEY_CARRIER_NAME_STRING);
+        if (config.isEmpty()) {
+            loge("handleCarrierNameOverride: fail to get carrier configs.");
+            return;
+        }
         boolean preferCcName = config.getBoolean(
                 CarrierConfigManager.KEY_CARRIER_NAME_OVERRIDE_BOOL, false);
         String ccName = config.getString(CarrierConfigManager.KEY_CARRIER_NAME_STRING);
@@ -481,7 +505,7 @@ public class UiccProfile extends IccCard {
             mOperatorBrandOverrideRegistrants.notifyRegistrants();
         }
 
-        updateCarrierNameForSubscription(subCon, subId, nameSource);
+        updateCarrierNameForSubscription(subId, nameSource);
     }
 
     /**
@@ -496,8 +520,7 @@ public class UiccProfile extends IccCard {
      * MCC table
      */
     private void handleSimCountryIsoOverride() {
-        SubscriptionController subCon = SubscriptionController.getInstance();
-        final int subId = subCon.getSubIdUsingPhoneId(mPhoneId);
+        final int subId = SubscriptionManager.getSubscriptionId(mPhoneId);
         if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
             loge("subId not valid for Phone " + mPhoneId);
             return;
@@ -510,20 +533,36 @@ public class UiccProfile extends IccCard {
             return;
         }
 
-        PersistableBundle config = configLoader.getConfigForSubId(subId);
+        PersistableBundle config =
+                getCarrierConfigSubset(
+                        subId, CarrierConfigManager.KEY_SIM_COUNTRY_ISO_OVERRIDE_STRING);
+        if (config.isEmpty()) {
+            loge("handleSimCountryIsoOverride: fail to get carrier configs.");
+            return;
+        }
         String iso = config.getString(CarrierConfigManager.KEY_SIM_COUNTRY_ISO_OVERRIDE_STRING);
-        if (!TextUtils.isEmpty(iso) &&
-                !iso.equals(mTelephonyManager.getSimCountryIsoForPhone(mPhoneId))) {
+        if (!TextUtils.isEmpty(iso)
+                && !iso.equals(TelephonyManager.getSimCountryIsoForPhone(mPhoneId))) {
             mTelephonyManager.setSimCountryIsoForPhone(mPhoneId, iso);
-            subCon.setCountryIso(iso, subId);
+            if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
+                SubscriptionManagerService.getInstance().setCountryIso(subId, iso);
+            } else {
+                SubscriptionController.getInstance().setCountryIso(iso, subId);
+            }
         }
     }
 
-    private void updateCarrierNameForSubscription(SubscriptionController subCon, int subId,
-            int nameSource) {
+    private void updateCarrierNameForSubscription(int subId, int nameSource) {
         /* update display name with carrier override */
-        SubscriptionInfo subInfo = subCon.getActiveSubscriptionInfo(
-                subId, mContext.getOpPackageName(), mContext.getAttributionTag());
+        SubscriptionInfo subInfo;
+
+        if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
+            subInfo = SubscriptionManagerService.getInstance().getActiveSubscriptionInfo(subId,
+                    mContext.getOpPackageName(), mContext.getAttributionTag());
+        } else {
+            subInfo = SubscriptionController.getInstance().getActiveSubscriptionInfo(
+                    subId, mContext.getOpPackageName(), mContext.getAttributionTag());
+        }
 
         if (subInfo == null) {
             return;
@@ -534,7 +573,13 @@ public class UiccProfile extends IccCard {
 
         if (!TextUtils.isEmpty(newCarrierName) && !newCarrierName.equals(oldSubName)) {
             log("sim name[" + mPhoneId + "] = " + newCarrierName);
-            subCon.setDisplayNameUsingSrc(newCarrierName, subId, nameSource);
+            if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
+                SubscriptionManagerService.getInstance().setDisplayNameUsingSrc(
+                        newCarrierName, subId, nameSource);
+            } else {
+                SubscriptionController.getInstance().setDisplayNameUsingSrc(
+                        newCarrierName, subId, nameSource);
+            }
         }
     }
 
@@ -791,8 +836,13 @@ public class UiccProfile extends IccCard {
             }
             log("setExternalState: set mPhoneId=" + mPhoneId + " mExternalState=" + mExternalState);
 
-            UiccController.updateInternalIccState(mContext, mExternalState,
-                    getIccStateReason(mExternalState), mPhoneId);
+            if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
+                UiccController.getInstance().updateSimState(mPhoneId, mExternalState,
+                        getIccStateReason(mExternalState));
+            } else {
+                UiccController.updateInternalIccState(mContext, mExternalState,
+                        getIccStateReason(mExternalState), mPhoneId);
+            }
         }
     }
 
@@ -1393,7 +1443,7 @@ public class UiccProfile extends IccCard {
         Set<String> uninstalledCarrierPackages = new ArraySet<>();
         List<UiccAccessRule> accessRules = rules.getAccessRules();
         for (UiccAccessRule accessRule : accessRules) {
-            String certHexString = accessRule.getCertificateHexString().toUpperCase();
+            String certHexString = accessRule.getCertificateHexString().toUpperCase(Locale.ROOT);
             String pkgName = certPackageMap.get(certHexString);
             if (!TextUtils.isEmpty(pkgName) && !isPackageBundled(mContext, pkgName)) {
                 uninstalledCarrierPackages.add(pkgName);
@@ -1423,7 +1473,7 @@ public class UiccProfile extends IccCard {
             String[] keyValue = keyValueString.split(keyValueDelim);
 
             if (keyValue.length == 2) {
-                map.put(keyValue[0].toUpperCase(), keyValue[1]);
+                map.put(keyValue[0].toUpperCase(Locale.ROOT), keyValue[1]);
             } else {
                 loge("Incorrect length of key-value pair in carrier app allow list map.  "
                         + "Length should be exactly 2");
@@ -1695,9 +1745,36 @@ public class UiccProfile extends IccCard {
         if (TextUtils.isEmpty(iccId)) {
             return false;
         }
-        if (!SubscriptionController.getInstance().checkPhoneIdAndIccIdMatch(getPhoneId(), iccId)) {
-            loge("iccId doesn't match current active subId.");
-            return false;
+
+        if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
+            int subId = SubscriptionManager.getSubscriptionId(getPhoneId());
+            SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
+                    .getSubscriptionInfoInternal(subId);
+            if (subInfo == null) {
+                loge("setOperatorBrandOverride: Cannot find subscription info for sub " + subId);
+                return false;
+            }
+
+            List<SubscriptionInfo> subInfos = new ArrayList<>();
+            subInfos.add(subInfo.toSubscriptionInfo());
+            String groupUuid = subInfo.getGroupUuid();
+            if (!TextUtils.isEmpty(groupUuid)) {
+                subInfos.addAll(SubscriptionManagerService.getInstance()
+                        .getSubscriptionsInGroup(ParcelUuid.fromString(groupUuid),
+                                mContext.getOpPackageName(), mContext.getFeatureId()));
+            }
+
+            if (subInfos.stream().noneMatch(info -> TextUtils.equals(IccUtils.stripTrailingFs(
+                    info.getIccId()), IccUtils.stripTrailingFs(iccId)))) {
+                loge("iccId doesn't match current active subId.");
+                return false;
+            }
+        } else {
+            if (!SubscriptionController.getInstance().checkPhoneIdAndIccIdMatch(
+                    getPhoneId(), iccId)) {
+                loge("iccId doesn't match current active subId.");
+                return false;
+            }
         }
 
         SharedPreferences.Editor spEditor =
@@ -1738,6 +1815,17 @@ public class UiccProfile extends IccCard {
             }
         }
         return null;
+    }
+
+    @NonNull
+    private PersistableBundle getCarrierConfigSubset(int subId, String... keys) {
+        PersistableBundle bundle = new PersistableBundle();
+        try {
+            bundle = mCarrierConfigManager.getConfigForSubId(subId, keys);
+        } catch (RuntimeException e) {
+            loge("CarrierConfigLoader is not available.");
+        }
+        return bundle;
     }
 
     private static String eventToString(int event) {

@@ -1160,6 +1160,11 @@ public class SimulatedCommandsVerifier implements CommandsInterface {
     }
 
     @Override
+    public void getImei(Message response) {
+
+    }
+
+    @Override
     public void getCDMASubscription(Message response) {
 
     }
@@ -1306,6 +1311,13 @@ public class SimulatedCommandsVerifier implements CommandsInterface {
     @Override
     public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction, int p1,
                                               int p2, int p3, String data, Message response) {
+
+    }
+
+    @Override
+    public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction, int p1,
+                                              int p2, int p3, String data,
+                                              boolean isEs10Command, Message response) {
 
     }
 
@@ -1534,5 +1546,13 @@ public class SimulatedCommandsVerifier implements CommandsInterface {
 
     @Override
     public void unregisterForSlicingConfigChanged(Handler h) {
+    }
+
+    @Override
+    public void startHandover(Message result, int callId) {
+    }
+
+    @Override
+    public void cancelHandover(Message result, int callId) {
     }
 }
