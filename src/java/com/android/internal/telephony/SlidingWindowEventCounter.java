@@ -78,7 +78,7 @@ public class SlidingWindowEventCounter {
     public synchronized boolean isInWindow() {
         return (mTimestampQueueMillis.size() == mNumOccurrences)
                 && mTimestampQueueMillis.peekFirst()
-                + mWindowSizeMillis >= mTimestampQueueMillis.peekLast();
+                + mWindowSizeMillis > mTimestampQueueMillis.peekLast();
     }
 
     @VisibleForTesting
@@ -106,7 +106,11 @@ public class SlidingWindowEventCounter {
      * @return A string describing the anomaly event
      */
     public @NonNull String getFrequencyString() {
-        return String.format("%d times within %d ms.", mNumOccurrences, mWindowSizeMillis);
+        if (mWindowSizeMillis >= 1000L) {
+            return mNumOccurrences + " times within " + mWindowSizeMillis / 1000L + " seconds";
+        } else {
+            return mNumOccurrences + " times within " + mWindowSizeMillis + "ms";
+        }
     }
 
     @Override

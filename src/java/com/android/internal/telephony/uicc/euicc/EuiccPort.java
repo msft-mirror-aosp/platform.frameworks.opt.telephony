@@ -101,6 +101,9 @@ public class EuiccPort extends UiccPort {
     private static final String DEV_CAP_NR5GC = "nr5gc";
     private static final String DEV_CAP_EUTRAN5GC = "eutran5gc";
 
+    private static final String ATR_ESIM_OS_V_M5 =
+            "3B9F97C00AB1FE453FC6838031E073FE211F65D002341569810F21";
+
     // These interfaces are used for simplifying the code by leveraging lambdas.
     private interface ApduRequestBuilder {
         void build(RequestBuilder requestBuilder)
@@ -123,9 +126,12 @@ public class EuiccPort extends UiccPort {
     private final ApduSender mApduSender;
     private EuiccSpecVersion mSpecVersion;
     private volatile String mEid;
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public boolean mIsSupportsMultipleEnabledProfiles;
+    private String mAtr;
 
     public EuiccPort(Context c, CommandsInterface ci, IccCardStatus ics, int phoneId, Object lock,
-            UiccCard card) {
+            UiccCard card, boolean isSupportsMultipleEnabledProfiles) {
         super(c, ci, ics, phoneId, lock, card);
         // TODO: Set supportExtendedApdu based on ATR.
         mApduSender = new ApduSender(ci, ISD_R_AID, false /* supportExtendedApdu */);
@@ -135,6 +141,8 @@ public class EuiccPort extends UiccPort {
             mEid = ics.eid;
             mCardId = ics.eid;
         }
+        mAtr = ics.atr;
+        mIsSupportsMultipleEnabledProfiles = isSupportsMultipleEnabledProfiles;
     }
 
     /**
@@ -157,8 +165,18 @@ public class EuiccPort extends UiccPort {
             if (!TextUtils.isEmpty(ics.eid)) {
                 mEid = ics.eid;
             }
+            mAtr = ics.atr;
             super.update(c, ci, ics, uiccCard);
         }
+    }
+
+    /**
+     * Updates MEP(Multiple Enabled Profile) support flag.
+     * The flag can be updated after the port creation.
+     */
+    public void updateSupportMultipleEnabledProfile(boolean supported) {
+        logd("updateSupportMultipleEnabledProfile");
+        mIsSupportsMultipleEnabledProfiles = supported;
     }
 
     /**
@@ -169,10 +187,17 @@ public class EuiccPort extends UiccPort {
      * @since 1.1.0 [GSMA SGP.22]
      */
     public void getAllProfiles(AsyncResultCallback<EuiccProfileInfo[]> callback, Handler handler) {
+        byte[] profileTags;
+        if (mIsSupportsMultipleEnabledProfiles) {
+            profileTags = ATR_ESIM_OS_V_M5.equals(mAtr)
+                    ? Tags.EUICC_PROFILE_MEP_TAGS : Tags.EUICC_PROFILE_MEP_TAGS_WITH_9F20;
+        } else {
+            profileTags = Tags.EUICC_PROFILE_TAGS;
+        }
         sendApdu(
                 newRequestProvider((RequestBuilder requestBuilder) ->
                         requestBuilder.addStoreData(Asn1Node.newBuilder(Tags.TAG_GET_PROFILES)
-                                .addChildAsBytes(Tags.TAG_TAG_LIST, Tags.EUICC_PROFILE_TAGS)
+                                .addChildAsBytes(Tags.TAG_TAG_LIST, profileTags)
                                 .build().toHex())),
                 response -> {
                     List<Asn1Node> profileNodes = new Asn1Decoder(response).nextNode()
@@ -209,6 +234,13 @@ public class EuiccPort extends UiccPort {
      */
     public final void getProfile(String iccid, AsyncResultCallback<EuiccProfileInfo> callback,
             Handler handler) {
+        byte[] profileTags;
+        if (mIsSupportsMultipleEnabledProfiles) {
+            profileTags = ATR_ESIM_OS_V_M5.equals(mAtr)
+                    ? Tags.EUICC_PROFILE_MEP_TAGS : Tags.EUICC_PROFILE_MEP_TAGS_WITH_9F20;
+        } else {
+            profileTags = Tags.EUICC_PROFILE_TAGS;
+        }
         sendApdu(
                 newRequestProvider((RequestBuilder requestBuilder) ->
                         requestBuilder.addStoreData(Asn1Node.newBuilder(Tags.TAG_GET_PROFILES)
@@ -216,7 +248,7 @@ public class EuiccPort extends UiccPort {
                                         .addChildAsBytes(Tags.TAG_ICCID,
                                                 IccUtils.bcdToBytes(padTrailingFs(iccid)))
                                         .build())
-                                .addChildAsBytes(Tags.TAG_TAG_LIST, Tags.EUICC_PROFILE_TAGS)
+                                .addChildAsBytes(Tags.TAG_TAG_LIST, profileTags)
                                 .build().toHex())),
                 response -> {
                     List<Asn1Node> profileNodes = new Asn1Decoder(response).nextNode()
@@ -963,15 +995,17 @@ public class EuiccPort extends UiccPort {
         }
 
         String devCap = split[0].trim();
-        Integer version;
+        String[] fullVer = (split[1].trim()).split("\\.");
+        Integer version, subVersion = 0;
         try {
-            version = Integer.parseInt(split[1].trim());
+            version = Integer.parseInt(fullVer[0]);
+            if (fullVer.length > 1) subVersion = Integer.parseInt(fullVer[1]);
         } catch (NumberFormatException e) {
             loge("Invalid device capability version number.", e);
             return;
         }
 
-        byte[] versionBytes = new byte[] { version.byteValue(), 0, 0 };
+        byte[] versionBytes = new byte[] { version.byteValue(), subVersion.byteValue(), 0 };
         switch (devCap) {
             case DEV_CAP_GSM:
                 devCapBuilder.addChildAsBytes(Tags.TAG_CTX_0, versionBytes);
@@ -1224,8 +1258,19 @@ public class EuiccPort extends UiccPort {
         }
 
         if (profileNode.hasChild(Tags.TAG_PROFILE_STATE)) {
-            // noinspection WrongConstant
-            profileBuilder.setState(profileNode.getChild(Tags.TAG_PROFILE_STATE).asInteger());
+            // In case of MEP capable eUICC, the profileState value returned SHALL only be Enabled
+            // if the Profile is in the Enabled state on the same eSIM Port as where this
+            // getProfilesInfo command was sent. So should check for enabledOnEsimPort(TAG_PORT)
+            // tag and verify its value is a valid port (means port value is >=0) or not.
+            if ((profileNode.hasChild(Tags.TAG_PORT)
+                    && profileNode.getChild(Tags.TAG_PORT).asInteger() >= 0)
+                    || (profileNode.hasChild(Tags.TAG_PORT_9F20)
+                    && profileNode.getChild(Tags.TAG_PORT_9F20).asInteger() >= 0)) {
+                profileBuilder.setState(EuiccProfileInfo.PROFILE_STATE_ENABLED);
+            } else {
+                // noinspection WrongConstant
+                profileBuilder.setState(profileNode.getChild(Tags.TAG_PROFILE_STATE).asInteger());
+            }
         } else {
             profileBuilder.setState(EuiccProfileInfo.PROFILE_STATE_DISABLED);
         }
@@ -1389,5 +1434,6 @@ public class EuiccPort extends UiccPort {
         super.dump(fd, pw, args);
         pw.println("EuiccPort:");
         pw.println(" mEid=" + mEid);
+        pw.println(" mIsSupportsMultipleEnabledProfiles=" + mIsSupportsMultipleEnabledProfiles);
     }
 }

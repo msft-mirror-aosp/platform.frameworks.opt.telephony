@@ -69,11 +69,14 @@ public class DisplayInfoController extends Handler {
     private final Phone mPhone;
     private final NetworkTypeController mNetworkTypeController;
     private final RegistrantList mTelephonyDisplayInfoChangedRegistrants = new RegistrantList();
-    private TelephonyDisplayInfo mTelephonyDisplayInfo;
+    private @NonNull TelephonyDisplayInfo mTelephonyDisplayInfo;
 
     public DisplayInfoController(Phone phone) {
         mPhone = phone;
         mLogTag = "DIC-" + mPhone.getPhoneId();
+        mTelephonyDisplayInfo = new TelephonyDisplayInfo(
+                TelephonyManager.NETWORK_TYPE_UNKNOWN,
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE);
         mNetworkTypeController = new NetworkTypeController(phone, this);
         mNetworkTypeController.sendMessage(NetworkTypeController.EVENT_UPDATE);
     }
@@ -81,7 +84,7 @@ public class DisplayInfoController extends Handler {
     /**
      * @return the current TelephonyDisplayInfo
      */
-    public TelephonyDisplayInfo getTelephonyDisplayInfo() {
+    public @NonNull TelephonyDisplayInfo getTelephonyDisplayInfo() {
         return mTelephonyDisplayInfo;
     }
 
@@ -134,7 +137,7 @@ public class DisplayInfoController extends Handler {
         } catch (InvalidArgumentException e) {
             logel(e.getMessage());
             AnomalyReporter.reportAnomaly(UUID.fromString("3aa92a2c-94ed-46a0-a744-d6b1dfec2a55"),
-                    e.getMessage());
+                    e.getMessage(), mPhone.getCarrierId());
         }
     }
 
