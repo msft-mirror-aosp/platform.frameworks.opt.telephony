@@ -114,6 +114,7 @@ import com.android.internal.telephony.data.DataNetworkController.HandoverRule;
 import com.android.internal.telephony.data.DataRetryManager.DataRetryManagerCallback;
 import com.android.internal.telephony.data.LinkBandwidthEstimator.LinkBandwidthEstimatorCallback;
 import com.android.internal.telephony.ims.ImsResolver;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 
 import org.junit.After;
 import org.junit.Before;
@@ -731,6 +732,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         doReturn("").when(mSubscriptionController).getEnabledMobileDataPolicies(anyInt());
         doReturn(true).when(mSubscriptionController).setEnabledMobileDataPolicies(
                 anyInt(), anyString());
+        doReturn(new SubscriptionInfoInternal.Builder().setId(1).build())
+                .when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
 
         List<SubscriptionInfo> infoList = new ArrayList<>();
         infoList.add(mMockSubInfo);
@@ -738,7 +741,9 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 any(), any(), any());
         doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         doReturn(0).when(mSubscriptionController).getPhoneId(1);
+        doReturn(0).when(mSubscriptionManagerService).getPhoneId(1);
         doReturn(1).when(mSubscriptionController).getPhoneId(2);
+        doReturn(1).when(mSubscriptionManagerService).getPhoneId(2);
 
         for (int transport : new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN}) {
@@ -1669,6 +1674,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
     public void testIsDataEnabledOverriddenForApnDataDuringCall() throws Exception {
         doReturn(1).when(mPhone).getSubId();
         doReturn(2).when(mSubscriptionController).getDefaultDataSubId();
+        doReturn(2).when(mSubscriptionManagerService).getDefaultDataSubId();
         // Data disabled
         mDataNetworkControllerUT.getDataSettingsManager().setDataEnabled(
                 TelephonyManager.DATA_ENABLED_REASON_USER, false, mContext.getOpPackageName());
@@ -1711,6 +1717,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         Phone phone2 = Mockito.mock(Phone.class);
         replaceInstance(PhoneFactory.class, "sPhones", null, new Phone[]{mPhone, phone2});
         doReturn(2).when(mSubscriptionController).getDefaultDataSubId();
+        doReturn(2).when(mSubscriptionManagerService).getDefaultDataSubId();
 
         // Data disabled on nonDDS
         mDataNetworkControllerUT.getDataSettingsManager().setDataEnabled(
@@ -2769,7 +2776,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         processAllFutureMessages();
 
         // TAC changes should clear the already-scheduled retry and throttling.
-        assertThat(mDataNetworkControllerUT.getDataRetryManager().isAnySetupRetryScheduled(
+        assertThat(mDataNetworkControllerUT.getDataRetryManager().isDataProfileThrottled(
                 mImsCellularDataProfile, AccessNetworkConstants.TRANSPORT_TYPE_WWAN)).isFalse();
 
         // But DNC should re-evaluate unsatisfied request and setup IMS again.
@@ -2874,6 +2881,35 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     @Test
+    public void testHandoverDataNetworkNetworkSuggestedRetryTimerDataThrottled() throws Exception {
+        testSetupImsDataNetwork();
+
+        DataNetwork network = getDataNetworks().get(0);
+        setFailedSetupDataResponse(mMockedWlanDataServiceManager,
+                DataFailCause.HANDOVER_FAILED, 10000, true);
+        updateTransport(NetworkCapabilities.NET_CAPABILITY_IMS,
+                AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+
+        // Verify retry scheduled on this network
+        assertThat(mDataNetworkControllerUT.getDataRetryManager()
+                .isAnyHandoverRetryScheduled(network)).isTrue();
+        // Verify the data profile is throttled on WLAN
+        assertThat(mDataNetworkControllerUT.getDataRetryManager().isDataProfileThrottled(
+                network.getDataProfile(), AccessNetworkConstants.TRANSPORT_TYPE_WLAN)).isTrue();
+
+        // Test even if network disconnected, the throttle status should remain
+        network.tearDown(DataNetwork.TEAR_DOWN_REASON_CONNECTIVITY_SERVICE_UNWANTED);
+        processAllFutureMessages();
+
+        // Verify retry is cleared on this network
+        assertThat(mDataNetworkControllerUT.getDataRetryManager()
+                .isAnyHandoverRetryScheduled(network)).isFalse();
+        // Verify the data profile is still throttled
+        assertThat(mDataNetworkControllerUT.getDataRetryManager().isDataProfileThrottled(
+                network.getDataProfile(), AccessNetworkConstants.TRANSPORT_TYPE_WLAN)).isTrue();
+    }
+
+    @Test
     public void testTacChangesClearThrottlingAndRetryHappens() throws Exception {
         testSetupDataNetworkNetworkSuggestedRetryTimerDataThrottled();
         processAllFutureMessages();
@@ -2886,7 +2922,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         processAllFutureMessages();
 
         // TAC changes should clear the already-scheduled retry and throttling.
-        assertThat(mDataNetworkControllerUT.getDataRetryManager().isAnySetupRetryScheduled(
+        assertThat(mDataNetworkControllerUT.getDataRetryManager().isDataProfileThrottled(
                 mImsCellularDataProfile, AccessNetworkConstants.TRANSPORT_TYPE_WWAN)).isFalse();
 
         // But DNC should re-evaluate unsatisfied request and setup IMS again.
