@@ -717,8 +717,10 @@ public class SubscriptionInfoUpdater extends Handler {
     }
 
     private void restoreSimSpecificSettingsForPhone(int phoneId) {
-        SubscriptionManager subManager = SubscriptionManager.from(sContext);
-        subManager.restoreSimSpecificSettingsForIccIdFromBackup(sIccId[phoneId]);
+        sContext.getContentResolver().call(
+                SubscriptionManager.SIM_INFO_BACKUP_AND_RESTORE_CONTENT_URI,
+                SubscriptionManager.RESTORE_SIM_SPECIFIC_SETTINGS_METHOD_NAME,
+                sIccId[phoneId], null);
     }
 
     private void updateCarrierServices(int phoneId, String simState) {
@@ -850,7 +852,8 @@ public class SubscriptionInfoUpdater extends Handler {
         // If SIM is not absent, insert new record or update existing record.
         if (!ICCID_STRING_FOR_NO_SIM.equals(sIccId[phoneId]) && sIccId[phoneId] != null) {
             logd("updateSubscriptionInfoByIccId: adding subscription info record: iccid: "
-                    + Rlog.pii(LOG_TAG, sIccId[phoneId]) + ", phoneId:" + phoneId);
+                    + SubscriptionInfo.givePrintableIccid(sIccId[phoneId])
+                    + ", phoneId:" + phoneId);
             mSubscriptionManager.addSubscriptionInfoRecord(sIccId[phoneId], phoneId);
         }
 

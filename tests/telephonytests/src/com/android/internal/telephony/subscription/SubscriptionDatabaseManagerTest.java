@@ -30,11 +30,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Looper;
 import android.provider.Telephony;
 import android.provider.Telephony.SimInfo;
@@ -56,7 +58,6 @@ import org.junit.runner.RunWith;
 import org.mockito.Mockito;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -343,19 +344,19 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
             mDatabase.add(values);
             return ContentUris.withAppendedId(SimInfo.CONTENT_URI, subId);
         }
-    }
 
-    private void loadFromDatabase() throws Exception {
-        Method method = SubscriptionDatabaseManager.class.getDeclaredMethod("loadFromDatabase");
-        method.setAccessible(true);
-        method.invoke(mDatabaseManagerUT);
-        processAllMessages();
+        @Override
+        public Bundle call(String method, @Nullable String args, @Nullable Bundle bundle) {
+            return new Bundle();
+        }
     }
 
     @Before
     public void setUp() throws Exception {
         logd("SubscriptionDatabaseManagerTest +Setup!");
         super.setUp(getClass().getSimpleName());
+        mContextFixture.putBooleanResource(com.android.internal.R.bool
+                .config_subscription_database_async_update, true);
         mSubscriptionDatabaseManagerCallback =
                 Mockito.mock(SubscriptionDatabaseManagerCallback.class);
         doAnswer(invocation -> {
@@ -365,6 +366,7 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
 
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 Telephony.Carriers.CONTENT_URI.getAuthority(), mSubscriptionProvider);
+
         doReturn(1).when(mUiccController).convertToPublicCardId(eq(FAKE_ICCID1));
         doReturn(2).when(mUiccController).convertToPublicCardId(eq(FAKE_ICCID2));
         mDatabaseManagerUT = new SubscriptionDatabaseManager(mContext, Looper.myLooper(),
@@ -389,7 +391,9 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
                 .that(mDatabaseManagerUT.getSubscriptionInfoInternal(subId)).isEqualTo(subInfo);
 
         // Load subscription info from the database.
-        loadFromDatabase();
+        mDatabaseManagerUT.reloadDatabase();
+        processAllMessages();
+
         // Verify the database value is same as the inserted one.
         assertWithMessage("Subscription info database value is different.")
                 .that(mDatabaseManagerUT.getSubscriptionInfoInternal(subId)).isEqualTo(subInfo);
