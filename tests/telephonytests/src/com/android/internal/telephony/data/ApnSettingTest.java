@@ -14,23 +14,20 @@
  * limitations under the License.
  */
 
-package com.android.internal.telephony.dataconnection;
+package com.android.internal.telephony.data;
 
 import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertTrue;
 import static junit.framework.Assert.fail;
 
 import static org.junit.Assert.assertEquals;
-import static org.mockito.Mockito.doReturn;
 
 import android.net.Uri;
 import android.os.Parcel;
 import android.os.PersistableBundle;
-import android.telephony.CarrierConfigManager;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
-import android.test.suitebuilder.annotation.SmallTest;
 
 import com.android.internal.telephony.TelephonyTest;
 
@@ -118,213 +115,7 @@ public class ApnSettingTest extends TelephonyTest {
     }
 
     @Test
-    @SmallTest
-    public void testIsMetered() {
-        mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_DEFAULT_STRING, ApnSetting.TYPE_MMS_STRING});
-
-        doReturn(false).when(mServiceState).getDataRoaming();
-        doReturn(1).when(mPhone).getSubId();
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_DEFAULT), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_MMS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_SUPL | ApnSetting.TYPE_MMS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_DUN), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_ALL), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_SUPL | ApnSetting.TYPE_FOTA), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_IA | ApnSetting.TYPE_CBS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_DEFAULT, mPhone));
-        assertTrue(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_MMS, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_SUPL, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_CBS, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_DUN, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_FOTA, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_IA, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_HIPRI, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_XCAP, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_ENTERPRISE, mPhone));
-
-        // Carrier config settings changes.
-        mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_DEFAULT_STRING});
-
-        assertTrue(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_DEFAULT, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_MMS, mPhone));
-    }
-
-    @Test
-    @SmallTest
-    public void testIsRoamingMetered() {
-        mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_ROAMING_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_DEFAULT_STRING, ApnSetting.TYPE_MMS_STRING});
-        doReturn(true).when(mServiceState).getDataRoaming();
-        doReturn(1).when(mPhone).getSubId();
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_DEFAULT), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_MMS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_SUPL | ApnSetting.TYPE_MMS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_DUN), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_ALL), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_SUPL | ApnSetting.TYPE_FOTA), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_IA | ApnSetting.TYPE_CBS), mPhone));
-
-        // Carrier config settings changes.
-        mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_ROAMING_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_FOTA_STRING});
-
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_DEFAULT, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_MMS, mPhone));
-        assertTrue(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_FOTA, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_XCAP, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_ENTERPRISE, mPhone));
-    }
-
-    @Test
-    @SmallTest
-    public void testIsMeteredAnother() {
-        mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_SUPL_STRING, ApnSetting.TYPE_CBS_STRING});
-
-        doReturn(false).when(mServiceState).getDataRoaming();
-        doReturn(1).when(mPhone).getSubId();
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_SUPL | ApnSetting.TYPE_CBS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_SUPL), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_CBS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_FOTA | ApnSetting.TYPE_CBS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_SUPL | ApnSetting.TYPE_IA), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_ALL), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_IMS), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_IMS), mPhone));
-        assertFalse(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_XCAP), mPhone));
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_ENTERPRISE), mPhone));
-    }
-
-    @Test
-    @SmallTest
-    public void testIsRoamingMeteredAnother() {
-        mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_ROAMING_APN_TYPES_STRINGS,
-                new String[]{ApnSetting.TYPE_SUPL_STRING, ApnSetting.TYPE_CBS_STRING});
-        doReturn(true).when(mServiceState).getDataRoaming();
-        doReturn(2).when(mPhone).getSubId();
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_SUPL | ApnSetting.TYPE_CBS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_SUPL), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_CBS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_FOTA | ApnSetting.TYPE_CBS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_SUPL | ApnSetting.TYPE_IA), mPhone));
-
-        assertTrue(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_ALL), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_IMS), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_IMS), mPhone));
-
-        assertTrue(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_SUPL, mPhone));
-        assertTrue(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_CBS, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_DEFAULT, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_MMS, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_DUN, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_FOTA, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_IA, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_HIPRI, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_XCAP, mPhone));
-        assertFalse(ApnSettingUtils.isMeteredApnType(ApnSetting.TYPE_ENTERPRISE, mPhone));
-    }
-
-    @Test
-    @SmallTest
-    public void testIsMeteredNothingCharged() {
-        mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
-                new String[]{});
-
-        doReturn(false).when(mServiceState).getDataRoaming();
-        doReturn(3).when(mPhone).getSubId();
-
-        assertFalse(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_IMS), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_IMS | ApnSetting.TYPE_MMS), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_FOTA), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_ALL), mPhone));
-    }
-
-    @Test
-    @SmallTest
-    public void testIsRoamingMeteredNothingCharged() {
-        mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_ROAMING_APN_TYPES_STRINGS,
-                new String[]{});
-        doReturn(true).when(mServiceState).getDataRoaming();
-        doReturn(3).when(mPhone).getSubId();
-
-        assertFalse(ApnSettingUtils.isMetered(createApnSetting(ApnSetting.TYPE_IMS), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_IMS | ApnSetting.TYPE_MMS), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_FOTA), mPhone));
-
-        assertFalse(ApnSettingUtils.isMetered(
-                createApnSetting(ApnSetting.TYPE_ALL), mPhone));
-    }
-
-    @Test
-    @SmallTest
     public void testCanHandleType() {
-        String types[] = {"mms"};
-
         assertTrue(createApnSetting(ApnSetting.TYPE_ALL)
                 .canHandleType(ApnSetting.TYPE_MMS));
 
@@ -402,7 +193,6 @@ public class ApnSettingTest extends TelephonyTest {
     }
 
     @Test
-    @SmallTest
     public void testEquals() throws Exception {
         final int dummyInt = 1;
         final int dummyLong = 1;
@@ -451,7 +241,6 @@ public class ApnSettingTest extends TelephonyTest {
     }
 
     @Test
-    @SmallTest
     public void testEqualsRoamingProtocol() {
         ApnSetting apn1 = new ApnSetting.Builder()
                 .setId(1234)
@@ -485,7 +274,6 @@ public class ApnSettingTest extends TelephonyTest {
     }
 
     @Test
-    @SmallTest
     public void testCanHandleNetwork() {
         ApnSetting apn1 = new ApnSetting.Builder()
                 .setId(1234)
@@ -539,5 +327,55 @@ public class ApnSettingTest extends TelephonyTest {
         assertEquals(apn, fromParcel);
 
         parcel.recycle();
+    }
+
+    @Test
+    public void testBuild_mmsProxyAddrStartsWithHttp() {
+        ApnSetting apn1 = new ApnSetting.Builder()
+                .setId(1234)
+                .setOperatorNumeric("310260")
+                .setEntryName("mms")
+                .setApnName("mms")
+                .setApnTypeBitmask(ApnSetting.TYPE_MMS)
+                .setProtocol(ApnSetting.PROTOCOL_IPV6)
+                .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_LTE
+                        | TelephonyManager.NETWORK_TYPE_BITMASK_UMTS))
+                .setMtuV4(1440)
+                .setCarrierEnabled(true)
+                .setMmsProxyAddress("http://proxy.mobile.att.net")
+                .build();
+        assertEquals("proxy.mobile.att.net", apn1.getMmsProxyAddressAsString());
+
+        ApnSetting apn2 = new ApnSetting.Builder()
+                .setId(1235)
+                .setOperatorNumeric("310260")
+                .setEntryName("mms")
+                .setApnName("mms")
+                .setApnTypeBitmask(ApnSetting.TYPE_MMS)
+                .setProtocol(ApnSetting.PROTOCOL_IPV6)
+                .setRoamingProtocol(ApnSetting.PROTOCOL_IPV6)
+                .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_EDGE
+                        | TelephonyManager.NETWORK_TYPE_BITMASK_GPRS))
+                .setMtuV4(1440)
+                .setCarrierEnabled(true)
+                .setMmsProxyAddress("https://proxy.mobile.att.net")
+                .build();
+        assertEquals("proxy.mobile.att.net", apn2.getMmsProxyAddressAsString());
+
+        ApnSetting apn3 = new ApnSetting.Builder()
+                .setId(1236)
+                .setOperatorNumeric("310260")
+                .setEntryName("mms")
+                .setApnName("mms")
+                .setApnTypeBitmask(ApnSetting.TYPE_MMS)
+                .setProtocol(ApnSetting.PROTOCOL_IPV6)
+                .setRoamingProtocol(ApnSetting.PROTOCOL_IPV6)
+                .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_EDGE
+                        | TelephonyManager.NETWORK_TYPE_BITMASK_GPRS))
+                .setMtuV4(1440)
+                .setCarrierEnabled(true)
+                .setMmsProxyAddress("proxy.mobile.att.net")
+                .build();
+        assertEquals("proxy.mobile.att.net", apn3.getMmsProxyAddressAsString());
     }
 }

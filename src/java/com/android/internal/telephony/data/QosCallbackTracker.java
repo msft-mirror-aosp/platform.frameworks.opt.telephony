@@ -54,8 +54,7 @@ public class QosCallbackTracker extends Handler {
     private static final int DEDICATED_BEARER_EVENT_STATE_DELETED = 3;
 
     private final @NonNull String mLogTag;
-    // TODO: Change this to TelephonyNetworkAgent
-    private final @NonNull NotifyQosSessionInterface mNetworkAgent;
+    private final @NonNull TelephonyNetworkAgent mNetworkAgent;
     private final @NonNull Map<Integer, QosBearerSession> mQosBearerSessions;
     private final @NonNull RcsStats mRcsStats;
 
@@ -81,12 +80,20 @@ public class QosCallbackTracker extends Handler {
         /**
          * Filter using the remote address.
          *
-         * @param address The local address.
+         * @param address The remote address.
          * @param startPort Starting port.
          * @param endPort Ending port.
          * @return {@code true} if matches, {@code false} otherwise.
          */
         boolean matchesRemoteAddress(InetAddress address, int startPort, int endPort);
+
+        /**
+         * Filter using the protocol
+         *
+         * @param protocol ID
+         * @return {@code true} if matches, {@code false} otherwise.
+         */
+        boolean matchesProtocol(int protocol);
     }
 
     /**
@@ -95,8 +102,7 @@ public class QosCallbackTracker extends Handler {
      * @param networkAgent The network agent to send events to.
      * @param phone The phone instance.
      */
-    public QosCallbackTracker(@NonNull NotifyQosSessionInterface networkAgent,
-            @NonNull Phone phone) {
+    public QosCallbackTracker(@NonNull TelephonyNetworkAgent networkAgent, @NonNull Phone phone) {
         mQosBearerSessions = new HashMap<>();
         mCallbacksToFilter = new HashMap<>();
         mNetworkAgent = networkAgent;
@@ -104,40 +110,41 @@ public class QosCallbackTracker extends Handler {
         mRcsStats = RcsStats.getInstance();
         mLogTag = "QOSCT" + "-" + ((NetworkAgent) mNetworkAgent).getNetwork().getNetId();
 
-        if (phone.isUsingNewDataStack()) {
-            //TODO: Replace the NetworkAgent in the constructor with TelephonyNetworkAgent
-            //  after mPhone.isUsingNewDataStack() check is removed.
-            ((TelephonyNetworkAgent) networkAgent).registerCallback(
-                    new TelephonyNetworkAgent.TelephonyNetworkAgentCallback(this::post) {
-                        @Override
-                        public void onQosCallbackRegistered(int qosCallbackId,
-                                @NonNull QosFilter filter) {
-                            addFilter(qosCallbackId,
-                                    new QosCallbackTracker.IFilter() {
-                                        @Override
-                                        public boolean matchesLocalAddress(
-                                                @NonNull InetAddress address, int startPort,
-                                                int endPort) {
-                                            return filter.matchesLocalAddress(address, startPort,
-                                                    endPort);
-                                        }
+        networkAgent.registerCallback(
+                new TelephonyNetworkAgent.TelephonyNetworkAgentCallback(this::post) {
+                    @Override
+                    public void onQosCallbackRegistered(int qosCallbackId,
+                            @NonNull QosFilter filter) {
+                        addFilter(qosCallbackId,
+                                new QosCallbackTracker.IFilter() {
+                                    @Override
+                                    public boolean matchesLocalAddress(
+                                            @NonNull InetAddress address, int startPort,
+                                            int endPort) {
+                                        return filter.matchesLocalAddress(address, startPort,
+                                                endPort);
+                                    }
 
-                                        @Override
-                                        public boolean matchesRemoteAddress(
-                                                @NonNull InetAddress address, int startPort,
-                                                int endPort) {
-                                            return filter.matchesRemoteAddress(address, startPort,
-                                                    endPort);
-                                        }
-                                    });
-                        }
+                                    @Override
+                                    public boolean matchesRemoteAddress(
+                                            @NonNull InetAddress address, int startPort,
+                                            int endPort) {
+                                        return filter.matchesRemoteAddress(address, startPort,
+                                                endPort);
+                                    }
 
-                        @Override
-                        public void onQosCallbackUnregistered(int qosCallbackId) {
+                                    @Override
+                                    public boolean matchesProtocol(int protocol) {
+                                        return filter.matchesProtocol(protocol);
+                                    }
+                                });
+                    }
 
-                        }
-                    });
-        }
+                    @Override
+                    public void onQosCallbackUnregistered(int qosCallbackId) {
+
+                    }
+                });
     }
 
     /**
@@ -338,6 +345,21 @@ public class QosCallbackTracker extends Handler {
         return result;
     }
 
+    private boolean matchesByProtocol(@NonNull QosBearerFilter sessionFilter,
+            final @NonNull IFilter filter, boolean hasMatchedFilter) {
+        boolean result = false;
+        int protocol = sessionFilter.getProtocol();
+        if (protocol == QosBearerFilter.QOS_PROTOCOL_TCP
+                || protocol == QosBearerFilter.QOS_PROTOCOL_UDP) {
+            result = filter.matchesProtocol(protocol);
+        } else {
+            // FWK currently doesn't support filtering based on protocol ID ESP & AH. We will follow
+            // match results of other filters.
+            result = hasMatchedFilter;
+        }
+        return result;
+    }
+
     private QosBearerFilter getFilterByPrecedence(
             @Nullable QosBearerFilter qosFilter, QosBearerFilter sessionFilter) {
         // Find for the highest precedence filter, lower the value is the higher the precedence
@@ -368,6 +390,15 @@ public class QosCallbackTracker extends Handler {
                     hasMatchedFilter = true;
                 }
             }
+
+            if (sessionFilter.getProtocol() != QosBearerFilter.QOS_PROTOCOL_UNSPECIFIED) {
+                if (!matchesByProtocol(sessionFilter, filter, hasMatchedFilter)) {
+                    unMatched = true;
+                } else {
+                    hasMatchedFilter = true;
+                }
+            }
+
             if (!unMatched && hasMatchedFilter) {
                 qosFilter = getFilterByPrecedence(qosFilter, sessionFilter);
             }
@@ -395,7 +426,7 @@ public class QosCallbackTracker extends Handler {
                             qos.getDownlinkBandwidth().getGuaranteedBitrateKbps(),
                             qos.getUplinkBandwidth().getGuaranteedBitrateKbps(),
                             remoteAddresses);
-            mNetworkAgent.notifyQosSessionAvailable(
+            mNetworkAgent.sendQosSessionAvailable(
                     callbackId, session.getQosBearerSessionId(), epsBearerAttr);
         } else {
             NrQos qos = (NrQos) session.getQos();
@@ -406,7 +437,7 @@ public class QosCallbackTracker extends Handler {
                             qos.getDownlinkBandwidth().getGuaranteedBitrateKbps(),
                             qos.getUplinkBandwidth().getGuaranteedBitrateKbps(),
                             qos.getAveragingWindow(), remoteAddresses);
-            mNetworkAgent.notifyQosSessionAvailable(
+            mNetworkAgent.sendQosSessionAvailable(
                     callbackId, session.getQosBearerSessionId(), nrQosAttr);
         }
 
@@ -417,7 +448,7 @@ public class QosCallbackTracker extends Handler {
     }
 
     private void sendSessionLost(int callbackId, @NonNull QosBearerSession session) {
-        mNetworkAgent.notifyQosSessionLost(callbackId, session.getQosBearerSessionId(),
+        mNetworkAgent.sendQosSessionLost(callbackId, session.getQosBearerSessionId(),
                 session.getQos() instanceof EpsQos
                         ? QosSession.TYPE_EPS_BEARER : QosSession.TYPE_NR_BEARER);
         log("sendSessionLost, callbackId=" + callbackId);
