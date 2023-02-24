@@ -76,7 +76,6 @@ public class PerSimStatus {
     public final int minimumVoltageClass;
     public final int userModifiedApnTypes;
     public final long unmeteredNetworks;
-    public final boolean vonrEnabled;
 
     /** Returns the current sim status of the given {@link Phone}. */
     @Nullable
@@ -108,8 +107,7 @@ public class PerSimStatus {
                 iccCard == null ? false : iccCard.getIccLockEnabled(),
                 getMinimumVoltageClass(phone),
                 getUserModifiedApnTypes(phone),
-                persistAtomsStorage.getUnmeteredNetworks(phone.getPhoneId(), carrierId),
-                isVonrEnabled(phone));
+                persistAtomsStorage.getUnmeteredNetworks(phone.getPhoneId(), carrierId));
     }
 
     private PerSimStatus(
@@ -128,8 +126,7 @@ public class PerSimStatus {
             boolean pin1Enabled,
             int minimumVoltageClass,
             int userModifiedApnTypes,
-            long unmeteredNetworks,
-            boolean vonrEnabled) {
+            long unmeteredNetworks) {
         this.carrierId = carrierId;
         this.phoneNumberSourceUicc = phoneNumberSourceUicc;
         this.phoneNumberSourceCarrier = phoneNumberSourceCarrier;
@@ -146,7 +143,6 @@ public class PerSimStatus {
         this.minimumVoltageClass = minimumVoltageClass;
         this.userModifiedApnTypes = userModifiedApnTypes;
         this.unmeteredNetworks = unmeteredNetworks;
-        this.vonrEnabled = vonrEnabled;
     }
 
     @Nullable
@@ -298,17 +294,5 @@ public class PerSimStatus {
             }
             return bitmask;
         }
-    }
-
-    /** Returns true if VoNR is enabled */
-    private static boolean isVonrEnabled(Phone phone) {
-        TelephonyManager telephonyManager =
-                phone.getContext()
-                        .getSystemService(TelephonyManager.class);
-        if (telephonyManager == null) {
-            return false;
-        }
-        telephonyManager = telephonyManager.createForSubscriptionId(phone.getSubId());
-        return telephonyManager.isVoNrEnabled();
     }
 }
