@@ -24,9 +24,11 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.AsyncResult;
 import android.os.Binder;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.RegistrantList;
 import android.os.RemoteException;
 import android.telephony.Rlog;
 import android.telephony.satellite.SatelliteCapabilities;
@@ -35,63 +37,141 @@ import android.telephony.satellite.SatelliteManager;
 import android.telephony.satellite.SatelliteManager.SatelliteException;
 import android.telephony.satellite.stub.ISatellite;
 import android.telephony.satellite.stub.ISatelliteCapabilitiesConsumer;
-import android.telephony.satellite.stub.SatelliteError;
-import android.telephony.satellite.stub.SatelliteModemState;
+import android.telephony.satellite.stub.ISatelliteListener;
 import android.telephony.satellite.stub.SatelliteService;
 import android.text.TextUtils;
+import android.util.Pair;
 
 import com.android.internal.telephony.ExponentialBackoff;
 import com.android.internal.telephony.IBooleanConsumer;
 import com.android.internal.telephony.IIntegerConsumer;
+import com.android.internal.telephony.Phone;
 
 import java.util.Arrays;
-import java.util.stream.Collectors;
+import java.util.function.Consumer;
 
 /**
- * Satellite service controller to manage connections with the satellite service.
+ * Satellite modem interface to manage connections with the satellite service and HAL interface.
  */
-public class SatelliteServiceController {
-    private static final String TAG = "SatelliteServiceController";
+public class SatelliteModemInterface {
+    private static final String TAG = "SatelliteModemInterface";
     private static final long REBIND_INITIAL_DELAY = 2 * 1000; // 2 seconds
     private static final long REBIND_MAXIMUM_DELAY = 64 * 1000; // 1 minute
     private static final int REBIND_MULTIPLIER = 2;
 
-    @NonNull private static SatelliteServiceController sInstance;
+    @NonNull private static SatelliteModemInterface sInstance;
     @NonNull private final Context mContext;
     @NonNull private final ExponentialBackoff mExponentialBackoff;
     @NonNull private final Object mLock = new Object();
+    /**
+     * {@code true} to use the vendor satellite service and {@code false} to use the HAL.
+     */
+    private final boolean mIsSatelliteServiceSupported = false;
     @Nullable private ISatellite mSatelliteService;
     @Nullable private SatelliteServiceConnection mSatelliteServiceConnection;
     private boolean mIsBound;
     private boolean mIsBinding;
 
+    @NonNull private final RegistrantList mSatelliteProvisionStateChangedRegistrants =
+            new RegistrantList();
+    @NonNull private final RegistrantList mSatellitePositionInfoChangedRegistrants =
+            new RegistrantList();
+    @NonNull private final RegistrantList mDatagramTransferStateChangedRegistrants =
+            new RegistrantList();
+    @NonNull private final RegistrantList mSatelliteModemStateChangedRegistrants =
+            new RegistrantList();
+    @NonNull private final RegistrantList mPendingDatagramCountRegistrants = new RegistrantList();
+    @NonNull private final RegistrantList mSatelliteDatagramsReceivedRegistrants =
+            new RegistrantList();
+    @NonNull private final RegistrantList mSatelliteRadioTechnologyChangedRegistrants =
+            new RegistrantList();
+
+    @NonNull private final ISatelliteListener mListener = new ISatelliteListener.Stub() {
+        @Override
+        public void onSatelliteProvisionStateChanged(boolean provisioned) {
+            mSatelliteProvisionStateChangedRegistrants.notifyResult(provisioned);
+        }
+
+        @Override
+        public void onSatelliteDatagramsReceived(
+                android.telephony.satellite.stub.SatelliteDatagram[] datagrams, int pendingCount) {
+            mSatelliteDatagramsReceivedRegistrants.notifyResult(new Pair<>(
+                    SatelliteServiceUtils.fromSatelliteDatagrams(datagrams), pendingCount));
+        }
+
+        @Override
+        public void onPendingDatagramCount(int count) {
+            mPendingDatagramCountRegistrants.notifyResult(count);
+        }
+
+        @Override
+        public void onSatellitePositionChanged(
+                android.telephony.satellite.stub.PointingInfo pointingInfo) {
+            mSatellitePositionInfoChangedRegistrants.notifyResult(
+                    SatelliteServiceUtils.fromPointingInfo(pointingInfo));
+        }
+
+        @Override
+        public void onSatelliteModemStateChanged(int state) {
+            mSatelliteModemStateChangedRegistrants.notifyResult(
+                    SatelliteServiceUtils.fromSatelliteModemState(state));
+            int datagramTransferState = SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_UNKNOWN;
+            switch (state) {
+                case SatelliteManager.SATELLITE_MODEM_STATE_IDLE:
+                    datagramTransferState = SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE;
+                    break;
+                case SatelliteManager.SATELLITE_MODEM_STATE_LISTENING:
+                    datagramTransferState =
+                            SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING;
+                    break;
+                case SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING:
+                    datagramTransferState =
+                            SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING;
+                    break;
+                case SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_RETRYING:
+                    datagramTransferState =
+                            SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RETRYING;
+            }
+            // TODO: properly notify the rest of the datagram transfer state changed parameters
+            mDatagramTransferStateChangedRegistrants.notifyResult(datagramTransferState);
+        }
+
+        @Override
+        public void onSatelliteRadioTechnologyChanged(int technology) {
+            mSatelliteRadioTechnologyChangedRegistrants.notifyResult(
+                    SatelliteServiceUtils.fromSatelliteRadioTechnology(technology));
+        }
+    };
+
     /**
-     * @return The singleton instance of SatelliteServiceController.
+     * @return The singleton instance of SatelliteModemInterface.
      */
-    public static SatelliteServiceController getInstance() {
+    public static SatelliteModemInterface getInstance() {
         if (sInstance == null) {
-            loge("SatelliteServiceController was not yet initialized.");
+            loge("SatelliteModemInterface was not yet initialized.");
         }
         return sInstance;
     }
 
     /**
-     * Create the SatelliteServiceController singleton instance.
-     * @param context The Context to use to create the SatelliteServiceController.
+     * Create the SatelliteModemInterface singleton instance.
+     * @param context The Context to use to create the SatelliteModemInterface.
+     * @return The singleton instance of SatelliteModemInterface.
      */
-    public static void make(@NonNull Context context) {
+    public static SatelliteModemInterface make(@NonNull Context context) {
         if (sInstance == null) {
-            sInstance = new SatelliteServiceController(context, Looper.getMainLooper());
+            sInstance = new SatelliteModemInterface(context, Looper.getMainLooper());
         }
+        return sInstance;
     }
 
     /**
-     * Create a SatelliteServiceController to manage connections to the SatelliteService.
+     * Create a SatelliteModemInterface to manage connections to the SatelliteService.
      *
-     * @param context The Context for the SatelliteServiceController.
+     * @param context The Context for the SatelliteModemInterface.
      * @param looper The Looper to run binding retry on.
      */
-    private SatelliteServiceController(@NonNull Context context, @NonNull Looper looper) {
+    private SatelliteModemInterface(@NonNull Context context, @NonNull Looper looper) {
         mContext = context;
         mExponentialBackoff = new ExponentialBackoff(REBIND_INITIAL_DELAY, REBIND_MAXIMUM_DELAY,
                 REBIND_MULTIPLIER, looper, () -> {
@@ -110,7 +190,7 @@ public class SatelliteServiceController {
             bindService();
         });
         mExponentialBackoff.start();
-        logd("Created SatelliteServiceController. Attempting to bind to SatelliteService.");
+        logd("Created SatelliteModemInterface. Attempting to bind to SatelliteService.");
         bindService();
     }
 
@@ -192,7 +272,21 @@ public class SatelliteServiceController {
             }
             mSatelliteService = ISatellite.Stub.asInterface(service);
             mExponentialBackoff.stop();
-            // TODO: register any listeners
+            try {
+                mSatelliteService.setSatelliteListener(mListener, new IIntegerConsumer.Stub() {
+                    @Override
+                    public void accept(int result) {
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
+                        if (error != SatelliteManager.SATELLITE_ERROR_NONE) {
+                            // TODO: Retry setSatelliteListener
+                        }
+                        logd("setSatelliteListener: " + error);
+                    }
+                });
+            } catch (RemoteException e) {
+                // TODO: Retry setSatelliteListener
+                logd("setSatelliteListener: RemoteException " + e);
+            }
         }
 
         @Override
@@ -218,39 +312,179 @@ public class SatelliteServiceController {
     }
 
     /**
-     * Register the callback interface with satellite service.
+     * Registers for the satellite provision state changed.
      *
-     * @param message The Message to send to result of the operation to.
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
      */
-    public void setSatelliteListener(@NonNull Message message) {
-        // TODO: implement and add listener to param
+    public void registerForSatelliteProvisionStateChanged(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mSatelliteProvisionStateChangedRegistrants.add(h, what, obj);
     }
 
     /**
-     * Enable or disable the satellite service listening mode.
+     * Unregisters for the satellite provision state changed.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForSatelliteProvisionStateChanged(@NonNull Handler h) {
+        mSatelliteProvisionStateChangedRegistrants.remove(h);
+    }
+
+    /**
+     * Registers for satellite position info changed from satellite modem.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForSatellitePositionInfoChanged(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mSatellitePositionInfoChangedRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for satellite position info changed from satellite modem.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForSatellitePositionInfoChanged(@NonNull Handler h) {
+        mSatellitePositionInfoChangedRegistrants.remove(h);
+    }
+
+    /**
+     * Registers for datagram transfer state changed.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForDatagramTransferStateChanged(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mDatagramTransferStateChangedRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for datagram transfer state changed.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForDatagramTransferStateChanged(@NonNull Handler h) {
+        mDatagramTransferStateChangedRegistrants.remove(h);
+    }
+
+    /**
+     * Registers for modem state changed from satellite modem.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForSatelliteModemStateChanged(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mSatelliteModemStateChangedRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for modem state changed from satellite modem.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForSatelliteModemStateChanged(@NonNull Handler h) {
+        mSatelliteModemStateChangedRegistrants.remove(h);
+    }
+
+    /**
+     * Registers for pending datagram count from satellite modem.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForPendingDatagramCount(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mPendingDatagramCountRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for pending datagram count from satellite modem.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForPendingDatagramCount(@NonNull Handler h) {
+        mPendingDatagramCountRegistrants.remove(h);
+    }
+
+    /**
+     * Registers for new datagrams received from satellite modem.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForSatelliteDatagramsReceived(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mSatelliteDatagramsReceivedRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for new datagrams received from satellite modem.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForSatelliteDatagramsReceived(@NonNull Handler h) {
+        mSatelliteDatagramsReceivedRegistrants.remove(h);
+    }
+
+    /**
+     * Registers for satellite radio technology changed from satellite modem.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForSatelliteRadioTechnologyChanged(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mSatelliteRadioTechnologyChangedRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for satellite radio technology changed from satellite modem.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForSatelliteRadioTechnologyChanged(@NonNull Handler h) {
+        mSatelliteRadioTechnologyChangedRegistrants.remove(h);
+    }
+
+    /**
+     * Request to enable or disable the satellite service listening mode.
      * Listening mode allows the satellite service to listen for incoming pages.
      *
      * @param enable True to enable satellite listening mode and false to disable.
      * @param message The Message to send to result of the operation to.
      */
-    public void setSatelliteListeningEnabled(boolean enable, @NonNull Message message) {
+    public void requestSatelliteListeningEnabled(boolean enable, @NonNull Message message) {
         if (mSatelliteService != null) {
             try {
-                mSatelliteService.setSatelliteListeningEnabled(enable, new IIntegerConsumer.Stub() {
-                    @Override
-                    public void accept(int result) {
-                        int error = fromSatelliteError(result);
-                        logd("setSatelliteListeningEnabled: " + error);
-                        Binder.withCleanCallingIdentity(() ->
-                                sendMessageWithResult(message, null, error));
-                    }
-                });
+                mSatelliteService.requestSatelliteListeningEnabled(
+                        enable, SatelliteController.getInstance().isSatelliteDemoModeEnabled(),
+                        new IIntegerConsumer.Stub() {
+                            @Override
+                            public void accept(int result) {
+                                int error = SatelliteServiceUtils.fromSatelliteError(result);
+                                logd("requestSatelliteListeningEnabled: " + error);
+                                Binder.withCleanCallingIdentity(() ->
+                                        sendMessageWithResult(message, null, error));
+                            }
+                        });
             } catch (RemoteException e) {
-                loge("setSatelliteListeningEnabled: RemoteException " + e);
+                loge("requestSatelliteListeningEnabled: RemoteException " + e);
                 sendMessageWithResult(message, null, SatelliteManager.SATELLITE_SERVICE_ERROR);
             }
         } else {
-            loge("setSatelliteListeningEnabled: Satellite service is unavailable.");
+            loge("requestSatelliteListeningEnabled: Satellite service is unavailable.");
             sendMessageWithResult(message, null, SatelliteManager.SATELLITE_REQUEST_NOT_SUPPORTED);
         }
     }
@@ -269,7 +503,7 @@ public class SatelliteServiceController {
                 mSatelliteService.requestSatelliteEnabled(enable, new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("setSatelliteEnabled: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -296,7 +530,7 @@ public class SatelliteServiceController {
                 mSatelliteService.requestIsSatelliteEnabled(new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("requestIsSatelliteEnabled: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -333,7 +567,7 @@ public class SatelliteServiceController {
                 mSatelliteService.requestIsSatelliteSupported(new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("requestIsSatelliteSupported: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -341,12 +575,9 @@ public class SatelliteServiceController {
                 }, new IBooleanConsumer.Stub() {
                     @Override
                     public void accept(boolean result) {
-                        // Convert for compatibility with SatelliteResponse
-                        // TODO: This should just report result instead.
-                        int[] supported = new int[] {result ? 1 : 0};
-                        logd("requestIsSatelliteSupported: " + Arrays.toString(supported));
+                        logd("requestIsSatelliteSupported: " + result);
                         Binder.withCleanCallingIdentity(() -> sendMessageWithResult(
-                                message, supported, SatelliteManager.SATELLITE_ERROR_NONE));
+                                message, result, SatelliteManager.SATELLITE_ERROR_NONE));
                     }
                 });
             } catch (RemoteException e) {
@@ -370,7 +601,7 @@ public class SatelliteServiceController {
                 mSatelliteService.requestSatelliteCapabilities(new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("requestSatelliteCapabilities: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -379,7 +610,8 @@ public class SatelliteServiceController {
                     @Override
                     public void accept(android.telephony.satellite.stub.SatelliteCapabilities
                             result) {
-                        SatelliteCapabilities capabilities = fromSatelliteCapabilities(result);
+                        SatelliteCapabilities capabilities =
+                                SatelliteServiceUtils.fromSatelliteCapabilities(result);
                         logd("requestSatelliteCapabilities: " + capabilities);
                         Binder.withCleanCallingIdentity(() -> sendMessageWithResult(
                                 message, capabilities, SatelliteManager.SATELLITE_ERROR_NONE));
@@ -398,7 +630,7 @@ public class SatelliteServiceController {
     /**
      * User started pointing to the satellite.
      * The satellite service should report the satellite pointing info via
-     * ISatelliteListener#onSatellitePointingInfoChanged as the user device/satellite moves.
+     * ISatelliteListener#onSatellitePositionChanged as the user device/satellite moves.
      *
      * @param message The Message to send to result of the operation to.
      */
@@ -408,7 +640,7 @@ public class SatelliteServiceController {
                 mSatelliteService.startSendingSatellitePointingInfo(new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("startSendingSatellitePointingInfo: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -436,7 +668,7 @@ public class SatelliteServiceController {
                 mSatelliteService.stopSendingSatellitePointingInfo(new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("stopSendingSatellitePointingInfo: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -463,7 +695,7 @@ public class SatelliteServiceController {
                 mSatelliteService.requestMaxCharactersPerMOTextMessage(new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("requestMaxCharactersPerMOTextMessage: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -505,7 +737,7 @@ public class SatelliteServiceController {
                 mSatelliteService.provisionSatelliteService(token, new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("provisionSatelliteService: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -535,7 +767,7 @@ public class SatelliteServiceController {
                 mSatelliteService.deprovisionSatelliteService(token, new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("deprovisionSatelliteService: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -562,7 +794,7 @@ public class SatelliteServiceController {
                 mSatelliteService.requestIsSatelliteProvisioned(new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("requestIsSatelliteProvisioned: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -589,8 +821,9 @@ public class SatelliteServiceController {
     }
 
     /**
-     * Poll the pending datagrams.
-     * The satellite service should report the new datagrams via ISatelliteListener#onNewDatagrams.
+     * Poll the pending datagrams to be received over satellite.
+     * The satellite service should check if there are any pending datagrams to be received over
+     * satellite and report them via ISatelliteListener#onSatelliteDatagramsReceived.
      *
      * @param message The Message to send to result of the operation to.
      */
@@ -600,7 +833,7 @@ public class SatelliteServiceController {
                 mSatelliteService.pollPendingSatelliteDatagrams(new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("pollPendingSatelliteDatagrams: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -618,22 +851,24 @@ public class SatelliteServiceController {
 
     /**
      * Send datagram over satellite.
-     * Once sent, the satellite service should report whether the operation was successful via
-     * SatelliteListener#onDatagramsDelivered.
      *
      * @param datagram Datagram to send in byte format.
      * @param isEmergency Whether this is an emergency datagram.
+     * @param needFullScreenPointingUI this is used to indicate pointingUI app to open in
+     *                                 full screen mode.
      * @param message The Message to send to result of the operation to.
      */
     public void sendSatelliteDatagram(@NonNull SatelliteDatagram datagram, boolean isEmergency,
-            @NonNull Message message) {
+            boolean needFullScreenPointingUI, @NonNull Message message) {
         if (mSatelliteService != null) {
             try {
-                mSatelliteService.sendSatelliteDatagram(toSatelliteDatagram(datagram), isEmergency,
+                mSatelliteService.sendSatelliteDatagram(
+                        SatelliteServiceUtils.toSatelliteDatagram(datagram),
+                        SatelliteController.getInstance().isSatelliteDemoModeEnabled(), isEmergency,
                         new IIntegerConsumer.Stub() {
                             @Override
                             public void accept(int result) {
-                                int error = fromSatelliteError(result);
+                                int error = SatelliteServiceUtils.fromSatelliteError(result);
                                 logd("sendSatelliteDatagram: " + error);
                                 Binder.withCleanCallingIdentity(() ->
                                         sendMessageWithResult(message, null, error));
@@ -662,7 +897,7 @@ public class SatelliteServiceController {
                 mSatelliteService.requestSatelliteModemState(new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        int error = fromSatelliteError(result);
+                        int error = SatelliteServiceUtils.fromSatelliteError(result);
                         logd("requestSatelliteModemState: " + error);
                         Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
@@ -671,7 +906,7 @@ public class SatelliteServiceController {
                     @Override
                     public void accept(int result) {
                         // Convert SatelliteModemState from service to frameworks definition.
-                        int modemState = fromSatelliteModemState(result);
+                        int modemState = SatelliteServiceUtils.fromSatelliteModemState(result);
                         logd("requestSatelliteModemState: " + modemState);
                         Binder.withCleanCallingIdentity(() -> sendMessageWithResult(
                                 message, modemState, SatelliteManager.SATELLITE_ERROR_NONE));
@@ -699,7 +934,7 @@ public class SatelliteServiceController {
                         new IIntegerConsumer.Stub() {
                             @Override
                             public void accept(int result) {
-                                int error = fromSatelliteError(result);
+                                int error = SatelliteServiceUtils.fromSatelliteError(result);
                                 logd("requestIsSatelliteCommunicationAllowedForCurrentLocation: "
                                         + error);
                                 Binder.withCleanCallingIdentity(() ->
@@ -708,13 +943,10 @@ public class SatelliteServiceController {
                         }, new IBooleanConsumer.Stub() {
                             @Override
                             public void accept(boolean result) {
-                                // Convert for compatibility with SatelliteResponse
-                                // TODO: This should just report result instead.
-                                int[] allowed = new int[] {result ? 1 : 0};
                                 logd("requestIsSatelliteCommunicationAllowedForCurrentLocation: "
-                                        + Arrays.toString(allowed));
+                                        + result);
                                 Binder.withCleanCallingIdentity(() -> sendMessageWithResult(
-                                        message, allowed, SatelliteManager.SATELLITE_ERROR_NONE));
+                                        message, result, SatelliteManager.SATELLITE_ERROR_NONE));
                             }
                         });
             } catch (RemoteException e) {
@@ -743,7 +975,7 @@ public class SatelliteServiceController {
                         new IIntegerConsumer.Stub() {
                             @Override
                             public void accept(int result) {
-                                int error = fromSatelliteError(result);
+                                int error = SatelliteServiceUtils.fromSatelliteError(result);
                                 logd("requestTimeForNextSatelliteVisibility: " + error);
                                 Binder.withCleanCallingIdentity(() ->
                                         sendMessageWithResult(message, null, error));
@@ -770,93 +1002,15 @@ public class SatelliteServiceController {
         }
     }
 
+    public boolean isSatelliteServiceSupported() {
+        // TODO: update this method
+        return mIsSatelliteServiceSupported;
+    }
+
     private static void sendMessageWithResult(@NonNull Message message, @Nullable Object result,
             @SatelliteManager.SatelliteError int error) {
         AsyncResult.forMessage(message, result, new SatelliteException(error));
         message.sendToTarget();
-    }
-
-    @SatelliteManager.SatelliteError private static int fromSatelliteError(int error) {
-        switch (error) {
-            case SatelliteError.ERROR_NONE:
-                return SatelliteManager.SATELLITE_ERROR_NONE;
-            case SatelliteError.SATELLITE_ERROR:
-                return SatelliteManager.SATELLITE_ERROR;
-            case SatelliteError.SERVER_ERROR:
-                return SatelliteManager.SATELLITE_SERVER_ERROR;
-            case SatelliteError.SERVICE_ERROR:
-                return SatelliteManager.SATELLITE_SERVICE_ERROR;
-            case SatelliteError.MODEM_ERROR:
-                return SatelliteManager.SATELLITE_MODEM_ERROR;
-            case SatelliteError.NETWORK_ERROR:
-                return SatelliteManager.SATELLITE_NETWORK_ERROR;
-            case SatelliteError.INVALID_TELEPHONY_STATE:
-                return SatelliteManager.SATELLITE_INVALID_TELEPHONY_STATE;
-            case SatelliteError.INVALID_MODEM_STATE:
-                return SatelliteManager.SATELLITE_INVALID_MODEM_STATE;
-            case SatelliteError.INVALID_ARGUMENTS:
-                return SatelliteManager.SATELLITE_INVALID_ARGUMENTS;
-            case SatelliteError.REQUEST_FAILED:
-                return SatelliteManager.SATELLITE_REQUEST_FAILED;
-            case SatelliteError.RADIO_NOT_AVAILABLE:
-                return SatelliteManager.SATELLITE_RADIO_NOT_AVAILABLE;
-            case SatelliteError.REQUEST_NOT_SUPPORTED:
-                return SatelliteManager.SATELLITE_REQUEST_NOT_SUPPORTED;
-            case SatelliteError.NO_RESOURCES:
-                return SatelliteManager.SATELLITE_NO_RESOURCES;
-            case SatelliteError.SERVICE_NOT_PROVISIONED:
-                return SatelliteManager.SATELLITE_SERVICE_NOT_PROVISIONED;
-            case SatelliteError.SERVICE_PROVISION_IN_PROGRESS:
-                return SatelliteManager.SATELLITE_SERVICE_PROVISION_IN_PROGRESS;
-            case SatelliteError.REQUEST_ABORTED:
-                return SatelliteManager.SATELLITE_REQUEST_ABORTED;
-            case SatelliteError.SATELLITE_ACCESS_BARRED:
-                return SatelliteManager.SATELLITE_ACCESS_BARRED;
-            case SatelliteError.NETWORK_TIMEOUT:
-                return SatelliteManager.SATELLITE_NETWORK_TIMEOUT;
-            case SatelliteError.SATELLITE_NOT_REACHABLE:
-                return SatelliteManager.SATELLITE_NOT_REACHABLE;
-            case SatelliteError.NOT_AUTHORIZED:
-                return SatelliteManager.SATELLITE_NOT_AUTHORIZED;
-        }
-        loge("Received invalid satellite service error: " + error);
-        return SatelliteManager.SATELLITE_SERVICE_ERROR;
-    }
-
-    @SatelliteManager.SatelliteModemState private static int fromSatelliteModemState(
-            int modemState) {
-        switch (modemState) {
-            case SatelliteModemState.SATELLITE_MODEM_STATE_IDLE:
-                return SatelliteManager.SATELLITE_MODEM_STATE_IDLE;
-            case SatelliteModemState.SATELLITE_MODEM_STATE_LISTENING:
-                return SatelliteManager.SATELLITE_MODEM_STATE_LISTENING;
-            case SatelliteModemState.SATELLITE_MODEM_STATE_MESSAGE_TRANSFERRING:
-                return SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING;
-            case SatelliteModemState.SATELLITE_MODEM_STATE_OFF:
-                return SatelliteManager.SATELLITE_MODEM_STATE_OFF;
-        }
-        // TODO: create and return SATELLITE_MODEM_STATE_UNKNOWN
-        loge("Received invalid modem state: " + modemState);
-        return SatelliteManager.SATELLITE_MODEM_STATE_OFF;
-    }
-
-    @Nullable private static SatelliteCapabilities fromSatelliteCapabilities(
-            @Nullable android.telephony.satellite.stub.SatelliteCapabilities capabilities) {
-        if (capabilities == null) return null;
-        return new SatelliteCapabilities(
-                Arrays.stream(capabilities.supportedRadioTechnologies)
-                        .boxed().collect(Collectors.toSet()),
-                capabilities.isAlwaysOn,
-                capabilities.needsPointingToSatellite,
-                capabilities.needsSeparateSimProfile);
-    }
-
-    @Nullable private static android.telephony.satellite.stub.SatelliteDatagram toSatelliteDatagram(
-            @Nullable SatelliteDatagram datagram) {
-        android.telephony.satellite.stub.SatelliteDatagram converted =
-                new android.telephony.satellite.stub.SatelliteDatagram();
-        converted.data = datagram.getSatelliteDatagram();
-        return converted;
     }
 
     private static void logd(@NonNull String log) {
