@@ -65,17 +65,6 @@ public final class LogicalChannelMocker {
     public static void mockSendToLogicalChannel(CommandsInterface mockCi, int channel,
             Object... responseObjects) {
         ArgumentCaptor<Message> response = ArgumentCaptor.forClass(Message.class);
-        doAnswer(new Answer() {
-            private int mIndex = 0;
-
-            @Override
-            public Object answer(InvocationOnMock invocation) throws Throwable {
-                Object responseObject = responseObjects[mIndex++];
-                mockIccTransmitApduLogicalChannelResponse(response, responseObject);
-                return null;
-            }
-        }).when(mockCi).iccTransmitApduLogicalChannel(eq(channel), anyInt(), anyInt(), anyInt(),
-                anyInt(), anyInt(), anyString(), response.capture());
 
         doAnswer(new Answer() {
             private int mIndex = 0;
@@ -118,7 +107,8 @@ public final class LogicalChannelMocker {
             AsyncResult.forMessage(msg);
             msg.sendToTarget();
             return null;
-        }).when(mockCi).iccCloseLogicalChannel(eq(channel), response.capture());
+        }).when(mockCi).iccCloseLogicalChannel(eq(channel),
+                eq(true /*isEs10*/), response.capture());
     }
 
     private static int[] getSelectResponse(String responseHex) {

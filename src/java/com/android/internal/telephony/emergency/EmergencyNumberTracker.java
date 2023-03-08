@@ -22,6 +22,7 @@ import android.annotation.NonNull;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Resources;
 import android.os.AsyncResult;
 import android.os.Environment;
@@ -186,7 +187,9 @@ public class EmergencyNumberTracker extends Handler {
             CarrierConfigManager configMgr = (CarrierConfigManager)
                     mPhone.getContext().getSystemService(Context.CARRIER_CONFIG_SERVICE);
             if (configMgr != null) {
-                PersistableBundle b = getCarrierConfigSubset(
+                PersistableBundle b = CarrierConfigManager.getCarrierConfigSubset(
+                        mPhone.getContext(),
+                        mPhone.getSubId(),
                         CarrierConfigManager.KEY_EMERGENCY_NUMBER_PREFIX_STRING_ARRAY);
                 if (!b.isEmpty()) {
                     mEmergencyNumberPrefix = b.getStringArray(
@@ -197,6 +200,12 @@ public class EmergencyNumberTracker extends Handler {
                 configMgr.registerCarrierConfigChangeListener(this::post,
                         (slotIndex, subId, carrierId, specificCarrierId) ->
                                 onCarrierConfigUpdated(slotIndex));
+
+                //register country change listener
+                IntentFilter filter = new IntentFilter(
+                    TelephonyManager.ACTION_NETWORK_COUNTRY_CHANGED);
+                mPhone.getContext().registerReceiver(mIntentReceiver, filter);
+
             } else {
                 loge("CarrierConfigManager is null.");
             }
@@ -355,7 +364,9 @@ public class EmergencyNumberTracker extends Handler {
             if (slotIndex != mPhone.getPhoneId()) return;
 
             PersistableBundle b =
-                    getCarrierConfigSubset(
+                    CarrierConfigManager.getCarrierConfigSubset(
+                            mPhone.getContext(),
+                            mPhone.getSubId(),
                             CarrierConfigManager.KEY_EMERGENCY_NUMBER_PREFIX_STRING_ARRAY);
             if (!b.isEmpty()) {
                 String[] emergencyNumberPrefix =
@@ -369,24 +380,6 @@ public class EmergencyNumberTracker extends Handler {
         } else {
             loge("onCarrierConfigurationChanged mPhone is null.");
         }
-    }
-
-    @NonNull
-    private PersistableBundle getCarrierConfigSubset(String key) {
-        PersistableBundle bundle = new PersistableBundle();
-
-        if (mPhone != null) {
-            CarrierConfigManager ccm =
-                    mPhone.getContext().getSystemService(CarrierConfigManager.class);
-            try {
-                if (ccm != null) {
-                    bundle = ccm.getConfigForSubId(mPhone.getPhoneId(), key);
-                }
-            } catch (RuntimeException e) {
-                loge("CarrierConfigLoader is not available.");
-            }
-        }
-        return bundle;
     }
 
     private String getInitialCountryIso() {
@@ -558,7 +551,7 @@ public class EmergencyNumberTracker extends Handler {
                     readInputStreamToByteArray(gzipInputStream));
             assetsDatabaseVersion = allEccMessages.revision;
             logd(countryIso + " asset emergency database is loaded. Ver: " + assetsDatabaseVersion
-                    + " Phone Id: " + mPhone.getPhoneId());
+                    + " Phone Id: " + mPhone.getPhoneId() + " countryIso: " + countryIso);
             for (ProtobufEccData.CountryInfo countryEccInfo : allEccMessages.countries) {
                 if (countryEccInfo.isoCode.equals(countryIso.toUpperCase(Locale.ROOT))) {
                     for (ProtobufEccData.EccInfo eccInfo : countryEccInfo.eccs) {

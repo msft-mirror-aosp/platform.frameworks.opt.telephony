@@ -387,11 +387,11 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
                 case EVENT_AIDL_PROXY_DEAD:
                     int aidlService = msg.arg1;
-                    AtomicLong obj = (AtomicLong) msg.obj;
-                    riljLog("handleMessage: EVENT_AIDL_PROXY_DEAD cookie = " + msg.obj
+                    long msgCookie = (long) msg.obj;
+                    riljLog("handleMessage: EVENT_AIDL_PROXY_DEAD cookie = " + msgCookie
                             + ", service = " + serviceToString(aidlService) + ", cookie = "
                             + mServiceCookies.get(aidlService));
-                    if (obj.get() == mServiceCookies.get(aidlService).get()) {
+                    if (msgCookie == mServiceCookies.get(aidlService).get()) {
                         mIsRadioProxyInitialized = false;
                         resetProxyAndRequestList(aidlService);
                     }
@@ -473,7 +473,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         public void binderDied() {
             riljLog("Service " + serviceToString(mService) + " has died.");
             mRilHandler.sendMessage(mRilHandler.obtainMessage(EVENT_AIDL_PROXY_DEAD, mService,
-                    0 /* ignored arg2 */, mServiceCookies.get(mService)));
+                    0 /* ignored arg2 */, mServiceCookies.get(mService).get()));
             unlinkToDeath();
         }
     }
@@ -1072,7 +1072,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                         if (!mIsRadioProxyInitialized) {
                             mIsRadioProxyInitialized = true;
                             serviceProxy.getHidl().linkToDeath(mRadioProxyDeathRecipient,
-                                    mServiceCookies.get(service).incrementAndGet());
+                                    mServiceCookies.get(HAL_SERVICE_RADIO).incrementAndGet());
                             serviceProxy.getHidl().setResponseFunctions(
                                     mRadioResponse, mRadioIndication);
                         }
@@ -2178,8 +2178,21 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 dataProxy.setupDataCall(rr.mSerial, mPhoneId, accessNetworkType, dataProfile,
                         isRoaming, allowRoaming, reason, linkProperties, pduSessionId, sliceInfo,
                         trafficDescriptor, matchAllRuleAllowed);
-            } catch (RemoteException | RuntimeException e) {
+            } catch (RemoteException e) {
                 handleRadioProxyExceptionForRR(HAL_SERVICE_DATA, "setupDataCall", e);
+            } catch (RuntimeException e) {
+                riljLoge("setupDataCall RuntimeException: " + e);
+                int error = RadioError.SYSTEM_ERR;
+                int responseType = RadioResponseType.SOLICITED;
+                processResponseInternal(HAL_SERVICE_DATA, rr.mSerial, error, responseType);
+                processResponseDoneInternal(rr, error, responseType, null);
+            }
+        } else {
+            riljLoge("setupDataCall: DataProxy is empty");
+            if (result != null) {
+                AsyncResult.forMessage(result, null,
+                        CommandException.fromRilErrno(RADIO_NOT_AVAILABLE));
+                result.sendToTarget();
             }
         }
     }
@@ -4121,7 +4134,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     }
 
     @Override
-    public void iccCloseLogicalChannel(int channel, Message result) {
+    public void iccCloseLogicalChannel(int channel, boolean isEs10, Message result) {
         RadioSimProxy simProxy = getRadioServiceProxy(RadioSimProxy.class, result);
         if (!simProxy.isEmpty()) {
             RILRequest rr = obtainRequest(RIL_REQUEST_SIM_CLOSE_CHANNEL, result,
@@ -4129,21 +4142,14 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
             if (RILJ_LOGD) {
                 riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
-                        + " channel = " + channel);
+                        + " channel = " + channel + " isEs10 = " + isEs10);
             }
-
             try {
-                simProxy.iccCloseLogicalChannel(rr.mSerial, channel);
+                simProxy.iccCloseLogicalChannel(rr.mSerial, channel, isEs10);
             } catch (RemoteException | RuntimeException e) {
                 handleRadioProxyExceptionForRR(HAL_SERVICE_SIM, "iccCloseLogicalChannel", e);
             }
         }
-    }
-
-    @Override
-    public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction, int p1, int p2,
-            int p3, String data, Message result) {
-        iccTransmitApduLogicalChannel(channel, cla, instruction, p1, p2, p3, data, false, result);
     }
 
     @Override
@@ -6155,6 +6161,25 @@ public class RIL extends BaseCommands implements CommandsInterface {
     }
 
     /**
+     * Check whether satellite modem is supported by the device.
+     *
+     * @param result Message that will be sent back to the requester.
+     */
+    @Override
+    public void isSatelliteSupported(Message result) {
+        if (result != null) {
+            AsyncResult.forMessage(result, null,
+                    CommandException.fromRilErrno(REQUEST_NOT_SUPPORTED));
+            result.sendToTarget();
+        }
+        /**
+         * TODO: when adding implementation of this method, we need to return successful result
+         * with satellite support set to false if radioSatelliteProxy.isEmpty() is true or
+         * mHalVersion.get(HAL_SERVICE_SATELLITE).greaterOrEqual(RADIO_HAL_VERSION_2_0) is false.
+         */
+    }
+
+    /**
      * User started pointing to the satellite. Modem should continue to update the ponting input
      * as user moves device.
      *
@@ -6286,6 +6311,25 @@ public class RIL extends BaseCommands implements CommandsInterface {
                         CommandException.fromRilErrno(REQUEST_NOT_SUPPORTED));
                 result.sendToTarget();
             }
+        }
+    }
+
+    /**
+     * Get whether satellite communication is allowed for the current location
+     *
+     * @param result Message that will be sent back to the requester.
+     */
+    @Override
+    public void isSatelliteCommunicationAllowedForCurrentLocation(Message result) {
+        // TODO: link to HAL implementation
+        if (RILJ_LOGD) {
+            Rlog.d(RILJ_LOG_TAG,
+                    "stopSendingSatellitePointingInfo: REQUEST_NOT_SUPPORTED");
+        }
+        if (result != null) {
+            AsyncResult.forMessage(result, null,
+                    CommandException.fromRilErrno(REQUEST_NOT_SUPPORTED));
+            result.sendToTarget();
         }
     }
 
@@ -7214,6 +7258,19 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
         }
         return halVersion;
+    }
+
+    /**
+     * Get the HAL version corresponding to the interface version of a IRadioService module.
+     * @param interfaceVersion The interface version, from IRadioService#getInterfaceVersion().
+     * @return The corresponding HalVersion.
+     */
+    public static HalVersion getServiceHalVersion(int interfaceVersion) {
+        switch (interfaceVersion) {
+            case 1: return RADIO_HAL_VERSION_2_0;
+            case 2: return RADIO_HAL_VERSION_2_1;
+            default: return RADIO_HAL_VERSION_UNKNOWN;
+        }
     }
 
     private static String serviceToString(@HalService int service) {

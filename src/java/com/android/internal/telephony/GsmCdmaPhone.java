@@ -16,7 +16,10 @@
 
 package com.android.internal.telephony;
 
+import static android.telephony.NetworkRegistrationInfo.DOMAIN_CS;
+import static android.telephony.NetworkRegistrationInfo.DOMAIN_CS_PS;
 import static android.telephony.NetworkRegistrationInfo.DOMAIN_PS;
+import static android.telephony.NetworkRegistrationInfo.DOMAIN_UNKNOWN;
 
 import static com.android.internal.telephony.CommandException.Error.GENERIC_FAILURE;
 import static com.android.internal.telephony.CommandException.Error.SIM_BUSY;
@@ -72,6 +75,7 @@ import android.telecom.VideoProfile;
 import android.telephony.AccessNetworkConstants.TransportType;
 import android.telephony.Annotation.DataActivityType;
 import android.telephony.Annotation.RadioPowerState;
+import android.telephony.AnomalyReporter;
 import android.telephony.BarringInfo;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellBroadcastIdRange;
@@ -88,6 +92,7 @@ import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.UiccAccessRule;
 import android.telephony.UssdResponse;
+import android.telephony.ims.ImsCallProfile;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.Pair;
@@ -101,6 +106,7 @@ import com.android.internal.telephony.data.DataNetworkController;
 import com.android.internal.telephony.data.LinkBandwidthEstimator;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
+import com.android.internal.telephony.emergency.EmergencyStateTracker;
 import com.android.internal.telephony.gsm.GsmMmiCode;
 import com.android.internal.telephony.gsm.SsData;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
@@ -139,6 +145,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -241,8 +248,9 @@ public class GsmCdmaPhone extends Phone {
     private String mVmNumber;
     private int mImeiType = IMEI_TYPE_UNKNOWN;
 
-    CellBroadcastConfigTracker mCellBroadcastConfigTracker =
-            CellBroadcastConfigTracker.make(this, null);
+    @VisibleForTesting
+    public CellBroadcastConfigTracker mCellBroadcastConfigTracker =
+            CellBroadcastConfigTracker.make(this, null, true);
 
     private boolean mIsNullCipherAndIntegritySupported = false;
 
@@ -510,8 +518,12 @@ public class GsmCdmaPhone extends Phone {
             // This is needed to handle phone process crashes
             mIsPhoneInEcmState = getInEcmMode();
             if (mIsPhoneInEcmState) {
-                // Send a message which will invoke handleExitEmergencyCallbackMode
-                mCi.exitEmergencyCallbackMode(null);
+                if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+                    EmergencyStateTracker.getInstance().exitEmergencyCallbackMode();
+                } else {
+                    // Send a message which will invoke handleExitEmergencyCallbackMode
+                    mCi.exitEmergencyCallbackMode(null);
+                }
             }
 
             mCi.setPhoneType(PhoneConstants.PHONE_TYPE_CDMA);
@@ -1427,6 +1439,24 @@ public class GsmCdmaPhone extends Phone {
                 && (isWpsCall ? allowWpsOverIms : true);
 
         Bundle extras = dialArgs.intentExtras;
+        if (extras != null && extras.containsKey(PhoneConstants.EXTRA_COMPARE_DOMAIN)) {
+            int domain = extras.getInt(PhoneConstants.EXTRA_DIAL_DOMAIN);
+            if (!isEmergency && (!isMmiCode || isPotentialUssdCode)) {
+                if ((domain == DOMAIN_PS && !useImsForCall)
+                        || (domain == DOMAIN_CS && useImsForCall)
+                        || domain == DOMAIN_UNKNOWN || domain == DOMAIN_CS_PS) {
+                    loge("[Anomaly] legacy-useImsForCall:" + useImsForCall
+                            + ", NCDS-domain:" + domain);
+
+                    AnomalyReporter.reportAnomaly(
+                            UUID.fromString("bfae6c2e-ca2f-4121-b167-9cad26a3b353"),
+                            "Domain selection results don't match. useImsForCall:"
+                                    + useImsForCall + ", NCDS-domain:" + domain);
+                }
+            }
+            extras.remove(PhoneConstants.EXTRA_COMPARE_DOMAIN);
+        }
+
         // Only when the domain selection service is supported, EXTRA_DIAL_DOMAIN extra shall exist.
         if (extras != null && extras.containsKey(PhoneConstants.EXTRA_DIAL_DOMAIN)) {
             int domain = extras.getInt(PhoneConstants.EXTRA_DIAL_DOMAIN);
@@ -1443,7 +1473,17 @@ public class GsmCdmaPhone extends Phone {
                     // should not reach here
                     loge("dial unexpected Ut domain selection, ignored");
                 }
+            } else if (domain == PhoneConstants.DOMAIN_NON_3GPP_PS) {
+                if (isEmergency) {
+                    useImsForEmergency = true;
+                    extras.putString(ImsCallProfile.EXTRA_CALL_RAT_TYPE,
+                            String.valueOf(ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN));
+                } else {
+                    // should not reach here
+                    loge("dial DOMAIN_NON_3GPP_PS should be used only for emergency calls");
+                }
             }
+
             extras.remove(PhoneConstants.EXTRA_DIAL_DOMAIN);
         }
 
@@ -3100,12 +3140,16 @@ public class GsmCdmaPhone extends Phone {
                 logd("Event EVENT_MODEM_RESET Received" + " isInEcm = " + isInEcm()
                         + " isPhoneTypeGsm = " + isPhoneTypeGsm() + " mImsPhone = " + mImsPhone);
                 if (isInEcm()) {
-                    if (isPhoneTypeGsm()) {
-                        if (mImsPhone != null) {
-                            mImsPhone.handleExitEmergencyCallbackMode();
-                        }
+                    if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+                        EmergencyStateTracker.getInstance().exitEmergencyCallbackMode();
                     } else {
-                        handleExitEmergencyCallbackMode(msg);
+                        if (isPhoneTypeGsm()) {
+                            if (mImsPhone != null) {
+                                mImsPhone.handleExitEmergencyCallbackMode();
+                            }
+                        } else {
+                            handleExitEmergencyCallbackMode(msg);
+                        }
                     }
                 }
             }
@@ -3878,6 +3922,10 @@ public class GsmCdmaPhone extends Phone {
 
     //CDMA
     private void handleEnterEmergencyCallbackMode(Message msg) {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            Rlog.d(LOG_TAG, "DomainSelection enabled: ignore ECBM enter event.");
+            return;
+        }
         if (DBG) {
             Rlog.d(LOG_TAG, "handleEnterEmergencyCallbackMode, isInEcm()="
                     + isInEcm());
@@ -3901,6 +3949,10 @@ public class GsmCdmaPhone extends Phone {
 
     //CDMA
     private void handleExitEmergencyCallbackMode(Message msg) {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            Rlog.d(LOG_TAG, "DomainSelection enabled: ignore ECBM exit event.");
+            return;
+        }
         AsyncResult ar = (AsyncResult)msg.obj;
         if (DBG) {
             Rlog.d(LOG_TAG, "handleExitEmergencyCallbackMode,ar.exception , isInEcm="

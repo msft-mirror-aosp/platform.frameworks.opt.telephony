@@ -70,7 +70,6 @@ import static org.mockito.Mockito.when;
 import android.annotation.Nullable;
 import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.NetworkStats;
@@ -128,6 +127,7 @@ import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.d2d.RtpTransport;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.imsphone.ImsPhoneCallTracker.VtDataUsageProvider;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -173,6 +173,7 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
     private ImsPhoneCallTracker.ConnectorFactory mConnectorFactory;
     private CommandsInterface mMockCi;
     private DomainSelectionResolver mDomainSelectionResolver;
+    private CarrierConfigManager.CarrierConfigChangeListener mCarrierConfigChangeListener;
 
     private final Executor mExecutor = Runnable::run;
 
@@ -241,6 +242,9 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
         mContextFixture.addSystemFeature(PackageManager.FEATURE_TELEPHONY_IMS);
         mDomainSelectionResolver = mock(DomainSelectionResolver.class);
 
+        doReturn(new SubscriptionInfoInternal.Builder().setSimSlotIndex(0).setId(1).build())
+                .when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
+
         doAnswer(invocation -> {
             mMmTelListener = (MmTelFeature.Listener) invocation.getArguments()[0];
             return null;
@@ -278,7 +282,13 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
         DomainSelectionResolver.setDomainSelectionResolver(mDomainSelectionResolver);
         doReturn(false).when(mDomainSelectionResolver).isDomainSelectionSupported();
 
+        // Capture CarrierConfigChangeListener to emulate the carrier config change notification
+        ArgumentCaptor<CarrierConfigManager.CarrierConfigChangeListener> listenerArgumentCaptor =
+                ArgumentCaptor.forClass(CarrierConfigManager.CarrierConfigChangeListener.class);
         mCTUT = new ImsPhoneCallTracker(mImsPhone, mConnectorFactory, Runnable::run);
+        verify(mCarrierConfigManager).registerCarrierConfigChangeListener(any(),
+                listenerArgumentCaptor.capture());
+        mCarrierConfigChangeListener = listenerArgumentCaptor.getAllValues().get(0);
         mCTUT.setDataEnabled(true);
 
         final ArgumentCaptor<VtDataUsageProvider> vtDataUsageProviderCaptor =
@@ -2606,10 +2616,8 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
     }
 
     private void sendCarrierConfigChanged() {
-        Intent intent = new Intent(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        intent.putExtra(CarrierConfigManager.EXTRA_SUBSCRIPTION_INDEX, mPhone.getSubId());
-        intent.putExtra(CarrierConfigManager.EXTRA_SLOT_INDEX, mPhone.getPhoneId());
-        mBroadcastReceiver.onReceive(mContext, intent);
+        mCarrierConfigChangeListener.onCarrierConfigChanged(mPhone.getPhoneId(), mPhone.getSubId(),
+                TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
         processAllMessages();
     }
 

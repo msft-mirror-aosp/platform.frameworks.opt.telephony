@@ -298,12 +298,18 @@ public class PhoneSwitcher extends Handler {
         @Override
         public void onDeviceConfigChanged() {
             log("onDeviceConfigChanged");
-            PhoneSwitcher.this.updateConfig();
+            PhoneSwitcher.this.updateDeviceConfig();
+        }
+
+        @Override
+        public void onCarrierConfigChanged() {
+            log("onCarrierConfigChanged");
+            PhoneSwitcher.this.updateCarrierConfig();
         }
     };
 
     private static final int EVENT_PRIMARY_DATA_SUB_CHANGED       = 101;
-    protected static final int EVENT_SUBSCRIPTION_CHANGED           = 102;
+    protected static final int EVENT_SUBSCRIPTION_CHANGED         = 102;
     private static final int EVENT_REQUEST_NETWORK                = 103;
     private static final int EVENT_RELEASE_NETWORK                = 104;
     // ECBM has started/ended. If we just ended an emergency call and mEmergencyOverride is not
@@ -360,6 +366,12 @@ public class PhoneSwitcher extends Handler {
     private int mImsRegistrationTech = REGISTRATION_TECH_NONE;
 
     private List<Set<CommandException.Error>> mCurrentDdsSwitchFailure;
+
+    /**
+     * {@code true} if requires ping test before switching preferred data modem; otherwise, switch
+     * even if ping test fails.
+     */
+    private boolean mRequirePingTestBeforeDataSwitch = true;
 
     /**
      * Time threshold in ms to define a internet connection status to be stable(e.g. out of service,
@@ -697,7 +709,7 @@ public class PhoneSwitcher extends Handler {
     public void handleMessage(Message msg) {
         switch (msg.what) {
             case EVENT_SUBSCRIPTION_CHANGED: {
-                onEvaluate(REQUESTS_UNCHANGED, "subChanged");
+                onEvaluate(REQUESTS_UNCHANGED, "subscription changed");
                 break;
             }
             case EVENT_SERVICE_STATE_CHANGED: {
@@ -932,15 +944,15 @@ public class PhoneSwitcher extends Handler {
         if (phone != null) {
             DataConfigManager dataConfig = phone.getDataNetworkController().getDataConfigManager();
             dataConfig.registerCallback(mDataConfigManagerCallback);
-            updateConfig();
+            updateDeviceConfig();
             sendEmptyMessage(EVENT_EVALUATE_AUTO_SWITCH);
         }
     }
 
     /**
-     * Update data config.
+     * Update device config.
      */
-    private void updateConfig() {
+    private void updateDeviceConfig() {
         Phone phone = getPhoneBySubId(mPrimaryDataSubId);
         if (phone != null) {
             DataConfigManager dataConfig = phone.getDataNetworkController().getDataConfigManager();
@@ -948,6 +960,17 @@ public class PhoneSwitcher extends Handler {
                     dataConfig.getAutoDataSwitchAvailabilityStabilityTimeThreshold();
             mAutoDataSwitchValidationMaxRetry =
                     dataConfig.getAutoDataSwitchValidationMaxRetry();
+        }
+    }
+
+    /**
+     * Update carrier config.
+     */
+    private void updateCarrierConfig() {
+        Phone phone = getPhoneBySubId(mPrimaryDataSubId);
+        if (phone != null) {
+            DataConfigManager dataConfig = phone.getDataNetworkController().getDataConfigManager();
+            mRequirePingTestBeforeDataSwitch = dataConfig.requirePingTestBeforeDataSwitch();
         }
     }
 
@@ -1158,7 +1181,7 @@ public class PhoneSwitcher extends Handler {
 
             int candidateSubId = getAutoSwitchTargetSubIdIfExists();
             if (candidateSubId != INVALID_SUBSCRIPTION_ID) {
-                startAutoDataSwitchStabilityCheck(candidateSubId, true);
+                startAutoDataSwitchStabilityCheck(candidateSubId, mRequirePingTestBeforeDataSwitch);
             } else {
                 cancelPendingAutoDataSwitch();
             }
@@ -1193,7 +1216,8 @@ public class PhoneSwitcher extends Handler {
 
             if (isInService(mPhoneStates[primaryPhoneId])) {
                 // primary becomes available
-                startAutoDataSwitchStabilityCheck(DEFAULT_SUBSCRIPTION_ID, true);
+                startAutoDataSwitchStabilityCheck(DEFAULT_SUBSCRIPTION_ID,
+                        mRequirePingTestBeforeDataSwitch);
                 return;
             }
 
@@ -1346,6 +1370,10 @@ public class PhoneSwitcher extends Handler {
                     mAutoSelectedDataSubId = DEFAULT_SUBSCRIPTION_ID;
                 }
                 mPhoneSubscriptions[i] = sub;
+                // Listen to IMS radio tech change for new sub
+                if (SubscriptionManager.isValidSubscriptionId(sub)) {
+                    registerForImsRadioTechChange(mContext, i);
+                }
                 diffDetected = true;
             }
         }
@@ -2063,8 +2091,8 @@ public class PhoneSwitcher extends Handler {
      * @param reason The switching reason.
      */
     private void logDataSwitchEvent(int subId, int state, int reason) {
-        logl("Data switch event. subId=" + subId + ", state=" + switchStateToString(state)
-                + ", reason=" + switchReasonToString(reason));
+        logl("Data switch state=" + switchStateToString(state) + " due to reason="
+                + switchReasonToString(reason) + " on subId " + subId);
         DataSwitch dataSwitch = new DataSwitch();
         dataSwitch.state = state;
         dataSwitch.reason = reason;
@@ -2137,6 +2165,7 @@ public class PhoneSwitcher extends Handler {
         pw.println("mAutoDataSwitchAvailabilityStabilityTimeThreshold="
                 + mAutoDataSwitchAvailabilityStabilityTimeThreshold);
         pw.println("mAutoDataSwitchValidationMaxRetry=" + mAutoDataSwitchValidationMaxRetry);
+        pw.println("mRequirePingTestBeforeDataSwitch=" + mRequirePingTestBeforeDataSwitch);
         pw.println("mLastSwitchPreferredDataReason="
                 + switchReasonToString(mLastSwitchPreferredDataReason));
         pw.println("mDisplayedAutoSwitchNotification=" + mDisplayedAutoSwitchNotification);

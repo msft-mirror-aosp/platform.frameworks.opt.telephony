@@ -79,8 +79,8 @@ public class DomainSelectionConnection {
         }
 
         @Override
-        public void onWlanSelected() {
-            DomainSelectionConnection.this.onWlanSelected();
+        public void onWlanSelected(boolean useEmergencyPdn) {
+            DomainSelectionConnection.this.onWlanSelected(useEmergencyPdn);
         }
 
         @Override
@@ -128,8 +128,9 @@ public class DomainSelectionConnection {
         }
 
         @Override
-        public void onDomainSelected(@NetworkRegistrationInfo.Domain int domain) {
-            DomainSelectionConnection.this.onDomainSelected(domain);
+        public void onDomainSelected(@NetworkRegistrationInfo.Domain int domain,
+                boolean useEmergencyPdn) {
+            DomainSelectionConnection.this.onDomainSelected(domain, useEmergencyPdn);
         }
 
         @Override
@@ -287,6 +288,16 @@ public class DomainSelectionConnection {
     }
 
     /**
+     * Notifies that WLAN transport has been selected.
+     *
+     * @param useEmergencyPdn Indicates whether Wi-Fi emergency services use emergency PDN or not.
+     */
+    public void onWlanSelected(boolean useEmergencyPdn) {
+        // Can be overridden.
+        onWlanSelected();
+    }
+
+    /**
      * Notifies that WWAN transport has been selected.
      */
     public void onWwanSelected() {
@@ -324,12 +335,25 @@ public class DomainSelectionConnection {
 
     /**
      * Notifies the domain selected.
+     *
      * @param domain The selected domain.
      */
     public void onDomainSelected(@NetworkRegistrationInfo.Domain int domain) {
         // Can be overridden if required
         CompletableFuture<Integer> future = getCompletableFuture();
         future.complete(domain);
+    }
+
+    /**
+     * Notifies the domain selected.
+     *
+     * @param domain The selected domain.
+     * @param useEmergencyPdn Indicates whether emergency services use emergency PDN or not.
+     */
+    public void onDomainSelected(@NetworkRegistrationInfo.Domain int domain,
+            boolean useEmergencyPdn) {
+        // Can be overridden if required
+        onDomainSelected(domain);
     }
 
     /**
@@ -341,8 +365,10 @@ public class DomainSelectionConnection {
     }
 
     private void onCancel(boolean resetScan) {
-        mIsWaitingForScanResult = false;
-        mPhone.cancelEmergencyNetworkScan(resetScan, null);
+        if (mIsWaitingForScanResult) {
+            mIsWaitingForScanResult = false;
+            mPhone.cancelEmergencyNetworkScan(resetScan, null);
+        }
     }
 
     /**
@@ -390,7 +416,7 @@ public class DomainSelectionConnection {
             mPhone.unregisterForEmergencyNetworkScan(mHandler);
             mRegisteredRegistrant = false;
         }
-        if (mIsWaitingForScanResult) onCancel(true);
+        onCancel(true);
         mController.removeConnection(this);
         if (mLooper != null) mLooper.quitSafely();
         mLooper = null;
