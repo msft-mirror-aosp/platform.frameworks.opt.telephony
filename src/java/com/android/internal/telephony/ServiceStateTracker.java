@@ -97,6 +97,8 @@ import com.android.internal.telephony.data.DataNetworkController.DataNetworkCont
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.metrics.ServiceStateStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppState;
 import com.android.internal.telephony.uicc.IccCardStatus.CardState;
 import com.android.internal.telephony.uicc.IccRecords;
@@ -220,8 +222,9 @@ public class ServiceStateTracker extends Handler {
     private final RegistrantList mAirplaneModeChangedRegistrants = new RegistrantList();
     private final RegistrantList mAreaCodeChangedRegistrants = new RegistrantList();
 
-    /* Radio power off pending flag and tag counter */
-    private boolean mPendingRadioPowerOffAfterDataOff = false;
+    /* Radio power off pending flag */
+    // @GuardedBy("this")
+    private volatile boolean mPendingRadioPowerOffAfterDataOff = false;
 
     /** Waiting period before recheck gprs and voice registration. */
     public static final int DEFAULT_GPRS_CHECK_PERIOD_MILLIS = 60 * 1000;
@@ -348,6 +351,7 @@ public class ServiceStateTracker extends Handler {
     private SubscriptionManager mSubscriptionManager;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private SubscriptionController mSubscriptionController;
+    private SubscriptionManagerService mSubscriptionManagerService;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private final SstSubscriptionsChangedListener mOnSubscriptionsChangedListener =
         new SstSubscriptionsChangedListener();
@@ -652,7 +656,12 @@ public class ServiceStateTracker extends Handler {
         mCi.registerForCellInfoList(this, EVENT_UNSOL_CELL_INFO_LIST, null);
         mCi.registerForPhysicalChannelConfiguration(this, EVENT_PHYSICAL_CHANNEL_CONFIG, null);
 
-        mSubscriptionController = SubscriptionController.getInstance();
+        if (mPhone.isSubscriptionManagerServiceEnabled()) {
+            mSubscriptionManagerService = SubscriptionManagerService.getInstance();
+        } else {
+            mSubscriptionController = SubscriptionController.getInstance();
+        }
+
         mSubscriptionManager = SubscriptionManager.from(phone.getContext());
         mSubscriptionManager.addOnSubscriptionsChangedListener(
                 new android.os.HandlerExecutor(this), mOnSubscriptionsChangedListener);
@@ -1463,24 +1472,26 @@ public class ServiceStateTracker extends Handler {
 
             case EVENT_ALL_DATA_DISCONNECTED:
                 log("EVENT_ALL_DATA_DISCONNECTED");
-                if (!mPendingRadioPowerOffAfterDataOff) return;
-                boolean areAllDataDisconnectedOnAllPhones = true;
-                for (Phone phone : PhoneFactory.getPhones()) {
-                    if (phone.getDataNetworkController().areAllDataDisconnected()) {
-                        phone.getDataNetworkController()
+                synchronized (this) {
+                    if (!mPendingRadioPowerOffAfterDataOff) return;
+                    boolean areAllDataDisconnectedOnAllPhones = true;
+                    for (Phone phone : PhoneFactory.getPhones()) {
+                        if (phone.getDataNetworkController().areAllDataDisconnected()) {
+                            phone.getDataNetworkController()
                                 .unregisterDataNetworkControllerCallback(
                                         mDataDisconnectedCallback);
-                    } else {
-                        log("Still waiting for all data disconnected on phone: "
-                                + phone.getSubId());
-                        areAllDataDisconnectedOnAllPhones = false;
+                        } else {
+                            log("Still waiting for all data disconnected on phone: "
+                                    + phone.getSubId());
+                            areAllDataDisconnectedOnAllPhones = false;
+                        }
                     }
-                }
-                if (areAllDataDisconnectedOnAllPhones) {
-                    mPendingRadioPowerOffAfterDataOff = false;
-                    removeMessages(EVENT_SET_RADIO_POWER_OFF);
-                    if (DBG) log("Data disconnected for all phones, turn radio off now.");
-                    hangupAndPowerOff();
+                    if (areAllDataDisconnectedOnAllPhones) {
+                        mPendingRadioPowerOffAfterDataOff = false;
+                        removeMessages(EVENT_SET_RADIO_POWER_OFF);
+                        if (DBG) log("Data disconnected for all phones, turn radio off now.");
+                        hangupAndPowerOff();
+                    }
                 }
                 break;
 
@@ -2756,9 +2767,16 @@ public class ServiceStateTracker extends Handler {
             SubscriptionManager.putPhoneIdAndSubIdExtra(intent, mPhone.getPhoneId());
             mPhone.getContext().sendStickyBroadcastAsUser(intent, UserHandle.ALL);
 
-            if (!mSubscriptionController.setPlmnSpn(mPhone.getPhoneId(),
-                    data.shouldShowPlmn(), data.getPlmn(), data.shouldShowSpn(), data.getSpn())) {
-                mSpnUpdatePending = true;
+            if (mPhone.isSubscriptionManagerServiceEnabled()) {
+                mSubscriptionManagerService.setCarrierName(mPhone.getSubId(),
+                        getCarrierName(data.shouldShowPlmn(), data.getPlmn(),
+                                data.shouldShowSpn(), data.getSpn()));
+            } else {
+                if (!mSubscriptionController.setPlmnSpn(mPhone.getPhoneId(),
+                        data.shouldShowPlmn(), data.getPlmn(), data.shouldShowSpn(),
+                        data.getSpn())) {
+                    mSpnUpdatePending = true;
+                }
             }
         }
 
@@ -2768,6 +2786,26 @@ public class ServiceStateTracker extends Handler {
         mCurSpn = data.getSpn();
         mCurDataSpn = data.getDataSpn();
         mCurPlmn = data.getPlmn();
+    }
+
+    @NonNull
+    private String getCarrierName(boolean showPlmn, String plmn, boolean showSpn, String spn) {
+        String carrierName = "";
+        if (showPlmn) {
+            carrierName = plmn;
+            if (showSpn) {
+                // Need to show both plmn and spn if both are not same.
+                if (!Objects.equals(spn, plmn)) {
+                    String separator = mPhone.getContext().getString(
+                            com.android.internal.R.string.kg_text_message_separator).toString();
+                    carrierName = new StringBuilder().append(carrierName).append(separator)
+                            .append(spn).toString();
+                }
+            }
+        } else if (showSpn) {
+            carrierName = spn;
+        }
+        return carrierName;
     }
 
     private void updateSpnDisplayCdnr() {
@@ -4497,14 +4535,23 @@ public class ServiceStateTracker extends Handler {
         }
         Context context = mPhone.getContext();
 
-        SubscriptionInfo info = mSubscriptionController
-                .getActiveSubscriptionInfo(mPhone.getSubId(), context.getOpPackageName(),
-                        context.getAttributionTag());
+        if (mPhone.isSubscriptionManagerServiceEnabled()) {
+            SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                    .getSubscriptionInfoInternal(mPhone.getSubId());
+            if (subInfo == null || !subInfo.isVisible()) {
+                log("cannot setNotification on invisible subid mSubId=" + mSubId);
+                return;
+            }
+        } else {
+            SubscriptionInfo info = mSubscriptionController
+                    .getActiveSubscriptionInfo(mPhone.getSubId(), context.getOpPackageName(),
+                            context.getAttributionTag());
 
-        //if subscription is part of a group and non-primary, suppress all notifications
-        if (info == null || (info.isOpportunistic() && info.getGroupUuid() != null)) {
-            log("cannot setNotification on invisible subid mSubId=" + mSubId);
-            return;
+            //if subscription is part of a group and non-primary, suppress all notifications
+            if (info == null || (info.isOpportunistic() && info.getGroupUuid() != null)) {
+                log("cannot setNotification on invisible subid mSubId=" + mSubId);
+                return;
+            }
         }
 
         // Needed because sprout RIL sends these when they shouldn't?
@@ -4536,7 +4583,7 @@ public class ServiceStateTracker extends Handler {
 
         final boolean multipleSubscriptions = (((TelephonyManager) mPhone.getContext()
                   .getSystemService(Context.TELEPHONY_SERVICE)).getPhoneCount() > 1);
-        final int simNumber = mSubscriptionController.getSlotIndex(mSubId) + 1;
+        int simNumber = SubscriptionManager.getSlotIndex(mSubId) + 1;
 
         switch (notifyType) {
             case PS_ENABLED:
@@ -4947,9 +4994,10 @@ public class ServiceStateTracker extends Handler {
      *
      * @param h handler to notify
      * @param what what code of message when delivered
+     * @param userobj the user obj that will be passed back when notify
      */
-    public void registerForServiceStateChanged(Handler h, int what) {
-        mServiceStateChangedRegistrants.addUnique(h, what, null);
+    public void registerForServiceStateChanged(Handler h, int what, Object userobj) {
+        mServiceStateChangedRegistrants.addUnique(h, what, userobj);
     }
 
     /**

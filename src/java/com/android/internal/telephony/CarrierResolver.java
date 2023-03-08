@@ -43,6 +43,7 @@ import android.util.Log;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.metrics.CarrierIdMatchStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.IccRecords;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.util.TelephonyUtils;
@@ -193,7 +194,7 @@ public class CarrierResolver extends Handler {
     /**
      * This is triggered from SubscriptionInfoUpdater after sim state change.
      * The sequence of sim loading would be
-     *  1. ACTION_SUBINFO_CONTENT_CHANGE
+     *  1. OnSubscriptionsChangedListener
      *  2. ACTION_SIM_STATE_CHANGED/ACTION_SIM_CARD_STATE_CHANGED
      *  /ACTION_SIM_APPLICATION_STATE_CHANGED
      *  3. ACTION_SUBSCRIPTION_CARRIER_IDENTITY_CHANGED
@@ -547,7 +548,12 @@ public class CarrierResolver extends Handler {
         // subscriptioninfo db to make sure we have correct carrier id set.
         if (SubscriptionManager.isValidSubscriptionId(mPhone.getSubId()) && !isSimOverride) {
             // only persist carrier id to simInfo db when subId is valid.
-            SubscriptionController.getInstance().setCarrierId(mCarrierId, mPhone.getSubId());
+            if (mPhone.isSubscriptionManagerServiceEnabled()) {
+                SubscriptionManagerService.getInstance().setCarrierId(mPhone.getSubId(),
+                        mCarrierId);
+            } else {
+                SubscriptionController.getInstance().setCarrierId(mCarrierId, mPhone.getSubId());
+            }
         }
     }
 

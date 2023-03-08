@@ -1024,7 +1024,7 @@ public class DataNetwork extends StateMachine {
             mPhone.getDisplayInfoController().registerForTelephonyDisplayInfoChanged(
                     getHandler(), EVENT_DISPLAY_INFO_CHANGED, null);
             mPhone.getServiceStateTracker().registerForServiceStateChanged(getHandler(),
-                    EVENT_SERVICE_STATE_CHANGED);
+                    EVENT_SERVICE_STATE_CHANGED, null);
             for (int transport : mAccessNetworksManager.getAvailableTransports()) {
                 mDataServiceManagers.get(transport)
                         .registerForDataCallListChanged(getHandler(), EVENT_DATA_STATE_CHANGED);
@@ -1896,7 +1896,8 @@ public class DataNetwork extends StateMachine {
                         DataSpecificRegistrationInfo dsri = nri.getDataSpecificInfo();
                         // Check if the network is non-VoPS.
                         if (dsri != null && dsri.getVopsSupportInfo() != null
-                                && !dsri.getVopsSupportInfo().isVopsSupported()) {
+                                && !dsri.getVopsSupportInfo().isVopsSupported()
+                                && !mDataConfigManager.shouldKeepNetworkUpInNonVops()) {
                             builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_MMTEL);
                         }
                         log("updateNetworkCapabilities: dsri=" + dsri);
@@ -2372,12 +2373,14 @@ public class DataNetwork extends StateMachine {
         mFailCause = getFailCauseFromDataCallResponse(resultCode, response);
         validateDataCallResponse(response);
         if (mFailCause == DataFailCause.NONE) {
-            if (mDataNetworkController.isNetworkInterfaceExisting(response.getInterfaceName())) {
-                logl("Interface " + response.getInterfaceName() + " already existing. Silently "
-                        + "tear down now.");
+            DataNetwork dataNetwork = mDataNetworkController.getDataNetworkByInterface(
+                    response.getInterfaceName());
+            if (dataNetwork != null) {
+                logl("Interface " + response.getInterfaceName() + " has been already used by "
+                        + dataNetwork + ". Silently tear down now.");
                 // If this is a pre-5G data setup, that means APN database has some problems. For
                 // example, different APN settings have the same APN name.
-                if (response.getTrafficDescriptors().isEmpty()) {
+                if (response.getTrafficDescriptors().isEmpty() && dataNetwork.isConnected()) {
                     reportAnomaly("Duplicate network interface " + response.getInterfaceName()
                             + " detected.", "62f66e7e-8d71-45de-a57b-dc5c78223fd5");
                 }

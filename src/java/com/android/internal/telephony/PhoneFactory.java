@@ -50,6 +50,7 @@ import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneFactory;
 import com.android.internal.telephony.metrics.MetricsCollector;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.util.NotificationChannelController;
 import com.android.internal.util.IndentingPrintWriter;
@@ -83,6 +84,7 @@ public class PhoneFactory {
     private static IntentBroadcaster sIntentBroadcaster;
     private static @Nullable EuiccController sEuiccController;
     private static @Nullable EuiccCardController sEuiccCardController;
+    private static SubscriptionManagerService sSubscriptionManagerService;
 
     static private SubscriptionInfoUpdater sSubInfoRecordUpdater = null;
 
@@ -102,6 +104,8 @@ public class PhoneFactory {
     private static MetricsCollector sMetricsCollector;
     private static RadioInterfaceCapabilityController sRadioHalCapabilities;
 
+    private static boolean sSubscriptionManagerServiceEnabled = false;
+
     //***** Class Methods
 
     public static void makeDefaultPhones(Context context) {
@@ -117,6 +121,10 @@ public class PhoneFactory {
         synchronized (sLockProxyPhones) {
             if (!sMadeDefaults) {
                 sContext = context;
+
+                sSubscriptionManagerServiceEnabled = context.getResources().getBoolean(
+                        com.android.internal.R.bool.config_using_subscription_manager_service);
+
                 // create the telephony device controller.
                 TelephonyDevController.create();
 
@@ -194,9 +202,16 @@ public class PhoneFactory {
                 // call getInstance()
                 sUiccController = UiccController.make(context);
 
-                Rlog.i(LOG_TAG, "Creating SubscriptionController");
-                TelephonyComponentFactory.getInstance().inject(SubscriptionController.class.
-                        getName()).initSubscriptionController(context);
+
+                if (isSubscriptionManagerServiceEnabled()) {
+                    Rlog.i(LOG_TAG, "Creating SubscriptionManagerService");
+                    sSubscriptionManagerService = new SubscriptionManagerService(context,
+                            Looper.myLooper());
+                } else {
+                    Rlog.i(LOG_TAG, "Creating SubscriptionController");
+                    TelephonyComponentFactory.getInstance().inject(SubscriptionController.class
+                            .getName()).initSubscriptionController(context);
+                }
                 TelephonyComponentFactory.getInstance().inject(MultiSimSettingController.class.
                         getName()).initMultiSimSettingController(context,
                         SubscriptionController.getInstance());
@@ -231,13 +246,15 @@ public class PhoneFactory {
 
                 sMadeDefaults = true;
 
-                Rlog.i(LOG_TAG, "Creating SubInfoRecordUpdater ");
-                HandlerThread pfhandlerThread = new HandlerThread("PhoneFactoryHandlerThread");
-                pfhandlerThread.start();
-                sSubInfoRecordUpdater = TelephonyComponentFactory.getInstance().inject(
-                        SubscriptionInfoUpdater.class.getName()).
-                        makeSubscriptionInfoUpdater(pfhandlerThread.
-                        getLooper(), context, SubscriptionController.getInstance());
+                if (!isSubscriptionManagerServiceEnabled()) {
+                    Rlog.i(LOG_TAG, "Creating SubInfoRecordUpdater ");
+                    HandlerThread pfhandlerThread = new HandlerThread("PhoneFactoryHandlerThread");
+                    pfhandlerThread.start();
+                    sSubInfoRecordUpdater = TelephonyComponentFactory.getInstance().inject(
+                            SubscriptionInfoUpdater.class.getName())
+                            .makeSubscriptionInfoUpdater(pfhandlerThread.getLooper(), context,
+                                    SubscriptionController.getInstance());
+                }
 
                 // Only bring up IMS if the device supports having an IMS stack.
                 if (context.getPackageManager().hasSystemFeature(
@@ -275,6 +292,14 @@ public class PhoneFactory {
                 }
             }
         }
+    }
+
+    /**
+     * @return {@code true} if the new {@link SubscriptionManagerService} is enabled, otherwise the
+     * old {@link SubscriptionController} is used.
+     */
+    public static boolean isSubscriptionManagerServiceEnabled() {
+        return sSubscriptionManagerServiceEnabled;
     }
 
     /**
@@ -433,6 +458,9 @@ public class PhoneFactory {
     /* Gets the default subscription */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static int getDefaultSubscription() {
+        if (isSubscriptionManagerServiceEnabled()) {
+            return SubscriptionManagerService.getInstance().getDefaultSubId();
+        }
         return SubscriptionController.getInstance().getDefaultSubId();
     }
 
@@ -576,23 +604,27 @@ public class PhoneFactory {
         pw.decreaseIndent();
         pw.println("++++++++++++++++++++++++++++++++");
 
-        pw.println("SubscriptionController:");
-        pw.increaseIndent();
-        try {
-            SubscriptionController.getInstance().dump(fd, pw, args);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        pw.flush();
-        pw.decreaseIndent();
-        pw.println("++++++++++++++++++++++++++++++++");
+        if (isSubscriptionManagerServiceEnabled()) {
+            SubscriptionManagerService.getInstance().dump(fd, pw, args);
+        } else {
+            pw.println("SubscriptionController:");
+            pw.increaseIndent();
+            try {
+                SubscriptionController.getInstance().dump(fd, pw, args);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            pw.flush();
+            pw.decreaseIndent();
+            pw.println("++++++++++++++++++++++++++++++++");
 
-        pw.println("SubInfoRecordUpdater:");
-        pw.increaseIndent();
-        try {
-            sSubInfoRecordUpdater.dump(fd, pw, args);
-        } catch (Exception e) {
-            e.printStackTrace();
+            pw.println("SubInfoRecordUpdater:");
+            pw.increaseIndent();
+            try {
+                sSubInfoRecordUpdater.dump(fd, pw, args);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
         pw.flush();
         pw.decreaseIndent();
