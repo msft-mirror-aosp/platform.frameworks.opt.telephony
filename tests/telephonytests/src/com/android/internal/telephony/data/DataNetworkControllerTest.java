@@ -103,6 +103,7 @@ import com.android.internal.telephony.ISub;
 import com.android.internal.telephony.MultiSimSettingController;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
+import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.RIL;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.data.AccessNetworksManager.AccessNetworksManagerCallback;
@@ -712,8 +713,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         doReturn(true).when(mSST).getPowerStateFromCarrier();
         doReturn(true).when(mSST).isConcurrentVoiceAndDataAllowed();
         doReturn(PhoneConstants.State.IDLE).when(mCT).getState();
-        doReturn("").when(mSubscriptionController).getDataEnabledOverrideRules(anyInt());
-        doReturn(true).when(mSubscriptionController).setDataEnabledOverrideRules(
+        doReturn("").when(mSubscriptionController).getEnabledMobileDataPolicies(anyInt());
+        doReturn(true).when(mSubscriptionController).setEnabledMobileDataPolicies(
                 anyInt(), anyString());
 
         List<SubscriptionInfo> infoList = new ArrayList<>();
@@ -721,7 +722,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         doReturn(infoList).when(mSubscriptionController).getSubscriptionsInGroup(
                 any(), any(), any());
         doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
-        doReturn(0).when(mSubscriptionController).getPhoneId(anyInt());
+        doReturn(0).when(mSubscriptionController).getPhoneId(1);
+        doReturn(1).when(mSubscriptionController).getPhoneId(2);
 
         for (int transport : new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN}) {
@@ -1577,7 +1579,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         mDataNetworkControllerUT.getDataSettingsManager().setDataEnabled(
                 TelephonyManager.DATA_ENABLED_REASON_USER, false, mContext.getOpPackageName());
         // Always allow MMS
-        mDataNetworkControllerUT.getDataSettingsManager().setAlwaysAllowMmsData(true);
+        mDataNetworkControllerUT.getDataSettingsManager().setMobileDataPolicy(TelephonyManager
+                .MOBILE_DATA_POLICY_MMS_ALWAYS_ALLOWED, true);
         processAllMessages();
         mDataNetworkControllerUT.addNetworkRequest(
                 createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_MMS));
@@ -1590,7 +1593,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_SUPL);
 
         // Remove MMS data enabled override
-        mDataNetworkControllerUT.getDataSettingsManager().setAlwaysAllowMmsData(false);
+        mDataNetworkControllerUT.getDataSettingsManager().setMobileDataPolicy(TelephonyManager
+                .MOBILE_DATA_POLICY_MMS_ALWAYS_ALLOWED, false);
         processAllMessages();
 
         // Make sure MMS is torn down when the override is disabled.
@@ -1608,7 +1612,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
                 NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
         // Always allow MMS
-        mDataNetworkControllerUT.getDataSettingsManager().setAlwaysAllowMmsData(true);
+        mDataNetworkControllerUT.getDataSettingsManager().setMobileDataPolicy(TelephonyManager
+                .MOBILE_DATA_POLICY_MMS_ALWAYS_ALLOWED, true);
         processAllMessages();
 
         mDataNetworkControllerUT.addNetworkRequest(
@@ -1618,6 +1623,89 @@ public class DataNetworkControllerTest extends TelephonyTest {
         // Make sure MMS is not allowed. MMS always allowed should be only applicable to data
         // disabled case.
         verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_MMS);
+    }
+
+    @Test
+    public void testIsDataEnabledOverriddenForApnDataDuringCall() throws Exception {
+        doReturn(1).when(mPhone).getSubId();
+        doReturn(2).when(mSubscriptionController).getDefaultDataSubId();
+        // Data disabled
+        mDataNetworkControllerUT.getDataSettingsManager().setDataEnabled(
+                TelephonyManager.DATA_ENABLED_REASON_USER, false, mContext.getOpPackageName());
+
+        // Enable during data call mobile policy
+        mDataNetworkControllerUT.getDataSettingsManager().setMobileDataPolicy(TelephonyManager
+                .MOBILE_DATA_POLICY_DATA_ON_NON_DEFAULT_DURING_VOICE_CALL, true);
+        processAllMessages();
+
+        // No active phone call
+        doReturn(PhoneConstants.State.IDLE).when(mPhone).getState();
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify no internet connection due to no active phone call
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+
+        // Phone ringing
+        doReturn(PhoneConstants.State.RINGING).when(mPhone).getState();
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify internet connection
+        verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+
+        // Disable during data call mobile policy
+        mDataNetworkControllerUT.getDataSettingsManager().setMobileDataPolicy(TelephonyManager
+                .MOBILE_DATA_POLICY_DATA_ON_NON_DEFAULT_DURING_VOICE_CALL, false);
+        processAllMessages();
+
+        // Verify no internet connection
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+    }
+
+    @Test
+    public void testIsDataEnabledOverriddenForApnAutoDataSwitch() throws Exception {
+        // Assume phone2 is the default data phone
+        Phone phone2 = Mockito.mock(Phone.class);
+        replaceInstance(PhoneFactory.class, "sPhones", null, new Phone[]{mPhone, phone2});
+        doReturn(2).when(mSubscriptionController).getDefaultDataSubId();
+
+        // Data disabled on nonDDS
+        mDataNetworkControllerUT.getDataSettingsManager().setDataEnabled(
+                TelephonyManager.DATA_ENABLED_REASON_USER, false, mContext.getOpPackageName());
+
+        // Enable auto data switch mobile policy
+        mDataNetworkControllerUT.getDataSettingsManager().setMobileDataPolicy(TelephonyManager
+                .MOBILE_DATA_POLICY_AUTO_DATA_SWITCH, true);
+        processAllMessages();
+
+        // use disabled data on DDS
+        doReturn(false).when(phone2).isUserDataEnabled();
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify no internet connection
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+
+        // use enabled data on DDS
+        doReturn(true).when(phone2).isUserDataEnabled();
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify internet connection
+        verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+
+        // Disable auto data switch mobile policy
+        mDataNetworkControllerUT.getDataSettingsManager().setMobileDataPolicy(TelephonyManager
+                .MOBILE_DATA_POLICY_AUTO_DATA_SWITCH, false);
+        processAllMessages();
+
+        // Verify no internet connection
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
     }
 
     @Test
@@ -2240,8 +2328,25 @@ public class DataNetworkControllerTest extends TelephonyTest {
         assertThat(dataNetwork.getTransport()).isEqualTo(
                 AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
 
+        // Set target transport OOS
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_UNKNOWN,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, /* data */
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, /* voice */
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING, /* iwlan */
+                null);
         setSuccessfulSetupDataResponse(mMockedWlanDataServiceManager, 1);
 
+        processAllFutureMessages();
+        // Verify that data network is still on cellular
+        assertThat(dataNetwork.getTransport()).isEqualTo(
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+
+        // Set target transport back to service
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_UNKNOWN,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, /* data */
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, /* voice */
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, /* iwlan */
+                null);
         processAllFutureMessages();
 
         dataNetwork = getDataNetworks().get(0);
@@ -2940,6 +3045,10 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     @Test
     public void testNonVoPStoVoPSImsSetup() throws Exception {
+        // Even allow lingering when NoVops, should have no effect on NoVops -> Vops
+        mCarrierConfig.putBoolean(CarrierConfigManager.Ims.KEY_KEEP_PDN_UP_IN_NO_VOPS_BOOL, true);
+        carrierConfigChanged();
+
         // VOPS not supported
         DataSpecificRegistrationInfo dsri = new DataSpecificRegistrationInfo(8, false, true, true,
                 new LteVopsSupportInfo(LteVopsSupportInfo.LTE_STATUS_NOT_SUPPORTED,
@@ -3452,6 +3561,70 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     @Test
+    public void testHandoverDataNetworkNonVopsAllowLingeringVoPS() throws Exception {
+        // Allow lingering IMS PDN when enter area VoPS -> no VoPS
+        mCarrierConfig.putBoolean(CarrierConfigManager.Ims.KEY_KEEP_PDN_UP_IN_NO_VOPS_BOOL, true);
+        carrierConfigChanged();
+
+        ServiceState ss = new ServiceState();
+
+        DataSpecificRegistrationInfo dsri = new DataSpecificRegistrationInfo(8, false, true, true,
+                new LteVopsSupportInfo(LteVopsSupportInfo.LTE_STATUS_NOT_SUPPORTED,
+                        LteVopsSupportInfo.LTE_STATUS_NOT_SUPPORTED));
+
+        ss.addNetworkRegistrationInfo(new NetworkRegistrationInfo.Builder()
+                .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_LTE)
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_HOME)
+                .setDomain(NetworkRegistrationInfo.DOMAIN_PS)
+                .setDataSpecificInfo(dsri)
+                .build());
+
+        ss.addNetworkRegistrationInfo(new NetworkRegistrationInfo.Builder()
+                .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WLAN)
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_IWLAN)
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_HOME)
+                .setDomain(NetworkRegistrationInfo.DOMAIN_PS)
+                .build());
+
+        ss.addNetworkRegistrationInfo(new NetworkRegistrationInfo.Builder()
+                .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_LTE)
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_HOME)
+                .setDomain(NetworkRegistrationInfo.DOMAIN_CS)
+                .build());
+        processServiceStateRegStateForTest(ss);
+        doReturn(ss).when(mSST).getServiceState();
+        doReturn(ss).when(mPhone).getServiceState();
+
+        doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WLAN).when(mAccessNetworksManager)
+                .getPreferredTransportByNetworkCapability(NetworkCapabilities.NET_CAPABILITY_IMS);
+
+        mDataNetworkControllerUT.obtainMessage(17/*EVENT_SERVICE_STATE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_IMS,
+                        NetworkCapabilities.NET_CAPABILITY_MMTEL));
+        processAllMessages();
+        verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_IMS,
+                NetworkCapabilities.NET_CAPABILITY_MMTEL);
+
+        // Change the preference to cellular
+        updateTransport(NetworkCapabilities.NET_CAPABILITY_IMS,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+
+        // Verify that handover is not performed.
+        verify(mMockedWwanDataServiceManager).setupDataCall(anyInt(),
+                any(DataProfile.class), anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(),
+                any(), any(), anyBoolean(), any(Message.class));
+
+        // IMS network still alive.
+        verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_IMS,
+                NetworkCapabilities.NET_CAPABILITY_MMTEL);
+    }
+
+    @Test
     public void testNonMmtelImsHandoverDataNetworkNonVops() throws Exception {
         ServiceState ss = new ServiceState();
 
@@ -3516,6 +3689,10 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     @Test
     public void testMmtelImsDataNetworkMovingToNonVops() throws Exception {
+        // Allow lingering IMS PDN when enter area VoPS -> no VoPS
+        mCarrierConfig.putBoolean(CarrierConfigManager.Ims.KEY_KEEP_PDN_UP_IN_NO_VOPS_BOOL, true);
+        carrierConfigChanged();
+
         ServiceState ss = new ServiceState();
 
         // VoPS network
@@ -3596,6 +3773,16 @@ public class DataNetworkControllerTest extends TelephonyTest {
         doReturn(ss).when(mPhone).getServiceState();
 
         mDataNetworkControllerUT.obtainMessage(17/*EVENT_SERVICE_STATE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // The IMS network is alive due to KEY_KEEP_PDN_UP_IN_NO_VOPS_BOOL = true
+        verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_IMS,
+                NetworkCapabilities.NET_CAPABILITY_MMTEL);
+
+        mCarrierConfig.putBoolean(CarrierConfigManager.Ims.KEY_KEEP_PDN_UP_IN_NO_VOPS_BOOL, false);
+        carrierConfigChanged();
+        mDataNetworkControllerUT.obtainMessage(16/*EVENT_REEVALUATE_EXISTING_DATA_NETWORKS*/)
+                .sendToTarget();
         processAllMessages();
 
         // The IMS network should be torn down by data network controller.

@@ -31,6 +31,7 @@ import android.telephony.PhoneNumberUtils;
 import android.telephony.SmsMessage;
 import android.telephony.SubscriptionInfo;
 import android.text.TextUtils;
+import android.util.Log;
 import android.util.Pair;
 
 import com.android.internal.telephony.CommandsInterface;
@@ -54,8 +55,9 @@ public class SIMRecords extends IccRecords {
     protected static final String LOG_TAG = "SIMRecords";
 
     private static final boolean CRASH_RIL = false;
-
-    private static final boolean VDBG = false;
+    private static final boolean FORCE_VERBOSE_STATE_LOGGING = false; /* stopship if true */
+    private static final boolean VDBG =  FORCE_VERBOSE_STATE_LOGGING ||
+            Rlog.isLoggable(LOG_TAG, Log.VERBOSE);
 
     // ***** Instance Variables
 
@@ -108,7 +110,9 @@ public class SIMRecords extends IccRecords {
                 + " efCPHS_MWI=" + IccUtils.bytesToHexString(mEfCPHS_MWI)
                 + " mEfCff=" + IccUtils.bytesToHexString(mEfCff)
                 + " mEfCfis=" + IccUtils.bytesToHexString(mEfCfis)
-                + " getOperatorNumeric=" + getOperatorNumeric();
+                + " getOperatorNumeric=" + getOperatorNumeric()
+                + " mPsiSmsc=" + mPsiSmsc
+                + " TPMR=" + getSmssTpmrValue();
     }
 
     // ***** Constants
@@ -184,6 +188,10 @@ public class SIMRecords extends IccRecords {
     private static final int EVENT_GET_FPLMN_DONE = 41 + SIM_RECORD_EVENT_BASE;
     private static final int EVENT_GET_FPLMN_SIZE_DONE = 42 + SIM_RECORD_EVENT_BASE;
     private static final int EVENT_SET_FPLMN_DONE = 43 + SIM_RECORD_EVENT_BASE;
+    protected static final int EVENT_GET_SMSS_RECORD_DONE = 46 + SIM_RECORD_EVENT_BASE;
+    protected static final int EVENT_GET_PSISMSC_DONE = 47 + SIM_RECORD_EVENT_BASE;
+    protected static final int EVENT_GET_FDN_DONE = 48 + SIM_RECORD_EVENT_BASE;
+
     // ***** Constructor
 
     public SIMRecords(UiccCardApplication app, Context c, CommandsInterface ci) {
@@ -276,6 +284,7 @@ public class SIMRecords extends IccRecords {
     private int getExtFromEf(int ef) {
         int ext;
         switch (ef) {
+            case EF_FDN: return EF_EXT2;
             case EF_MSISDN:
                 /* For USIM apps use EXT5. (TS 31.102 Section 4.2.37) */
                 if (mParentApp.getType() == AppType.APPTYPE_USIM) {
@@ -639,7 +648,6 @@ public class SIMRecords extends IccRecords {
                     " while being destroyed. Ignoring.");
             return;
         }
-
         try {
             switch (msg.what) {
                 /* IO events */
@@ -1047,7 +1055,7 @@ public class SIMRecords extends IccRecords {
                                     mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
                             if (ar.exception != null && configManager != null) {
                                 PersistableBundle b = configManager.getConfigForSubId(
-                                        SubscriptionController.getInstance().getSubIdUsingPhoneId(
+                                        SubscriptionController.getInstance().getSubId(
                                                 mParentApp.getPhoneId()));
                                 if (b != null && b.getBoolean(
                                         CarrierConfigManager.KEY_EDITABLE_VOICEMAIL_NUMBER_BOOL)) {
@@ -1288,6 +1296,44 @@ public class SIMRecords extends IccRecords {
                             response.sendToTarget();
                         }
                         log("Successfully setted fplmns " + ar.result);
+                    }
+                    break;
+
+                case EVENT_GET_PSISMSC_DONE:
+                    isRecordLoadResponse = true;
+                    ar = (AsyncResult) msg.obj;
+                    if (ar.exception != null) {
+                        loge("Failed to read USIM EF_PSISMSC field error=" + ar.exception);
+                    } else {
+                        data = (byte[]) ar.result;
+                        if (data != null && data.length > 0) {
+                            mPsiSmsc = parseEfPsiSmsc(data);
+                            if (VDBG) {
+                                log("SIMRecords - EF_PSISMSC value = " + mPsiSmsc);
+                            }
+                        }
+                    }
+                    break;
+
+                case EVENT_GET_SMSS_RECORD_DONE:
+                    isRecordLoadResponse = true;
+                    ar = (AsyncResult) msg.obj;
+                    if (ar.exception != null) {
+                        loge("Failed to read USIM EF_SMSS field error=" + ar.exception);
+                    } else {
+                        mSmssValues = (byte[]) ar.result;
+                        if (VDBG) {
+                            log("SIMRecords - EF_SMSS TPMR value = " + getSmssTpmrValue());
+                        }
+                    }
+                    break;
+
+                case EVENT_GET_FDN_DONE:
+                    ar = (AsyncResult) msg.obj;
+                    if (ar.exception != null) {
+                        loge("Failed to read USIM EF_FDN field error=" + ar.exception);
+                    } else {
+                        log("EF_FDN read successfully");
                     }
                     break;
 
@@ -1680,11 +1726,17 @@ public class SIMRecords extends IccRecords {
         mFh.getEFLinearRecordSize(EF_SMS, obtainMessage(EVENT_GET_SMS_RECORD_SIZE_DONE));
         mRecordsToLoad++;
 
+        mFh.loadEFLinearFixed(EF_PSISMSC, 1, obtainMessage(EVENT_GET_PSISMSC_DONE));
+        mRecordsToLoad++;
+
         // XXX should seek instead of examining them all
         if (false) { // XXX
             mFh.loadEFLinearFixedAll(EF_SMS, obtainMessage(EVENT_GET_ALL_SMS_DONE));
             mRecordsToLoad++;
         }
+
+        mFh.loadEFTransparent(EF_SMSS, obtainMessage(EVENT_GET_SMSS_RECORD_DONE));
+        mRecordsToLoad++;
 
         if (CRASH_RIL) {
             String sms = "0107912160130310f20404d0110041007030208054832b0120"
@@ -2110,6 +2162,15 @@ public class SIMRecords extends IccRecords {
         log("[CSP] Value Added Service Group (0xC0), not found!");
     }
 
+    public void loadFdnRecords() {
+        if (mParentApp != null && mParentApp.getIccFdnEnabled()
+                && mParentApp.getIccFdnAvailable()) {
+            log("Loading FdnRecords");
+            mAdnCache.requestLoadAllAdnLike(IccConstants.EF_FDN, getExtFromEf(IccConstants.EF_FDN),
+                    obtainMessage(EVENT_GET_FDN_DONE));
+        }
+    }
+
     @Override
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         pw.println("SIMRecords: " + this);
@@ -2144,6 +2205,8 @@ public class SIMRecords extends IccRecords {
         pw.println(" mHplmnActRecords[]=" + Arrays.toString(mHplmnActRecords));
         pw.println(" mFplmns[]=" + Arrays.toString(mFplmns));
         pw.println(" mEhplmns[]=" + Arrays.toString(mEhplmns));
+        pw.println(" mPsismsc=" + mPsiSmsc);
+        pw.println(" TPMR=" + getSmssTpmrValue());
         pw.flush();
     }
 }
