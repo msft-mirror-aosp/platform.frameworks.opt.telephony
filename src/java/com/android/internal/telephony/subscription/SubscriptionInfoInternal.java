@@ -31,7 +31,9 @@
 
 package com.android.internal.telephony.subscription;
 
+import android.annotation.ColorInt;
 import android.annotation.NonNull;
+import android.annotation.UserIdInt;
 import android.os.UserHandle;
 import android.provider.Telephony.SimInfo;
 import android.telephony.SubscriptionInfo;
@@ -113,6 +115,7 @@ public class SubscriptionInfoInternal {
     /**
      * The color to be used for tinting the icon when displaying to the user.
      */
+    @ColorInt
     private final int mIconTint;
 
     /**
@@ -509,6 +512,7 @@ public class SubscriptionInfoInternal {
      *
      * @return A hexadecimal color value.
      */
+    @ColorInt
     public int getIconTint() {
         return mIconTint;
     }
@@ -949,6 +953,7 @@ public class SubscriptionInfoInternal {
     /**
      * @return The user id associated with this subscription.
      */
+    @UserIdInt
     public int getUserId() {
         return mUserId;
     }
@@ -1765,6 +1770,24 @@ public class SubscriptionInfoInternal {
         }
 
         /**
+         * Set the native access rules for this subscription, if it is embedded and defines any.
+         * This does not include access rules for non-embedded subscriptions.
+         *
+         * @param nativeAccessRules The native access rules for this subscription.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setNativeAccessRules(@NonNull List<UiccAccessRule> nativeAccessRules) {
+            Objects.requireNonNull(nativeAccessRules);
+            if (!nativeAccessRules.isEmpty()) {
+                mNativeAccessRules = UiccAccessRule.encodeRules(
+                        nativeAccessRules.toArray(new UiccAccessRule[0]));
+            }
+            return this;
+        }
+
+        /**
          * Set the carrier certificates for this subscription that are saved in carrier configs.
          * This does not include access rules from the Uicc, whether embedded or non-embedded.
          *
@@ -1776,6 +1799,23 @@ public class SubscriptionInfoInternal {
         public Builder setCarrierConfigAccessRules(@NonNull byte[] carrierConfigAccessRules) {
             Objects.requireNonNull(carrierConfigAccessRules);
             mCarrierConfigAccessRules = carrierConfigAccessRules;
+            return this;
+        }
+
+        /**
+         * Set whether an embedded subscription is on a removable card. Such subscriptions are
+         * marked inaccessible as soon as the current card is removed. Otherwise, they will remain
+         * accessible unless explicitly deleted. Only meaningful when {@link #getEmbedded()} is
+         * {@code 1}.
+         *
+         * @param isRemovableEmbedded {@code true} if the subscription is from the removable
+         * embedded SIM.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setRemovableEmbedded(boolean isRemovableEmbedded) {
+            mIsRemovableEmbedded = isRemovableEmbedded ? 1 : 0;
             return this;
         }
 
@@ -2186,7 +2226,7 @@ public class SubscriptionInfoInternal {
          * @return The builder.
          */
         @NonNull
-        public Builder setUserId(int userId) {
+        public Builder setUserId(@UserIdInt int userId) {
             mUserId = userId;
             return this;
         }

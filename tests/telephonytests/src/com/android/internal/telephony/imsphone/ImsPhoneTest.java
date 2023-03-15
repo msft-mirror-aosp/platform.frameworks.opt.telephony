@@ -734,7 +734,6 @@ public class ImsPhoneTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testRoamingToAirplanModeIwlanInService() throws Exception {
-        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
         doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
         doReturn(true).when(mPhone).isRadioOn();
 
@@ -762,7 +761,6 @@ public class ImsPhoneTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testRoamingToOutOfService() throws Exception {
-        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
         doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
         doReturn(true).when(mPhone).isRadioOn();
 
@@ -786,83 +784,6 @@ public class ImsPhoneTest extends TelephonyTest {
     }
 
     @Test
-    @SmallTest
-    public void testRoamingChangeForLteInLegacyMode() throws Exception {
-        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
-        doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
-        doReturn(true).when(mPhone).isRadioOn();
-
-        //roaming - data registration only on LTE
-        Message m = getServiceStateChangedMessage(getServiceStateDataOnly(
-                ServiceState.RIL_RADIO_TECHNOLOGY_LTE, ServiceState.STATE_IN_SERVICE, true));
-        // Inject the message synchronously instead of waiting for the thread to do it.
-        mImsPhoneUT.handleMessage(m);
-        m.recycle();
-
-        verify(mImsManager, times(1)).setWfcMode(anyInt(), eq(true));
-
-        // not roaming - data registration on LTE
-        m = getServiceStateChangedMessage(getServiceStateDataOnly(
-                ServiceState.RIL_RADIO_TECHNOLOGY_LTE, ServiceState.STATE_IN_SERVICE, false));
-        mImsPhoneUT.handleMessage(m);
-        m.recycle();
-
-        verify(mImsManager, times(1)).setWfcMode(anyInt(), eq(false));
-    }
-
-    @Test
-    @SmallTest
-    public void testDataOnlyRoamingCellToIWlanInLegacyMode() throws Exception {
-        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
-        doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
-        doReturn(true).when(mPhone).isRadioOn();
-
-        //roaming - data registration only on LTE
-        Message m = getServiceStateChangedMessage(getServiceStateDataOnly(
-                ServiceState.RIL_RADIO_TECHNOLOGY_LTE, ServiceState.STATE_IN_SERVICE, true));
-        // Inject the message synchronously instead of waiting for the thread to do it.
-        mImsPhoneUT.handleMessage(m);
-        m.recycle();
-
-        verify(mImsManager, times(1)).setWfcMode(anyInt(), eq(true));
-
-        // not roaming - data registration onto IWLAN
-        m = getServiceStateChangedMessage(getServiceStateDataOnly(
-                ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN, ServiceState.STATE_IN_SERVICE, false));
-        mImsPhoneUT.handleMessage(m);
-        m.recycle();
-
-        // Verify that it hasn't been called again.
-        verify(mImsManager, times(1)).setWfcMode(anyInt(), anyBoolean());
-    }
-
-    @Test
-    @SmallTest
-    public void testCellVoiceDataChangeToWlanInLegacyMode() throws Exception {
-        doReturn(true).when(mAccessNetworksManager).isInLegacyMode();
-        doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
-        doReturn(true).when(mPhone).isRadioOn();
-
-        //roaming - voice/data registration on LTE
-        ServiceState ss = getServiceStateDataAndVoice(
-                ServiceState.RIL_RADIO_TECHNOLOGY_LTE, ServiceState.STATE_IN_SERVICE, true);
-        Message m = getServiceStateChangedMessage(ss);
-        // Inject the message synchronously instead of waiting for the thread to do it.
-        mImsPhoneUT.handleMessage(m);
-
-        verify(mImsManager, times(1)).setWfcMode(anyInt(), eq(true));
-
-        // roaming - voice LTE, data registration onto IWLAN
-        modifyServiceStateData(ss, ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN,
-                ServiceState.STATE_IN_SERVICE, false);
-        mImsPhoneUT.handleMessage(m);
-        m.recycle();
-
-        // Verify that it hasn't been called again.
-        verify(mImsManager, times(1)).setWfcMode(anyInt(), anyBoolean());
-    }
-
-    @Test
     public void testNonNullTrackersInImsPhone() throws Exception {
         assertNotNull(mImsPhoneUT.getEmergencyNumberTracker());
         assertNotNull(mImsPhoneUT.getServiceStateTracker());
@@ -881,6 +802,9 @@ public class ImsPhoneTest extends TelephonyTest {
 
         mImsPhoneUT.dial("*135#", new ImsPhone.ImsDialArgs.Builder().build());
         verify(mImsCT).sendUSSD(eq("*135#"), any());
+
+        mImsPhoneUT.dial("91", new ImsPhone.ImsDialArgs.Builder().build());
+        verify(mImsCT).sendUSSD(eq("91"), any());
     }
 
     @Test
@@ -897,6 +821,13 @@ public class ImsPhoneTest extends TelephonyTest {
 
         try {
             mImsPhoneUT.dial("*135#", new ImsPhone.ImsDialArgs.Builder().build());
+        } catch (CallStateException e) {
+            errorCode = e.getMessage();
+        }
+        assertEquals(Phone.CS_FALLBACK, errorCode);
+
+        try {
+            mImsPhoneUT.dial("91", new ImsPhone.ImsDialArgs.Builder().build());
         } catch (CallStateException e) {
             errorCode = e.getMessage();
         }
@@ -918,11 +849,18 @@ public class ImsPhoneTest extends TelephonyTest {
             errorCode = e.getMessage();
         }
         assertEquals(Phone.CS_FALLBACK, errorCode);
+
+        try {
+            mImsPhoneUT.dial("91", new ImsPhone.ImsDialArgs.Builder().build());
+        } catch (CallStateException e) {
+            errorCode = e.getMessage();
+        }
+        assertEquals(Phone.CS_FALLBACK, errorCode);
     }
 
     @Test
     @SmallTest
-    public void testSendUssdAllowUssdOverImswithIMSPreferred() throws Exception {
+    public void testSendUssdAllowUssdOverImsWithImsPreferred() throws Exception {
         Resources resources = mContext.getResources();
 
         mBundle.putInt(CarrierConfigManager.KEY_CARRIER_USSD_METHOD_INT,
@@ -933,11 +871,14 @@ public class ImsPhoneTest extends TelephonyTest {
 
         mImsPhoneUT.dial("*135#", new ImsPhone.ImsDialArgs.Builder().build());
         verify(mImsCT).sendUSSD(eq("*135#"), any());
+
+        mImsPhoneUT.dial("91", new ImsPhone.ImsDialArgs.Builder().build());
+        verify(mImsCT).sendUSSD(eq("91"), any());
     }
 
     @Test
     @SmallTest
-    public void testSendUssdAllowUssdOverImswithCSOnly() throws Exception {
+    public void testSendUssdAllowUssdOverImsWithCsOnly() throws Exception {
         String errorCode = "";
         Resources resources = mContext.getResources();
 
@@ -953,11 +894,18 @@ public class ImsPhoneTest extends TelephonyTest {
             errorCode = e.getMessage();
         }
         assertEquals(Phone.CS_FALLBACK, errorCode);
+
+        try {
+            mImsPhoneUT.dial("91", new ImsPhone.ImsDialArgs.Builder().build());
+        } catch (CallStateException e) {
+            errorCode = e.getMessage();
+        }
+        assertEquals(Phone.CS_FALLBACK, errorCode);
     }
 
     @Test
     @SmallTest
-    public void testSendUssdAllowUssdOverImswithIMSOnly() throws Exception {
+    public void testSendUssdAllowUssdOverImsWithImsOnly() throws Exception {
         Resources resources = mContext.getResources();
 
         mBundle.putInt(CarrierConfigManager.KEY_CARRIER_USSD_METHOD_INT,
@@ -968,6 +916,9 @@ public class ImsPhoneTest extends TelephonyTest {
 
         mImsPhoneUT.dial("*135#", new ImsPhone.ImsDialArgs.Builder().build());
         verify(mImsCT).sendUSSD(eq("*135#"), any());
+
+        mImsPhoneUT.dial("91", new ImsPhone.ImsDialArgs.Builder().build());
+        verify(mImsCT).sendUSSD(eq("91"), any());
     }
 
     @Test
