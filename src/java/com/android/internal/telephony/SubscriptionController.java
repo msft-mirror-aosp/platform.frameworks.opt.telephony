@@ -75,7 +75,6 @@ import android.util.Log;
 
 import com.android.ims.ImsManager;
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.telephony.IccCardConstants.State;
 import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.uicc.IccUtils;
@@ -1855,12 +1854,14 @@ public class SubscriptionController extends ISub.Stub {
 
     /**
      * Set SIM color tint by simInfo index
-     * @param tint the tint color of the SIM
+     *
      * @param subId the unique SubInfoRecord index in database
+     * @param tint the tint color of the SIM
+     *
      * @return the number of records updated
      */
     @Override
-    public int setIconTint(int tint, int subId) {
+    public int setIconTint(int subId, int tint) {
         if (DBG) logd("[setIconTint]+ tint:" + tint + " subId:" + subId);
 
         enforceModifyPhoneState("setIconTint");
@@ -2711,7 +2712,6 @@ public class SubscriptionController extends ISub.Stub {
     /**
      * @return the number of records cleared
      */
-    @Override
     public int clearSubInfo() {
         enforceModifyPhoneState("clearSubInfo");
 
@@ -2837,15 +2837,9 @@ public class SubscriptionController extends ISub.Stub {
                         subId);
 
         TelecomManager telecomManager = mContext.getSystemService(TelecomManager.class);
-        PhoneAccountHandle currentHandle = telecomManager.getUserSelectedOutgoingPhoneAccount();
-        logd("[setDefaultVoiceSubId] current phoneAccountHandle=" + currentHandle);
 
-        if (!Objects.equals(currentHandle, newHandle)) {
-            telecomManager.setUserSelectedOutgoingPhoneAccount(newHandle);
-            logd("[setDefaultVoiceSubId] change to phoneAccountHandle=" + newHandle);
-        } else {
-            logd("[setDefaultVoiceSubId] default phoneAccountHandle not changed.");
-        }
+        telecomManager.setUserSelectedOutgoingPhoneAccount(newHandle);
+        logd("[setDefaultVoiceSubId] requesting change to phoneAccountHandle=" + newHandle);
 
         if (previousDefaultSub != getDefaultSubId()) {
             sendDefaultChangedBroadcast(getDefaultSubId());
@@ -3159,46 +3153,6 @@ public class SubscriptionController extends ISub.Stub {
 
         if (VDBG) logdl("[isActiveSubId]- " + retVal);
         return retVal;
-    }
-
-    /**
-     * Get the SIM state for the slot index.
-     * For Remote-SIMs, this method returns {@link IccCardConstants.State#UNKNOWN}
-     * @return SIM state as the ordinal of {@link IccCardConstants.State}
-     */
-    @Override
-    public int getSimStateForSlotIndex(int slotIndex) {
-        State simState;
-        String err;
-        if (slotIndex < 0) {
-            simState = IccCardConstants.State.UNKNOWN;
-            err = "invalid slotIndex";
-        } else {
-            Phone phone = null;
-            try {
-                phone = PhoneFactory.getPhone(slotIndex);
-            } catch (IllegalStateException e) {
-                // ignore
-            }
-            if (phone == null) {
-                simState = IccCardConstants.State.UNKNOWN;
-                err = "phone == null";
-            } else {
-                IccCard icc = phone.getIccCard();
-                if (icc == null) {
-                    simState = IccCardConstants.State.UNKNOWN;
-                    err = "icc == null";
-                } else {
-                    simState = icc.getState();
-                    err = "";
-                }
-            }
-        }
-        if (VDBG) {
-            logd("getSimStateForSlotIndex: " + err + " simState=" + simState
-                    + " ordinal=" + simState.ordinal() + " slotIndex=" + slotIndex);
-        }
-        return simState.ordinal();
     }
 
     /**
@@ -3567,7 +3521,7 @@ public class SubscriptionController extends ISub.Stub {
             if (phoneSwitcher == null) {
                 logd("Set preferred data sub: phoneSwitcher is null.");
                 AnomalyReporter.reportAnomaly(
-                        UUID.fromString("a3ab0b9d-f2aa-4baf-911d-7096c0d4645a"),
+                        UUID.fromString("a73fe57f-4178-4bc3-a7ae-9d7354939274"),
                         "Set preferred data sub: phoneSwitcher is null.");
                 if (callback != null) {
                     try {
@@ -3594,7 +3548,7 @@ public class SubscriptionController extends ISub.Stub {
             PhoneSwitcher phoneSwitcher = PhoneSwitcher.getInstance();
             if (phoneSwitcher == null) {
                 AnomalyReporter.reportAnomaly(
-                        UUID.fromString("a3ab0b9d-f2aa-4baf-911d-7096c0d4645a"),
+                        UUID.fromString("e72747ab-d0aa-4b0e-9dd5-cb99365c6d58"),
                         "Get preferred data sub: phoneSwitcher is null.");
                 return SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
             }
