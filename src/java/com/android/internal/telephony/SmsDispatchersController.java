@@ -457,17 +457,12 @@ public class SmsDispatchersController extends Handler {
         }
     }
 
-    private String getSmscAddressFromUSIMWithPhoneIdentity(String callingPkg) {
-        final long identity = Binder.clearCallingIdentity();
-        try {
-            IccSmsInterfaceManager iccSmsIntMgr = mPhone.getIccSmsInterfaceManager();
-            if (iccSmsIntMgr != null) {
-                return iccSmsIntMgr.getSmscAddressFromIccEf(callingPkg);
-            } else {
-                Rlog.d(TAG, "getSmscAddressFromIccEf iccSmsIntMgr is null");
-            }
-        } finally {
-            Binder.restoreCallingIdentity(identity);
+    private String getSmscAddressFromUSIM(String callingPkg) {
+        IccSmsInterfaceManager iccSmsIntMgr = mPhone.getIccSmsInterfaceManager();
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.getSmscAddressFromIccEf(callingPkg);
+        } else {
+            Rlog.d(TAG, "getSmscAddressFromIccEf iccSmsIntMgr is null");
         }
         return null;
     }
@@ -1305,7 +1300,7 @@ public class SmsDispatchersController extends Handler {
     protected void sendData(String callingPackage, String destAddr, String scAddr, int destPort,
             byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent, boolean isForVvm) {
         if (TextUtils.isEmpty(scAddr)) {
-            scAddr = getSmscAddressFromUSIMWithPhoneIdentity(callingPackage);
+            scAddr = getSmscAddressFromUSIM(callingPackage);
         }
 
         if (mDomainSelectionResolverProxy.isDomainSelectionSupported()) {
@@ -1544,7 +1539,7 @@ public class SmsDispatchersController extends Handler {
             int priority, boolean expectMore, int validityPeriod, boolean isForVvm,
             long messageId, boolean skipShortCodeCheck) {
         if (TextUtils.isEmpty(scAddr)) {
-            scAddr = getSmscAddressFromUSIMWithPhoneIdentity(callingPkg);
+            scAddr = getSmscAddressFromUSIM(callingPkg);
         }
 
         if (mDomainSelectionResolverProxy.isDomainSelectionSupported()) {
@@ -1693,7 +1688,7 @@ public class SmsDispatchersController extends Handler {
             boolean persistMessage, int priority, boolean expectMore, int validityPeriod,
             long messageId) {
         if (TextUtils.isEmpty(scAddr)) {
-            scAddr = getSmscAddressFromUSIMWithPhoneIdentity(callingPkg);
+            scAddr = getSmscAddressFromUSIM(callingPkg);
         }
 
         if (mDomainSelectionResolverProxy.isDomainSelectionSupported()) {

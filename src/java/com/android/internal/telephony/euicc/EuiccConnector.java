@@ -1073,8 +1073,9 @@ public class EuiccConnector extends StateMachine implements ServiceConnection {
         for (int slotIndex = 0; slotIndex < slotInfos.length; slotIndex++) {
             // Report Anomaly in case UiccSlotInfo is not.
             if (slotInfos[slotIndex] == null) {
-                Log.i(TAG, "No UiccSlotInfo found for slotIndex: " + slotIndex);
-                return SubscriptionManager.INVALID_SIM_SLOT_INDEX;
+                AnomalyReporter.reportAnomaly(
+                        UUID.fromString("4195b83d-6cee-4999-a02f-d0b9f7079b9d"),
+                        "EuiccConnector: Found UiccSlotInfo Null object.");
             }
             String retrievedCardId = slotInfos[slotIndex] != null
                     ? slotInfos[slotIndex].getCardId() : null;

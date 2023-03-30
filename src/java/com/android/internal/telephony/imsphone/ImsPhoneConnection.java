@@ -1593,6 +1593,7 @@ public class ImsPhoneConnection extends Connection implements
      */
     public void handleMergeComplete() {
         mIsMergeInProcess = false;
+        onConnectionEvent(android.telecom.Connection.EVENT_MERGE_COMPLETE, null);
     }
 
     /**

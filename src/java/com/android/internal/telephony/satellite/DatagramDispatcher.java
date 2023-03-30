@@ -16,8 +16,6 @@
 
 package com.android.internal.telephony.satellite;
 
-import static com.android.internal.telephony.satellite.DatagramController.ROUNDING_UNIT;
-
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
@@ -32,7 +30,6 @@ import android.telephony.satellite.SatelliteManager;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
-import com.android.internal.telephony.metrics.SatelliteStats;
 
 import java.util.LinkedHashMap;
 import java.util.Map.Entry;
@@ -130,7 +127,6 @@ public class DatagramDispatcher extends Handler {
         public @NonNull SatelliteDatagram datagram;
         public boolean needFullScreenPointingUI;
         public @NonNull Consumer<Integer> callback;
-        public long datagramStartTime;
 
         SendSatelliteDatagramArgument(int subId, long datagramId,
                 @SatelliteManager.DatagramType int datagramType,
@@ -142,23 +138,6 @@ public class DatagramDispatcher extends Handler {
             this.datagram = datagram;
             this.needFullScreenPointingUI = needFullScreenPointingUI;
             this.callback = callback;
-        }
-
-        /** returns the size of outgoing SMS, rounded by 10 bytes */
-        public int getDatagramRoundedSizeBytes() {
-            if (datagram.getSatelliteDatagram() != null) {
-                int sizeBytes = datagram.getSatelliteDatagram().length;
-                // rounded by ROUNDING_UNIT
-                return (int) (Math.round((double) sizeBytes / ROUNDING_UNIT) * ROUNDING_UNIT);
-            } else {
-                return 0;
-            }
-        }
-
-        /** sets the start time at datagram is sent out */
-        public void setDatagramStartTime() {
-            datagramStartTime =
-                    datagramStartTime == 0 ? System.currentTimeMillis() : datagramStartTime;
         }
     }
 
@@ -190,9 +169,6 @@ public class DatagramDispatcher extends Handler {
                 } else {
                     loge("sendSatelliteDatagram: No phone object");
                     argument.callback.accept(SatelliteManager.SATELLITE_INVALID_TELEPHONY_STATE);
-                    // report phone == null case
-                    reportSendDatagramCompleted(argument,
-                            SatelliteManager.SATELLITE_INVALID_TELEPHONY_STATE);
 
                     synchronized (mLock) {
                         // Remove current datagram from pending map
@@ -217,8 +193,6 @@ public class DatagramDispatcher extends Handler {
                 SendSatelliteDatagramArgument argument =
                         (SendSatelliteDatagramArgument) request.argument;
                 logd("EVENT_SEND_SATELLITE_DATAGRAM_DONE error: " + error);
-                // log metrics about the outgoing datagram
-                reportSendDatagramCompleted(argument, error);
 
                 synchronized (mLock) {
                     mSendingDatagramInProgress = false;
@@ -284,9 +258,8 @@ public class DatagramDispatcher extends Handler {
         long datagramId = mNextDatagramId.getAndUpdate(
                 n -> ((n + 1) % DatagramController.MAX_DATAGRAM_ID));
 
-        SendSatelliteDatagramArgument datagramArgs =
-                new SendSatelliteDatagramArgument(subId, datagramId, datagramType, datagram,
-                        needFullScreenPointingUI, callback);
+        SendSatelliteDatagramArgument datagramArgs = new SendSatelliteDatagramArgument(subId,
+                datagramId, datagramType, datagram, needFullScreenPointingUI, callback);
 
         synchronized (mLock) {
             if (datagramType == SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE) {
@@ -297,7 +270,6 @@ public class DatagramDispatcher extends Handler {
 
             if (!mSendingDatagramInProgress) {
                 mSendingDatagramInProgress = true;
-                datagramArgs.setDatagramStartTime();
                 sendRequestAsync(CMD_SEND_SATELLITE_DATAGRAM, datagramArgs, phone);
                 mDatagramController.updateSendStatus(subId,
                         SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
@@ -325,8 +297,6 @@ public class DatagramDispatcher extends Handler {
             mSendingDatagramInProgress = true;
             SendSatelliteDatagramArgument datagramArg =
                     pendingDatagram.iterator().next().getValue();
-            // Sets the trigger time for getting pending datagrams
-            datagramArg.setDatagramStartTime();
             sendRequestAsync(CMD_SEND_SATELLITE_DATAGRAM, datagramArg, phone);
             mDatagramController.updateSendStatus(datagramArg.subId,
                     SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
@@ -351,7 +321,6 @@ public class DatagramDispatcher extends Handler {
                 pendingDatagramsMap.entrySet()) {
             SendSatelliteDatagramArgument argument = entry.getValue();
             argument.callback.accept(errorCode);
-            reportSendDatagramCompleted(argument, errorCode);
         }
 
         // Clear pending datagram maps
@@ -403,18 +372,6 @@ public class DatagramDispatcher extends Handler {
                 argument, phone);
         Message msg = this.obtainMessage(command, request);
         msg.sendToTarget();
-    }
-
-    private void reportSendDatagramCompleted(@NonNull SendSatelliteDatagramArgument argument,
-            @NonNull @SatelliteManager.SatelliteError int resultCode) {
-        SatelliteStats.getInstance().onSatelliteOutgoingDatagramMetrics(
-                new SatelliteStats.SatelliteOutgoingDatagramParams.Builder()
-                        .setDatagramType(argument.datagramType)
-                        .setResultCode(resultCode)
-                        .setDatagramSizeBytes(argument.getDatagramRoundedSizeBytes())
-                        .setDatagramTransferTimeMillis(
-                                System.currentTimeMillis() - argument.datagramStartTime)
-                        .build());
     }
 
     /**

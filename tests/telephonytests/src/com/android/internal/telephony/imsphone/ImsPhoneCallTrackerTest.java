@@ -1666,9 +1666,7 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
             }
         });
         ImsCall call = connection.getImsCall();
-        call.getListener().onCallTerminated(
-                call, new ImsReasonInfo(
-                        ImsReasonInfo.CODE_LOCAL_ENDED_BY_CONFERENCE_MERGE, 0));
+        call.getListener().onCallMerged(call, null, false);
         assertTrue(result[0]);
     }
 

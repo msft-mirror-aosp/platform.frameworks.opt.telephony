@@ -647,7 +647,7 @@ public class PhoneSwitcherTest extends TelephonyTest {
         setSlotIndexToSubId(1, 2);
         setDefaultDataSubId(1);
 
-        doReturn(false).when(mDataConfigManager).isPingTestBeforeAutoDataSwitchRequired();
+        doReturn(false).when(mDataConfigManager).requirePingTestBeforeDataSwitch();
         mDataConfigManagerCallback.onCarrierConfigChanged();
 
         //1. Attempting to switch to nDDS, switch even if validation failed
@@ -2047,7 +2047,7 @@ public class PhoneSwitcherTest extends TelephonyTest {
         doReturn(1000L).when(mDataConfigManager)
                 .getAutoDataSwitchAvailabilityStabilityTimeThreshold();
         doReturn(7).when(mDataConfigManager).getAutoDataSwitchValidationMaxRetry();
-        doReturn(true).when(mDataConfigManager).isPingTestBeforeAutoDataSwitchRequired();
+        doReturn(true).when(mDataConfigManager).requirePingTestBeforeDataSwitch();
 
         mDataConfigManagerCallback.onCarrierConfigChanged();
         mDataConfigManagerCallback.onDeviceConfigChanged();
