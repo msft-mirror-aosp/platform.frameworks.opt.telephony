@@ -120,7 +120,9 @@ import com.android.internal.telephony.ServiceStateTracker;
 import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyComponentFactory;
 import com.android.internal.telephony.TelephonyIntents;
+import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
+import com.android.internal.telephony.emergency.EmergencyStateTracker;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.metrics.ImsStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
@@ -263,6 +265,7 @@ public class ImsPhone extends ImsPhoneBase {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     ImsPhoneCallTracker mCT;
     ImsExternalCallTracker mExternalCallTracker;
+    ImsNrSaModeHandler mImsNrSaModeHandler;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private ArrayList <ImsPhoneMmiCode> mPendingMMIs = new ArrayList<ImsPhoneMmiCode>();
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
@@ -473,6 +476,10 @@ public class ImsPhone extends ImsPhoneBase {
                 TelephonyComponentFactory.getInstance()
                         .inject(ImsExternalCallTracker.class.getName())
                         .makeImsExternalCallTracker(this);
+        mImsNrSaModeHandler =
+                TelephonyComponentFactory.getInstance()
+                        .inject(ImsNrSaModeHandler.class.getName())
+                        .makeImsNrSaModeHandler(this);
         mCT = TelephonyComponentFactory.getInstance().inject(ImsPhoneCallTracker.class.getName())
                 .makeImsPhoneCallTracker(this);
         mCT.registerPhoneStateListener(mExternalCallTracker);
@@ -520,6 +527,7 @@ public class ImsPhone extends ImsPhoneBase {
         //super.dispose();
         mPendingMMIs.clear();
         mExternalCallTracker.tearDown();
+        mImsNrSaModeHandler.tearDown();
         mCT.unregisterPhoneStateListener(mExternalCallTracker);
         mCT.unregisterForVoiceCallEnded(this);
         mCT.dispose();
@@ -908,6 +916,9 @@ public class ImsPhone extends ImsPhoneBase {
 
     @Override
     public boolean isInImsEcm() {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            return EmergencyStateTracker.getInstance().isInImsEcm();
+        }
         return mIsInImsEcm;
     }
 
@@ -2054,6 +2065,10 @@ public class ImsPhone extends ImsPhoneBase {
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private void handleEnterEmergencyCallbackMode() {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            logd("DomainSelection enabled: ignore ECBM enter event.");
+            return;
+        }
         if (DBG) logd("handleEnterEmergencyCallbackMode,mIsPhoneInEcmState= " + isInEcm());
         // if phone is not in Ecm mode, and it's changed to Ecm mode
         if (!isInEcm()) {
@@ -2075,6 +2090,10 @@ public class ImsPhone extends ImsPhoneBase {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @Override
     protected void handleExitEmergencyCallbackMode() {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            logd("DomainSelection enabled: ignore ECBM exit event.");
+            return;
+        }
         if (DBG) logd("handleExitEmergencyCallbackMode: mIsPhoneInEcmState = " + isInEcm());
 
         if (isInEcm()) {
@@ -2104,6 +2123,7 @@ public class ImsPhone extends ImsPhoneBase {
      * Ecm timer and notify apps the timer is restarted.
      */
     void handleTimerInEmergencyCallbackMode(int action) {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) return;
         switch (action) {
             case CANCEL_ECM_TIMER:
                 removeCallbacks(mExitEcmRunnable);
@@ -2459,6 +2479,8 @@ public class ImsPhone extends ImsPhoneBase {
             getDefaultPhone().setImsRegistrationState(true);
             mMetrics.writeOnImsConnectionState(mPhoneId, ImsConnectionState.State.CONNECTED, null);
             mImsStats.onImsRegistered(imsRadioTech);
+            mImsNrSaModeHandler.onImsRegistered(
+                    attributes.getRegistrationTechnology(), attributes.getFeatureTags());
             updateImsRegistrationInfo(REGISTRATION_STATE_REGISTERED,
                     attributes.getRegistrationTechnology(), SUGGESTED_ACTION_NONE);
         }
@@ -2495,6 +2517,7 @@ public class ImsPhone extends ImsPhoneBase {
             mMetrics.writeOnImsConnectionState(mPhoneId, ImsConnectionState.State.DISCONNECTED,
                     imsReasonInfo);
             mImsStats.onImsUnregistered(imsReasonInfo);
+            mImsNrSaModeHandler.onImsUnregistered(imsRadioTech);
             mImsRegistrationTech = REGISTRATION_TECH_NONE;
             int suggestedModemAction = SUGGESTED_ACTION_NONE;
             if (imsReasonInfo.getCode() == ImsReasonInfo.CODE_REGISTRATION_ERROR) {

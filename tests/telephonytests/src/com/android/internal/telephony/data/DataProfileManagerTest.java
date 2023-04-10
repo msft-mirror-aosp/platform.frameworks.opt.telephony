@@ -75,6 +75,7 @@ import java.util.stream.Collectors;
 @TestableLooper.RunWithLooper
 public class DataProfileManagerTest extends TelephonyTest {
     private static final String GENERAL_PURPOSE_APN = "GP_APN";
+    private static final String GENERAL_PURPOSE_APN_LEGACY_RAT = "GP_APN_RAT";
     private static final String GENERAL_PURPOSE_APN1 = "GP_APN1";
     private static final String IMS_APN = "IMS_APN";
     private static final String TETHERING_APN = "DUN_APN";
@@ -164,6 +165,41 @@ public class DataProfileManagerTest extends TelephonyTest {
                         "",                     // mnvo_match_data
                         TelephonyManager.NETWORK_TYPE_BITMASK_LTE
                                 | TelephonyManager.NETWORK_TYPE_BITMASK_NR, // network_type_bitmask
+                        0,                      // lingering_network_type_bitmask
+                        DEFAULT_APN_SET_ID,     // apn_set_id
+                        -1,                     // carrier_id
+                        -1,                     // skip_464xlat
+                        0                       // always_on
+                },
+                // default internet data profile for RAT CDMA, to test update preferred data profile
+                new Object[]{
+                        9,                      // id
+                        PLMN,                   // numeric
+                        GENERAL_PURPOSE_APN_LEGACY_RAT,    // name
+                        GENERAL_PURPOSE_APN_LEGACY_RAT,    // apn
+                        "",                     // proxy
+                        "",                     // port
+                        "",                     // mmsc
+                        "",                     // mmsproxy
+                        "",                     // mmsport
+                        "",                     // user
+                        "",                     // password
+                        -1,                     // authtype
+                        "default,supl,mms,ia",  // types
+                        "IPV4V6",               // protocol
+                        "IPV4V6",               // roaming_protocol
+                        1,                      // carrier_enabled
+                        0,                      // profile_id
+                        1,                      // modem_cognitive
+                        0,                      // max_conns
+                        0,                      // wait_time
+                        0,                      // max_conns_time
+                        0,                      // mtu
+                        1280,                   // mtu_v4
+                        1280,                   // mtu_v6
+                        "",                     // mvno_type
+                        "",                     // mnvo_match_data
+                        TelephonyManager.NETWORK_TYPE_BITMASK_CDMA, // network_type_bitmask
                         0,                      // lingering_network_type_bitmask
                         DEFAULT_APN_SET_ID,     // apn_set_id
                         -1,                     // carrier_id
@@ -777,13 +813,51 @@ public class DataProfileManagerTest extends TelephonyTest {
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
         dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
         dataProfile.setPreferred(true);
-        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(dataProfile));
+        DataNetwork internetNetwork = Mockito.mock(DataNetwork.class);
+        doReturn(dataProfile).when(internetNetwork).getDataProfile();
+        doReturn(new DataNetworkController.NetworkRequestList(List.of(tnr)))
+                .when(internetNetwork).getAttachedNetworkRequestList();
+        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(internetNetwork));
         processAllMessages();
 
-        // See if the same one can be returned.
+        // Test See if the same one can be returned.
         dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
                 tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
+
+        // Test Another default internet network connected due to RAT changed. Verify the preferred
+        // data profile is updated.
+        DataProfile legacyRatDataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_CDMA, false);
+        DataNetwork legacyRatInternetNetwork = Mockito.mock(DataNetwork.class);
+        doReturn(legacyRatDataProfile).when(legacyRatInternetNetwork).getDataProfile();
+        doReturn(new DataNetworkController.NetworkRequestList(List.of(tnr)))
+                .when(legacyRatInternetNetwork).getAttachedNetworkRequestList();
+        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(
+                // Because internetNetwork is torn down due to network type mismatch
+                legacyRatInternetNetwork));
+        processAllMessages();
+
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(legacyRatDataProfile)).isTrue();
+
+        // Test Another supl default internet network temporarily connected. Verify preferred
+        // doesn't change.
+        TelephonyNetworkRequest suplTnr = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_SUPL)
+                        .build(), mPhone);
+        DataProfile suplDataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                suplTnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+        DataNetwork suplInternetNetwork = Mockito.mock(DataNetwork.class);
+        doReturn(suplDataProfile).when(suplInternetNetwork).getDataProfile();
+        doReturn(new DataNetworkController.NetworkRequestList(List.of(suplTnr)))
+                .when(suplInternetNetwork).getAttachedNetworkRequestList();
+        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(
+                legacyRatInternetNetwork, suplInternetNetwork));
+        processAllMessages();
+
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(legacyRatDataProfile)).isTrue();
     }
 
     @Test
@@ -1065,12 +1139,12 @@ public class DataProfileManagerTest extends TelephonyTest {
                 tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
         dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
-        dataProfile.setPreferred(true);
-        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(dataProfile));
+        DataNetwork internetNetwork = Mockito.mock(DataNetwork.class);
+        doReturn(dataProfile).when(internetNetwork).getDataProfile();
+        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(internetNetwork));
         processAllMessages();
 
         // After internet connected, preferred APN should be set
-        assertThat(mDataProfileManagerUT.isAnyPreferredDataProfileExisting()).isTrue();
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
 
         // APN reset
@@ -1079,29 +1153,35 @@ public class DataProfileManagerTest extends TelephonyTest {
         processAllMessages();
 
         // preferred APN should set to be the last data profile that succeeded for internet setup
-        assertThat(mDataProfileManagerUT.isAnyPreferredDataProfileExisting()).isTrue();
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
 
-        // no active internet, expect no preferred APN after reset
-        mDataNetworkControllerCallback.onInternetDataNetworkDisconnected();
+        // Test user selected a bad data profile, expects to adopt the last data profile that
+        // succeeded for internet setup after APN reset
+        // some bad profile that cannot be used for internet
+        mApnSettingContentProvider.setPreferredApn(MATCH_ALL_APN_SET_ID_IMS_APN);
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isFalse();
+
+        // APN reset, preferred APN should set to be the last data profile that succeeded for
+        // internet setup
         mPreferredApnId = -1;
         mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
         processAllMessages();
 
-        assertThat(mDataProfileManagerUT.isAnyPreferredDataProfileExisting()).isFalse();
-        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isFalse();
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
 
-        // setup internet again
-        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(dataProfile));
+        // Test removed data profile(user created after reset) shouldn't show up
+        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(internetNetwork));
         processAllMessages();
-        //APN reset and removed GENERAL_PURPOSE_APN(as if user created) from APN DB
+        //APN reset and removed GENERAL_PURPOSE_APN from APN DB
         mPreferredApnId = -1;
         mApnSettingContentProvider.removeApnByApnId(1);
         mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
         processAllMessages();
 
-        // There should be no preferred APN after APN reset
-        assertThat(mDataProfileManagerUT.isAnyPreferredDataProfileExisting()).isFalse();
+        // There should be no preferred APN after APN reset because last working profile is removed
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isFalse();
 
         // restore mApnSettingContentProvider
@@ -1185,7 +1265,7 @@ public class DataProfileManagerTest extends TelephonyTest {
     }
 
     @Test
-    public void testDataProfileCompatibility() throws Exception {
+    public void testDataProfileCompatibility() {
         DataProfile enterpriseDataProfile = new DataProfile.Builder()
                 .setTrafficDescriptor(new TrafficDescriptor(null,
                         new TrafficDescriptor.OsAppId(TrafficDescriptor.OsAppId.ANDROID_OS_ID,

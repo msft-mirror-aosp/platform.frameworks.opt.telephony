@@ -2115,30 +2115,15 @@ public interface CommandsInterface {
      *
      * Input parameters equivalent to TS 27.007 AT+CCHC command.
      *
+     * Per spec SGP.22 V3.0, ES10 commands needs to be sent over command port of MEP-A. In order
+     * to close proper logical channel, should pass information about whether the logical channel
+     * was opened for sending ES10 commands or not.
+     *
      * @param channel Channel id. Id of the channel to be closed.
+     * @param isEs10  Whether the logical channel is opened to perform ES10 operations.
      * @param response Callback message.
      */
-    public void iccCloseLogicalChannel(int channel, Message response);
-
-    /**
-     * Exchange APDUs with the SIM on a logical channel.
-     *
-     * Input parameters equivalent to TS 27.007 AT+CGLA command.
-     *
-     * @param channel Channel id of the channel to use for communication. Has to
-     *            be greater than zero.
-     * @param cla Class of the APDU command.
-     * @param instruction Instruction of the APDU command.
-     * @param p1 P1 value of the APDU command.
-     * @param p2 P2 value of the APDU command.
-     * @param p3 P3 value of the APDU command. If p3 is negative a 4 byte APDU
-     *            is sent to the SIM.
-     * @param data Data to be sent with the APDU.
-     * @param response Callback message. response.obj.userObj will be
-     *            an IccIoResult on success.
-     */
-    public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction,
-            int p1, int p2, int p3, String data, Message response);
+    public void iccCloseLogicalChannel(int channel, boolean isEs10, Message response);
 
     /**
      * Exchange APDUs with the SIM on a logical channel.
@@ -3050,6 +3035,20 @@ public interface CommandsInterface {
     default void getSatellitePowerState(Message result) {}
 
     /**
+     * Get satellite provision state.
+     *
+     * @param result Message that will be sent back to the requester
+     */
+    default void getSatelliteProvisionState(Message result) {}
+
+    /**
+     * Check whether satellite modem is supported by the device.
+     *
+     * @param result Message that will be sent back to the requester
+     */
+    default void isSatelliteSupported(Message result) {}
+
+    /**
      * Provision the subscription with a satellite provider. This is needed to register the
      * subscription if the provider allows dynamic registration.
      *
@@ -3139,7 +3138,14 @@ public interface CommandsInterface {
     default void getMaxCharactersPerSatelliteTextMessage(Message result) {}
 
     /**
-     * Get time for next visibility of satellite.
+     * Get whether satellite communication is allowed for the current location.
+     *
+     * @param result Message that will be sent back to the requester.
+     */
+    default void isSatelliteCommunicationAllowedForCurrentLocation(Message result) {}
+
+    /**
+     * Get the time after which the satellite will be visible.
      *
      * @param result Message that will be sent back to the requester.
      */

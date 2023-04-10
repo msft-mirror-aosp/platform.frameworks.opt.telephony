@@ -49,8 +49,6 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.Process;
-import android.os.Registrant;
-import android.os.RegistrantList;
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.os.UserManager;
@@ -64,7 +62,6 @@ import android.telephony.UiccAccessRule;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
-import android.util.IntArray;
 import android.util.LocalLog;
 import android.util.Pair;
 
@@ -104,6 +101,11 @@ public class CarrierPrivilegesTracker extends Handler {
     private static final String SHA_1 = "SHA-1";
     private static final String SHA_256 = "SHA-256";
 
+    private static final int PACKAGE_NOT_PRIVILEGED = 0;
+    private static final int PACKAGE_PRIVILEGED_FROM_CARRIER_CONFIG = 1;
+    private static final int PACKAGE_PRIVILEGED_FROM_SIM = 2;
+    private static final int PACKAGE_PRIVILEGED_FROM_CARRIER_SERVICE_TEST_OVERRIDE = 3;
+
     // TODO(b/232273884): Turn feature on when find solution to handle the inter-carriers switching
     /**
      * Time delay to clear UICC rules after UICC is gone.
@@ -123,25 +125,6 @@ public class CarrierPrivilegesTracker extends Handler {
             PackageManager.GET_SIGNING_CERTIFICATES
                     | PackageManager.MATCH_DISABLED_UNTIL_USED_COMPONENTS
                     | PackageManager.MATCH_HIDDEN_UNTIL_INSTALLED_COMPONENTS;
-
-    /**
-     * All carrier config keys used in this class should list here in alphabetical order.
-     */
-    private static final String[] CARRIER_CONFIG_KEYS = {
-            KEY_CARRIER_CERTIFICATE_STRING_ARRAY,
-    };
-
-    /**
-     * Action to register a Registrant with this Tracker.
-     * obj: Registrant that will be notified of Carrier Privileged UID changes.
-     */
-    private static final int ACTION_REGISTER_LISTENER = 1;
-
-    /**
-     * Action to unregister a Registrant with this Tracker.
-     * obj: Handler used by the Registrant that will be removed.
-     */
-    private static final int ACTION_UNREGISTER_LISTENER = 2;
 
     /**
      * Action for tracking when the Phone's SIM state changes.
@@ -184,6 +167,14 @@ public class CarrierPrivilegesTracker extends Handler {
      */
     private static final int ACTION_UICC_ACCESS_RULES_LOADED = 10;
 
+    /**
+     * Action to set the test override rule through {@link
+     * TelephonyManager#setCarrierServicePackageOverride}.
+     *
+     * <p>obj: String of the carrierServicePackage from method setCarrierServicePackageOverride.
+     */
+    private static final int ACTION_SET_TEST_OVERRIDE_CARRIER_SERVICE_PACKAGE = 11;
+
     private final Context mContext;
     private final Phone mPhone;
     private final PackageManager mPackageManager;
@@ -193,7 +184,6 @@ public class CarrierPrivilegesTracker extends Handler {
     private final TelephonyRegistryManager mTelephonyRegistryManager;
 
     @NonNull private final LocalLog mLocalLog = new LocalLog(64);
-    @NonNull private final RegistrantList mRegistrantList = new RegistrantList();
     // Stores rules for Carrier Config-loaded rules
     @NonNull private final List<UiccAccessRule> mCarrierConfigRules = new ArrayList<>();
     // Stores rules for SIM-loaded rules.
@@ -203,6 +193,7 @@ public class CarrierPrivilegesTracker extends Handler {
     // - Empty list indicates test override to simulate no rules (CC and UICC rules are ignored)
     // - Non-empty list indicates test override with specific rules (CC and UICC rules are ignored)
     @Nullable private List<UiccAccessRule> mTestOverrideRules = null;
+    @Nullable private String mTestOverrideCarrierServicePackage = null;
     // Map of PackageName -> Certificate hashes for that Package
     @NonNull private final Map<String, Set<String>> mInstalledPackageCerts = new ArrayMap<>();
     // Map of PackageName -> UIDs for that Package
@@ -385,14 +376,6 @@ public class CarrierPrivilegesTracker extends Handler {
     @Override
     public void handleMessage(Message msg) {
         switch (msg.what) {
-            case ACTION_REGISTER_LISTENER: {
-                handleRegisterListener((Registrant) msg.obj);
-                break;
-            }
-            case ACTION_UNREGISTER_LISTENER: {
-                handleUnregisterListener((Handler) msg.obj);
-                break;
-            }
             case ACTION_SIM_STATE_UPDATED: {
                 handleSimStateChanged(msg.arg1, msg.arg2);
                 break;
@@ -424,28 +407,16 @@ public class CarrierPrivilegesTracker extends Handler {
                 handleUiccAccessRulesLoaded();
                 break;
             }
+            case ACTION_SET_TEST_OVERRIDE_CARRIER_SERVICE_PACKAGE: {
+                String carrierServicePackage = (String) msg.obj;
+                handleSetTestOverrideCarrierServicePackage(carrierServicePackage);
+                break;
+            }
             default: {
                 Rlog.e(TAG, "Received unknown msg type: " + msg.what);
                 break;
             }
         }
-    }
-
-    private void handleRegisterListener(@NonNull Registrant registrant) {
-        mRegistrantList.add(registrant);
-        mPrivilegedPackageInfoLock.readLock().lock();
-        try {
-            // Old registrant callback still takes int[] as parameter, need conversion here
-            int[] uids = intSetToArray(mPrivilegedPackageInfo.mUids);
-            registrant.notifyResult(
-                    Arrays.copyOf(uids, uids.length));
-        } finally {
-            mPrivilegedPackageInfoLock.readLock().unlock();
-        }
-    }
-
-    private void handleUnregisterListener(@NonNull Handler handler) {
-        mRegistrantList.remove(handler);
     }
 
     private void handleCarrierConfigUpdated(int subId, int slotIndex) {
@@ -469,13 +440,9 @@ public class CarrierPrivilegesTracker extends Handler {
 
     @NonNull
     private List<UiccAccessRule> getCarrierConfigRules(int subId) {
-        PersistableBundle carrierConfigs = null;
-        try {
-            carrierConfigs = mCarrierConfigManager.getConfigForSubId(subId, CARRIER_CONFIG_KEYS);
-        } catch (RuntimeException e) {
-            mLocalLog.log("CarrierConfigLoader is not available, try it later.");
-        }
-
+        PersistableBundle carrierConfigs =
+                CarrierConfigManager.getCarrierConfigSubset(
+                        mContext, subId, KEY_CARRIER_CERTIFICATE_STRING_ARRAY);
         // CarrierConfigManager#isConfigForIdentifiedCarrier can handle null or empty bundle
         if (!mCarrierConfigManager.isConfigForIdentifiedCarrier(carrierConfigs)) {
             return Collections.EMPTY_LIST;
@@ -714,12 +681,6 @@ public class CarrierPrivilegesTracker extends Handler {
 
         mPrivilegedPackageInfoLock.readLock().lock();
         try {
-            // The obsoleted callback only care about UIDs
-            if (carrierPrivilegesUidsChanged) {
-                int[] uids = intSetToArray(mPrivilegedPackageInfo.mUids);
-                mRegistrantList.notifyResult(Arrays.copyOf(uids, uids.length));
-            }
-
             if (carrierPrivilegesPackageNamesChanged || carrierPrivilegesUidsChanged) {
                 mTelephonyRegistryManager.notifyCarrierPrivilegesChanged(
                         mPhone.getPhoneId(),
@@ -744,23 +705,36 @@ public class CarrierPrivilegesTracker extends Handler {
 
     @NonNull
     private PrivilegedPackageInfo getCurrentPrivilegedPackagesForAllUsers() {
+        Set<String> carrierServiceEligiblePackages = new ArraySet<>();
         Set<String> privilegedPackageNames = new ArraySet<>();
         Set<Integer> privilegedUids = new ArraySet<>();
         for (Map.Entry<String, Set<String>> e : mInstalledPackageCerts.entrySet()) {
-            if (isPackagePrivileged(e.getKey(), e.getValue())) {
-                privilegedPackageNames.add(e.getKey());
-                privilegedUids.addAll(getUidsForPackage(e.getKey(), /* invalidateCache= */ false));
+            final int priv = getPackagePrivilegedStatus(e.getKey(), e.getValue());
+            switch (priv) {
+                case PACKAGE_PRIVILEGED_FROM_SIM:
+                case PACKAGE_PRIVILEGED_FROM_CARRIER_SERVICE_TEST_OVERRIDE: // fallthrough
+                    carrierServiceEligiblePackages.add(e.getKey());
+                    // fallthrough
+                case PACKAGE_PRIVILEGED_FROM_CARRIER_CONFIG:
+                    privilegedPackageNames.add(e.getKey());
+                    privilegedUids.addAll(
+                            getUidsForPackage(e.getKey(), /* invalidateCache= */ false));
             }
         }
-        return new PrivilegedPackageInfo(privilegedPackageNames, privilegedUids,
-                getCarrierService(privilegedPackageNames));
+
+        return new PrivilegedPackageInfo(
+                privilegedPackageNames,
+                privilegedUids,
+                getCarrierService(carrierServiceEligiblePackages));
     }
 
     /**
-     * Returns true iff there is an overlap between the provided certificate hashes and the
-     * certificate hashes stored in mTestOverrideRules, mCarrierConfigRules and mUiccRules.
+     * Returns the privilege status of the provided package.
+     *
+     * <p>Returned privilege status depends on whether a package matches the certificates from
+     * carrier config, from test overrides or from certificates stored on the SIM.
      */
-    private boolean isPackagePrivileged(@NonNull String pkgName, @NonNull Set<String> certs) {
+    private int getPackagePrivilegedStatus(@NonNull String pkgName, @NonNull Set<String> certs) {
         // Double-nested for loops, but each collection should contain at most 2 elements in nearly
         // every case.
         // TODO(b/184382310) find a way to speed this up
@@ -769,23 +743,25 @@ public class CarrierPrivilegesTracker extends Handler {
             if (mTestOverrideRules != null) {
                 for (UiccAccessRule rule : mTestOverrideRules) {
                     if (rule.matches(cert, pkgName)) {
-                        return true;
+                        return PACKAGE_PRIVILEGED_FROM_SIM;
                     }
                 }
             } else {
-                for (UiccAccessRule rule : mCarrierConfigRules) {
-                    if (rule.matches(cert, pkgName)) {
-                        return true;
-                    }
-                }
                 for (UiccAccessRule rule : mUiccRules) {
                     if (rule.matches(cert, pkgName)) {
-                        return true;
+                        return PACKAGE_PRIVILEGED_FROM_SIM;
+                    }
+                }
+                for (UiccAccessRule rule : mCarrierConfigRules) {
+                    if (rule.matches(cert, pkgName)) {
+                        return pkgName.equals(mTestOverrideCarrierServicePackage)
+                                ? PACKAGE_PRIVILEGED_FROM_CARRIER_SERVICE_TEST_OVERRIDE
+                                : PACKAGE_PRIVILEGED_FROM_CARRIER_CONFIG;
                     }
                 }
             }
         }
-        return false;
+        return PACKAGE_NOT_PRIVILEGED;
     }
 
     @NonNull
@@ -853,33 +829,6 @@ public class CarrierPrivilegesTracker extends Handler {
     }
 
     /**
-     * Registers the given Registrant with this tracker.
-     *
-     * <p>After being registered, the Registrant will be notified with the current Carrier
-     * Privileged UIDs for this Phone.
-     *
-     * @deprecated Use {@link TelephonyManager#addCarrierPrivilegesListener} instead, which also
-     *     provides package names
-     *     <p>TODO(b/211658797) migrate callers, then delete all Registrant logic from CPT
-     */
-    @Deprecated
-    public void registerCarrierPrivilegesListener(@NonNull Handler h, int what,
-            @Nullable Object obj) {
-        sendMessage(obtainMessage(ACTION_REGISTER_LISTENER, new Registrant(h, what, obj)));
-    }
-
-    /**
-     * Unregisters the given listener with this tracker.
-     *
-     * @deprecated Use {@link TelephonyManager#removeCarrierPrivilegesListener} instead
-     *     <p>TODO(b/211658797) migrate callers, then delete all Registrant logic from CPT
-     */
-    @Deprecated
-    public void unregisterCarrierPrivilegesListener(@NonNull Handler handler) {
-        sendMessage(obtainMessage(ACTION_UNREGISTER_LISTENER, handler));
-    }
-
-    /**
      * Set test carrier privilege rules which will override the actual rules on both Carrier Config
      * and SIM.
      *
@@ -890,6 +839,30 @@ public class CarrierPrivilegesTracker extends Handler {
      */
     public void setTestOverrideCarrierPrivilegeRules(@Nullable String carrierPrivilegeRules) {
         sendMessage(obtainMessage(ACTION_SET_TEST_OVERRIDE_RULE, carrierPrivilegeRules));
+    }
+
+    /**
+     * Override the carrier provisioning package, if it exists.
+     *
+     * <p>This API is to be used ONLY for testing, and requires the provided package to be carrier
+     * privileged. While this override is set, ONLY the specified package will be considered
+     * eligible to be bound as the carrier provisioning package, and any existing bindings will be
+     * terminated.
+     *
+     * @param carrierServicePackage the package to be used as the overridden carrier service
+     *     package, or {@code null} to reset override
+     * @see TelephonyManager#setCarrierServicePackageOverride
+     */
+    public void setTestOverrideCarrierServicePackage(@Nullable String carrierServicePackage) {
+        sendMessage(obtainMessage(
+                ACTION_SET_TEST_OVERRIDE_CARRIER_SERVICE_PACKAGE, carrierServicePackage));
+    }
+
+    private void handleSetTestOverrideCarrierServicePackage(
+            @Nullable String carrierServicePackage) {
+        mTestOverrideCarrierServicePackage = carrierServicePackage;
+        refreshInstalledPackageCache();
+        maybeUpdatePrivilegedPackagesAndNotifyRegistrants();
     }
 
     private void handleSetTestOverrideRules(@Nullable String carrierPrivilegeRules) {
@@ -1054,13 +1027,18 @@ public class CarrierPrivilegesTracker extends Handler {
     }
 
     @NonNull
-    private Pair<String, Integer> getCarrierService(@NonNull Set<String> privilegedPackageNames) {
+    private Pair<String, Integer> getCarrierService(@NonNull Set<String> simPrivilegedPackages) {
         List<ResolveInfo> carrierServiceResolveInfos = mPackageManager.queryIntentServices(
                 new Intent(CarrierService.CARRIER_SERVICE_INTERFACE), /* flags= */ 0);
         String carrierServicePackageName = null;
         for (ResolveInfo resolveInfo : carrierServiceResolveInfos) {
             String packageName = getPackageName(resolveInfo);
-            if (privilegedPackageNames.contains(packageName)) {
+            if (mTestOverrideCarrierServicePackage != null
+                    && !mTestOverrideCarrierServicePackage.equals(packageName)) {
+                continue;
+            }
+
+            if (simPrivilegedPackages.contains(packageName)) {
                 carrierServicePackageName = packageName;
                 break;
             }
@@ -1068,12 +1046,5 @@ public class CarrierPrivilegesTracker extends Handler {
         return carrierServicePackageName == null
                 ? new Pair<>(null, Process.INVALID_UID)
                 : new Pair<>(carrierServicePackageName, getPackageUid(carrierServicePackageName));
-    }
-
-    @NonNull
-    private static int[] intSetToArray(@NonNull Set<Integer> intSet) {
-        IntArray converter = new IntArray(intSet.size());
-        intSet.forEach(converter::add);
-        return converter.toArray();
     }
 }

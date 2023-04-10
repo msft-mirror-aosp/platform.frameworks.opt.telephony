@@ -33,6 +33,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.annotation.Nullable;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
@@ -40,6 +41,7 @@ import android.content.Intent;
 import android.content.pm.IPackageManager;
 import android.content.pm.UserInfo;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Looper;
 import android.os.ParcelUuid;
 import android.os.PersistableBundle;
@@ -107,11 +109,17 @@ public class SubscriptionInfoUpdaterTest extends TelephonyTest {
         public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
             return mContentProvider.update(uri, values, selection, selectionArgs);
         }
+
+        @Override
+        public Bundle call(String method, @Nullable String args, @Nullable Bundle bundle) {
+            return new Bundle();
+        }
     }
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        enableSubscriptionManagerService(false);
         mUserInfo = mock(UserInfo.class);
         mSubInfo = mock(SubscriptionInfo.class);
         mContentProvider = mock(ContentProvider.class);

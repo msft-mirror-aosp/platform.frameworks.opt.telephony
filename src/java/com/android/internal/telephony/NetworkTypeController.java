@@ -32,7 +32,6 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.ServiceState;
-import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager;
 import android.telephony.data.DataCallResponse;
@@ -134,20 +133,25 @@ public class NetworkTypeController extends StateMachine {
         @Override
         public void onReceive(Context context, Intent intent) {
             switch (intent.getAction()) {
-                case CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED:
-                    if (intent.getIntExtra(SubscriptionManager.EXTRA_SLOT_INDEX,
-                            SubscriptionManager.INVALID_PHONE_INDEX) == mPhone.getPhoneId()
-                            && !intent.getBooleanExtra(
-                                    CarrierConfigManager.EXTRA_REBROADCAST_ON_UNLOCK, false)) {
-                        sendMessage(EVENT_CARRIER_CONFIG_CHANGED);
-                    }
-                    break;
                 case PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED:
                     sendMessage(EVENT_DEVICE_IDLE_MODE_CHANGED);
                     break;
             }
         }
     };
+
+    private final @NonNull CarrierConfigManager.CarrierConfigChangeListener
+            mCarrierConfigChangeListener =
+            new CarrierConfigManager.CarrierConfigChangeListener() {
+                @Override
+                public void onCarrierConfigChanged(int slotIndex, int subId, int carrierId,
+                        int specificCarrierId) {
+                    // CarrierConfigChangeListener wouldn't send notification on device unlock
+                    if (slotIndex == mPhone.getPhoneId()) {
+                        sendMessage(EVENT_CARRIER_CONFIG_CHANGED);
+                    }
+                }
+            };
 
     private @NonNull Map<String, OverrideTimerRule> mOverrideTimerRules = new HashMap<>();
     private @NonNull String mLteEnhancedPattern = "";
@@ -158,7 +162,6 @@ public class NetworkTypeController extends StateMachine {
     private boolean mIsTimerResetEnabledForLegacyStateRrcIdle;
     private int mLtePlusThresholdBandwidth;
     private int mNrAdvancedThresholdBandwidth;
-    private boolean mIncludeLteForNrAdvancedThresholdBandwidth;
     private @NonNull int[] mAdditionalNrAdvancedBandsList;
     private @NonNull String mPrimaryTimerState;
     private @NonNull String mSecondaryTimerState;
@@ -251,9 +254,10 @@ public class NetworkTypeController extends StateMachine {
         mPhone.getDeviceStateMonitor().registerForPhysicalChannelConfigNotifChanged(getHandler(),
                 EVENT_PHYSICAL_CHANNEL_CONFIG_NOTIF_CHANGED, null);
         IntentFilter filter = new IntentFilter();
-        filter.addAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
         filter.addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED);
         mPhone.getContext().registerReceiver(mIntentReceiver, filter, null, mPhone);
+        CarrierConfigManager ccm = mPhone.getContext().getSystemService(CarrierConfigManager.class);
+        ccm.registerCarrierConfigChangeListener(Runnable::run, mCarrierConfigChangeListener);
     }
 
     private void unRegisterForAllEvents() {
@@ -262,6 +266,10 @@ public class NetworkTypeController extends StateMachine {
         mPhone.getServiceStateTracker().unregisterForServiceStateChanged(getHandler());
         mPhone.getDeviceStateMonitor().unregisterForPhysicalChannelConfigNotifChanged(getHandler());
         mPhone.getContext().unregisterReceiver(mIntentReceiver);
+        CarrierConfigManager ccm = mPhone.getContext().getSystemService(CarrierConfigManager.class);
+        if (mCarrierConfigChangeListener != null) {
+            ccm.unregisterCarrierConfigChangeListener(mCarrierConfigChangeListener);
+        }
     }
 
     private void parseCarrierConfigs() {
@@ -282,8 +290,6 @@ public class NetworkTypeController extends StateMachine {
                 CarrierConfigManager.KEY_LTE_PLUS_THRESHOLD_BANDWIDTH_KHZ_INT);
         mNrAdvancedThresholdBandwidth = config.getInt(
                 CarrierConfigManager.KEY_NR_ADVANCED_THRESHOLD_BANDWIDTH_KHZ_INT);
-        mIncludeLteForNrAdvancedThresholdBandwidth = config.getBoolean(
-                CarrierConfigManager.KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH_BOOL);
         mEnableNrAdvancedWhileRoaming = config.getBoolean(
                 CarrierConfigManager.KEY_ENABLE_NR_ADVANCED_WHILE_ROAMING_BOOL);
         mAdditionalNrAdvancedBandsList = config.getIntArray(
@@ -991,6 +997,13 @@ public class NetworkTypeController extends StateMachine {
                             // Update in case the override network type changed
                             updateOverrideNetworkType();
                         } else {
+                            if (rat == TelephonyManager.NETWORK_TYPE_NR && mOverrideNetworkType
+                                    != TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED) {
+                                // manually override network type after data rat changes since
+                                // timer will prevent it from being updated
+                                mOverrideNetworkType =
+                                        TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE;
+                            }
                             transitionWithTimerTo(mNrConnectedState);
                         }
                     } else if (isLte(rat) && isNrNotRestricted()) {
@@ -1134,12 +1147,17 @@ public class NetworkTypeController extends StateMachine {
             if (currentState.equals(STATE_CONNECTED_NR_ADVANCED)) {
                 if (DBG) log("Reset timers since state is NR_ADVANCED.");
                 resetAllTimers();
-            }
-
-            int rat = getDataNetworkType();
-            if (!isLte(rat) && rat != TelephonyManager.NETWORK_TYPE_NR) {
-                if (DBG) log("Reset timers since 2G and 3G don't need NR timers.");
+            } else if (currentState.equals(STATE_CONNECTED)
+                    && !mPrimaryTimerState.equals(STATE_CONNECTED_NR_ADVANCED)
+                    && !mSecondaryTimerState.equals(STATE_CONNECTED_NR_ADVANCED)) {
+                if (DBG) log("Reset non-NR_ADVANCED timers since state is NR_CONNECTED");
                 resetAllTimers();
+            } else {
+                int rat = getDataNetworkType();
+                if (!isLte(rat) && rat != TelephonyManager.NETWORK_TYPE_NR) {
+                    if (DBG) log("Reset timers since 2G and 3G don't need NR timers.");
+                    resetAllTimers();
+                }
             }
         }
     }
@@ -1263,20 +1281,11 @@ public class NetworkTypeController extends StateMachine {
             return false;
         }
 
-        int bandwidths = 0;
-        if (mPhone.getServiceStateTracker().getPhysicalChannelConfigList() != null) {
-            bandwidths = mPhone.getServiceStateTracker().getPhysicalChannelConfigList()
-                    .stream()
-                    .filter(config -> mIncludeLteForNrAdvancedThresholdBandwidth
-                            || config.getNetworkType() == TelephonyManager.NETWORK_TYPE_NR)
-                    .map(PhysicalChannelConfig::getCellBandwidthDownlinkKhz)
-                    .mapToInt(Integer::intValue)
-                    .sum();
-        }
-
         // Check if meeting minimum bandwidth requirement. For most carriers, there is no minimum
         // bandwidth requirement and mNrAdvancedThresholdBandwidth is 0.
-        if (mNrAdvancedThresholdBandwidth > 0 && bandwidths < mNrAdvancedThresholdBandwidth) {
+        if (mNrAdvancedThresholdBandwidth > 0
+                && IntStream.of(mPhone.getServiceState().getCellBandwidths()).sum()
+                < mNrAdvancedThresholdBandwidth) {
             return false;
         }
 

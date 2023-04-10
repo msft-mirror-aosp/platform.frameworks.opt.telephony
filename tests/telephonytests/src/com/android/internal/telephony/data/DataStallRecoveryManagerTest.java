@@ -29,7 +29,6 @@ import static org.mockito.Mockito.verify;
 import android.net.NetworkAgent;
 import android.telephony.Annotation.ValidationStatus;
 import android.telephony.CarrierConfigManager;
-import android.telephony.data.DataProfile;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
@@ -117,7 +116,7 @@ public class DataStallRecoveryManagerTest extends TelephonyTest {
                 dataNetworkControllerCallbackCaptor.getValue();
 
         if (isConnected) {
-            List<DataProfile> dataprofile = new ArrayList<DataProfile>();
+            List<DataNetwork> dataprofile = new ArrayList<>();
             dataNetworkControllerCallback.onInternetDataNetworkConnected(dataprofile);
         } else {
             dataNetworkControllerCallback.onInternetDataNetworkDisconnected();
@@ -349,5 +348,24 @@ public class DataStallRecoveryManagerTest extends TelephonyTest {
             moveTimeForward(101);
             assertThat(mDataStallRecoveryManager.getRecoveryAction()).isEqualTo(0);
         }
+    }
+
+    @Test
+    public void testStartTimeNotZero() throws Exception {
+        sendOnInternetDataNetworkCallback(false);
+        doReturn(mSignalStrength).when(mPhone).getSignalStrength();
+        doReturn(PhoneConstants.State.IDLE).when(mPhone).getState();
+
+        logd("Sending validation failed callback");
+        sendValidationStatusCallback(NetworkAgent.VALIDATION_STATUS_NOT_VALID);
+        processAllFutureMessages();
+
+        for (int i = 0; i < 2; i++) {
+            sendValidationStatusCallback(NetworkAgent.VALIDATION_STATUS_NOT_VALID);
+            logd("Sending validation failed callback");
+            processAllMessages();
+            moveTimeForward(101);
+        }
+        assertThat(mDataStallRecoveryManager.mDataStallStartMs != 0).isTrue();
     }
 }

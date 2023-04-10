@@ -53,6 +53,18 @@ public class SubscriptionInfoInternalTest {
                     .setCarrierConfigAccessRules(SubscriptionDatabaseManagerTest
                             .FAKE_CARRIER_CONFIG_ACCESS_RULES1)
                     .setRemovableEmbedded(0)
+                    .setCellBroadcastExtremeThreatAlertEnabled(1)
+                    .setCellBroadcastSevereThreatAlertEnabled(1)
+                    .setCellBroadcastAmberAlertEnabled(1)
+                    .setCellBroadcastEmergencyAlertEnabled(1)
+                    .setCellBroadcastAlertSoundDuration(4)
+                    .setCellBroadcastAlertReminderInterval(1)
+                    .setCellBroadcastAlertVibrationEnabled(1)
+                    .setCellBroadcastAlertSpeechEnabled(1)
+                    .setCellBroadcastEtwsTestAlertEnabled(1)
+                    .setCellBroadcastAreaInfoMessageEnabled(1)
+                    .setCellBroadcastTestAlertEnabled(1)
+                    .setCellBroadcastOptOutDialogEnabled(1)
                     .setEnhanced4GModeEnabled(1)
                     .setVideoTelephonyEnabled(1)
                     .setWifiCallingEnabled(1)
@@ -88,6 +100,7 @@ public class SubscriptionInfoInternalTest {
                     .setLastUsedTPMessageReference(SubscriptionDatabaseManagerTest
                             .FAKE_TP_MESSAGE_REFERENCE1)
                     .setUserId(SubscriptionDatabaseManagerTest.FAKE_USER_ID1)
+                    .setSatelliteEnabled(1)
                     .setGroupDisabled(false)
                     .build();
 
@@ -144,6 +157,18 @@ public class SubscriptionInfoInternalTest {
         assertThat(mSubInfo.getCarrierConfigAccessRules()).isEqualTo(SubscriptionDatabaseManagerTest
                 .FAKE_CARRIER_CONFIG_ACCESS_RULES1);
         assertThat(mSubInfo.getRemovableEmbedded()).isEqualTo(0);
+        assertThat(mSubInfo.getCellBroadcastExtremeThreatAlertEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastSevereThreatAlertEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastAmberAlertEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastEmergencyAlertEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastAlertSoundDuration()).isEqualTo(4);
+        assertThat(mSubInfo.getCellBroadcastAlertReminderInterval()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastAlertVibrationEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastAlertSpeechEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastEtwsTestAlertEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastAreaInfoMessageEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastTestAlertEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getCellBroadcastOptOutDialogEnabled()).isEqualTo(1);
         assertThat(mSubInfo.getEnhanced4GModeEnabled()).isEqualTo(1);
         assertThat(mSubInfo.getVideoTelephonyEnabled()).isEqualTo(1);
         assertThat(mSubInfo.getWifiCallingEnabled()).isEqualTo(1);
@@ -185,6 +210,7 @@ public class SubscriptionInfoInternalTest {
         assertThat(mSubInfo.getLastUsedTPMessageReference()).isEqualTo(
                 SubscriptionDatabaseManagerTest.FAKE_TP_MESSAGE_REFERENCE1);
         assertThat(mSubInfo.getUserId()).isEqualTo(SubscriptionDatabaseManagerTest.FAKE_USER_ID1);
+        assertThat(mSubInfo.getSatelliteEnabled()).isEqualTo(1);
         assertThat(mSubInfo.isGroupDisabled()).isFalse();
     }
 
@@ -192,6 +218,7 @@ public class SubscriptionInfoInternalTest {
     public void testEquals() {
         SubscriptionInfoInternal another = new SubscriptionInfoInternal.Builder(mSubInfo).build();
         assertThat(another).isEqualTo(mSubInfo);
+        assertThat(another.hashCode()).isEqualTo(mSubInfo.hashCode());
     }
 
     @Test

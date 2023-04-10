@@ -22,6 +22,7 @@ import static android.telephony.AccessNetworkConstants.TRANSPORT_TYPE_WWAN;
 import static android.telephony.DomainSelectionService.SELECTOR_TYPE_CALLING;
 import static android.telephony.NetworkRegistrationInfo.DOMAIN_PS;
 
+import static com.android.internal.telephony.PhoneConstants.DOMAIN_NON_3GPP_PS;
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_WLAN;
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_WWAN;
 
@@ -83,24 +84,28 @@ public class EmergencyCallDomainSelectionConnection extends DomainSelectionConne
 
     /** {@inheritDoc} */
     @Override
-    public void onWlanSelected() {
-        mEmergencyStateTracker.onEmergencyTransportChanged(MODE_EMERGENCY_WLAN);
-        AccessNetworksManager anm = mPhone.getAccessNetworksManager();
-        int transportType = anm.getPreferredTransport(ApnSetting.TYPE_EMERGENCY);
-        logi("onWlanSelected curTransportType=" + transportType);
-        if (transportType != TRANSPORT_TYPE_WLAN) {
-            changePreferredTransport(TRANSPORT_TYPE_WLAN);
-            return;
+    public void onWlanSelected(boolean useEmergencyPdn) {
+        mEmergencyStateTracker.onEmergencyTransportChanged(
+                EmergencyStateTracker.EMERGENCY_TYPE_CALL, MODE_EMERGENCY_WLAN);
+        if (useEmergencyPdn) {
+            AccessNetworksManager anm = mPhone.getAccessNetworksManager();
+            int transportType = anm.getPreferredTransport(ApnSetting.TYPE_EMERGENCY);
+            logi("onWlanSelected curTransportType=" + transportType);
+            if (transportType != TRANSPORT_TYPE_WLAN) {
+                changePreferredTransport(TRANSPORT_TYPE_WLAN);
+                return;
+            }
         }
 
         CompletableFuture<Integer> future = getCompletableFuture();
-        if (future != null) future.complete(DOMAIN_PS);
+        if (future != null) future.complete(DOMAIN_NON_3GPP_PS);
     }
 
     /** {@inheritDoc} */
     @Override
     public void onWwanSelected() {
-        mEmergencyStateTracker.onEmergencyTransportChanged(MODE_EMERGENCY_WWAN);
+        mEmergencyStateTracker.onEmergencyTransportChanged(
+                EmergencyStateTracker.EMERGENCY_TYPE_CALL, MODE_EMERGENCY_WWAN);
     }
 
     /** {@inheritDoc} */
@@ -111,8 +116,9 @@ public class EmergencyCallDomainSelectionConnection extends DomainSelectionConne
 
     /** {@inheritDoc} */
     @Override
-    public void onDomainSelected(@NetworkRegistrationInfo.Domain int domain) {
-        if (domain == DOMAIN_PS) {
+    public void onDomainSelected(@NetworkRegistrationInfo.Domain int domain,
+            boolean useEmergencyPdn) {
+        if (domain == DOMAIN_PS && useEmergencyPdn) {
             AccessNetworksManager anm = mPhone.getAccessNetworksManager();
             int transportType = anm.getPreferredTransport(ApnSetting.TYPE_EMERGENCY);
             logi("onDomainSelected curTransportType=" + transportType);
@@ -121,7 +127,7 @@ public class EmergencyCallDomainSelectionConnection extends DomainSelectionConne
                 return;
             }
         }
-        super.onDomainSelected(domain);
+        super.onDomainSelected(domain, useEmergencyPdn);
     }
 
     /**
@@ -164,9 +170,24 @@ public class EmergencyCallDomainSelectionConnection extends DomainSelectionConne
                 + ", current=" + preferredTransport);
         if (preferredTransport == mPreferredTransportType) {
             CompletableFuture<Integer> future = getCompletableFuture();
-            if (future != null) future.complete(DOMAIN_PS);
+            if (future != null) {
+                if (preferredTransport == TRANSPORT_TYPE_WLAN) {
+                    future.complete(DOMAIN_NON_3GPP_PS);
+                } else {
+                    future.complete(DOMAIN_PS);
+                }
+            }
             anm.unregisterForQualifiedNetworksChanged(mHandler);
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void cancelSelection() {
+        logi("cancelSelection");
+        AccessNetworksManager anm = mPhone.getAccessNetworksManager();
+        anm.unregisterForQualifiedNetworksChanged(mHandler);
+        super.cancelSelection();
     }
 
     /**

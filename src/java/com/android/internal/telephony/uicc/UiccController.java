@@ -34,12 +34,12 @@ import android.os.AsyncResult;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
-import android.os.Registrant;
 import android.os.RegistrantList;
 import android.preference.PreferenceManager;
 import android.sysprop.TelephonyProperties;
 import android.telephony.AnomalyReporter;
 import android.telephony.CarrierConfigManager;
+import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.TelephonyManager.SimState;
@@ -48,6 +48,7 @@ import android.telephony.UiccPortInfo;
 import android.telephony.UiccSlotMapping;
 import android.telephony.data.ApnSetting;
 import android.text.TextUtils;
+import android.util.IndentingPrintWriter;
 import android.util.LocalLog;
 import android.util.Log;
 
@@ -67,6 +68,7 @@ import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.euicc.EuiccCard;
+import com.android.internal.telephony.util.ArrayUtils;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.telephony.Rlog;
 
@@ -76,6 +78,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 /**
@@ -805,6 +808,7 @@ public class UiccController extends Handler {
         // DO NOT add any new extras to this broadcast -- it is not protected by any permissions.
         Intent intent = new Intent(TelephonyIntents.ACTION_SIM_STATE_CHANGED);
         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+        intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
         intent.putExtra(PhoneConstants.PHONE_NAME_KEY, "Phone");
         intent.putExtra(IccCardConstants.INTENT_KEY_ICC_STATE, state);
         intent.putExtra(IccCardConstants.INTENT_KEY_LOCKED_REASON, reason);
@@ -1091,6 +1095,14 @@ public class UiccController extends Handler {
             return;
         }
 
+        UiccPort port = card.getUiccPort(status.mSlotPortMapping.mPortIndex);
+        if (port == null) {
+            if (DBG) log("mUiccSlots[" + slotId + "] has no UiccPort with index["
+                    + status.mSlotPortMapping.mPortIndex + "]. Notifying IccChangedRegistrants");
+            mIccChangedRegistrants.notifyRegistrants(new AsyncResult(null, index, null));
+            return;
+        }
+
         String cardString = null;
         boolean isEuicc = mUiccSlots[slotId].isEuicc();
         if (isEuicc) {
@@ -1191,55 +1203,57 @@ public class UiccController extends Handler {
      * Returns the UiccCardInfo of all currently inserted UICCs and embedded eUICCs.
      */
     public ArrayList<UiccCardInfo> getAllUiccCardInfos() {
-        ArrayList<UiccCardInfo> infos = new ArrayList<>();
-        for (int slotIndex = 0; slotIndex < mUiccSlots.length; slotIndex++) {
-            final UiccSlot slot = mUiccSlots[slotIndex];
-            if (slot == null) continue;
-            boolean isEuicc = slot.isEuicc();
-            String eid = null;
-            UiccCard card = slot.getUiccCard();
-            int cardId = UNINITIALIZED_CARD_ID;
-            boolean isRemovable = slot.isRemovable();
+        synchronized (mLock) {
+            ArrayList<UiccCardInfo> infos = new ArrayList<>();
+            for (int slotIndex = 0; slotIndex < mUiccSlots.length; slotIndex++) {
+                final UiccSlot slot = mUiccSlots[slotIndex];
+                if (slot == null) continue;
+                boolean isEuicc = slot.isEuicc();
+                String eid = null;
+                UiccCard card = slot.getUiccCard();
+                int cardId = UNINITIALIZED_CARD_ID;
+                boolean isRemovable = slot.isRemovable();
 
-            // first we try to populate UiccCardInfo using the UiccCard, but if it doesn't exist
-            // (e.g. the slot is for an inactive eUICC) then we try using the UiccSlot.
-            if (card != null) {
-                if (isEuicc) {
-                    eid = ((EuiccCard) card).getEid();
-                    cardId = convertToPublicCardId(eid);
-                } else {
-                    // In case of non Euicc, use default port index to get the IccId.
-                    UiccPort port = card.getUiccPort(TelephonyManager.DEFAULT_PORT_INDEX);
-                    if (port == null) {
-                        AnomalyReporter.reportAnomaly(
-                                UUID.fromString("92885ba7-98bb-490a-ba19-987b1c8b2055"),
-                                "UiccController: Found UiccPort Null object.");
+                // first we try to populate UiccCardInfo using the UiccCard, but if it doesn't exist
+                // (e.g. the slot is for an inactive eUICC) then we try using the UiccSlot.
+                if (card != null) {
+                    if (isEuicc) {
+                        eid = ((EuiccCard) card).getEid();
+                        cardId = convertToPublicCardId(eid);
+                    } else {
+                        // In case of non Euicc, use default port index to get the IccId.
+                        UiccPort port = card.getUiccPort(TelephonyManager.DEFAULT_PORT_INDEX);
+                        if (port == null) {
+                            AnomalyReporter.reportAnomaly(
+                                    UUID.fromString("92885ba7-98bb-490a-ba19-987b1c8b2055"),
+                                    "UiccController: Found UiccPort Null object.");
+                        }
+                        String iccId = (port != null) ? port.getIccId() : null;
+                        cardId = convertToPublicCardId(iccId);
                     }
-                    String iccId = (port != null) ? port.getIccId() : null;
-                    cardId = convertToPublicCardId(iccId);
+                } else {
+                    // This iccid is used for non Euicc only, so use default port index
+                    String iccId = slot.getIccId(TelephonyManager.DEFAULT_PORT_INDEX);
+                    // Fill in the fields we can
+                    if (!isEuicc && !TextUtils.isEmpty(iccId)) {
+                        cardId = convertToPublicCardId(iccId);
+                    }
                 }
-            } else {
-                // This iccid is used for non Euicc only, so use default port index
-                String iccId = slot.getIccId(TelephonyManager.DEFAULT_PORT_INDEX);
-                // Fill in the fields we can
-                if (!isEuicc && !TextUtils.isEmpty(iccId)) {
-                    cardId = convertToPublicCardId(iccId);
-                }
-            }
 
-            List<UiccPortInfo> portInfos = new ArrayList<>();
-            int[] portIndexes = slot.getPortList();
-            for (int portIdx : portIndexes) {
-                String iccId = IccUtils.stripTrailingFs(slot.getIccId(portIdx));
-                portInfos.add(new UiccPortInfo(iccId, portIdx,
-                        slot.getPhoneIdFromPortIndex(portIdx), slot.isPortActive(portIdx)));
+                List<UiccPortInfo> portInfos = new ArrayList<>();
+                int[] portIndexes = slot.getPortList();
+                for (int portIdx : portIndexes) {
+                    String iccId = IccUtils.stripTrailingFs(slot.getIccId(portIdx));
+                    portInfos.add(new UiccPortInfo(iccId, portIdx,
+                            slot.getPhoneIdFromPortIndex(portIdx), slot.isPortActive(portIdx)));
+                }
+                UiccCardInfo info = new UiccCardInfo(
+                        isEuicc, cardId, eid, slotIndex, isRemovable,
+                        slot.isMultipleEnabledProfileSupported(), portInfos);
+                infos.add(info);
             }
-            UiccCardInfo info = new UiccCardInfo(
-                    isEuicc, cardId, eid, slotIndex, isRemovable,
-                    slot.isMultipleEnabledProfileSupported(), portInfos);
-            infos.add(info);
+            return infos;
         }
-        return infos;
     }
 
     /**
@@ -1783,35 +1797,40 @@ public class UiccController extends Handler {
         sLocalLog.log(data);
     }
 
-    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
-        pw.println("UiccController: " + this);
-        pw.println(" mContext=" + mContext);
-        pw.println(" mInstance=" + mInstance);
-        pw.println(" mIccChangedRegistrants: size=" + mIccChangedRegistrants.size());
-        for (int i = 0; i < mIccChangedRegistrants.size(); i++) {
-            pw.println("  mIccChangedRegistrants[" + i + "]="
-                    + ((Registrant)mIccChangedRegistrants.get(i)).getHandler());
+    private List<String> getPrintableCardStrings() {
+        if (!ArrayUtils.isEmpty(mCardStrings)) {
+            return mCardStrings.stream().map(SubscriptionInfo::getPrintableId).collect(
+                    Collectors.toList());
         }
-        pw.println();
-        pw.flush();
-        pw.println(" mIsCdmaSupported=" + isCdmaSupported(mContext));
-        pw.println(" mHasBuiltInEuicc=" + mHasBuiltInEuicc);
-        pw.println(" mHasActiveBuiltInEuicc=" + mHasActiveBuiltInEuicc);
-        pw.println(" mCardStrings=" + Rlog.pii(LOG_TAG, mCardStrings));
-        pw.println(" mDefaultEuiccCardId=" + mDefaultEuiccCardId);
-        pw.println(" mPhoneIdToSlotId=" + Arrays.toString(mPhoneIdToSlotId));
-        pw.println(" mUseRemovableEsimAsDefault=" + mUseRemovableEsimAsDefault);
-        pw.println(" mUiccSlots: size=" + mUiccSlots.length);
+        return mCardStrings;
+    }
+
+    public void dump(FileDescriptor fd, PrintWriter printWriter, String[] args) {
+        IndentingPrintWriter pw = new IndentingPrintWriter(printWriter, "  ");
+        pw.println("mIsCdmaSupported=" + isCdmaSupported(mContext));
+        pw.println("mHasBuiltInEuicc=" + mHasBuiltInEuicc);
+        pw.println("mHasActiveBuiltInEuicc=" + mHasActiveBuiltInEuicc);
+        pw.println("mCardStrings=" + getPrintableCardStrings());
+        pw.println("mDefaultEuiccCardId=" + mDefaultEuiccCardId);
+        pw.println("mPhoneIdToSlotId=" + Arrays.toString(mPhoneIdToSlotId));
+        pw.println("mUseRemovableEsimAsDefault=" + mUseRemovableEsimAsDefault);
+        pw.println("mUiccSlots: size=" + mUiccSlots.length);
+        pw.increaseIndent();
         for (int i = 0; i < mUiccSlots.length; i++) {
             if (mUiccSlots[i] == null) {
-                pw.println("  mUiccSlots[" + i + "]=null");
+                pw.println("mUiccSlots[" + i + "]=null");
             } else {
-                pw.println("  mUiccSlots[" + i + "]=" + mUiccSlots[i]);
+                pw.println("mUiccSlots[" + i + "]:");
+                pw.increaseIndent();
                 mUiccSlots[i].dump(fd, pw, args);
+                pw.decreaseIndent();
             }
         }
-        pw.println(" sLocalLog= ");
-        sLocalLog.dump(fd, pw, args);
+        pw.decreaseIndent();
+        pw.println();
+        pw.println("sLocalLog= ");
+        pw.increaseIndent();
         mPinStorage.dump(fd, pw, args);
+        sLocalLog.dump(fd, pw, args);
     }
 }

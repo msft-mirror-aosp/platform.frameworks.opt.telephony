@@ -54,6 +54,7 @@ import android.telephony.Annotation.NetCapability;
 import android.telephony.Annotation.NetworkType;
 import android.telephony.Annotation.ValidationStatus;
 import android.telephony.AnomalyReporter;
+import android.telephony.CarrierConfigManager;
 import android.telephony.DataFailCause;
 import android.telephony.DataSpecificRegistrationInfo;
 import android.telephony.LinkCapacityEstimate;
@@ -680,6 +681,9 @@ public class DataNetwork extends StateMachine {
      */
     private @NonNull int[] mAdministratorUids = new int[0];
 
+    /** Carrier privileges callback to monitor administrator UID change. */
+    private @Nullable TelephonyManager.CarrierPrivilegesCallback mCarrierPrivilegesCallback;
+
     /**
      * Carrier service package uid. This UID will not change through the life cycle of data network.
      */
@@ -855,6 +859,14 @@ public class DataNetwork extends StateMachine {
          * @param dataNetwork The data network.
          */
         public abstract void onTrackNetworkUnwanted(@NonNull DataNetwork dataNetwork);
+
+        /**
+         * Called when a network request is detached after no longer satisfied.
+         *
+         * @param networkRequest The detached network request.
+         */
+        public abstract void onRetryUnsatisfiedNetworkRequest(
+                @NonNull TelephonyNetworkRequest networkRequest);
     }
 
     /**
@@ -917,8 +929,8 @@ public class DataNetwork extends StateMachine {
         for (int transportType : mAccessNetworksManager.getAvailableTransports()) {
             mCid.put(transportType, INVALID_CID);
         }
-        mTcpBufferSizes = mDataConfigManager.getDefaultTcpConfigString();
         mTelephonyDisplayInfo = mPhone.getDisplayInfoController().getTelephonyDisplayInfo();
+        mTcpBufferSizes = mDataConfigManager.getTcpConfigString(mTelephonyDisplayInfo);
 
         for (TelephonyNetworkRequest networkRequest : networkRequestList) {
             networkRequest.setAttachedNetwork(DataNetwork.this);
@@ -1048,8 +1060,22 @@ public class DataNetwork extends StateMachine {
                 mDataServiceManagers.get(transport)
                         .registerForDataCallListChanged(getHandler(), EVENT_DATA_STATE_CHANGED);
             }
-            mPhone.getCarrierPrivilegesTracker().registerCarrierPrivilegesListener(getHandler(),
-                    EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED, null);
+
+            mCarrierPrivilegesCallback =
+                    (Set<String> privilegedPackageNames, Set<Integer> privilegedUids) -> {
+                        log("onCarrierPrivilegesChanged, Uids=" + privilegedUids.toString());
+                        Message message = obtainMessage(EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED);
+                        AsyncResult.forMessage(
+                                message,
+                                privilegedUids.stream().mapToInt(i -> i).toArray(),
+                                null /* ex */);
+                        sendMessage(message);
+                    };
+            TelephonyManager tm = mPhone.getContext().getSystemService(TelephonyManager.class);
+            if (tm != null) {
+                tm.registerCarrierPrivilegesCallback(
+                        mPhone.getPhoneId(), getHandler()::post, mCarrierPrivilegesCallback);
+            }
 
             mPhone.getServiceStateTracker().registerForCssIndicatorChanged(
                     getHandler(), EVENT_CSS_INDICATOR_CHANGED, null);
@@ -1083,7 +1109,10 @@ public class DataNetwork extends StateMachine {
             mPhone.getCallTracker().unregisterForVoiceCallEnded(getHandler());
 
             mPhone.getServiceStateTracker().unregisterForCssIndicatorChanged(getHandler());
-            mPhone.getCarrierPrivilegesTracker().unregisterCarrierPrivilegesListener(getHandler());
+            TelephonyManager tm = mPhone.getContext().getSystemService(TelephonyManager.class);
+            if (tm != null && mCarrierPrivilegesCallback != null) {
+                tm.unregisterCarrierPrivilegesCallback(mCarrierPrivilegesCallback);
+            }
             for (int transport : mAccessNetworksManager.getAvailableTransports()) {
                 mDataServiceManagers.get(transport)
                         .unregisterForDataCallListChanged(getHandler());
@@ -1117,7 +1146,8 @@ public class DataNetwork extends StateMachine {
                     break;
                 }
                 case EVENT_DETACH_NETWORK_REQUEST: {
-                    onDetachNetworkRequest((TelephonyNetworkRequest) msg.obj);
+                    onDetachNetworkRequest((TelephonyNetworkRequest) msg.obj,
+                            msg.arg1 != 0 /* shouldRetry */);
                     updateNetworkScore();
                     break;
                 }
@@ -1332,17 +1362,6 @@ public class DataNetwork extends StateMachine {
                     }
 
                     int tearDownReason = msg.arg1;
-                    // If the tear down request is from upper layer, for example, IMS service
-                    // releases network request, we don't need to delay. The purpose of the delay
-                    // is to have IMS service have time to perform IMS de-registration, so if this
-                    // request is from IMS service itself, that means IMS service is already aware
-                    // of the tear down. So there is no need to delay in this case.
-                    if (tearDownReason != TEAR_DOWN_REASON_CONNECTIVITY_SERVICE_UNWANTED
-                            && shouldDelayImsTearDown()) {
-                        logl("Delay IMS tear down until call ends. reason="
-                                + tearDownReasonToString(tearDownReason));
-                        break;
-                    }
 
                     removeMessages(EVENT_TEAR_DOWN_NETWORK);
                     removeDeferredMessages(EVENT_TEAR_DOWN_NETWORK);
@@ -1694,11 +1713,20 @@ public class DataNetwork extends StateMachine {
      * Called when detaching the network request from this data network.
      *
      * @param networkRequest Network request to detach.
+     * @param shouldRetry {@code true} if the detached network request should be retried.
      */
-    private void onDetachNetworkRequest(@NonNull TelephonyNetworkRequest networkRequest) {
+    private void onDetachNetworkRequest(@NonNull TelephonyNetworkRequest networkRequest,
+            boolean shouldRetry) {
         mAttachedNetworkRequestList.remove(networkRequest);
         networkRequest.setState(TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED);
         networkRequest.setAttachedNetwork(null);
+
+        if (shouldRetry) {
+            // Inform DataNetworkController that a network request was detached and should be
+            // scheduled to retry.
+            mDataNetworkCallback.invokeFromExecutor(
+                    () -> mDataNetworkCallback.onRetryUnsatisfiedNetworkRequest(networkRequest));
+        }
 
         if (mAttachedNetworkRequestList.isEmpty()) {
             log("All network requests are detached.");
@@ -1720,12 +1748,15 @@ public class DataNetwork extends StateMachine {
      * network.
      *
      * @param networkRequest Network request to detach.
+     * @param shouldRetry {@code true} if the detached network request should be retried.
      */
-    public void detachNetworkRequest(@NonNull TelephonyNetworkRequest networkRequest) {
+    public void detachNetworkRequest(@NonNull TelephonyNetworkRequest networkRequest,
+            boolean shouldRetry) {
         if (getCurrentState() == null || isDisconnected()) {
             return;
         }
-        sendMessage(obtainMessage(EVENT_DETACH_NETWORK_REQUEST, networkRequest));
+        sendMessage(obtainMessage(EVENT_DETACH_NETWORK_REQUEST, shouldRetry ? 1 : 0, 0,
+                networkRequest));
     }
 
     /**
@@ -1776,13 +1807,15 @@ public class DataNetwork extends StateMachine {
 
     /**
      * Remove network requests that can't be satisfied anymore.
+     *
+     * @param shouldRetry {@code true} if the detached network requests should be retried.
      */
-    private void removeUnsatisfiedNetworkRequests() {
+    private void removeUnsatisfiedNetworkRequests(boolean shouldRetry) {
         for (TelephonyNetworkRequest networkRequest : mAttachedNetworkRequestList) {
             if (!networkRequest.canBeSatisfiedBy(mNetworkCapabilities)) {
                 log("removeUnsatisfiedNetworkRequests: " + networkRequest
                         + " can't be satisfied anymore. Will be detached.");
-                detachNetworkRequest(networkRequest);
+                detachNetworkRequest(networkRequest, shouldRetry);
             }
         }
     }
@@ -2084,7 +2117,11 @@ public class DataNetwork extends StateMachine {
                 mNetworkAgent.sendNetworkCapabilities(mNetworkCapabilities);
             }
 
-            removeUnsatisfiedNetworkRequests();
+            // Only retry the request when the network is in connected or handover state. This is to
+            // prevent request is detached during connecting state, and then become a setup/detach
+            // infinite loop.
+            boolean shouldRetry = isConnected() || isHandoverInProgress();
+            removeUnsatisfiedNetworkRequests(shouldRetry);
             mDataNetworkCallback.invokeFromExecutor(() -> mDataNetworkCallback
                     .onNetworkCapabilitiesChanged(DataNetwork.this));
         } else {
@@ -2457,7 +2494,8 @@ public class DataNetwork extends StateMachine {
                 getDataNetworkType(),
                 apnTypeBitmask,
                 protocol,
-                mFailCause);
+                // Log the raw fail cause to avoid large amount of UNKNOWN showing on metrics.
+                response != null ? response.getCause() : mFailCause);
     }
 
     /**
@@ -2575,16 +2613,17 @@ public class DataNetwork extends StateMachine {
                 reason == TEAR_DOWN_REASON_AIRPLANE_MODE_ON ? DataService.REQUEST_REASON_SHUTDOWN
                         : DataService.REQUEST_REASON_NORMAL,
                 obtainMessage(EVENT_DEACTIVATE_DATA_NETWORK_RESPONSE));
-        mDataCallSessionStats.setDeactivateDataCallReason(DataService.REQUEST_REASON_NORMAL);
+        mDataCallSessionStats.setDeactivateDataCallReason(reason);
         mInvokedDataDeactivation = true;
     }
 
     /**
-     * @return {@code true} if this is an IMS network and tear down should be delayed until call
-     * ends on this data network.
+     * @return {@code true} if we shall delay tear down this network because an active voice call is
+     * relying on it and
+     * {@link CarrierConfigManager#KEY_DELAY_IMS_TEAR_DOWN_UNTIL_CALL_END_BOOL} is enabled.
      */
-    public boolean shouldDelayImsTearDown() {
-        return mDataConfigManager.isImsDelayTearDownEnabled()
+    public boolean shouldDelayImsTearDownDueToInCall() {
+        return mDataConfigManager.isImsDelayTearDownUntilVoiceCallEndEnabled()
                 && mNetworkCapabilities != null
                 && mNetworkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_MMTEL)
                 && mPhone.getImsPhone() != null
@@ -2807,9 +2846,12 @@ public class DataNetwork extends StateMachine {
             log("updateMeteredAndCongested: mTempNotMeteredSupported changed to "
                     + mTempNotMeteredSupported);
         }
-        if ((mDataNetworkController.getUnmeteredOverrideNetworkTypes().contains(networkType)
-                || isNetworkTypeUnmetered(networkType)) != mTempNotMetered) {
-            mTempNotMetered = !mTempNotMetered;
+        boolean isTempNotMetered = mDataConfigManager.isNetworkTypeUnmetered(
+                mTelephonyDisplayInfo, mPhone.getServiceState())
+                && (mDataNetworkController.getUnmeteredOverrideNetworkTypes().contains(networkType)
+                || isNetworkTypeUnmetered(networkType));
+        if (isTempNotMetered != mTempNotMetered) {
+            mTempNotMetered = isTempNotMetered;
             changed = true;
             log("updateMeteredAndCongested: mTempNotMetered changed to " + mTempNotMetered);
         }
@@ -3271,7 +3313,7 @@ public class DataNetwork extends StateMachine {
             mDataNetworkCallback.invokeFromExecutor(
                     () -> mDataNetworkCallback.onHandoverFailed(DataNetwork.this,
                             mFailCause, retry, handoverFailureMode));
-            trackHandoverFailure();
+            trackHandoverFailure(response != null ? response.getCause() : mFailCause);
         }
 
         // No matter handover succeeded or not, transit back to connected state.
@@ -3281,13 +3323,15 @@ public class DataNetwork extends StateMachine {
     /**
      * Called when handover failed. Record the source and target RAT{@link NetworkType} and the
      * failure cause {@link android.telephony.DataFailCause}.
+     *
+     * @param cause The fail cause.
      */
-    private void trackHandoverFailure() {
+    private void trackHandoverFailure(int cause) {
         int sourceRat = getDataNetworkType();
         int targetTransport = DataUtils.getTargetTransport(mTransport);
         int targetRat = getDataNetworkType(targetTransport);
 
-        mDataCallSessionStats.onHandoverFailure(mFailCause, sourceRat, targetRat);
+        mDataCallSessionStats.onHandoverFailure(cause, sourceRat, targetRat);
     }
 
     /**
