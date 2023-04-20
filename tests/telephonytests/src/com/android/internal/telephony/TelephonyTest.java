@@ -69,6 +69,7 @@ import android.provider.BlockedNumberContract;
 import android.provider.DeviceConfig;
 import android.provider.Settings;
 import android.provider.Telephony;
+import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellIdentity;
@@ -266,6 +267,7 @@ public abstract class TelephonyTest {
     protected ActivityManager mActivityManager;
     protected ImsCallProfile mImsCallProfile;
     protected TelephonyManager mTelephonyManager;
+    protected TelecomManager mTelecomManager;
     protected TelephonyRegistryManager mTelephonyRegistryManager;
     protected SubscriptionManager mSubscriptionManager;
     protected EuiccManager mEuiccManager;
@@ -523,6 +525,7 @@ public abstract class TelephonyTest {
         doReturn(mUiccProfile).when(mUiccPort).getUiccProfile();
 
         mTelephonyManager = (TelephonyManager) mContext.getSystemService(Context.TELEPHONY_SERVICE);
+        mTelecomManager = mContext.getSystemService(TelecomManager.class);
         mActivityManager = (ActivityManager) mContext.getSystemService(Context.ACTIVITY_SERVICE);
         mTelephonyRegistryManager = (TelephonyRegistryManager) mContext.getSystemService(
             Context.TELEPHONY_REGISTRY_SERVICE);
@@ -694,7 +697,7 @@ public abstract class TelephonyTest {
         doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_LTE).when(mServiceState)
                 .getRilDataRadioTechnology();
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
-                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE))
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false))
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         doReturn(mPhone).when(mCT).getPhone();
         doReturn(mImsEcbm).when(mImsManager).getEcbmInterface();
@@ -716,6 +719,9 @@ public abstract class TelephonyTest {
         mServiceManagerMockedServices.put("package", mMockPackageManager);
         mServiceManagerMockedServices.put("legacy_permission", mMockLegacyPermissionManager);
         logd("mMockLegacyPermissionManager replaced");
+        doReturn(new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                AccessNetworkConstants.TRANSPORT_TYPE_WLAN})
+                .when(mAccessNetworksManager).getAvailableTransports();
         doReturn(new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN})
                 .when(mAccessNetworksManager).getAvailableTransports();
@@ -1137,7 +1143,7 @@ public abstract class TelephonyTest {
      * Remove a TestableLooper from the list of monitored loopers
      * @param looper removed if it does exist
      */
-    public void unmonitorTestableLooper(TestableLooper looper) {
+    private void unmonitorTestableLooper(TestableLooper looper) {
         if (mTestableLoopers.contains(looper)) {
             mTestableLoopers.remove(looper);
         }

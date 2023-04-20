@@ -34,6 +34,7 @@ import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
 import android.telephony.AccessNetworkConstants.RadioAccessNetworkType;
@@ -82,7 +83,6 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.SlidingWindowEventCounter;
-import com.android.internal.telephony.SubscriptionInfoUpdater;
 import com.android.internal.telephony.TelephonyComponentFactory;
 import com.android.internal.telephony.data.AccessNetworksManager.AccessNetworksManagerCallback;
 import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCallback;
@@ -140,6 +140,9 @@ public class DataNetworkController extends Handler {
 
     /** Event for removing a network request. */
     private static final int EVENT_REMOVE_NETWORK_REQUEST = 3;
+
+    /** Event for SRVCC state changed. */
+    private static final int EVENT_SRVCC_STATE_CHANGED = 4;
 
     /** Re-evaluate all unsatisfied network requests. */
     private static final int EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS = 5;
@@ -220,6 +223,13 @@ public class DataNetworkController extends Handler {
     private static final long REEVALUATE_UNSATISFIED_NETWORK_REQUESTS_TAC_CHANGED_DELAY_MILLIS =
             TimeUnit.MILLISECONDS.toMillis(100);
 
+    /**
+     * The delay in milliseconds to re-evaluate unsatisfied network requests after network request
+     * detached.
+     */
+    private static final long REEVALUATE_UNSATISFIED_NETWORK_REQUESTS_AFTER_DETACHED_DELAY_MILLIS =
+            TimeUnit.SECONDS.toMillis(1);
+
     private final Phone mPhone;
     private final String mLogTag;
     private final LocalLog mLocalLog = new LocalLog(128);
@@ -231,6 +241,7 @@ public class DataNetworkController extends Handler {
     private final @NonNull AccessNetworksManager mAccessNetworksManager;
     private final @NonNull DataRetryManager mDataRetryManager;
     private final @NonNull ImsManager mImsManager;
+    private final @NonNull TelecomManager mTelecomManager;
     private final @NonNull NetworkPolicyManager mNetworkPolicyManager;
     private final @NonNull SparseArray<DataServiceManager> mDataServiceManagers =
             new SparseArray<>();
@@ -302,6 +313,9 @@ public class DataNetworkController extends Handler {
 
     /** Indicates if NR advanced is allowed by PCO. */
     private boolean mNrAdvancedCapableByPco = false;
+
+    /** Indicates if srvcc is going on. */
+    private boolean mIsSrvccHandoverInProcess = false;
 
     /**
      * Indicates if the data services are bound. Key if the transport type, and value is the boolean
@@ -780,11 +794,13 @@ public class DataNetworkController extends Handler {
         log("DataNetworkController created.");
 
         mAccessNetworksManager = phone.getAccessNetworksManager();
-        for (int transport : mAccessNetworksManager.getAvailableTransports()) {
-            mDataServiceManagers.put(transport, new DataServiceManager(mPhone, looper,
-                    AccessNetworkConstants.TRANSPORT_TYPE_WWAN));
+        mDataServiceManagers.put(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                new DataServiceManager(mPhone, looper, AccessNetworkConstants.TRANSPORT_TYPE_WWAN));
+        if (!mAccessNetworksManager.isInLegacyMode()) {
+            mDataServiceManagers.put(AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
+                    new DataServiceManager(mPhone, looper,
+                            AccessNetworkConstants.TRANSPORT_TYPE_WLAN));
         }
-
         mDataConfigManager = new DataConfigManager(mPhone, looper);
 
         // ========== Anomaly counters ==========
@@ -900,7 +916,7 @@ public class DataNetworkController extends Handler {
                                             preferredTransport));
                             return;
                         }
-                        if (dataNetwork.shouldDelayImsTearDown()) {
+                        if (dataNetwork.shouldDelayImsTearDownDueToInCall()) {
                             log("onDataNetworkHandoverRetryStopped: Delay IMS tear down until call "
                                     + "ends. " + dataNetwork);
                             return;
@@ -912,6 +928,7 @@ public class DataNetworkController extends Handler {
                 });
         mImsManager = mPhone.getContext().getSystemService(ImsManager.class);
         mNetworkPolicyManager = mPhone.getContext().getSystemService(NetworkPolicyManager.class);
+        mTelecomManager = mPhone.getContext().getSystemService(TelecomManager.class);
 
         // Use the raw one from ServiceStateTracker instead of the combined one from
         // mPhone.getServiceState().
@@ -987,10 +1004,12 @@ public class DataNetworkController extends Handler {
         mDataServiceManagers.get(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
                 .registerForServiceBindingChanged(this, EVENT_DATA_SERVICE_BINDING_CHANGED);
 
-        mPhone.getServiceStateTracker().registerForServiceStateChanged(this,
-                EVENT_SERVICE_STATE_CHANGED, null);
-        mDataServiceManagers.get(AccessNetworkConstants.TRANSPORT_TYPE_WLAN)
-                .registerForServiceBindingChanged(this, EVENT_DATA_SERVICE_BINDING_CHANGED);
+        if (!mAccessNetworksManager.isInLegacyMode()) {
+            mPhone.getServiceStateTracker().registerForServiceStateChanged(this,
+                    EVENT_SERVICE_STATE_CHANGED, null);
+            mDataServiceManagers.get(AccessNetworkConstants.TRANSPORT_TYPE_WLAN)
+                    .registerForServiceBindingChanged(this, EVENT_DATA_SERVICE_BINDING_CHANGED);
+        }
 
         mPhone.getContext().getSystemService(TelephonyRegistryManager.class)
                 .addOnSubscriptionsChangedListener(new OnSubscriptionsChangedListener() {
@@ -1012,6 +1031,7 @@ public class DataNetworkController extends Handler {
                     this, EVENT_VOICE_CALL_ENDED, null);
         }
         mPhone.mCi.registerForSlicingConfigChanged(this, EVENT_SLICE_CONFIG_CHANGED, null);
+        mPhone.mCi.registerForSrvccStateChanged(this, EVENT_SRVCC_STATE_CHANGED, null);
 
         mPhone.getLinkBandwidthEstimator().registerCallback(
                 new LinkBandwidthEstimatorCallback(this::post) {
@@ -1025,6 +1045,7 @@ public class DataNetworkController extends Handler {
 
     @Override
     public void handleMessage(@NonNull Message msg) {
+        AsyncResult ar;
         switch (msg.what) {
             case EVENT_REGISTER_ALL_EVENTS:
                 onRegisterAllEvents();
@@ -1059,6 +1080,12 @@ public class DataNetworkController extends Handler {
                 sendMessage(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
                         DataEvaluationReason.SLICE_CONFIG_CHANGED));
                 break;
+            case EVENT_SRVCC_STATE_CHANGED:
+                ar = (AsyncResult) msg.obj;
+                if (ar.exception == null) {
+                    onSrvccStateChanged((int[]) ar.result);
+                }
+                break;
             case EVENT_PS_RESTRICT_ENABLED:
                 mPsRestricted = true;
                 break;
@@ -1075,7 +1102,7 @@ public class DataNetworkController extends Handler {
                         REEVALUATE_UNSATISFIED_NETWORK_REQUESTS_TAC_CHANGED_DELAY_MILLIS);
                 break;
             case EVENT_DATA_SERVICE_BINDING_CHANGED:
-                AsyncResult ar = (AsyncResult) msg.obj;
+                ar = (AsyncResult) msg.obj;
                 int transport = (int) ar.userObj;
                 boolean bound = (boolean) ar.result;
                 onDataServiceBindingChanged(transport, bound);
@@ -1571,7 +1598,7 @@ public class DataNetworkController extends Handler {
                 evaluation.addDataAllowedReason(DataAllowedReason.MMS_REQUEST);
             }
         } else if (!evaluation.containsHardDisallowedReasons()) {
-            if ((mPhone.isInEmergencyCall() || mPhone.isInEcm())
+            if ((mTelecomManager.isInEmergencyCall() || mPhone.isInEcm())
                     && networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_SUPL)) {
                 // Check if it's SUPL during emergency call.
                 evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_SUPL);
@@ -1737,13 +1764,15 @@ public class DataNetworkController extends Handler {
             }
         }
 
+        boolean isMmtel = false;
         // If the data network is IMS that supports voice call, and has MMTEL request (client
         // specified VoPS is required.)
         if (dataNetwork.getAttachedNetworkRequestList().get(
                 new int[]{NetworkCapabilities.NET_CAPABILITY_MMTEL}) != null) {
             // When reaching here, it means the network supports MMTEL, and also has MMTEL request
             // attached to it.
-            if (!dataNetwork.shouldDelayImsTearDown()) {
+            isMmtel = true;
+            if (!dataNetwork.shouldDelayImsTearDownDueToInCall()) {
                 if (dataNetwork.getTransport() == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
                     NetworkRegistrationInfo nri = mServiceState.getNetworkRegistrationInfo(
                             NetworkRegistrationInfo.DOMAIN_PS,
@@ -1790,7 +1819,9 @@ public class DataNetworkController extends Handler {
             // Sometimes network temporarily OOS and network type becomes UNKNOWN. We don't
             // tear down network in that case.
             if (networkType != TelephonyManager.NETWORK_TYPE_UNKNOWN
-                    && !dataProfile.getApnSetting().canSupportLingeringNetworkType(networkType)) {
+                    && !dataProfile.getApnSetting().canSupportLingeringNetworkType(networkType)
+                    // delay IMS tear down if SRVCC in progress
+                    && !(isMmtel && mIsSrvccHandoverInProcess)) {
                 log("networkType=" + TelephonyManager.getNetworkTypeName(networkType)
                         + ", networkTypeBitmask="
                         + TelephonyManager.convertNetworkTypeBitmaskToString(
@@ -1829,7 +1860,8 @@ public class DataNetworkController extends Handler {
             // If there are reasons we should tear down the network, check if those are hard reasons
             // or soft reasons. In some scenarios, we can make exceptions if they are soft
             // disallowed reasons.
-            if ((mPhone.isInEmergencyCall() || mPhone.isInEcm()) && dataNetwork.isEmergencySupl()) {
+            if ((mTelecomManager.isInEmergencyCall() || mPhone.isInEcm())
+                    && dataNetwork.isEmergencySupl()) {
                 // Check if it's SUPL during emergency call.
                 evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_SUPL);
             } else if (!dataNetwork.getNetworkCapabilities().hasCapability(
@@ -1852,7 +1884,7 @@ public class DataNetworkController extends Handler {
             }
         }
 
-        log("Evaluated " + dataNetwork + ", " + evaluation.toString());
+        log("Evaluated " + dataNetwork + ", " + evaluation);
         return evaluation;
     }
 
@@ -2046,7 +2078,7 @@ public class DataNetworkController extends Handler {
                     return DataNetwork.TEAR_DOWN_REASON_ONLY_ALLOWED_SINGLE_NETWORK;
             }
         }
-        return 0;
+        return DataNetwork.TEAR_DOWN_REASON_NONE;
     }
 
     /**
@@ -2129,7 +2161,8 @@ public class DataNetworkController extends Handler {
         }
 
         if (networkRequest.getAttachedNetwork() != null) {
-            networkRequest.getAttachedNetwork().detachNetworkRequest(networkRequest);
+            networkRequest.getAttachedNetwork().detachNetworkRequest(
+                        networkRequest, false /* shouldRetry */);
         }
         log("onRemoveNetworkRequest: Removed " + networkRequest);
     }
@@ -2327,7 +2360,7 @@ public class DataNetworkController extends Handler {
         log("onCarrierConfigUpdated: config is "
                 + (mDataConfigManager.isConfigCarrierSpecific() ? "" : "not ")
                 + "carrier specific. mSimState="
-                + SubscriptionInfoUpdater.simStateString(mSimState));
+                + TelephonyManager.simStateToString(mSimState));
         updateNetworkRequestsPriority();
         onReevaluateUnsatisfiedNetworkRequests(DataEvaluationReason.DATA_CONFIG_CHANGED);
     }
@@ -2488,9 +2521,9 @@ public class DataNetworkController extends Handler {
 
                     @Override
                     public void onDisconnected(@NonNull DataNetwork dataNetwork,
-                            @DataFailureCause int cause) {
+                            @DataFailureCause int cause, @TearDownReason int tearDownReason) {
                         DataNetworkController.this.onDataNetworkDisconnected(
-                                dataNetwork, cause);
+                                dataNetwork, cause, tearDownReason);
                     }
 
                     @Override
@@ -2525,6 +2558,13 @@ public class DataNetworkController extends Handler {
                     @Override
                     public void onTrackNetworkUnwanted(@NonNull DataNetwork dataNetwork) {
                         DataNetworkController.this.onTrackNetworkUnwanted();
+                    }
+
+                    @Override
+                    public void onRetryUnsatisfiedNetworkRequest(
+                            @NonNull TelephonyNetworkRequest networkRequest) {
+                        DataNetworkController.this.onRetryUnsatisfiedNetworkRequest(
+                                networkRequest);
                     }
                 }
         ));
@@ -2662,11 +2702,22 @@ public class DataNetworkController extends Handler {
         NetworkRequestList requestList = new NetworkRequestList(
                 dataSetupRetryEntry.networkRequestList);
         requestList.removeIf(request -> !mAllNetworkRequestList.contains(request));
+        // Retrieves the newly added unsatisfied NetworkRequest if all NetworkRequests in the
+        // DataSetupRetryEntry have already been removed.
+        if (requestList.isEmpty()) {
+            List<NetworkRequestList> groupRequestLists = getGroupedUnsatisfiedNetworkRequests();
+            dataSetupRetryEntry.networkRequestList.stream()
+                    .filter(request -> groupRequestLists.stream()
+                            .anyMatch(groupRequestList -> groupRequestList
+                                    .get(request.getCapabilities()) != null))
+                    .forEach(requestList::add);
+        }
         if (requestList.isEmpty()) {
             loge("onDataNetworkSetupRetry: Request list is empty. Abort retry.");
             dataSetupRetryEntry.setState(DataRetryEntry.RETRY_STATE_CANCELLED);
             return;
         }
+        log("onDataNetworkSetupRetry: Request list:" + requestList);
         TelephonyNetworkRequest telephonyNetworkRequest = requestList.get(0);
 
         int networkCapability = telephonyNetworkRequest.getApnTypeNetworkCapability();
@@ -2812,11 +2863,13 @@ public class DataNetworkController extends Handler {
      *
      * @param dataNetwork The data network.
      * @param cause The disconnect cause.
+     * @param tearDownReason The reason the network was torn down
      */
     private void onDataNetworkDisconnected(@NonNull DataNetwork dataNetwork,
-            @DataFailureCause int cause) {
+            @DataFailureCause int cause, @TearDownReason int tearDownReason) {
         logl("onDataNetworkDisconnected: " + dataNetwork + ", cause="
-                + DataFailCause.toString(cause) + "(" + cause + ")");
+                + DataFailCause.toString(cause) + "(" + cause + "), tearDownReason="
+                + DataNetwork.tearDownReasonToString(tearDownReason));
         mDataNetworkList.remove(dataNetwork);
         mPendingImsDeregDataNetworks.remove(dataNetwork);
         mDataRetryManager.cancelPendingHandoverRetry(dataNetwork);
@@ -2837,11 +2890,13 @@ public class DataNetworkController extends Handler {
                     () -> callback.onAnyDataNetworkExistingChanged(mAnyDataNetworkExisting)));
         }
 
+        // Immediately reestablish on target transport if network was torn down due to policy
+        long delayMillis = tearDownReason == DataNetwork.TEAR_DOWN_REASON_HANDOVER_NOT_ALLOWED
+                ? 0 : mDataConfigManager.getRetrySetupAfterDisconnectMillis();
         // Sometimes network was unsolicitedly reported lost for reasons. We should re-evaluate
         // and see if data network can be re-established again.
         sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
-                DataEvaluationReason.RETRY_AFTER_DISCONNECTED),
-                mDataConfigManager.getRetrySetupAfterDisconnectMillis());
+                        DataEvaluationReason.RETRY_AFTER_DISCONNECTED), delayMillis);
     }
 
     /**
@@ -2939,6 +2994,20 @@ public class DataNetworkController extends Handler {
     }
 
     /**
+     * Called when a network request is detached from the data network and should be retried.
+     *
+     * @param networkRequest The detached network request.
+     */
+    private void onRetryUnsatisfiedNetworkRequest(
+            @NonNull TelephonyNetworkRequest networkRequest) {
+        if (!mAllNetworkRequestList.contains(networkRequest)) return;
+
+        sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
+                        DataEvaluationReason.UNSATISFIED_REQUEST_DETACHED),
+                REEVALUATE_UNSATISFIED_NETWORK_REQUESTS_AFTER_DETACHED_DELAY_MILLIS);
+    }
+
+    /**
      * Called when data stall occurs and needed to tear down / setup a new data network for
      * internet. This event is from {@link DataStallRecoveryManager}.
      */
@@ -2951,6 +3020,25 @@ public class DataNetworkController extends Handler {
                 .filter(DataNetwork::isInternetSupported)
                 .forEach(dataNetwork -> dataNetwork.tearDown(
                         DataNetwork.TEAR_DOWN_REASON_DATA_STALL));
+    }
+
+    /**
+     * Called when SRVCC handover state changes. To preserve the voice call, we don't tear down the
+     * IMS network while handover in process. We reevaluate the network when handover ends.
+     *
+     * @param state The handover state of SRVCC
+     */
+    private void onSrvccStateChanged(@NonNull int[] state) {
+        if (state != null && state.length != 0) {
+            log("onSrvccStateChanged: " + TelephonyManager.srvccStateToString(state[0]));
+            mIsSrvccHandoverInProcess = state[0] == TelephonyManager.SRVCC_STATE_HANDOVER_STARTED;
+            // Reevaluate networks if SRVCC ends.
+            if (!mIsSrvccHandoverInProcess
+                    && !hasMessages(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS)) {
+                sendMessage(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
+                        DataEvaluationReason.SRVCC_STATE_CHANGED));
+            }
+        }
     }
 
     /**
@@ -2985,7 +3073,7 @@ public class DataNetworkController extends Handler {
      * @param simState SIM state. (Note this is mixed with card state and application state.)
      */
     private void onSimStateChanged(@SimState int simState) {
-        log("onSimStateChanged: state=" + SubscriptionInfoUpdater.simStateString(simState));
+        log("onSimStateChanged: state=" + TelephonyManager.simStateToString(simState));
         if (mSimState != simState) {
             mSimState = simState;
             if (simState == TelephonyManager.SIM_STATE_ABSENT) {
@@ -3705,7 +3793,8 @@ public class DataNetworkController extends Handler {
         pw.println("mImsDataNetworkState="
                 + TelephonyUtils.dataStateToString(mImsDataNetworkState));
         pw.println("mDataServiceBound=" + mDataServiceBound);
-        pw.println("mSimState=" + SubscriptionInfoUpdater.simStateString(mSimState));
+        pw.println("mIsSrvccHandoverInProcess=" + mIsSrvccHandoverInProcess);
+        pw.println("mSimState=" + TelephonyManager.simStateToString(mSimState));
         pw.println("mDataNetworkControllerCallbacks=" + mDataNetworkControllerCallbacks);
         pw.println("Subscription plans:");
         pw.increaseIndent();

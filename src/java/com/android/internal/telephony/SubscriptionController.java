@@ -77,6 +77,7 @@ import com.android.ims.ImsManager;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccController;
@@ -329,8 +330,11 @@ public class SubscriptionController extends ISub.Stub {
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static SubscriptionController getInstance() {
+        if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
+            throw new RuntimeException("getInstance should not be called.");
+        }
         if (sInstance == null) {
-           Log.wtf(LOG_TAG, "getInstance null");
+            Log.wtf(LOG_TAG, "getInstance null");
         }
 
         return sInstance;
@@ -397,6 +401,8 @@ public class SubscriptionController extends ISub.Stub {
                         }
                     }
                 });
+
+        SubscriptionManager.invalidateSubscriptionManagerServiceEnabledCaches();
 
         if (DBG) logdl("[SubscriptionController] init by Context");
     }
@@ -3213,6 +3219,7 @@ public class SubscriptionController extends ISub.Stub {
             case SubscriptionManager.NR_ADVANCED_CALLING_ENABLED:
             case SubscriptionManager.USAGE_SETTING:
             case SubscriptionManager.USER_HANDLE:
+            case SubscriptionManager.SATELLITE_ENABLED:
                 value.put(propKey, Integer.parseInt(propValue));
                 break;
             case SubscriptionManager.ALLOWED_NETWORK_TYPES:
@@ -3310,6 +3317,7 @@ public class SubscriptionController extends ISub.Stub {
                         case SimInfo.COLUMN_PHONE_NUMBER_SOURCE_IMS:
                         case SubscriptionManager.USAGE_SETTING:
                         case SubscriptionManager.USER_HANDLE:
+                        case SubscriptionManager.SATELLITE_ENABLED:
                             resultValue = cursor.getString(0);
                             break;
                         default:
@@ -4838,6 +4846,109 @@ public class SubscriptionController extends ISub.Stub {
         } finally {
             Binder.restoreCallingIdentity(token);
         }
+    }
+
+    /**
+     * Check if subscription and user are associated with each other.
+     *
+     * @param subscriptionId the subId of the subscription
+     * @param userHandle user handle of the user
+     * @return {@code true} if subscription is associated with user
+     * {code true} if there are no subscriptions on device
+     * else {@code false} if subscription is not associated with user.
+     *
+     * @throws SecurityException if the caller doesn't have permissions required.
+     * @throws IllegalStateException if subscription service is not available.
+     *
+     */
+    @Override
+    public boolean isSubscriptionAssociatedWithUser(int subscriptionId,
+            @NonNull UserHandle userHandle) {
+        enforceManageSubscriptionUserAssociation("isSubscriptionAssociatedWithUser");
+
+        long token = Binder.clearCallingIdentity();
+        try {
+            // Return true if there are no subscriptions on the device.
+            List<SubscriptionInfo> subInfoList = getAllSubInfoList(
+                    mContext.getOpPackageName(), mContext.getAttributionTag());
+            if (subInfoList == null || subInfoList.isEmpty()) {
+                return true;
+            }
+
+            // Get list of subscriptions associated with this user.
+            List<SubscriptionInfo> associatedSubscriptionsList =
+                    getSubscriptionInfoListAssociatedWithUser(userHandle);
+            if (associatedSubscriptionsList.isEmpty()) {
+                return false;
+            }
+
+            // Return true if required subscription is present in associated subscriptions list.
+            for (SubscriptionInfo subInfo: associatedSubscriptionsList) {
+                if (subInfo.getSubscriptionId() == subscriptionId){
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    /**
+     * Get list of subscriptions associated with user.
+     *
+     * If user handle is associated with some subscriptions, return subscriptionsAssociatedWithUser
+     * else return all the subscriptions which are not associated with any user.
+     *
+     * @param userHandle user handle of the user
+     * @return list of subscriptionInfo associated with the user.
+     *
+     * @throws SecurityException if the caller doesn't have permissions required.
+     * @throws IllegalStateException if subscription service is not available.
+     *
+     */
+    @Override
+    public @NonNull List<SubscriptionInfo> getSubscriptionInfoListAssociatedWithUser(
+            @NonNull UserHandle userHandle) {
+        enforceManageSubscriptionUserAssociation("getActiveSubscriptionInfoListAssociatedWithUser");
+
+        long token = Binder.clearCallingIdentity();
+        try {
+            List<SubscriptionInfo> subInfoList =  getAllSubInfoList(
+                    mContext.getOpPackageName(), mContext.getAttributionTag());
+            if (subInfoList == null || subInfoList.isEmpty()) {
+                return new ArrayList<>();
+            }
+
+            List<SubscriptionInfo> subscriptionsAssociatedWithUser = new ArrayList<>();
+            List<SubscriptionInfo> subscriptionsWithNoAssociation = new ArrayList<>();
+            for (SubscriptionInfo subInfo : subInfoList) {
+                int subId = subInfo.getSubscriptionId();
+                UserHandle subIdUserHandle = getSubscriptionUserHandle(subId);
+                if (userHandle.equals(subIdUserHandle)) {
+                    // Store subscriptions whose user handle matches with required user handle.
+                    subscriptionsAssociatedWithUser.add(subInfo);
+                } else if (subIdUserHandle == null) {
+                    // Store subscriptions whose user handle is set to null.
+                    subscriptionsWithNoAssociation.add(subInfo);
+                }
+            }
+
+            return subscriptionsAssociatedWithUser.isEmpty() ?
+                    subscriptionsWithNoAssociation : subscriptionsAssociatedWithUser;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    /**
+     * @return {@code true} if using {@link SubscriptionManagerService} instead of
+     * {@link SubscriptionController}.
+     */
+    //TODO: Removed before U AOSP public release.
+    @Override
+    public boolean isSubscriptionManagerServiceEnabled() {
+        return false;
     }
 
     /**
