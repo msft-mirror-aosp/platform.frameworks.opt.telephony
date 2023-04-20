@@ -37,6 +37,7 @@ import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.WorkSource;
 import android.preference.PreferenceManager;
+import android.provider.DeviceConfig;
 import android.sysprop.TelephonyProperties;
 import android.telecom.VideoProfile;
 import android.telephony.AccessNetworkConstants;
@@ -82,6 +83,7 @@ import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneCall;
 import com.android.internal.telephony.metrics.SmsStats;
 import com.android.internal.telephony.metrics.VoiceCallSessionStats;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.test.SimulatedRadioControl;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppType;
@@ -437,6 +439,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     protected final Context mContext;
 
+    protected SubscriptionManagerService mSubscriptionManagerService;
+
     /**
      * PhoneNotifier is an abstraction for all system-wide
      * state change notification. DefaultPhoneNotifier is
@@ -599,6 +603,15 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         // Initialize SMS stats
         mSmsStats = new SmsStats(this);
 
+        // This is a temp flag which will be removed before U AOSP public release.
+        mIsSubscriptionManagerServiceEnabled = mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_using_subscription_manager_service)
+                || DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_TELEPHONY,
+                "enable_subscription_manager_service", false);
+        if (isSubscriptionManagerServiceEnabled()) {
+            mSubscriptionManagerService = SubscriptionManagerService.getInstance();
+        }
+
         if (getPhoneType() == PhoneConstants.PHONE_TYPE_IMS) {
             return;
         }
@@ -606,9 +619,6 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         if (TelephonyUtils.IS_DEBUGGABLE) {
             mTelephonyTester = new TelephonyTester(this);
         }
-
-        mIsSubscriptionManagerServiceEnabled = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_using_subscription_manager_service);
 
         // Initialize device storage and outgoing SMS usage monitors for SMSDispatchers.
         mTelephonyComponentFactory = telephonyComponentFactory;
@@ -2373,17 +2383,29 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      * Loads the allowed network type from subscription database.
      */
     public void loadAllowedNetworksFromSubscriptionDatabase() {
-        // Try to load ALLOWED_NETWORK_TYPES from SIMINFO.
-        if (SubscriptionController.getInstance() == null) {
-            return;
+        String result = null;
+        if (isSubscriptionManagerServiceEnabled()) {
+            SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                    .getSubscriptionInfoInternal(getSubId());
+            if (subInfo != null) {
+                result = subInfo.getAllowedNetworkTypesForReasons();
+            }
+        } else {
+            // Try to load ALLOWED_NETWORK_TYPES from SIMINFO.
+            if (SubscriptionController.getInstance() == null) {
+                return;
+            }
+
+            result = SubscriptionController.getInstance().getSubscriptionProperty(
+                    getSubId(),
+                    SubscriptionManager.ALLOWED_NETWORK_TYPES);
         }
 
-        String result = SubscriptionController.getInstance().getSubscriptionProperty(
-                getSubId(),
-                SubscriptionManager.ALLOWED_NETWORK_TYPES);
         // After fw load network type from DB, do unlock if subId is valid.
-        mIsAllowedNetworkTypesLoadedFromDb = SubscriptionManager.isValidSubscriptionId(getSubId());
-        if (result == null) {
+        mIsAllowedNetworkTypesLoadedFromDb = SubscriptionManager.isValidSubscriptionId(
+                getSubId());
+
+        if (TextUtils.isEmpty(result)) {
             return;
         }
 
@@ -4051,6 +4073,9 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      */
     @UnsupportedAppUsage
     public int getSubId() {
+        if (isSubscriptionManagerServiceEnabled()) {
+            return mSubscriptionManagerService.getSubId(mPhoneId);
+        }
         if (SubscriptionController.getInstance() == null) {
             // TODO b/78359408 getInstance sometimes returns null in Treehugger tests, which causes
             // flakiness. Even though we haven't seen this crash in the wild we should keep this
@@ -4058,7 +4083,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             Rlog.e(LOG_TAG, "SubscriptionController.getInstance = null! Returning default subId");
             return SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
         }
-        return SubscriptionController.getInstance().getSubIdUsingPhoneId(mPhoneId);
+        return SubscriptionController.getInstance().getSubId(mPhoneId);
     }
 
     /**
@@ -4372,7 +4397,16 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     }
 
     private int getResolvedUsageSetting(int subId) {
-        SubscriptionInfo subInfo = SubscriptionController.getInstance().getSubscriptionInfo(subId);
+        SubscriptionInfo subInfo = null;
+        if (isSubscriptionManagerServiceEnabled()) {
+            SubscriptionInfoInternal subInfoInternal = mSubscriptionManagerService
+                    .getSubscriptionInfoInternal(subId);
+            if (subInfoInternal != null) {
+                subInfo = subInfoInternal.toSubscriptionInfo();
+            }
+        } else {
+            subInfo = SubscriptionController.getInstance().getSubscriptionInfo(subId);
+        }
 
         if (subInfo == null
                 || subInfo.getUsageSetting() == SubscriptionManager.USAGE_SETTING_UNKNOWN) {

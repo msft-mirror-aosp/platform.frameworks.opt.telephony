@@ -41,6 +41,8 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.ServiceStateTracker;
 import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.nano.PersistAtomsProto.DataCallSession;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.telephony.Rlog;
 
 import java.util.Arrays;
@@ -79,14 +81,14 @@ public class DataCallSessionStats {
      * @param currentRat The data call current Network Type
      * @param apnTypeBitmask APN type bitmask
      * @param protocol Data connection protocol
-     * @param failureCause failure cause as per android.telephony.DataFailCause
+     * @param failureCause The raw failure cause from modem/IWLAN data service.
      */
     public synchronized void onSetupDataCallResponse(
             @Nullable DataCallResponse response,
             @NetworkType int currentRat,
             @ApnType int apnTypeBitmask,
             @ProtocolType int protocol,
-            @DataFailureCause int failureCause) {
+            int failureCause) {
         // there should've been a call to onSetupDataCall to initiate the atom,
         // so this method is being called out of order -> no metric will be logged
         if (mDataCallSession == null) {
@@ -323,12 +325,17 @@ public class DataCallSessionStats {
         ServiceStateTracker serviceStateTracker = mPhone.getServiceStateTracker();
         ServiceState serviceState =
                 serviceStateTracker != null ? serviceStateTracker.getServiceState() : null;
-        return serviceState != null ? serviceState.getRoaming() : false;
+        return serviceState != null && serviceState.getRoaming();
     }
 
     private boolean getIsOpportunistic() {
+        if (mPhone.isSubscriptionManagerServiceEnabled()) {
+            SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
+                    .getSubscriptionInfoInternal(mPhone.getSubId());
+            return subInfo != null && subInfo.isOpportunistic();
+        }
         SubscriptionController subController = SubscriptionController.getInstance();
-        return subController != null ? subController.isOpportunistic(mPhone.getSubId()) : false;
+        return subController != null && subController.isOpportunistic(mPhone.getSubId());
     }
 
     private boolean getIsOos() {
@@ -336,8 +343,7 @@ public class DataCallSessionStats {
         ServiceState serviceState =
                 serviceStateTracker != null ? serviceStateTracker.getServiceState() : null;
         return serviceState != null
-                ? serviceState.getDataRegistrationState() == ServiceState.STATE_OUT_OF_SERVICE
-                : false;
+                && serviceState.getDataRegistrationState() == ServiceState.STATE_OUT_OF_SERVICE;
     }
 
     private void logi(String format, Object... args) {
