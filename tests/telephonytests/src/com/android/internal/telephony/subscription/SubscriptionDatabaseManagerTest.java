@@ -63,10 +63,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class SubscriptionDatabaseManagerTest extends TelephonyTest {
+
+    static final String FAKE_DEFAULT_CARD_NAME = "CARD %d";
     static final String FAKE_ICCID1 = "123456";
     static final String FAKE_ICCID2 = "456789";
     static final String FAKE_PHONE_NUMBER1 = "6502530000";
@@ -114,6 +118,9 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
     static final int FAKE_USER_ID1 = 10;
     static final int FAKE_USER_ID2 = 11;
 
+    static final String FAKE_MAC_ADDRESS1 = "DC:E5:5B:38:7D:40";
+    static final String FAKE_MAC_ADDRESS2 = "DC:B5:4F:47:F3:4C";
+
     static final SubscriptionInfoInternal FAKE_SUBSCRIPTION_INFO1 =
             new SubscriptionInfoInternal.Builder()
                     .setId(1)
@@ -135,6 +142,18 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
                     .setNativeAccessRules(FAKE_NATIVE_ACCESS_RULES1)
                     .setCarrierConfigAccessRules(FAKE_CARRIER_CONFIG_ACCESS_RULES1)
                     .setRemovableEmbedded(0)
+                    .setCellBroadcastExtremeThreatAlertEnabled(1)
+                    .setCellBroadcastSevereThreatAlertEnabled(1)
+                    .setCellBroadcastAmberAlertEnabled(1)
+                    .setCellBroadcastEmergencyAlertEnabled(1)
+                    .setCellBroadcastAlertSoundDuration(4)
+                    .setCellBroadcastAlertReminderInterval(1)
+                    .setCellBroadcastAlertVibrationEnabled(1)
+                    .setCellBroadcastAlertSpeechEnabled(1)
+                    .setCellBroadcastEtwsTestAlertEnabled(1)
+                    .setCellBroadcastAreaInfoMessageEnabled(1)
+                    .setCellBroadcastTestAlertEnabled(1)
+                    .setCellBroadcastOptOutDialogEnabled(1)
                     .setEnhanced4GModeEnabled(1)
                     .setVideoTelephonyEnabled(1)
                     .setWifiCallingEnabled(1)
@@ -191,6 +210,18 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
                     .setNativeAccessRules(FAKE_NATIVE_ACCESS_RULES2)
                     .setCarrierConfigAccessRules(FAKE_CARRIER_CONFIG_ACCESS_RULES2)
                     .setRemovableEmbedded(1)
+                    .setCellBroadcastExtremeThreatAlertEnabled(0)
+                    .setCellBroadcastSevereThreatAlertEnabled(0)
+                    .setCellBroadcastAmberAlertEnabled(0)
+                    .setCellBroadcastEmergencyAlertEnabled(0)
+                    .setCellBroadcastAlertSoundDuration(0)
+                    .setCellBroadcastAlertReminderInterval(0)
+                    .setCellBroadcastAlertVibrationEnabled(0)
+                    .setCellBroadcastAlertSpeechEnabled(0)
+                    .setCellBroadcastEtwsTestAlertEnabled(0)
+                    .setCellBroadcastAreaInfoMessageEnabled(0)
+                    .setCellBroadcastTestAlertEnabled(0)
+                    .setCellBroadcastOptOutDialogEnabled(0)
                     .setEnhanced4GModeEnabled(0)
                     .setVideoTelephonyEnabled(0)
                     .setWifiCallingEnabled(0)
@@ -889,6 +920,294 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
     }
 
     @Test
+    public void testUpdateCellBroadcastExtremeThreatAlertEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastExtremeThreatAlertEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastExtremeThreatAlertEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastExtremeThreatAlertEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_EXTREME_THREAT_ALERT))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_EXTREME_THREAT_ALERT, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastExtremeThreatAlertEnabled()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastSevereThreatAlertEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastSevereThreatAlertEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastSevereThreatAlertEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastSevereThreatAlertEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_SEVERE_THREAT_ALERT))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_SEVERE_THREAT_ALERT, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastSevereThreatAlertEnabled()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastAmberAlertEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastAmberAlertEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastAmberAlertEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastAmberAlertEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_AMBER_ALERT))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_AMBER_ALERT, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastAmberAlertEnabled()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastEmergencyAlertEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastEmergencyAlertEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastEmergencyAlertEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastEmergencyAlertEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_EMERGENCY_ALERT))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_EMERGENCY_ALERT, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastEmergencyAlertEnabled()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastAlertSoundDuration() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastAlertSoundDuration(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastAlertSoundDuration(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastAlertSoundDuration(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_ALERT_SOUND_DURATION))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_ALERT_SOUND_DURATION, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastAlertSoundDuration()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastAlertReminderInterval() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastAlertReminderInterval(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastAlertReminderInterval(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastAlertReminderInterval(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_ALERT_REMINDER_INTERVAL))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_ALERT_REMINDER_INTERVAL, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastAlertReminderInterval()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastAlertVibrationEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastAlertVibrationEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastAlertVibrationEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastAlertVibrationEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_ALERT_VIBRATE))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_ALERT_VIBRATE, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastAlertVibrationEnabled()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastAlertSpeechEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastAlertSpeechEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastAlertSpeechEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastAlertSpeechEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_ALERT_SPEECH))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_ALERT_SPEECH, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastAlertSpeechEnabled()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastEtwsTestAlertEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastEtwsTestAlertEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastEtwsTestAlertEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastEtwsTestAlertEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_ETWS_TEST_ALERT))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_ETWS_TEST_ALERT, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastEtwsTestAlertEnabled()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastAreaInfoMessageEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastAreaInfoMessageEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastAreaInfoMessageEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastAreaInfoMessageEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_CHANNEL_50_ALERT))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_CHANNEL_50_ALERT, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastAreaInfoMessageEnabled()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastTestAlertEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastTestAlertEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastTestAlertEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastTestAlertEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_CMAS_TEST_ALERT))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_CMAS_TEST_ALERT, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastTestAlertEnabled()).isEqualTo(1);
+    }
+
+    @Test
+    public void testUpdateCellBroadcastOptOutDialogEnabled() throws Exception {
+        // exception is expected if there is nothing in the database.
+        assertThrows(IllegalArgumentException.class,
+                () -> mDatabaseManagerUT.setCellBroadcastOptOutDialogEnabled(1, 1));
+
+        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
+        mDatabaseManagerUT.setCellBroadcastOptOutDialogEnabled(
+                subInfo.getSubscriptionId(), 0);
+        processAllMessages();
+
+        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
+                .setCellBroadcastOptOutDialogEnabled(0).build();
+        verifySubscription(subInfo);
+        verify(mSubscriptionDatabaseManagerCallback, times(2)).onSubscriptionChanged(eq(1));
+
+        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
+                1, SimInfo.COLUMN_CB_OPT_OUT_DIALOG))
+                .isEqualTo(0);
+        mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CB_OPT_OUT_DIALOG, 1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .getCellBroadcastOptOutDialogEnabled()).isEqualTo(1);
+    }
+
+    @Test
     public void testUpdateEnhanced4GModeEnabled() throws Exception {
         // exception is expected if there is nothing in the database.
         assertThrows(IllegalArgumentException.class,
@@ -907,6 +1226,8 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
         mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_ENHANCED_4G_MODE_ENABLED, 1);
         assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1).getEnhanced4GModeEnabled())
                 .isEqualTo(1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1).isEnhanced4GModeEnabled())
+                .isTrue();
     }
 
     @Test
@@ -928,6 +1249,8 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
         mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_VT_IMS_ENABLED, 1);
         assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1).getVideoTelephonyEnabled())
                 .isEqualTo(1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1).isVideoTelephonyEnabled())
+                .isTrue();
     }
 
     @Test
@@ -1044,6 +1367,8 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
         mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_VOIMS_OPT_IN_STATUS, 1);
         assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
                 .getVoImsOptInEnabled()).isEqualTo(1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1).isVoImsOptInEnabled())
+                .isTrue();
     }
 
 
@@ -1294,6 +1619,8 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
         mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_IMS_RCS_UCE_ENABLED, 1);
         assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1).getRcsUceEnabled())
                 .isEqualTo(1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1).isRcsUceEnabled())
+                .isTrue();
     }
 
     @Test
@@ -1316,6 +1643,8 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
         mDatabaseManagerUT.setSubscriptionProperty(1, SimInfo.COLUMN_CROSS_SIM_CALLING_ENABLED, 1);
         assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1).getCrossSimCallingEnabled())
                 .isEqualTo(1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1).isCrossSimCallingEnabled())
+                .isTrue();
     }
 
     @Test
@@ -1417,6 +1746,8 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
                 1, SimInfo.COLUMN_NR_ADVANCED_CALLING_ENABLED, 1);
         assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
                 .getNrAdvancedCallingEnabled()).isEqualTo(1);
+        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(1)
+                .isNrAdvancedCallingEnabled()).isTrue();
     }
 
     @Test
@@ -1669,5 +2000,39 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
         assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(2)).isNull();
         assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(3)).isNull();
         verify(mSubscriptionDatabaseManagerCallback).onSubscriptionChanged(eq(3));
+    }
+
+    @Test
+    public void testCallback() {
+        CountDownLatch latch = new CountDownLatch(2);
+        Executor executor = Runnable::run;
+        SubscriptionDatabaseManagerCallback callback =
+                new SubscriptionDatabaseManagerCallback(executor) {
+                    @Override
+                    public void onInitialized() {
+                        latch.countDown();
+                        logd("onInitialized");
+                    }
+
+                    @Override
+                    public void onSubscriptionChanged(int subId) {
+                        latch.countDown();
+                        logd("onSubscriptionChanged");
+                    }
+                };
+        assertThat(callback.getExecutor()).isEqualTo(executor);
+        mDatabaseManagerUT = new SubscriptionDatabaseManager(mContext, Looper.myLooper(), callback);
+        processAllMessages();
+
+        assertThat(latch.getCount()).isEqualTo(1);
+
+        mDatabaseManagerUT.insertSubscriptionInfo(
+                new SubscriptionInfoInternal.Builder()
+                        .setId(SubscriptionManager.INVALID_SUBSCRIPTION_ID)
+                        .setIccId(FAKE_ICCID1)
+                        .setSimSlotIndex(0)
+                        .build());
+        processAllMessages();
+        assertThat(latch.getCount()).isEqualTo(0);
     }
 }

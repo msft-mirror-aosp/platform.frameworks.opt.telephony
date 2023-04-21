@@ -106,6 +106,7 @@ import com.android.internal.telephony.data.DataNetworkController;
 import com.android.internal.telephony.data.LinkBandwidthEstimator;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
+import com.android.internal.telephony.emergency.EmergencyStateTracker;
 import com.android.internal.telephony.gsm.GsmMmiCode;
 import com.android.internal.telephony.gsm.SsData;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
@@ -249,7 +250,7 @@ public class GsmCdmaPhone extends Phone {
 
     @VisibleForTesting
     public CellBroadcastConfigTracker mCellBroadcastConfigTracker =
-            CellBroadcastConfigTracker.make(this, null);
+            CellBroadcastConfigTracker.make(this, null, true);
 
     private boolean mIsNullCipherAndIntegritySupported = false;
 
@@ -368,18 +369,13 @@ public class GsmCdmaPhone extends Phone {
         mSST.registerForVoiceRegStateOrRatChanged(this, EVENT_VRS_OR_RAT_CHANGED, null);
         mSST.getServiceStateStats().registerDataNetworkControllerCallback();
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            mSubscriptionManagerService.registerCallback(new SubscriptionManagerServiceCallback(
-                    this::post) {
-                @Override
-                public void onUiccApplicationsEnabled(int subId) {
-                    reapplyUiccAppsEnablementIfNeeded(ENABLE_UICC_APPS_MAX_RETRIES);
-                }
-            });
-        } else {
-            SubscriptionController.getInstance().registerForUiccAppsEnabled(this,
-                    EVENT_UICC_APPS_ENABLEMENT_SETTING_CHANGED, null, false);
-        }
+        mSubscriptionManagerService.registerCallback(new SubscriptionManagerServiceCallback(
+                this::post) {
+            @Override
+            public void onUiccApplicationsEnabledChanged(int subId) {
+                reapplyUiccAppsEnablementIfNeeded(ENABLE_UICC_APPS_MAX_RETRIES);
+            }
+        });
 
         mLinkBandwidthEstimator = mTelephonyComponentFactory
                 .inject(LinkBandwidthEstimator.class.getName())
@@ -492,9 +488,7 @@ public class GsmCdmaPhone extends Phone {
         mCDM = new CarrierKeyDownloadManager(this);
         mCIM = new CarrierInfoManager();
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            initializeCarrierApps();
-        }
+        initializeCarrierApps();
     }
 
     private void initRatSpecific(int precisePhoneType) {
@@ -517,8 +511,12 @@ public class GsmCdmaPhone extends Phone {
             // This is needed to handle phone process crashes
             mIsPhoneInEcmState = getInEcmMode();
             if (mIsPhoneInEcmState) {
-                // Send a message which will invoke handleExitEmergencyCallbackMode
-                mCi.exitEmergencyCallbackMode(null);
+                if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+                    EmergencyStateTracker.getInstance().exitEmergencyCallbackMode();
+                } else {
+                    // Send a message which will invoke handleExitEmergencyCallbackMode
+                    mCi.exitEmergencyCallbackMode(null);
+                }
             }
 
             mCi.setPhoneType(PhoneConstants.PHONE_TYPE_CDMA);
@@ -541,11 +539,7 @@ public class GsmCdmaPhone extends Phone {
                 logd("update icc_operator_numeric=" + operatorNumeric);
                 tm.setSimOperatorNumericForPhone(mPhoneId, operatorNumeric);
 
-                if (isSubscriptionManagerServiceEnabled()) {
-                    mSubscriptionManagerService.setMccMnc(getSubId(), operatorNumeric);
-                } else {
-                    SubscriptionController.getInstance().setMccMnc(operatorNumeric, getSubId());
-                }
+                mSubscriptionManagerService.setMccMnc(getSubId(), operatorNumeric);
 
                 // Sets iso country property by retrieving from build-time system property
                 String iso = "";
@@ -557,11 +551,7 @@ public class GsmCdmaPhone extends Phone {
 
                 logd("init: set 'gsm.sim.operator.iso-country' to iso=" + iso);
                 tm.setSimCountryIsoForPhone(mPhoneId, iso);
-                if (isSubscriptionManagerServiceEnabled()) {
-                    mSubscriptionManagerService.setCountryIso(getSubId(), iso);
-                } else {
-                    SubscriptionController.getInstance().setCountryIso(iso, getSubId());
-                }
+                mSubscriptionManagerService.setCountryIso(getSubId(), iso);
 
                 // Updates MCC MNC device configuration information
                 logd("update mccmnc=" + operatorNumeric);
@@ -3135,12 +3125,16 @@ public class GsmCdmaPhone extends Phone {
                 logd("Event EVENT_MODEM_RESET Received" + " isInEcm = " + isInEcm()
                         + " isPhoneTypeGsm = " + isPhoneTypeGsm() + " mImsPhone = " + mImsPhone);
                 if (isInEcm()) {
-                    if (isPhoneTypeGsm()) {
-                        if (mImsPhone != null) {
-                            mImsPhone.handleExitEmergencyCallbackMode();
-                        }
+                    if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+                        EmergencyStateTracker.getInstance().exitEmergencyCallbackMode();
                     } else {
-                        handleExitEmergencyCallbackMode(msg);
+                        if (isPhoneTypeGsm()) {
+                            if (mImsPhone != null) {
+                                mImsPhone.handleExitEmergencyCallbackMode();
+                            }
+                        } else {
+                            handleExitEmergencyCallbackMode(msg);
+                        }
                     }
                 }
             }
@@ -3913,6 +3907,10 @@ public class GsmCdmaPhone extends Phone {
 
     //CDMA
     private void handleEnterEmergencyCallbackMode(Message msg) {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            Rlog.d(LOG_TAG, "DomainSelection enabled: ignore ECBM enter event.");
+            return;
+        }
         if (DBG) {
             Rlog.d(LOG_TAG, "handleEnterEmergencyCallbackMode, isInEcm()="
                     + isInEcm());
@@ -3936,6 +3934,10 @@ public class GsmCdmaPhone extends Phone {
 
     //CDMA
     private void handleExitEmergencyCallbackMode(Message msg) {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            Rlog.d(LOG_TAG, "DomainSelection enabled: ignore ECBM exit event.");
+            return;
+        }
         AsyncResult ar = (AsyncResult)msg.obj;
         if (DBG) {
             Rlog.d(LOG_TAG, "handleExitEmergencyCallbackMode,ar.exception , isInEcm="
@@ -4454,6 +4456,7 @@ public class GsmCdmaPhone extends Phone {
                 " mTelecomVoiceServiceStateOverride=" + mTelecomVoiceServiceStateOverride + "("
                         + ServiceState.rilServiceStateToString(mTelecomVoiceServiceStateOverride)
                         + ")");
+        pw.println(" mUiccApplicationsEnabled=" + mUiccApplicationsEnabled);
         pw.flush();
         try {
             mCallWaitingController.dump(pw);
@@ -4866,6 +4869,8 @@ public class GsmCdmaPhone extends Phone {
         // If no card is present or we don't have mUiccApplicationsEnabled yet, do nothing.
         if (slot == null || slot.getCardState() != IccCardStatus.CardState.CARDSTATE_PRESENT
                 || mUiccApplicationsEnabled == null) {
+            loge("reapplyUiccAppsEnablementIfNeeded: slot state="
+                    + (slot != null ? slot.getCardState() : null));
             return;
         }
 
@@ -4878,18 +4883,12 @@ public class GsmCdmaPhone extends Phone {
             return;
         }
 
-        SubscriptionInfo info;
-        if (isSubscriptionManagerServiceEnabled()) {
-            info = mSubscriptionManagerService
-                    .getAllSubInfoList(mContext.getOpPackageName(), mContext.getAttributionTag())
-                    .stream()
-                    .filter(subInfo -> subInfo.getIccId().equals(IccUtils.stripTrailingFs(iccId)))
-                    .findFirst()
-                    .orElse(null);
-        } else {
-            info = SubscriptionController.getInstance().getSubInfoForIccId(
-                    IccUtils.stripTrailingFs(iccId));
-        }
+        SubscriptionInfo info = mSubscriptionManagerService
+                .getAllSubInfoList(mContext.getOpPackageName(), mContext.getAttributionTag())
+                .stream()
+                .filter(subInfo -> subInfo.getIccId().equals(IccUtils.stripTrailingFs(iccId)))
+                .findFirst()
+                .orElse(null);
 
         logd("reapplyUiccAppsEnablementIfNeeded: retries=" + retries + ", subInfo=" + info);
 
@@ -4994,18 +4993,10 @@ public class GsmCdmaPhone extends Phone {
                 config.getBoolean(CarrierConfigManager.KEY_VONR_ON_BY_DEFAULT_BOOL);
 
         int setting = -1;
-        if (isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfo = mSubscriptionManagerService
-                    .getSubscriptionInfoInternal(getSubId());
-            if (subInfo != null) {
-                setting = subInfo.getNrAdvancedCallingEnabled();
-            }
-        } else {
-            String result = SubscriptionController.getInstance().getSubscriptionProperty(
-                    getSubId(), SubscriptionManager.NR_ADVANCED_CALLING_ENABLED);
-            if (result != null) {
-                setting = Integer.parseInt(result);
-            }
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                .getSubscriptionInfoInternal(getSubId());
+        if (subInfo != null) {
+            setting = subInfo.getNrAdvancedCallingEnabled();
         }
 
         logd("VoNR setting from telephony.db:"
