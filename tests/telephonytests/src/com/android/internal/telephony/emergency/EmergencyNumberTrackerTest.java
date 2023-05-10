@@ -16,8 +16,6 @@
 
 package com.android.internal.telephony.emergency;
 
-import static android.telephony.TelephonyManager.HAL_SERVICE_VOICE;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -50,10 +48,8 @@ import android.testing.TestableLooper;
 
 import androidx.test.InstrumentationRegistry;
 
-import com.android.internal.telephony.HalVersion;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyTest;
 
 import com.google.i18n.phonenumbers.ShortNumberInfo;
@@ -118,7 +114,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
     private static final int INVALID_SLOT_INDEX_VALID = SubscriptionManager.INVALID_SIM_SLOT_INDEX;
     private ParcelFileDescriptor mOtaParcelFileDescriptor = null;
     // Mocked classes
-    private SubscriptionController mSubControllerMock;
     private CarrierConfigManager mCarrierConfigManagerMock;
 
     // mEmergencyNumberTrackerMock for mPhone
@@ -140,7 +135,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         logd("EmergencyNumberTrackerTest +Setup!");
         super.setUp(getClass().getSimpleName());
         mShortNumberInfo = mock(ShortNumberInfo.class);
-        mSubControllerMock = mock(SubscriptionController.class);
         mCarrierConfigManagerMock = mock(CarrierConfigManager.class);
 
         mContext = new ContextWrapper(InstrumentationRegistry.getTargetContext());
@@ -150,12 +144,10 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         doReturn(mContext).when(mPhone).getContext();
         doReturn(0).when(mPhone).getPhoneId();
         doReturn(SUB_ID_PHONE_1).when(mPhone).getSubId();
-        doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
 
         doReturn(mContext).when(mPhone2).getContext();
         doReturn(1).when(mPhone2).getPhoneId();
         doReturn(SUB_ID_PHONE_2).when(mPhone2).getSubId();
-        doReturn(new HalVersion(1, 4)).when(mPhone2).getHalVersion(HAL_SERVICE_VOICE);
 
         initializeEmergencyNumberListTestSamples();
         mEmergencyNumberTrackerMock = new EmergencyNumberTracker(mPhone, mSimulatedCommands);
@@ -338,13 +330,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
     @Test
     public void testIsSimAbsent() throws Exception {
         setDsdsPhones();
-        replaceInstance(SubscriptionController.class, "sInstance", null, mSubControllerMock);
-
-        // Both sim slots are active
-        doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_1));
-        doReturn(VALID_SLOT_INDEX_VALID_2).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_2));
         doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubscriptionManagerService).getSlotIndex(
                 eq(SUB_ID_PHONE_1));
         doReturn(VALID_SLOT_INDEX_VALID_2).when(mSubscriptionManagerService).getSlotIndex(
@@ -352,10 +337,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         assertFalse(mEmergencyNumberTrackerMock.isSimAbsent());
 
         // One sim slot is active; the other one is not active
-        doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_1));
-        doReturn(INVALID_SLOT_INDEX_VALID).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_2));
         doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubscriptionManagerService).getSlotIndex(
                 eq(SUB_ID_PHONE_1));
         doReturn(INVALID_SLOT_INDEX_VALID).when(mSubscriptionManagerService).getSlotIndex(
@@ -363,10 +344,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         assertFalse(mEmergencyNumberTrackerMock.isSimAbsent());
 
         // Both sim slots are not active
-        doReturn(INVALID_SLOT_INDEX_VALID).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_1));
-        doReturn(INVALID_SLOT_INDEX_VALID).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_2));
         doReturn(INVALID_SLOT_INDEX_VALID).when(mSubscriptionManagerService).getSlotIndex(
                 anyInt());
         assertTrue(mEmergencyNumberTrackerMock.isSimAbsent());
@@ -429,18 +406,9 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
 
     @Test
     public void testIsEmergencyNumber_FallbackToShortNumberXml_NoSims() throws Exception {
-        // Set up the Hal version as 1.4
-        doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
-        doReturn(new HalVersion(1, 4)).when(mPhone2).getHalVersion(HAL_SERVICE_VOICE);
-
         setDsdsPhones();
-        replaceInstance(SubscriptionController.class, "sInstance", null, mSubControllerMock);
 
         // Both sim slots are not active
-        doReturn(INVALID_SLOT_INDEX_VALID).when(mSubControllerMock).getSlotIndex(
-            eq(SUB_ID_PHONE_1));
-        doReturn(INVALID_SLOT_INDEX_VALID).when(mSubControllerMock).getSlotIndex(
-            eq(SUB_ID_PHONE_2));
         doReturn(INVALID_SLOT_INDEX_VALID).when(mSubscriptionManagerService).getSlotIndex(
                 anyInt());
         assertTrue(mEmergencyNumberTrackerMock.isSimAbsent());
@@ -469,30 +437,17 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
     }
 
     private void testIsEmergencyNumber_NoFallbackToShortNumberXml(int numSims) throws Exception {
-        // Set up the Hal version as 1.4
-        doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
-        doReturn(new HalVersion(1, 4)).when(mPhone2).getHalVersion(HAL_SERVICE_VOICE);
-
         assertTrue((numSims > 0 && numSims < 3));
         setDsdsPhones();
-        replaceInstance(SubscriptionController.class, "sInstance", null, mSubControllerMock);
 
         if (numSims == 1) {
             // One sim slot is active; the other one is not active
-            doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_1));
-            doReturn(INVALID_SLOT_INDEX_VALID).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_2));
             doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubscriptionManagerService).getSlotIndex(
                     eq(SUB_ID_PHONE_1));
             doReturn(INVALID_SLOT_INDEX_VALID).when(mSubscriptionManagerService).getSlotIndex(
                     eq(SUB_ID_PHONE_2));
         } else {
             //both slots active
-            doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_1));
-            doReturn(VALID_SLOT_INDEX_VALID_2).when(mSubControllerMock).getSlotIndex(
-                eq(SUB_ID_PHONE_2));
             doReturn(VALID_SLOT_INDEX_VALID_1).when(mSubscriptionManagerService).getSlotIndex(
                     eq(SUB_ID_PHONE_1));
             doReturn(VALID_SLOT_INDEX_VALID_2).when(mSubscriptionManagerService).getSlotIndex(
@@ -545,34 +500,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         processAllMessages();
         assertTrue(mEmergencyNumberTrackerMock.getEmergencyCountryIso().equals("ca"));
         assertTrue(mEmergencyNumberTrackerMock2.getEmergencyCountryIso().equals("us"));
-    }
-
-    /**
-     * In 1.3 or less HAL. we should not use database number.
-     */
-    @Test
-    public void testUsingEmergencyNumberDatabaseWheneverHal_1_3() {
-        doReturn(new HalVersion(1, 3)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
-        doReturn(mMockContext).when(mPhone).getContext();
-        doReturn(mResources).when(mMockContext).getResources();
-        doReturn(true).when(mResources).getBoolean(
-                com.android.internal.R.bool.ignore_emergency_number_routing_from_db);
-
-        EmergencyNumberTracker emergencyNumberTracker = new EmergencyNumberTracker(
-                mPhone, mSimulatedCommands);
-
-        sendEmergencyNumberPrefix(emergencyNumberTracker);
-        emergencyNumberTracker.updateEmergencyCountryIsoAllPhones("us");
-        processAllMessages();
-
-        boolean hasDatabaseNumber = false;
-        for (EmergencyNumber number : emergencyNumberTracker.getEmergencyNumberList()) {
-            if (number.isFromSources(EmergencyNumber.EMERGENCY_NUMBER_SOURCE_DATABASE)) {
-                hasDatabaseNumber = true;
-                break;
-            }
-        }
-        assertFalse(hasDatabaseNumber);
     }
 
     /**
@@ -813,9 +740,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
      */
     @Test
     public void testOtaEmergencyNumberDatabase() {
-        // Set up the Hal version as 1.4 to apply emergency number database
-        doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
-
         sendEmergencyNumberPrefix(mEmergencyNumberTrackerMock);
         mEmergencyNumberTrackerMock.updateEmergencyCountryIsoAllPhones("");
         processAllMessages();

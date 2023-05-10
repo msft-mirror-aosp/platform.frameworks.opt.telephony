@@ -191,7 +191,6 @@ public class SIMRecords extends IccRecords {
     private static final int EVENT_SET_FPLMN_DONE = 43 + SIM_RECORD_EVENT_BASE;
     protected static final int EVENT_GET_SMSS_RECORD_DONE = 46 + SIM_RECORD_EVENT_BASE;
     protected static final int EVENT_GET_PSISMSC_DONE = 47 + SIM_RECORD_EVENT_BASE;
-    protected static final int EVENT_GET_FDN_DONE = 48 + SIM_RECORD_EVENT_BASE;
 
     // ***** Constructor
 
@@ -859,7 +858,7 @@ public class SIMRecords extends IccRecords {
                     mIccId = IccUtils.bcdToString(data, 0, data.length);
                     mFullIccId = IccUtils.bchToString(data, 0, data.length);
 
-                    log("iccid: " + SubscriptionInfo.givePrintableIccid(mFullIccId));
+                    log("iccid: " + SubscriptionInfo.getPrintableId(mFullIccId));
                     break;
 
                 case EVENT_GET_AD_DONE:
@@ -1357,15 +1356,6 @@ public class SIMRecords extends IccRecords {
                         if (VDBG) {
                             log("SIMRecords - EF_SMSS TPMR value = " + getSmssTpmrValue());
                         }
-                    }
-                    break;
-
-                case EVENT_GET_FDN_DONE:
-                    ar = (AsyncResult) msg.obj;
-                    if (ar.exception != null) {
-                        loge("Failed to read USIM EF_FDN field error=" + ar.exception);
-                    } else {
-                        log("EF_FDN read successfully");
                     }
                     break;
 
@@ -2192,15 +2182,6 @@ public class SIMRecords extends IccRecords {
         }
 
         log("[CSP] Value Added Service Group (0xC0), not found!");
-    }
-
-    public void loadFdnRecords() {
-        if (mParentApp != null && mParentApp.getIccFdnEnabled()
-                && mParentApp.getIccFdnAvailable()) {
-            log("Loading FdnRecords");
-            mAdnCache.requestLoadAllAdnLike(IccConstants.EF_FDN, getExtFromEf(IccConstants.EF_FDN),
-                    obtainMessage(EVENT_GET_FDN_DONE));
-        }
     }
 
     @VisibleForTesting
