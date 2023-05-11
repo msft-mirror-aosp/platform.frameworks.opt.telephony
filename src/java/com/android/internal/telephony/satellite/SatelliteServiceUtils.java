@@ -23,6 +23,7 @@ import android.os.AsyncResult;
 import android.os.Binder;
 import android.telephony.Rlog;
 import android.telephony.SubscriptionManager;
+import android.telephony.satellite.AntennaPosition;
 import android.telephony.satellite.PointingInfo;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
@@ -35,10 +36,11 @@ import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.RILUtils;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -157,11 +159,23 @@ public class SatelliteServiceUtils {
         if (capabilities == null) return null;
         int[] radioTechnologies = capabilities.supportedRadioTechnologies == null
                 ? new int[0] : capabilities.supportedRadioTechnologies;
+
+        Map<Integer, AntennaPosition> antennaPositionMap = new HashMap<>();
+        int[] antennaPositionKeys = capabilities.antennaPositionKeys;
+        AntennaPosition[] antennaPositionValues = capabilities.antennaPositionValues;
+        if (antennaPositionKeys != null && antennaPositionValues != null &&
+                antennaPositionKeys.length == antennaPositionValues.length) {
+            for(int i = 0; i < antennaPositionKeys.length; i++) {
+                antennaPositionMap.put(antennaPositionKeys[i], antennaPositionValues[i]);
+            }
+        }
+
         return new SatelliteCapabilities(
                 Arrays.stream(radioTechnologies)
                         .map(SatelliteServiceUtils::fromSatelliteRadioTechnology)
                         .boxed().collect(Collectors.toSet()),
-                capabilities.isPointingRequired, capabilities.maxBytesPerOutgoingDatagram);
+                capabilities.isPointingRequired, capabilities.maxBytesPerOutgoingDatagram,
+                antennaPositionMap);
     }
 
     /**
@@ -239,14 +253,8 @@ public class SatelliteServiceUtils {
     public static int getValidSatelliteSubId(int subId, @NonNull Context context) {
         final long identity = Binder.clearCallingIdentity();
         try {
-            boolean isActive;
-            if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
-                isActive = SubscriptionManagerService.getInstance().isActiveSubId(subId,
-                        context.getOpPackageName(), context.getAttributionTag());
-            } else {
-                isActive = SubscriptionController.getInstance().isActiveSubId(subId,
-                        context.getOpPackageName(), context.getAttributionTag());
-            }
+            boolean isActive = SubscriptionManagerService.getInstance().isActiveSubId(subId,
+                    context.getOpPackageName(), context.getAttributionTag());
 
             if (isActive) {
                 return subId;
