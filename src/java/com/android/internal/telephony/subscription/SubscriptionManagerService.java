@@ -1158,11 +1158,14 @@ public class SubscriptionManagerService extends ISub.Stub {
             } else {
                 loge("The eSIM profiles update was not successful.");
             }
+            log("updateEmbeddedSubscriptions: Finished embedded subscription update.");
+            // The runnable will be executed in the main thread. Pre Android-U behavior.
+            mHandler.post(() -> {
+                if (callback != null) {
+                    callback.run();
+                }
+            });
         });
-        log("updateEmbeddedSubscriptions: Finished embedded subscription update.");
-        if (callback != null) {
-            callback.run();
-        }
     }
 
     /**
@@ -3562,7 +3565,7 @@ public class SubscriptionManagerService extends ISub.Stub {
             }
 
             UserHandle userHandle = UserHandle.of(subInfo.getUserId());
-            log("getSubscriptionUserHandle subId = " + subId + " userHandle = " + userHandle);
+            logv("getSubscriptionUserHandle subId = " + subId + " userHandle = " + userHandle);
             if (userHandle.getIdentifier() == UserHandle.USER_NULL) {
                 return null;
             }
@@ -3596,6 +3599,13 @@ public class SubscriptionManagerService extends ISub.Stub {
             List<SubscriptionInfo> subInfoList = getAllSubInfoList(
                     mContext.getOpPackageName(), mContext.getAttributionTag());
             if (subInfoList == null || subInfoList.isEmpty()) {
+                return true;
+            }
+
+            List<Integer> subIdList = subInfoList.stream().map(SubscriptionInfo::getSubscriptionId)
+                    .collect(Collectors.toList());
+            if (!subIdList.contains(subscriptionId)) {
+                // Return true as this subscription is not available on the device.
                 return true;
             }
 
@@ -3923,6 +3933,15 @@ public class SubscriptionManagerService extends ISub.Stub {
     private void logl(@NonNull String s) {
         log(s);
         mLocalLog.log(s);
+    }
+
+    /**
+     * Log verbose messages.
+     *
+     * @param s verbose messages
+     */
+    private void logv(@NonNull String s) {
+        Rlog.v(LOG_TAG, s);
     }
 
     /**
