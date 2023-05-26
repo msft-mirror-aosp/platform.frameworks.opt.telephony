@@ -93,6 +93,7 @@ import androidx.test.filters.FlakyTest;
 
 import com.android.internal.R;
 import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
+import com.android.internal.telephony.data.AccessNetworksManager;
 import com.android.internal.telephony.data.DataNetworkController;
 import com.android.internal.telephony.metrics.ServiceStateStats;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
@@ -107,6 +108,7 @@ import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -303,6 +305,11 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         waitUntilReady();
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
 
+        // Voice radio tech change will always trigger an update of
+        // phone object irrespective of this config
+        mContextFixture.putBooleanResource(
+                com.android.internal.R.bool.config_switch_phone_on_voice_reg_state_change, false);
+
         // Override SPN related resource
         mContextFixture.putResource(
                 com.android.internal.R.string.lockscreen_carrier_default,
@@ -367,6 +374,9 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                     15, /* SIGNAL_STRENGTH_GOOD */
                     30  /* SIGNAL_STRENGTH_GREAT */
                 });
+        mBundle.putBoolean(
+                CarrierConfigManager.KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH_BOOL,
+                true);
 
         sendCarrierConfigUpdate(PHONE_ID);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
@@ -916,13 +926,15 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @Test
     @MediumTest
     public void testUpdatePhoneType() {
+        String brandOverride = "spn from brand override";
+        doReturn(brandOverride).when(mUiccProfile).getOperatorBrandOverride();
         doReturn(false).when(mPhone).isPhoneTypeGsm();
         doReturn(true).when(mPhone).isPhoneTypeCdmaLte();
         doReturn(CdmaSubscriptionSourceManager.SUBSCRIPTION_FROM_RUIM).when(mCdmaSSM).
                 getCdmaSubscriptionSource();
 
-        logd("Calling updatePhoneType");
         // switch to CDMA
+        logd("Calling updatePhoneType");
         sst.updatePhoneType();
 
         ArgumentCaptor<Integer> integerArgumentCaptor = ArgumentCaptor.forClass(Integer.class);
@@ -967,7 +979,6 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         mSimulatedCommands.setVoiceRegState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
         mSimulatedCommands.setDataRegState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
         mSimulatedCommands.notifyNetworkStateChanged();
-
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
 
         // verify if registered handler has message posted to it
@@ -1149,7 +1160,6 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         mSimulatedCommands.notifyNetworkStateChanged();
 
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
-
         // verify if registered handler has message posted to it
         ArgumentCaptor<Message> messageArgumentCaptor = ArgumentCaptor.forClass(Message.class);
         verify(mTestHandler).sendMessageAtTime(messageArgumentCaptor.capture(), anyLong());
@@ -1273,7 +1283,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Test
     @MediumTest
-    public void testRegisterForVoiceRegStateOrRatChange() {
+    public void testRegisterForVoiceRegStateOrRatChange() throws Exception {
         NetworkRegistrationInfo nri = new NetworkRegistrationInfo.Builder()
                 .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
                 .setDomain(NetworkRegistrationInfo.DOMAIN_CS)
@@ -1281,14 +1291,17 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                 .build();
         sst.mSS.addNetworkRegistrationInfo(nri);
 
+        sst.mSS.setState(ServiceState.STATE_IN_SERVICE);
         sst.registerForVoiceRegStateOrRatChanged(mTestHandler, EVENT_VOICE_RAT_CHANGED, null);
 
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
 
         // Verify if message was posted to handler and value of result
         ArgumentCaptor<Message> messageArgumentCaptor = ArgumentCaptor.forClass(Message.class);
-        verify(mTestHandler).sendMessageAtTime(messageArgumentCaptor.capture(), anyLong());
+        verify(mTestHandler)
+                .sendMessageAtTime(messageArgumentCaptor.capture(), anyLong());
         assertEquals(EVENT_VOICE_RAT_CHANGED, messageArgumentCaptor.getValue().what);
+
         assertEquals(new Pair<Integer, Integer>(ServiceState.STATE_IN_SERVICE,
                         ServiceState.RIL_RADIO_TECHNOLOGY_LTE),
                 ((AsyncResult)messageArgumentCaptor.getValue().obj).result);
@@ -1383,6 +1396,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         mSimulatedCommands.setDataRegState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
         mSimulatedCommands.notifyNetworkStateChanged();
 
+        waitForDelayedHandlerAction(mSSTTestHandler.getThreadHandler(), 500, 200);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
 
         // verify if registered handler has message posted to it
@@ -1534,13 +1548,10 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testSetPsNotifications() {
+    public void testSetPsNotifications() throws Exception {
         int subId = 1;
         sst.mSubId = subId;
         doReturn(subId).when(mSubInfo).getSubscriptionId();
-
-        doReturn(mSubInfo).when(mSubscriptionController).getActiveSubscriptionInfo(
-                anyInt(), anyString(), nullable(String.class));
 
         final NotificationManager nm = (NotificationManager)
                 mContext.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -1552,6 +1563,9 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         when(mockResources.getDrawable(anyInt(), any())).thenReturn(mockDrawable);
 
         mContextFixture.putResource(com.android.internal.R.string.RestrictedOnDataTitle, "test1");
+        // Make sure getState() condition returns in service, without this at logs at times found to
+        // be out of service
+        sst.mSS.setState(ServiceState.STATE_IN_SERVICE);
         sst.setNotification(ServiceStateTracker.PS_ENABLED);
         ArgumentCaptor<Notification> notificationArgumentCaptor =
                 ArgumentCaptor.forClass(Notification.class);
@@ -1567,12 +1581,10 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testSetCsNotifications() {
+    public void testSetCsNotifications() throws Exception {
         int subId = 1;
         sst.mSubId = subId;
         doReturn(subId).when(mSubInfo).getSubscriptionId();
-        doReturn(mSubInfo).when(mSubscriptionController)
-                .getActiveSubscriptionInfo(anyInt(), anyString(), nullable(String.class));
 
         final NotificationManager nm = (NotificationManager)
                 mContext.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -1585,6 +1597,9 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
         mContextFixture.putResource(com.android.internal.R.string.RestrictedOnAllVoiceTitle,
                 "test2");
+        // Make sure getState() condition returns in service, without this at logs at times found to
+        // be out of service
+        sst.mSS.setState(ServiceState.STATE_IN_SERVICE);
         sst.setNotification(ServiceStateTracker.CS_ENABLED);
         ArgumentCaptor<Notification> notificationArgumentCaptor =
                 ArgumentCaptor.forClass(Notification.class);
@@ -1600,12 +1615,10 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testSetCsNormalNotifications() {
+    public void testSetCsNormalNotifications() throws Exception {
         int subId = 1;
         sst.mSubId = subId;
         doReturn(subId).when(mSubInfo).getSubscriptionId();
-        doReturn(mSubInfo).when(mSubscriptionController)
-                .getActiveSubscriptionInfo(anyInt(), anyString(), nullable(String.class));
 
         final NotificationManager nm = (NotificationManager)
                 mContext.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -1617,6 +1630,9 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         when(mockResources.getDrawable(anyInt(), any())).thenReturn(mockDrawable);
 
         mContextFixture.putResource(com.android.internal.R.string.RestrictedOnNormalTitle, "test3");
+        // Make sure getState() condition returns in service, without this at logs at times found to
+        // be out of service
+        sst.mSS.setState(ServiceState.STATE_IN_SERVICE);
         sst.setNotification(ServiceStateTracker.CS_NORMAL_ENABLED);
         ArgumentCaptor<Notification> notificationArgumentCaptor =
                 ArgumentCaptor.forClass(Notification.class);
@@ -1632,12 +1648,10 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testSetCsEmergencyNotifications() {
+    public void testSetCsEmergencyNotifications() throws Exception {
         int subId = 1;
         sst.mSubId = subId;
         doReturn(subId).when(mSubInfo).getSubscriptionId();
-        doReturn(mSubInfo).when(mSubscriptionController)
-                .getActiveSubscriptionInfo(anyInt(), anyString(), nullable(String.class));
 
         final NotificationManager nm = (NotificationManager)
                 mContext.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -1650,6 +1664,9 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
         mContextFixture.putResource(com.android.internal.R.string.RestrictedOnEmergencyTitle,
                 "test4");
+        // Make sure mIsEmergencyOnly should be true, when setNotification notification type is
+        // CS_EMERGENCY_ENABLED notification
+        sst.mSS.setEmergencyOnly(true);
         sst.setNotification(ServiceStateTracker.CS_EMERGENCY_ENABLED);
         ArgumentCaptor<Notification> notificationArgumentCaptor =
                 ArgumentCaptor.forClass(Notification.class);
@@ -2268,10 +2285,6 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Test
     public void testPhyChanBandwidthRatchetedOnPhyChanBandwidth() {
-        mBundle.putBoolean(
-                CarrierConfigManager.KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH_BOOL,
-                true);
-
         // LTE Cell with bandwidth = 10000
         CellIdentityLte cellIdentity10 =
                 new CellIdentityLte(1, 1, 1, 1, new int[] {1, 2}, 10000, "1", "1", "test",
@@ -2289,6 +2302,42 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         sendPhyChanConfigChange(new int[] {1000, 500}, TelephonyManager.NETWORK_TYPE_NR, 1,
                 new int[][]{{0, 1}, {2, 3}});
         assertEquals(ServiceState.FREQUENCY_RANGE_MID, sst.mSS.getNrFrequencyRange());
+    }
+
+    @Test
+    public void testNotifyServiceStateChangedOnPhysicalConfigUpdates() {
+        mBundle.putBoolean(
+                CarrierConfigManager.KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH_BOOL,
+                true);
+
+        // LTE Cell with bandwidth = 10000
+        CellIdentityLte cellIdentity11 =
+                new CellIdentityLte(1, 1, 1, 1, new int[] {1, 2}, 10000, "1", "1", "test",
+                        "tst", Collections.emptyList(), null);
+
+        sendRegStateUpdateForLteCellId(cellIdentity11);
+
+        // Notify Service State changed for BandWidth Change
+        sendPhyChanConfigChange(new int[] {10000, 40000}, TelephonyManager.NETWORK_TYPE_LTE, 1);
+        verify(mPhone, times(1)).notifyServiceStateChanged(any(ServiceState.class));
+
+        // Notify Service State changed for NR Connection Status: LTE -> NR
+        // with context id update
+        when(mPhone.getDataNetworkController().isInternetNetwork(eq(3))).thenReturn(true);
+        sendPhyChanConfigChange(new int[] {10000, 40000}, TelephonyManager.NETWORK_TYPE_NR, 1,
+                new int[][]{{0, 1}, {2, 3}});
+        verify(mPhone, times(2)).notifyServiceStateChanged(any(ServiceState.class));
+
+        // Service State changed is not notified since no change
+        when(mPhone.getDataNetworkController().isInternetNetwork(eq(3))).thenReturn(true);
+        sendPhyChanConfigChange(new int[] {10000, 40000}, TelephonyManager.NETWORK_TYPE_NR, 1,
+                new int[][]{{0, 1}, {2, 3}});
+        verify(mPhone, times(2)).notifyServiceStateChanged(any(ServiceState.class));
+
+        // Notify Service State changed for NR Connection Status: NR -> LTE
+        when(mPhone.getDataNetworkController().isInternetNetwork(eq(3))).thenReturn(true);
+        sendPhyChanConfigChange(new int[] {10000, 40000}, TelephonyManager.NETWORK_TYPE_LTE, 1);
+        verify(mPhone, times(3)).notifyServiceStateChanged(any(ServiceState.class));
     }
 
     @Test
@@ -2320,6 +2369,9 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
     @Test
     public void testPhyChanBandwidthForNr() {
+        mBundle.putBoolean(
+                CarrierConfigManager.KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH_BOOL,
+                false);
         // NR Cell with bandwidth = 10000
         CellIdentityNr nrCi = new CellIdentityNr(
                 0, 0, 0, new int[]{10000}, "", "", 5, "", "", Collections.emptyList());
@@ -2428,6 +2480,9 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     public void testLocaleTrackerUpdateWithIWLANInService() {
         // Start state: Cell data only LTE + IWLAN
         final String[] OpNamesResult = new String[] { "carrier long", "carrier", "310310" };
+        // Clear invocations for mLocaleTracker as precondition before test case execution & as part
+        // test setup
+        Mockito.clearInvocations(mLocaleTracker);
         changeRegStateWithIwlanOperatorNumeric(NetworkRegistrationInfo.REGISTRATION_STATE_HOME,
                 TelephonyManager.NETWORK_TYPE_LTE,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME, OpNamesResult, true);
@@ -2811,13 +2866,20 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @Test
     public void testUpdateSpnDisplay_spnNotEmptyAndCrossSimCallingEnabled_showSpnOnly() {
         // GSM phone
-
         doReturn(true).when(mPhone).isPhoneTypeGsm();
+        final CellIdentityLte cellIdentityLte =
+                new CellIdentityLte(1, 1, 5, 1, new int[] {1, 2}, 5000, "001", "01", "test",
+                        "tst", Collections.emptyList(), null);
 
         // In Service
         ServiceState ss = new ServiceState();
         ss.setVoiceRegState(ServiceState.STATE_IN_SERVICE);
         ss.setDataRegState(ServiceState.STATE_IN_SERVICE);
+        //To By Pass RatRacheter
+        ss.addNetworkRegistrationInfo(makeNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_PS,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                cellIdentityLte, true));
         sst.mSS = ss;
 
         // cross-sim-calling is enable
@@ -2846,11 +2908,19 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     public void testUpdateSpnDisplay_spnNotEmptyAndWifiCallingEnabled_showSpnOnly() {
         // GSM phone
         doReturn(true).when(mPhone).isPhoneTypeGsm();
+        final CellIdentityLte cellIdentityLte =
+                new CellIdentityLte(1, 1, 5, 1, new int[] {1, 2}, 5000, "001", "01", "test",
+                        "tst", Collections.emptyList(), null);
 
         // In Service
         ServiceState ss = new ServiceState();
         ss.setVoiceRegState(ServiceState.STATE_IN_SERVICE);
         ss.setDataRegState(ServiceState.STATE_IN_SERVICE);
+        //To By Pass RatRacheter
+        ss.addNetworkRegistrationInfo(makeNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_PS,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                cellIdentityLte, true));
         sst.mSS = ss;
 
         // wifi-calling is enabled
@@ -3087,6 +3157,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     @Test
     public void testGetCombinedRegState() {
         doReturn(mImsPhone).when(mPhone).getImsPhone();
+        doReturn(true).when(mPhone).isPhoneTypeGsm();
 
         // If voice/data out of service, return out of service.
         doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getState();
@@ -3125,5 +3196,36 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         // Check emergency
         doReturn(ServiceState.STATE_EMERGENCY_ONLY).when(mServiceState).getState();
         assertEquals(ServiceState.STATE_EMERGENCY_ONLY, sst.getCombinedRegState(mServiceState));
+    }
+
+
+    @Test
+    public void testOnChangingPreferredOnIwlan() throws Exception {
+        Field callbackField =
+                ServiceStateTracker.class.getDeclaredField("mAccessNetworksManagerCallback");
+        callbackField.setAccessible(true);
+        AccessNetworksManager.AccessNetworksManagerCallback accessNetworksManagerCallback =
+                (AccessNetworksManager.AccessNetworksManagerCallback) callbackField.get(sst);
+
+        when(mAccessNetworksManager.isAnyApnOnIwlan()).thenReturn(false);
+
+        // Start state: Cell data only LTE + IWLAN
+        CellIdentityLte cellIdentity =
+                new CellIdentityLte(1, 1, 5, 1, new int[] {1, 2}, 5000, "001", "01", "test",
+                        "tst", Collections.emptyList(), null);
+        changeRegStateWithIwlan(
+                // WWAN
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, cellIdentity,
+                TelephonyManager.NETWORK_TYPE_UNKNOWN, TelephonyManager.NETWORK_TYPE_LTE,
+                // WLAN
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME,
+                TelephonyManager.NETWORK_TYPE_IWLAN);
+        assertFalse(sst.mSS.isIwlanPreferred());
+
+        when(mAccessNetworksManager.isAnyApnOnIwlan()).thenReturn(true);
+        accessNetworksManagerCallback.onPreferredTransportChanged(0);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+
+        assertTrue(sst.mSS.isIwlanPreferred());
     }
 }

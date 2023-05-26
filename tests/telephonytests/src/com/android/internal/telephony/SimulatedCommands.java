@@ -196,6 +196,9 @@ public class SimulatedCommands extends BaseCommands
 
     private int[] mImsRegistrationInfo = new int[4];
 
+    private boolean mN1ModeEnabled = false;
+    private boolean mVonrEnabled = false;
+
     //***** Constructor
     public
     SimulatedCommands() {
@@ -1497,12 +1500,17 @@ public class SimulatedCommands extends BaseCommands
     }
 
     @Override
-    public void setNetworkSelectionModeAutomatic(Message result) {unimplemented(result);}
+    public void setNetworkSelectionModeAutomatic(Message result) {
+        SimulatedCommandsVerifier.getInstance().setNetworkSelectionModeAutomatic(result);
+        mMockNetworkSelectionMode = 0;
+    }
     @Override
     public void exitEmergencyCallbackMode(Message result) {unimplemented(result);}
     @Override
     public void setNetworkSelectionModeManual(String operatorNumeric, int ran, Message result) {
-        unimplemented(result);
+        SimulatedCommandsVerifier.getInstance().setNetworkSelectionModeManual(
+                operatorNumeric, ran, result);
+        mMockNetworkSelectionMode = 1;
     }
 
     /**
@@ -1519,9 +1527,12 @@ public class SimulatedCommands extends BaseCommands
         getNetworkSelectionModeCallCount.incrementAndGet();
         int ret[] = new int[1];
 
-        ret[0] = 0;
+        ret[0] = mMockNetworkSelectionMode;
         resultSuccess(result, ret);
     }
+
+    /** 0 for automatic selection and a 1 for manual selection. */
+    private int mMockNetworkSelectionMode = 0;
 
     private final AtomicInteger getNetworkSelectionModeCallCount = new AtomicInteger(0);
 
@@ -2610,5 +2621,23 @@ public class SimulatedCommands extends BaseCommands
 
     public int[] getImsRegistrationInfo() {
         return mImsRegistrationInfo;
+    }
+
+    @Override
+    public void setN1ModeEnabled(boolean enable, Message result) {
+        mN1ModeEnabled = enable;
+    }
+
+    public boolean isN1ModeEnabled() {
+        return mN1ModeEnabled;
+    }
+
+    @Override
+    public void isVoNrEnabled(Message message, WorkSource workSource) {
+        resultSuccess(message, (Object) mVonrEnabled);
+    }
+
+    public void setVonrEnabled(boolean vonrEnable) {
+        mVonrEnabled = vonrEnable;
     }
 }
