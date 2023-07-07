@@ -385,15 +385,12 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 case EVENT_AIDL_PROXY_DEAD:
                     int aidlService = msg.arg1;
                     long msgCookie = (long) msg.obj;
+                    riljLog("handleMessage: EVENT_AIDL_PROXY_DEAD cookie = " + msgCookie
+                            + ", service = " + serviceToString(aidlService) + ", cookie = "
+                            + mServiceCookies.get(aidlService));
                     if (msgCookie == mServiceCookies.get(aidlService).get()) {
-                        riljLog("handleMessage: EVENT_AIDL_PROXY_DEAD cookie = " + msgCookie
-                                + ", service = " + serviceToString(aidlService) + ", cookie = "
-                                + mServiceCookies.get(aidlService));
                         mIsRadioProxyInitialized = false;
                         resetProxyAndRequestList(aidlService);
-                    } else {
-                        riljLog("Ignore stale EVENT_AIDL_PROXY_DEAD for service "
-                                + serviceToString(aidlService));
                     }
                     break;
             }
@@ -438,7 +435,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         public void serviceDied(long cookie) {
             // Deal with service going away
             riljLog("serviceDied");
-            mRilHandler.sendMessageAtFrontOfQueue(mRilHandler.obtainMessage(EVENT_RADIO_PROXY_DEAD,
+            mRilHandler.sendMessage(mRilHandler.obtainMessage(EVENT_RADIO_PROXY_DEAD,
                     HAL_SERVICE_RADIO, 0 /* ignored arg2 */, cookie));
         }
     }
@@ -471,14 +468,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
         @Override
         public void binderDied() {
             riljLog("Service " + serviceToString(mService) + " has died.");
-            if (!mRilHandler.hasMessages(EVENT_AIDL_PROXY_DEAD)) {
-                mRilHandler.sendMessageAtFrontOfQueue(mRilHandler.obtainMessage(
-                        EVENT_AIDL_PROXY_DEAD, mService, 0 /* ignored arg2 */,
-                        mServiceCookies.get(mService).get()));
-            } else {
-                riljLog("Not sending redundant EVENT_AIDL_PROXY_DEAD for service "
-                        + serviceToString(mService));
-            }
+            mRilHandler.sendMessage(mRilHandler.obtainMessage(EVENT_AIDL_PROXY_DEAD, mService,
+                    0 /* ignored arg2 */, mServiceCookies.get(mService).get()));
             unlinkToDeath();
         }
     }
@@ -487,19 +478,14 @@ public class RIL extends BaseCommands implements CommandsInterface {
         if (service == HAL_SERVICE_RADIO) {
             mRadioProxy = null;
         } else {
-            for (int i = MIN_SERVICE_IDX; i <= MAX_SERVICE_IDX; i++) {
-                if (i == HAL_SERVICE_RADIO) continue;
-                if (mServiceProxies.get(i) == null) {
-                    // This should only happen in tests
-                    riljLoge("Null service proxy for service " + serviceToString(i));
-                    continue;
-                }
-                mServiceProxies.get(i).clear();
-                // Increment the cookie so that death notification can be ignored
-                mServiceCookies.get(i).incrementAndGet();
-            }
+            mServiceProxies.get(service).clear();
         }
 
+        // Increment the cookie so that death notification can be ignored
+        mServiceCookies.get(service).incrementAndGet();
+
+        // TODO: If a service doesn't exist or is unimplemented, it shouldn't cause the radio to
+        //  become unavailable for all other services
         setRadioState(TelephonyManager.RADIO_POWER_UNAVAILABLE, true /* forceNotifyRegistrants */);
 
         RILRequest.resetSerial();
@@ -509,15 +495,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         if (service == HAL_SERVICE_RADIO) {
             getRadioProxy(null);
         } else {
-            for (int i = MIN_SERVICE_IDX; i <= MAX_SERVICE_IDX; i++) {
-                if (i == HAL_SERVICE_RADIO) continue;
-                if (mServiceProxies.get(i) == null) {
-                    // This should only happen in tests
-                    riljLoge("Null service proxy for service " + serviceToString(i));
-                    continue;
-                }
-                getRadioServiceProxy(i, null);
-            }
+            getRadioServiceProxy(service, null);
         }
     }
 
@@ -1804,7 +1782,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             RILRequest rr = obtainRequest(RIL_REQUEST_GET_IMSI, result, mRILDefaultWorkSource);
 
             if (RILJ_LOGD) {
-                riljLog(rr.serialString() + ">" + RILUtils.requestToString(rr.mRequest)
+                riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
                         + " aid = " + aid);
             }
             try {
@@ -3756,8 +3734,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
     @Override
     public void getImei(Message result) {
         RadioModemProxy modemProxy = getRadioServiceProxy(RadioModemProxy.class, result);
-        if (!modemProxy.isEmpty() &&
-                mHalVersion.get(HAL_SERVICE_MODEM).greaterOrEqual(RADIO_HAL_VERSION_2_1)) {
+        if (modemProxy.isEmpty()) {
+            if (RILJ_LOGD) {
+                Rlog.e(RILJ_LOG_TAG, "getImei: modemProxy is Empty");
+            }
+            return;
+        }
+        if (mHalVersion.get(HAL_SERVICE_MODEM).greaterOrEqual(RADIO_HAL_VERSION_2_1)) {
             RILRequest rr = obtainRequest(RIL_REQUEST_DEVICE_IMEI, result,
                     mRILDefaultWorkSource);
 
@@ -5655,6 +5638,41 @@ public class RIL extends BaseCommands implements CommandsInterface {
         } else {
             if (RILJ_LOGD) {
                 Rlog.d(RILJ_LOG_TAG, "setNullCipherAndIntegrityEnabled: REQUEST_NOT_SUPPORTED");
+            }
+            if (result != null) {
+                AsyncResult.forMessage(result, null,
+                        CommandException.fromRilErrno(REQUEST_NOT_SUPPORTED));
+                result.sendToTarget();
+            }
+        }
+    }
+
+    /**
+     * Get if null ciphering / null integrity are enabled / disabled.
+     *
+     * @param result Callback message containing the success or failure status.
+     */
+    @Override
+    public void isNullCipherAndIntegrityEnabled(Message result) {
+        RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class, result);
+        if (networkProxy.isEmpty()) return;
+        if (mHalVersion.get(HAL_SERVICE_NETWORK).greaterOrEqual(RADIO_HAL_VERSION_2_1)) {
+            RILRequest rr = obtainRequest(RIL_REQUEST_IS_NULL_CIPHER_AND_INTEGRITY_ENABLED, result,
+                    mRILDefaultWorkSource);
+
+            if (RILJ_LOGD) {
+                riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest));
+            }
+
+            try {
+                networkProxy.isNullCipherAndIntegrityEnabled(rr.mSerial);
+            } catch (RemoteException | RuntimeException e) {
+                handleRadioProxyExceptionForRR(
+                        HAL_SERVICE_NETWORK, "isNullCipherAndIntegrityEnabled", e);
+            }
+        } else {
+            if (RILJ_LOGD) {
+                Rlog.d(RILJ_LOG_TAG, "isNullCipherAndIntegrityEnabled: REQUEST_NOT_SUPPORTED");
             }
             if (result != null) {
                 AsyncResult.forMessage(result, null,

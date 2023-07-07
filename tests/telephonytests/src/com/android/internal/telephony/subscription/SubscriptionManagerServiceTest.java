@@ -146,6 +146,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
     private static final UserHandle FAKE_USER_HANDLE = new UserHandle(12);
 
+    private static final UserHandle FAKE_MANAGED_PROFILE_USER_HANDLE = new UserHandle(13);
+
     // mocked
     private SubscriptionManagerServiceCallback mMockedSubscriptionManagerServiceCallback;
     private EuiccController mEuiccController;
@@ -212,7 +214,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         setIdentifierAccess(false);
         setPhoneNumberAccess(PackageManager.PERMISSION_DENIED);
 
-        mSubscriptionManagerServiceUT.setWorkProfileTelephonyEnabled(true);
+        doReturn(true).when(mUserManager)
+                .isManagedProfile(eq(FAKE_MANAGED_PROFILE_USER_HANDLE.getIdentifier()));
 
         logd("SubscriptionManagerServiceTest -Setup!");
     }
@@ -1083,6 +1086,13 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
         assertThat(mSubscriptionManagerServiceUT.isSubscriptionAssociatedWithUser(1,
                 FAKE_USER_HANDLE)).isEqualTo(true);
+
+        // Work profile is not associated with any subscription
+        associatedSubInfoList = mSubscriptionManagerServiceUT
+                .getSubscriptionInfoListAssociatedWithUser(FAKE_MANAGED_PROFILE_USER_HANDLE);
+        assertThat(associatedSubInfoList.size()).isEqualTo(0);
+        assertThat(mSubscriptionManagerServiceUT.isSubscriptionAssociatedWithUser(1,
+                FAKE_MANAGED_PROFILE_USER_HANDLE)).isEqualTo(false);
     }
 
     @Test
@@ -2232,6 +2242,19 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
         mSubscriptionManagerServiceUT.updateSimState(
                 0, TelephonyManager.SIM_STATE_NOT_READY, null, null);
+        processAllMessages();
+
+        assertThat(mSubscriptionManagerServiceUT.getActiveSubIdList(false)).isEmpty();
+    }
+
+    @Test
+    public void testSimNotReadyBySimDeactivate() {
+        insertSubscription(FAKE_SUBSCRIPTION_INFO1);
+
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+        mSubscriptionManagerServiceUT.updateSimState(
+                0, TelephonyManager.SIM_STATE_NOT_READY, null, null);
+        doReturn(true).when(mUiccProfile).isEmptyProfile();
         processAllMessages();
 
         assertThat(mSubscriptionManagerServiceUT.getActiveSubIdList(false)).isEmpty();

@@ -46,7 +46,7 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.TelephonyServiceManager;
 import android.os.UserHandle;
-import android.provider.DeviceConfig;
+import android.os.UserManager;
 import android.provider.Settings;
 import android.provider.Telephony.SimInfo;
 import android.service.carrier.CarrierIdentifier;
@@ -398,11 +398,6 @@ public class SubscriptionManagerService extends ISub.Stub {
         public void onUiccApplicationsEnabledChanged(int subId) {}
     }
 
-    /** DeviceConfig key for whether work profile telephony feature is enabled. */
-    private static final String KEY_ENABLE_WORK_PROFILE_TELEPHONY = "enable_work_profile_telephony";
-    /** {@code true} if the work profile telephony feature is enabled otherwise {@code false}. */
-    private boolean mIsWorkProfileTelephonyEnabled = false;
-
     /**
      * The constructor
      *
@@ -478,15 +473,6 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         mSimState = new int[mTelephonyManager.getSupportedModemCount()];
         Arrays.fill(mSimState, TelephonyManager.SIM_STATE_UNKNOWN);
-
-        mIsWorkProfileTelephonyEnabled = DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_TELEPHONY,
-                KEY_ENABLE_WORK_PROFILE_TELEPHONY, false);
-        DeviceConfig.addOnPropertiesChangedListener(DeviceConfig.NAMESPACE_TELEPHONY,
-                mHandler::post, properties -> {
-            if (TextUtils.equals(DeviceConfig.NAMESPACE_TELEPHONY, properties.getNamespace())) {
-                onDeviceConfigChanged();
-            }
-        });
 
         // Create a separate thread for subscription database manager. The database will be updated
         // from a different thread.
@@ -792,16 +778,6 @@ public class SubscriptionManagerService extends ISub.Stub {
         }
 
         return iccidList;
-    }
-
-    /**
-     * Enable or disable work profile telephony feature.
-     * @param isWorkProfileTelephonyEnabled - {@code true} if the work profile telephony feature
-     *                                      is enabled otherwise {@code false}.
-     */
-    @VisibleForTesting
-    public void setWorkProfileTelephonyEnabled(boolean isWorkProfileTelephonyEnabled) {
-        mIsWorkProfileTelephonyEnabled = isWorkProfileTelephonyEnabled;
     }
 
     /**
@@ -1182,11 +1158,14 @@ public class SubscriptionManagerService extends ISub.Stub {
             } else {
                 loge("The eSIM profiles update was not successful.");
             }
+            log("updateEmbeddedSubscriptions: Finished embedded subscription update.");
+            // The runnable will be executed in the main thread. Pre Android-U behavior.
+            mHandler.post(() -> {
+                if (callback != null) {
+                    callback.run();
+                }
+            });
         });
-        log("updateEmbeddedSubscriptions: Finished embedded subscription update.");
-        if (callback != null) {
-            callback.run();
-        }
     }
 
     /**
@@ -1332,9 +1311,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                 log("updateSubscription: SIM_STATE_NOT_READY is not a final state. Will update "
                         + "subscription later.");
                 return;
-            }
-
-            if (!areUiccAppsEnabledOnCard(phoneId)) {
+            } else {
                 logl("updateSubscription: UICC app disabled on slot " + phoneId);
                 markSubscriptionsInactive(phoneId);
             }
@@ -3576,11 +3553,6 @@ public class SubscriptionManagerService extends ISub.Stub {
     public UserHandle getSubscriptionUserHandle(int subId) {
         enforcePermissions("getSubscriptionUserHandle",
                 Manifest.permission.MANAGE_SUBSCRIPTION_USER_ASSOCIATION);
-
-        if (!mIsWorkProfileTelephonyEnabled) {
-            return null;
-        }
-
         long token = Binder.clearCallingIdentity();
         try {
             SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
@@ -3591,7 +3563,7 @@ public class SubscriptionManagerService extends ISub.Stub {
             }
 
             UserHandle userHandle = UserHandle.of(subInfo.getUserId());
-            log("getSubscriptionUserHandle subId = " + subId + " userHandle = " + userHandle);
+            logv("getSubscriptionUserHandle subId = " + subId + " userHandle = " + userHandle);
             if (userHandle.getIdentifier() == UserHandle.USER_NULL) {
                 return null;
             }
@@ -3619,16 +3591,19 @@ public class SubscriptionManagerService extends ISub.Stub {
         enforcePermissions("isSubscriptionAssociatedWithUser",
                 Manifest.permission.MANAGE_SUBSCRIPTION_USER_ASSOCIATION);
 
-        if (!mIsWorkProfileTelephonyEnabled) {
-            return true;
-        }
-
         long token = Binder.clearCallingIdentity();
         try {
             // Return true if there are no subscriptions on the device.
             List<SubscriptionInfo> subInfoList = getAllSubInfoList(
                     mContext.getOpPackageName(), mContext.getAttributionTag());
             if (subInfoList == null || subInfoList.isEmpty()) {
+                return true;
+            }
+
+            List<Integer> subIdList = subInfoList.stream().map(SubscriptionInfo::getSubscriptionId)
+                    .collect(Collectors.toList());
+            if (!subIdList.contains(subscriptionId)) {
+                // Return true as this subscription is not available on the device.
                 return true;
             }
 
@@ -3677,10 +3652,6 @@ public class SubscriptionManagerService extends ISub.Stub {
                 return new ArrayList<>();
             }
 
-            if (!mIsWorkProfileTelephonyEnabled) {
-                return subInfoList;
-            }
-
             List<SubscriptionInfo> subscriptionsAssociatedWithUser = new ArrayList<>();
             List<SubscriptionInfo> subscriptionsWithNoAssociation = new ArrayList<>();
             for (SubscriptionInfo subInfo : subInfoList) {
@@ -3695,6 +3666,15 @@ public class SubscriptionManagerService extends ISub.Stub {
                 }
             }
 
+            UserManager userManager = mContext.getSystemService(UserManager.class);
+            if ((userManager != null)
+                    && (userManager.isManagedProfile(userHandle.getIdentifier()))) {
+                // For work profile, return subscriptions associated only with work profile
+                return subscriptionsAssociatedWithUser;
+            }
+
+            // For all other profiles, if subscriptionsAssociatedWithUser is empty return all the
+            // subscriptionsWithNoAssociation.
             return subscriptionsAssociatedWithUser.isEmpty() ?
                     subscriptionsWithNoAssociation : subscriptionsAssociatedWithUser;
         } finally {
@@ -3888,21 +3868,6 @@ public class SubscriptionManagerService extends ISub.Stub {
     }
 
     /**
-     * Listener to update cached flag values from DeviceConfig.
-     */
-    private void onDeviceConfigChanged() {
-        boolean isWorkProfileTelephonyEnabled = DeviceConfig.getBoolean(
-                DeviceConfig.NAMESPACE_TELEPHONY, KEY_ENABLE_WORK_PROFILE_TELEPHONY,
-                false);
-        if (isWorkProfileTelephonyEnabled != mIsWorkProfileTelephonyEnabled) {
-            log("onDeviceConfigChanged: isWorkProfileTelephonyEnabled "
-                    + "changed from " + mIsWorkProfileTelephonyEnabled + " to "
-                    + isWorkProfileTelephonyEnabled);
-            mIsWorkProfileTelephonyEnabled = isWorkProfileTelephonyEnabled;
-        }
-    }
-
-    /**
      * Get the calling package(s).
      *
      * @return The calling package(s).
@@ -3975,6 +3940,15 @@ public class SubscriptionManagerService extends ISub.Stub {
     private void logl(@NonNull String s) {
         log(s);
         mLocalLog.log(s);
+    }
+
+    /**
+     * Log verbose messages.
+     *
+     * @param s verbose messages
+     */
+    private void logv(@NonNull String s) {
+        Rlog.v(LOG_TAG, s);
     }
 
     /**
