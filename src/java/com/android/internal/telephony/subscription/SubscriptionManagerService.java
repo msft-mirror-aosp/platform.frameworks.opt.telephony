@@ -46,7 +46,7 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.TelephonyServiceManager;
 import android.os.UserHandle;
-import android.provider.DeviceConfig;
+import android.os.UserManager;
 import android.provider.Settings;
 import android.provider.Telephony.SimInfo;
 import android.service.carrier.CarrierIdentifier;
@@ -1311,9 +1311,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                 log("updateSubscription: SIM_STATE_NOT_READY is not a final state. Will update "
                         + "subscription later.");
                 return;
-            }
-
-            if (!areUiccAppsEnabledOnCard(phoneId)) {
+            } else {
                 logl("updateSubscription: UICC app disabled on slot " + phoneId);
                 markSubscriptionsInactive(phoneId);
             }
@@ -3668,6 +3666,15 @@ public class SubscriptionManagerService extends ISub.Stub {
                 }
             }
 
+            UserManager userManager = mContext.getSystemService(UserManager.class);
+            if ((userManager != null)
+                    && (userManager.isManagedProfile(userHandle.getIdentifier()))) {
+                // For work profile, return subscriptions associated only with work profile
+                return subscriptionsAssociatedWithUser;
+            }
+
+            // For all other profiles, if subscriptionsAssociatedWithUser is empty return all the
+            // subscriptionsWithNoAssociation.
             return subscriptionsAssociatedWithUser.isEmpty() ?
                     subscriptionsWithNoAssociation : subscriptionsAssociatedWithUser;
         } finally {
