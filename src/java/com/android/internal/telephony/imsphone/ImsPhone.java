@@ -16,7 +16,6 @@
 
 package com.android.internal.telephony.imsphone;
 
-import static android.provider.Telephony.SimInfo.COLUMN_PHONE_NUMBER_SOURCE_IMS;
 import static android.telephony.ims.ImsManager.EXTRA_WFC_REGISTRATION_FAILURE_MESSAGE;
 import static android.telephony.ims.ImsManager.EXTRA_WFC_REGISTRATION_FAILURE_TITLE;
 import static android.telephony.ims.RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED;
@@ -78,7 +77,6 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
-import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.UssdResponse;
@@ -117,7 +115,6 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneNotifier;
 import com.android.internal.telephony.ServiceStateTracker;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyComponentFactory;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
@@ -196,6 +193,7 @@ public class ImsPhone extends ImsPhoneBase {
                     return new ImsDialArgs.Builder()
                             .setUusInfo(dialArgs.uusInfo)
                             .setIsEmergency(dialArgs.isEmergency)
+                            .setEccCategory(dialArgs.eccCategory)
                             .setVideoState(dialArgs.videoState)
                             .setIntentExtras(dialArgs.intentExtras)
                             .setRttTextStream(((ImsDialArgs)dialArgs).rttTextStream)
@@ -265,6 +263,7 @@ public class ImsPhone extends ImsPhoneBase {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     ImsPhoneCallTracker mCT;
     ImsExternalCallTracker mExternalCallTracker;
+    ImsNrSaModeHandler mImsNrSaModeHandler;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private ArrayList <ImsPhoneMmiCode> mPendingMMIs = new ArrayList<ImsPhoneMmiCode>();
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
@@ -475,6 +474,10 @@ public class ImsPhone extends ImsPhoneBase {
                 TelephonyComponentFactory.getInstance()
                         .inject(ImsExternalCallTracker.class.getName())
                         .makeImsExternalCallTracker(this);
+        mImsNrSaModeHandler =
+                TelephonyComponentFactory.getInstance()
+                        .inject(ImsNrSaModeHandler.class.getName())
+                        .makeImsNrSaModeHandler(this);
         mCT = TelephonyComponentFactory.getInstance().inject(ImsPhoneCallTracker.class.getName())
                 .makeImsPhoneCallTracker(this);
         mCT.registerPhoneStateListener(mExternalCallTracker);
@@ -522,6 +525,7 @@ public class ImsPhone extends ImsPhoneBase {
         //super.dispose();
         mPendingMMIs.clear();
         mExternalCallTracker.tearDown();
+        mImsNrSaModeHandler.tearDown();
         mCT.unregisterPhoneStateListener(mExternalCallTracker);
         mCT.unregisterForVoiceCallEnded(this);
         mCT.dispose();
@@ -2059,6 +2063,10 @@ public class ImsPhone extends ImsPhoneBase {
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private void handleEnterEmergencyCallbackMode() {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            logd("DomainSelection enabled: ignore ECBM enter event.");
+            return;
+        }
         if (DBG) logd("handleEnterEmergencyCallbackMode,mIsPhoneInEcmState= " + isInEcm());
         // if phone is not in Ecm mode, and it's changed to Ecm mode
         if (!isInEcm()) {
@@ -2080,6 +2088,10 @@ public class ImsPhone extends ImsPhoneBase {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @Override
     protected void handleExitEmergencyCallbackMode() {
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            logd("DomainSelection enabled: ignore ECBM exit event.");
+            return;
+        }
         if (DBG) logd("handleExitEmergencyCallbackMode: mIsPhoneInEcmState = " + isInEcm());
 
         if (isInEcm()) {
@@ -2465,6 +2477,8 @@ public class ImsPhone extends ImsPhoneBase {
             getDefaultPhone().setImsRegistrationState(true);
             mMetrics.writeOnImsConnectionState(mPhoneId, ImsConnectionState.State.CONNECTED, null);
             mImsStats.onImsRegistered(imsRadioTech);
+            mImsNrSaModeHandler.onImsRegistered(
+                    attributes.getRegistrationTechnology(), attributes.getFeatureTags());
             updateImsRegistrationInfo(REGISTRATION_STATE_REGISTERED,
                     attributes.getRegistrationTechnology(), SUGGESTED_ACTION_NONE);
         }
@@ -2501,6 +2515,7 @@ public class ImsPhone extends ImsPhoneBase {
             mMetrics.writeOnImsConnectionState(mPhoneId, ImsConnectionState.State.DISCONNECTED,
                     imsReasonInfo);
             mImsStats.onImsUnregistered(imsReasonInfo);
+            mImsNrSaModeHandler.onImsUnregistered(imsRadioTech);
             mImsRegistrationTech = REGISTRATION_TECH_NONE;
             int suggestedModemAction = SUGGESTED_ACTION_NONE;
             if (imsReasonInfo.getCode() == ImsReasonInfo.CODE_REGISTRATION_ERROR) {
@@ -2531,42 +2546,22 @@ public class ImsPhone extends ImsPhoneBase {
         int subId = getSubId();
         if (!SubscriptionManager.isValidSubscriptionId(subId)) {
             // Defending b/219080264:
-            // SubscriptionController.setSubscriptionProperty validates input subId
+            // SubscriptionManagerService.setSubscriptionProperty validates input subId
             // so do not proceed if subId invalid. This may be happening because cached
             // IMS callbacks are sent back to telephony after SIM state changed.
             return;
         }
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfo = mSubscriptionManagerService
-                    .getSubscriptionInfoInternal(subId);
-            if (subInfo != null) {
-                phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber,
-                        subInfo.getCountryIso());
-                if (phoneNumber == null) {
-                    return;
-                }
-                mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
-            }
-        } else {
-            SubscriptionController subController = SubscriptionController.getInstance();
-            String countryIso = getCountryIso(subController, subId);
-            // Format the number as one more defense to reject garbage values:
-            // phoneNumber will become null.
-            phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber, countryIso);
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                .getSubscriptionInfoInternal(subId);
+        if (subInfo != null) {
+            phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber,
+                    subInfo.getCountryIso());
             if (phoneNumber == null) {
                 return;
             }
-            subController.setSubscriptionProperty(subId, COLUMN_PHONE_NUMBER_SOURCE_IMS,
-                    phoneNumber);
+            mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
         }
-    }
-
-    private static String getCountryIso(SubscriptionController subController, int subId) {
-        SubscriptionInfo info = subController.getSubscriptionInfo(subId);
-        String countryIso = info == null ? "" : info.getCountryIso();
-        // info.getCountryIso() may return null
-        return countryIso == null ? "" : countryIso;
     }
 
     /**

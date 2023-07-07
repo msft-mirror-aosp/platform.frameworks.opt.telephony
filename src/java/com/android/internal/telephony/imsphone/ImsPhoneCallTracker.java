@@ -143,7 +143,6 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.ServiceStateTracker;
 import com.android.internal.telephony.SrvccConnection;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.d2d.RtpTransport;
 import com.android.internal.telephony.data.DataSettingsManager;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
@@ -1857,20 +1856,12 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         // Check for changes due to carrier config.
         maybeConfigureRtpHeaderExtensions();
 
-        if (mPhone.isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
-                    .getSubscriptionInfoInternal(subId);
-            if (subInfo == null || !subInfo.isActive()) {
-                loge("updateCarrierConfiguration: skipping notification to ImsService, non"
-                        + "active subId = " + subId);
-                return;
-            }
-        } else {
-            if (!SubscriptionController.getInstance().isActiveSubId(subId)) {
-                loge("updateCarrierConfiguration: skipping notification to ImsService, non"
-                        + "active subId = " + subId);
-                return;
-            }
+        SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
+                .getSubscriptionInfoInternal(subId);
+        if (subInfo == null || !subInfo.isActive()) {
+            loge("updateCarrierConfiguration: skipping notification to ImsService, non"
+                    + "active subId = " + subId);
+            return;
         }
 
         Phone defaultPhone = getPhone().getDefaultPhone();
@@ -3398,6 +3389,13 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 break;
 
             case ImsReasonInfo.CODE_SIP_BAD_REQUEST:
+                // Auto-missed/rejected calls can sometimes use this reason cause, but if we see it
+                // for outgoing calls it is just a server error.
+                if (callState == Call.State.DIALING || callState == Call.State.ALERTING) {
+                    return DisconnectCause.SERVER_ERROR;
+                } else {
+                    return DisconnectCause.INCOMING_AUTO_REJECTED;
+                }
             case ImsReasonInfo.CODE_REJECT_CALL_ON_OTHER_SUB:
             case ImsReasonInfo.CODE_REJECT_ONGOING_E911_CALL:
             case ImsReasonInfo.CODE_REJECT_ONGOING_CALL_SETUP:
@@ -3555,6 +3553,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 // Since onCallInitiating and onCallProgressing reset mPendingMO,
                 // we can't depend on mPendingMO.
                 if ((reasonInfo.getCode() == ImsReasonInfo.CODE_SIP_ALTERNATE_EMERGENCY_CALL
+                        || reasonInfo.getCode() == ImsReasonInfo.CODE_LOCAL_NOT_REGISTERED
                         || reasonInfo.getCode() == ImsReasonInfo.CODE_LOCAL_CALL_CS_RETRY_REQUIRED)
                         && conn != null) {
                     logi("onCallStartFailed eccCategory=" + eccCategory);
@@ -3698,6 +3697,12 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             if (cause == DisconnectCause.NORMAL && conn != null && conn.getImsCall().isMerged()) {
                 // Call was terminated while it is merged instead of a remote disconnect.
                 cause = DisconnectCause.IMS_MERGED_SUCCESSFULLY;
+            }
+
+            // Ensure the background call is correctly marked as MERGE_COMPLETE before it is
+            // disconnected as part of the IMS merge conference process:
+            if (cause == DisconnectCause.IMS_MERGED_SUCCESSFULLY && conn != null) {
+                conn.onConnectionEvent(android.telecom.Connection.EVENT_MERGE_COMPLETE, null);
             }
 
             EmergencyNumberTracker emergencyNumberTracker = null;
@@ -4041,7 +4046,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     mPhone.stopOnHoldTone(conn);
                     mOnHoldToneStarted = false;
                 }
-                conn.onConnectionEvent(android.telecom.Connection.EVENT_CALL_REMOTELY_UNHELD, null);
+                conn.setRemotelyUnheld();
                 mImsCallInfoTracker.updateImsCallStatus(conn, false, true);
             }
 
@@ -4722,6 +4727,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 // If the dialing call had ringback, ensure it stops now,
                 // otherwise it'll keep playing afer the SRVCC completes.
                 mForegroundCall.maybeStopRingback();
+                mForegroundCall.maybeClearRemotelyHeldStatus();
+                mBackgroundCall.maybeClearRemotelyHeldStatus();
 
                 resetState();
                 transferHandoverConnections(mForegroundCall);
@@ -5822,7 +5829,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 mOnHoldToneStarted = true;
                 mOnHoldToneId = System.identityHashCode(conn);
             }
-            conn.onConnectionEvent(android.telecom.Connection.EVENT_CALL_REMOTELY_HELD, null);
+            conn.setRemotelyHeld();
             mImsCallInfoTracker.updateImsCallStatus(conn, true, false);
 
             boolean useVideoPauseWorkaround = mPhone.getContext().getResources().getBoolean(

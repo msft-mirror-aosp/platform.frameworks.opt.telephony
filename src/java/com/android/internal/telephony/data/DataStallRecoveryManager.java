@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony.data;
 
+import static android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE;
+
 import android.annotation.CallbackExecutor;
 import android.annotation.ElapsedRealtimeLong;
 import android.annotation.IntDef;
@@ -32,7 +34,6 @@ import android.telephony.Annotation.ValidationStatus;
 import android.telephony.CellSignalStrength;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
-import android.telephony.data.DataProfile;
 import android.util.IndentingPrintWriter;
 import android.util.LocalLog;
 
@@ -176,6 +177,8 @@ public class DataStallRecoveryManager extends Handler {
     private boolean mIsAttemptedAllSteps;
     /** Whether internet network connected. */
     private boolean mIsInternetNetworkConnected;
+    /** The durations for current recovery action */
+    private @ElapsedRealtimeLong long mTimeElapsedOfCurrentAction;
 
     /** The array for the timers between recovery actions. */
     private @NonNull long[] mDataStallRecoveryDelayMillisArray;
@@ -265,7 +268,7 @@ public class DataStallRecoveryManager extends Handler {
 
                     @Override
                     public void onInternetDataNetworkConnected(
-                            @NonNull List<DataProfile> dataProfiles) {
+                            @NonNull List<DataNetwork> internetNetworks) {
                         mIsInternetNetworkConnected = true;
                         logl("onInternetDataNetworkConnected");
                     }
@@ -469,6 +472,15 @@ public class DataStallRecoveryManager extends Handler {
     }
 
     /**
+     * Get duration time for current recovery action.
+     *
+     * @return the time duration for current recovery action.
+     */
+    private long getDurationOfCurrentRecoveryMs() {
+        return (SystemClock.elapsedRealtime() - mTimeElapsedOfCurrentAction);
+    }
+
+    /**
      * Broadcast intent when data stall occurred.
      *
      * @param recoveryAction Send the data stall detected intent with RecoveryAction info.
@@ -478,7 +490,7 @@ public class DataStallRecoveryManager extends Handler {
         Intent intent = new Intent(TelephonyManager.ACTION_DATA_STALL_DETECTED);
         SubscriptionManager.putPhoneIdAndSubIdExtra(intent, mPhone.getPhoneId());
         intent.putExtra(TelephonyManager.EXTRA_RECOVERY_ACTION, recoveryAction);
-        mPhone.getContext().sendBroadcast(intent);
+        mPhone.getContext().sendBroadcast(intent, READ_PRIVILEGED_PHONE_STATE);
     }
 
     /** Recovery Action: RECOVERY_ACTION_GET_DATA_CALL_LIST */
@@ -595,6 +607,7 @@ public class DataStallRecoveryManager extends Handler {
     private void setNetworkValidationState(boolean isValid) {
         boolean isLogNeeded = false;
         int timeDuration = 0;
+        int timeDurationOfCurrentAction = 0;
         boolean isFirstDataStall = false;
         boolean isFirstValidationAfterDoRecovery = false;
         @RecoveredReason int reason = getRecoveredReason(isValid);
@@ -627,9 +640,14 @@ public class DataStallRecoveryManager extends Handler {
         }
 
         if (isLogNeeded) {
+            timeDurationOfCurrentAction =
+                ((getRecoveryAction() > RECOVERY_ACTION_GET_DATA_CALL_LIST
+                   && !mIsAttemptedAllSteps)
+                 || mLastAction == RECOVERY_ACTION_RESET_MODEM)
+                 ? (int) getDurationOfCurrentRecoveryMs() : 0;
             DataStallRecoveryStats.onDataStallEvent(
                     mLastAction, mPhone, isValid, timeDuration, reason,
-                    isFirstValidationAfterDoRecovery);
+                    isFirstValidationAfterDoRecovery, timeDurationOfCurrentAction);
             logl(
                     "data stall: "
                     + (isFirstDataStall == true ? "start" : isValid == false ? "in process" : "end")
@@ -642,7 +660,9 @@ public class DataStallRecoveryManager extends Handler {
                     + ", isFirstValidationAfterDoRecovery="
                     + isFirstValidationAfterDoRecovery
                     + ", TimeDuration="
-                    + timeDuration);
+                    + timeDuration
+                    + ", TimeDurationForCurrentRecoveryAction="
+                    + timeDurationOfCurrentAction);
         }
     }
 
@@ -693,6 +713,7 @@ public class DataStallRecoveryManager extends Handler {
         mLastActionReported = false;
         broadcastDataStallDetected(recoveryAction);
         mNetworkCheckTimerStarted = false;
+        mTimeElapsedOfCurrentAction = SystemClock.elapsedRealtime();
 
         switch (recoveryAction) {
             case RECOVERY_ACTION_GET_DATA_CALL_LIST:

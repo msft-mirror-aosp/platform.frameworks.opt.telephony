@@ -395,16 +395,11 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testCarrierConfigLoadSubscription() throws Exception {
-        // Start with there being no subId loaded, so SubscriptionController#isActiveSubId is false
-        // as part of setup, connectionReady is called, which ends up calling
-        // updateCarrierConfiguration. Since the carrier config is not report carrier identified
-        // config, we should not see updateImsServiceConfig called yet.
         verify(mImsManager, never()).updateImsServiceConfig();
         // Send disconnected indication
         mConnectorListener.connectionUnavailable(FeatureConnector.UNAVAILABLE_REASON_DISCONNECTED);
 
         // Receive a subscription loaded and IMS connection ready indication.
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         mContextFixture.getCarrierConfigBundle().putBoolean(
                 CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
         sendCarrierConfigChanged();
@@ -420,7 +415,6 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
     public void testCarrierConfigSentLocked() throws Exception {
         // move to ImsService unavailable state.
         mConnectorListener.connectionUnavailable(FeatureConnector.UNAVAILABLE_REASON_DISCONNECTED);
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         mContextFixture.getCarrierConfigBundle().putBoolean(
                 CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
 
@@ -447,7 +441,6 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
         verify(mImsManager, never()).updateImsServiceConfig();
 
         // Receive a subscription loaded and IMS connection ready indication.
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         mContextFixture.getCarrierConfigBundle().putBoolean(
                 CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
         // CarrierConfigLoader has signalled that the carrier config has been applied for a specific
@@ -467,7 +460,6 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
     public void testCarrierConfigSentBeforeReady() throws Exception {
         // move to ImsService unavailable state.
         mConnectorListener.connectionUnavailable(FeatureConnector.UNAVAILABLE_REASON_DISCONNECTED);
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         mContextFixture.getCarrierConfigBundle().putBoolean(
                 CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
 
@@ -488,7 +480,6 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
         verify(mImsManager, never()).updateImsServiceConfig();
 
         // Receive a subscription loaded and IMS connection ready indication.
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         mContextFixture.getCarrierConfigBundle().putBoolean(
                 CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
         // CarrierConfigLoader has signalled that the carrier config has been applied for a specific
@@ -512,7 +503,6 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
     public void testCarrierConfigSentBeforeReadyAndCrash() throws Exception {
         // move to ImsService unavailable state.
         mConnectorListener.connectionUnavailable(FeatureConnector.UNAVAILABLE_REASON_DISCONNECTED);
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         mContextFixture.getCarrierConfigBundle().putBoolean(
                 CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
 
@@ -1435,6 +1425,43 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testAutoRejectedCauses() {
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_REJECT_CALL_ON_OTHER_SUB, 0),
+                Call.State.INCOMING));
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_REJECT_ONGOING_E911_CALL, 0),
+                Call.State.INCOMING));
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_REJECT_ONGOING_CALL_SETUP, 0),
+                Call.State.INCOMING));
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_REJECT_MAX_CALL_LIMIT_REACHED, 0),
+                Call.State.INCOMING));
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_REJECT_ONGOING_CALL_TRANSFER, 0),
+                Call.State.INCOMING));
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_REJECT_ONGOING_CONFERENCE_CALL, 0),
+                Call.State.INCOMING));
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_REJECT_ONGOING_HANDOVER, 0),
+                Call.State.INCOMING));
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_REJECT_ONGOING_CALL_UPGRADE, 0),
+                Call.State.INCOMING));
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_SIP_BAD_REQUEST, 0), Call.State.INCOMING));
+        assertEquals(DisconnectCause.INCOMING_AUTO_REJECTED, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_SIP_BAD_REQUEST, 0), Call.State.WAITING));
+        assertEquals(DisconnectCause.SERVER_ERROR, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_SIP_BAD_REQUEST, 0), Call.State.DIALING));
+        assertEquals(DisconnectCause.SERVER_ERROR, mCTUT.getDisconnectCauseFromReasonInfo(
+                new ImsReasonInfo(ImsReasonInfo.CODE_SIP_BAD_REQUEST, 0), Call.State.ALERTING));
+    }
+
+    @Test
+    @SmallTest
     public void testImsAlternateEmergencyDisconnect() {
         assertEquals(DisconnectCause.IMS_SIP_ALTERNATE_EMERGENCY_CALL,
                 mCTUT.getDisconnectCauseFromReasonInfo(
@@ -1666,7 +1693,9 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
             }
         });
         ImsCall call = connection.getImsCall();
-        call.getListener().onCallMerged(call, null, false);
+        call.getListener().onCallTerminated(
+                call, new ImsReasonInfo(
+                        ImsReasonInfo.CODE_LOCAL_ENDED_BY_CONFERENCE_MERGE, 0));
         assertTrue(result[0]);
     }
 
@@ -1884,7 +1913,6 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
     @SmallTest
     public void testConfigureRtpHeaderExtensionTypes() throws Exception {
         mConnectorListener.connectionUnavailable(FeatureConnector.UNAVAILABLE_REASON_DISCONNECTED);
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         mContextFixture.getCarrierConfigBundle().putBoolean(
                 CarrierConfigManager.KEY_SUPPORTS_DEVICE_TO_DEVICE_COMMUNICATION_USING_RTP_BOOL,
                 true);
@@ -1915,7 +1943,6 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
     @SmallTest
     public void testRtpButNoSdp() throws Exception {
         mConnectorListener.connectionUnavailable(FeatureConnector.UNAVAILABLE_REASON_DISCONNECTED);
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         mContextFixture.getCarrierConfigBundle().putBoolean(
                 CarrierConfigManager.KEY_SUPPORTS_DEVICE_TO_DEVICE_COMMUNICATION_USING_RTP_BOOL,
                 true);
@@ -1945,7 +1972,6 @@ public class ImsPhoneCallTrackerTest extends TelephonyTest {
     @SmallTest
     public void testDontConfigureRtpHeaderExtensionTypes() throws Exception {
         mConnectorListener.connectionUnavailable(FeatureConnector.UNAVAILABLE_REASON_DISCONNECTED);
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
         sendCarrierConfigChanged();
         ImsPhoneCallTracker.Config config = new ImsPhoneCallTracker.Config();
         config.isD2DCommunicationSupported = false;

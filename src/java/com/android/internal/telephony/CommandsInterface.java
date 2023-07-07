@@ -2990,6 +2990,13 @@ public interface CommandsInterface {
     default void setNullCipherAndIntegrityEnabled(boolean enabled, Message result) {}
 
     /**
+     * Check whether null ciphering and/or null integrity-protected connections are allowed.
+     *
+     * @param result Callback message containing the success or failure status.
+     */
+    default void isNullCipherAndIntegrityEnabled(Message result) {}
+
+    /**
      * Notifies the IMS call status to the modem.
      *
      * @param imsCallInfo The list of {@link ImsCallInfo}.
@@ -3033,6 +3040,13 @@ public interface CommandsInterface {
      * @param result Message that will be sent back to the requester
      */
     default void getSatellitePowerState(Message result) {}
+
+    /**
+     * Get satellite provision state.
+     *
+     * @param result Message that will be sent back to the requester
+     */
+    default void getSatelliteProvisionState(Message result) {}
 
     /**
      * Check whether satellite modem is supported by the device.

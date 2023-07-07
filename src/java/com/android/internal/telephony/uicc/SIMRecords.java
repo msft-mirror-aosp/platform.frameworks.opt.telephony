@@ -296,6 +296,7 @@ public class SIMRecords extends IccRecords {
     private int getExtFromEf(int ef) {
         int ext;
         switch (ef) {
+            case EF_FDN: return EF_EXT2;
             case EF_MSISDN:
                 /* For USIM apps use EXT5. (TS 31.102 Section 4.2.37) */
                 if (mParentApp.getType() == AppType.APPTYPE_USIM) {
@@ -857,7 +858,7 @@ public class SIMRecords extends IccRecords {
                     mIccId = IccUtils.bcdToString(data, 0, data.length);
                     mFullIccId = IccUtils.bchToString(data, 0, data.length);
 
-                    log("iccid: " + SubscriptionInfo.givePrintableIccid(mFullIccId));
+                    log("iccid: " + SubscriptionInfo.getPrintableId(mFullIccId));
                     break;
 
                 case EVENT_GET_AD_DONE:

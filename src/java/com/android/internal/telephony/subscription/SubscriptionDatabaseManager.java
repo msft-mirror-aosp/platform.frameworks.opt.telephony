@@ -81,7 +81,7 @@ import java.util.stream.Collectors;
  * to the database should go through {@link SubscriptionManagerService}.
  */
 public class SubscriptionDatabaseManager extends Handler {
-    private static final String LOG_TAG = "SDM";
+    private static final String LOG_TAG = "SDMGR";
 
     /** Whether enabling verbose debugging message or not. */
     private static final boolean VDBG = false;
@@ -91,7 +91,6 @@ public class SubscriptionDatabaseManager extends Handler {
 
     /** The mapping from {@link SimInfo} table to {@link SubscriptionInfoInternal} get methods. */
     private static final Map<String, Function<SubscriptionInfoInternal, ?>>
-            // TODO: Support SimInfo.COLUMN_CB_XXX which are still used by wear.
             SUBSCRIPTION_GET_METHOD_MAP = Map.ofEntries(
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_UNIQUE_KEY_SUBSCRIPTION_ID,
@@ -147,6 +146,42 @@ public class SubscriptionDatabaseManager extends Handler {
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_IS_REMOVABLE,
                     SubscriptionInfoInternal::getRemovableEmbedded),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_EXTREME_THREAT_ALERT,
+                    SubscriptionInfoInternal::getCellBroadcastExtremeThreatAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_SEVERE_THREAT_ALERT,
+                    SubscriptionInfoInternal::getCellBroadcastSevereThreatAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_AMBER_ALERT,
+                    SubscriptionInfoInternal::getCellBroadcastAmberAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_EMERGENCY_ALERT,
+                    SubscriptionInfoInternal::getCellBroadcastEmergencyAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ALERT_SOUND_DURATION,
+                    SubscriptionInfoInternal::getCellBroadcastAlertSoundDuration),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ALERT_REMINDER_INTERVAL,
+                    SubscriptionInfoInternal::getCellBroadcastAlertReminderInterval),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ALERT_VIBRATE,
+                    SubscriptionInfoInternal::getCellBroadcastAlertVibrationEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ALERT_SPEECH,
+                    SubscriptionInfoInternal::getCellBroadcastAlertSpeechEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ETWS_TEST_ALERT,
+                    SubscriptionInfoInternal::getCellBroadcastEtwsTestAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_CHANNEL_50_ALERT,
+                    SubscriptionInfoInternal::getCellBroadcastAreaInfoMessageEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_CMAS_TEST_ALERT,
+                    SubscriptionInfoInternal::getCellBroadcastTestAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_OPT_OUT_DIALOG,
+                    SubscriptionInfoInternal::getCellBroadcastOptOutDialogEnabled),
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_ENHANCED_4G_MODE_ENABLED,
                     SubscriptionInfoInternal::getEnhanced4GModeEnabled),
@@ -266,6 +301,42 @@ public class SubscriptionDatabaseManager extends Handler {
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_IS_REMOVABLE,
                     SubscriptionDatabaseManager::setRemovableEmbedded),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_EXTREME_THREAT_ALERT,
+                    SubscriptionDatabaseManager::setCellBroadcastExtremeThreatAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_SEVERE_THREAT_ALERT,
+                    SubscriptionDatabaseManager::setCellBroadcastSevereThreatAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_AMBER_ALERT,
+                    SubscriptionDatabaseManager::setCellBroadcastAmberAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_EMERGENCY_ALERT,
+                    SubscriptionDatabaseManager::setCellBroadcastEmergencyAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ALERT_SOUND_DURATION,
+                    SubscriptionDatabaseManager::setCellBroadcastAlertSoundDuration),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ALERT_REMINDER_INTERVAL,
+                    SubscriptionDatabaseManager::setCellBroadcastAlertReminderInterval),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ALERT_VIBRATE,
+                    SubscriptionDatabaseManager::setCellBroadcastAlertVibrationEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ALERT_SPEECH,
+                    SubscriptionDatabaseManager::setCellBroadcastAlertSpeechEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_ETWS_TEST_ALERT,
+                    SubscriptionDatabaseManager::setCellBroadcastEtwsTestAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_CHANNEL_50_ALERT,
+                    SubscriptionDatabaseManager::setCellBroadcastAreaInfoMessageEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_CMAS_TEST_ALERT,
+                    SubscriptionDatabaseManager::setCellBroadcastTestAlertEnabled),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_CB_OPT_OUT_DIALOG,
+                    SubscriptionDatabaseManager::setCellBroadcastOptOutDialogEnabled),
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_ENHANCED_4G_MODE_ENABLED,
                     SubscriptionDatabaseManager::setEnhanced4GModeEnabled),
@@ -449,18 +520,6 @@ public class SubscriptionDatabaseManager extends Handler {
             SimInfo.COLUMN_MCC,
             SimInfo.COLUMN_MNC,
             SimInfo.COLUMN_SIM_PROVISIONING_STATUS,
-            SimInfo.COLUMN_CB_EXTREME_THREAT_ALERT,
-            SimInfo.COLUMN_CB_SEVERE_THREAT_ALERT,
-            SimInfo.COLUMN_CB_AMBER_ALERT,
-            SimInfo.COLUMN_CB_EMERGENCY_ALERT,
-            SimInfo.COLUMN_CB_ALERT_SOUND_DURATION,
-            SimInfo.COLUMN_CB_ALERT_REMINDER_INTERVAL,
-            SimInfo.COLUMN_CB_ALERT_VIBRATE,
-            SimInfo.COLUMN_CB_ALERT_SPEECH,
-            SimInfo.COLUMN_CB_ETWS_TEST_ALERT,
-            SimInfo.COLUMN_CB_CHANNEL_50_ALERT,
-            SimInfo.COLUMN_CB_CMAS_TEST_ALERT,
-            SimInfo.COLUMN_CB_OPT_OUT_DIALOG,
             SimInfo.COLUMN_IS_METERED,
             SimInfo.COLUMN_DATA_ENABLED_OVERRIDE_RULES,
             SimInfo.COLUMN_ALLOWED_NETWORK_TYPES
@@ -553,14 +612,6 @@ public class SubscriptionDatabaseManager extends Handler {
          * @param subId The subscription id.
          */
         public abstract void onSubscriptionChanged(int subId);
-
-        /**
-         * Called when {@link SubscriptionInfoInternal#areUiccApplicationsEnabled()}
-         * changed.
-         *
-         * @param subId The subscription id.
-         */
-        public abstract void onUiccApplicationsEnabled(int subId);
     }
 
     /**
@@ -918,10 +969,6 @@ public class SubscriptionDatabaseManager extends Handler {
                             mAllSubscriptionInfoInternalCache.put(id, builder.build());
                             mCallback.invokeFromExecutor(()
                                     -> mCallback.onSubscriptionChanged(subId));
-                            if (columnName.equals(SimInfo.COLUMN_UICC_APPLICATIONS_ENABLED)) {
-                                mCallback.invokeFromExecutor(()
-                                        -> mCallback.onUiccApplicationsEnabled(subId));
-                            }
                         }
                     }
                 }
@@ -956,10 +1003,6 @@ public class SubscriptionDatabaseManager extends Handler {
             if (updateDatabase(subId, createDeltaContentValues(oldSubInfo, newSubInfo)) > 0) {
                 mAllSubscriptionInfoInternalCache.put(subId, newSubInfo);
                 mCallback.invokeFromExecutor(() -> mCallback.onSubscriptionChanged(subId));
-                if (oldSubInfo.areUiccApplicationsEnabled()
-                        != newSubInfo.areUiccApplicationsEnabled()) {
-                    mCallback.invokeFromExecutor(() -> mCallback.onUiccApplicationsEnabled(subId));
-                }
             }
         } finally {
             mReadWriteLock.writeLock().unlock();
@@ -1301,6 +1344,180 @@ public class SubscriptionDatabaseManager extends Handler {
     public void setRemovableEmbedded(int subId, int isRemovableEmbedded) {
         writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_IS_REMOVABLE, isRemovableEmbedded,
                 SubscriptionInfoInternal.Builder::setRemovableEmbedded);
+    }
+
+    /**
+     * Set whether cell broadcast extreme threat alert is enabled by the user or not.
+     *
+     * @param subId Subscription id.
+     * @param isExtremeThreatAlertEnabled whether cell broadcast extreme threat alert is enabled by
+     * the user or not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastExtremeThreatAlertEnabled(int subId,
+            int isExtremeThreatAlertEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_EXTREME_THREAT_ALERT,
+                isExtremeThreatAlertEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastExtremeThreatAlertEnabled);
+    }
+
+    /**
+     * Set whether cell broadcast severe threat alert is enabled by the user or not.
+     *
+     * @param subId Subscription id.
+     * @param isSevereThreatAlertEnabled whether cell broadcast severe threat alert is enabled by
+     * the user or not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastSevereThreatAlertEnabled(int subId,
+            int isSevereThreatAlertEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_SEVERE_THREAT_ALERT,
+                isSevereThreatAlertEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastSevereThreatAlertEnabled);
+    }
+
+    /**
+     * Set whether cell broadcast amber alert is enabled by the user or not.
+     *
+     * @param subId Subscription id.
+     * @param isAmberAlertEnabled whether cell broadcast amber alert is enabled by
+     * the user or not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastAmberAlertEnabled(int subId, int isAmberAlertEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_AMBER_ALERT, isAmberAlertEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastAmberAlertEnabled);
+    }
+
+    /**
+     * Set whether cell broadcast emergency alert is enabled by the user or not.
+     *
+     * @param subId Subscription id.
+     * @param isEmergencyAlertEnabled whether cell broadcast emergency alert is enabled by
+     * the user or not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastEmergencyAlertEnabled(int subId,
+            int isEmergencyAlertEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_EMERGENCY_ALERT,
+                isEmergencyAlertEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastEmergencyAlertEnabled);
+    }
+
+    /**
+     * Set cell broadcast alert sound duration.
+     *
+     * @param subId Subscription id.
+     * @param alertSoundDuration Alert sound duration in seconds.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastAlertSoundDuration(int subId, int alertSoundDuration) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_ALERT_SOUND_DURATION,
+                alertSoundDuration,
+                SubscriptionInfoInternal.Builder::setCellBroadcastAlertSoundDuration);
+    }
+
+    /**
+     * Set cell broadcast alert reminder interval.
+     *
+     * @param subId Subscription id.
+     * @param reminderInterval Alert reminder interval in milliseconds.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastAlertReminderInterval(int subId, int reminderInterval) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_ALERT_REMINDER_INTERVAL,
+                reminderInterval,
+                SubscriptionInfoInternal.Builder::setCellBroadcastAlertReminderInterval);
+    }
+
+    /**
+     * Set whether cell broadcast alert vibration is enabled by the user or not.
+     *
+     * @param subId Subscription id.
+     * @param isAlertVibrationEnabled whether cell broadcast alert vibration is enabled by the user
+     * or not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastAlertVibrationEnabled(int subId, int isAlertVibrationEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_ALERT_VIBRATE, isAlertVibrationEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastAlertVibrationEnabled);
+    }
+
+    /**
+     * Set whether cell broadcast alert speech is enabled by the user or not.
+     *
+     * @param subId Subscription id.
+     * @param isAlertSpeechEnabled whether cell broadcast alert speech is enabled by the user or
+     * not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastAlertSpeechEnabled(int subId, int isAlertSpeechEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_ALERT_SPEECH, isAlertSpeechEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastAlertSpeechEnabled);
+    }
+
+    /**
+     * Set whether ETWS test alert is enabled by the user or not.
+     *
+     * @param subId Subscription id.
+     * @param isEtwsTestAlertEnabled whether cell broadcast ETWS test alert is enabled by the user
+     * or not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastEtwsTestAlertEnabled(int subId, int isEtwsTestAlertEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_ETWS_TEST_ALERT,
+                isEtwsTestAlertEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastEtwsTestAlertEnabled);
+    }
+
+    /**
+     * Set whether area info message is enabled by the user or not.
+     *
+     * @param subId Subscription id.
+     * @param isAreaInfoMessageEnabled whether cell broadcast area info message is enabled by the
+     * user or not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastAreaInfoMessageEnabled(int subId, int isAreaInfoMessageEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_CHANNEL_50_ALERT,
+                isAreaInfoMessageEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastAreaInfoMessageEnabled);
+    }
+
+    /**
+     * Set whether cell broadcast test alert is enabled by the user or not.
+     *
+     * @param subId Subscription id.
+     * @param isTestAlertEnabled whether cell broadcast test alert is enabled by the user or not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastTestAlertEnabled(int subId, int isTestAlertEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_CMAS_TEST_ALERT, isTestAlertEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastTestAlertEnabled);
+    }
+
+    /**
+     * Set whether cell broadcast opt-out dialog should be shown or not.
+     *
+     * @param subId Subscription id.
+     * @param isOptOutDialogEnabled whether cell broadcast opt-out dialog should be shown or not.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setCellBroadcastOptOutDialogEnabled(int subId, int isOptOutDialogEnabled) {
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_CB_OPT_OUT_DIALOG, isOptOutDialogEnabled,
+                SubscriptionInfoInternal.Builder::setCellBroadcastOptOutDialogEnabled);
     }
 
     /**
@@ -1815,13 +2032,14 @@ public class SubscriptionDatabaseManager extends Handler {
      * Load the database from content provider to the cache.
      */
     private void loadDatabaseInternal() {
-        logl("loadDatabaseInternal");
+        log("loadDatabaseInternal");
         try (Cursor cursor = mContext.getContentResolver().query(
                 SimInfo.CONTENT_URI, null, null, null, null)) {
             mReadWriteLock.writeLock().lock();
             try {
                 Map<Integer, SubscriptionInfoInternal> newAllSubscriptionInfoInternalCache =
                         new HashMap<>();
+                boolean changed = false;
                 while (cursor != null && cursor.moveToNext()) {
                     SubscriptionInfoInternal subInfo = createSubscriptionInfoFromCursor(cursor);
                     newAllSubscriptionInfoInternalCache.put(subInfo.getSubscriptionId(), subInfo);
@@ -1829,16 +2047,19 @@ public class SubscriptionDatabaseManager extends Handler {
                             .get(subInfo.getSubscriptionId()), subInfo)) {
                         mCallback.invokeFromExecutor(() -> mCallback.onSubscriptionChanged(
                                 subInfo.getSubscriptionId()));
+                        changed = true;
                     }
                 }
 
-                mAllSubscriptionInfoInternalCache.clear();
-                mAllSubscriptionInfoInternalCache.putAll(newAllSubscriptionInfoInternalCache);
+                if (changed) {
+                    mAllSubscriptionInfoInternalCache.clear();
+                    mAllSubscriptionInfoInternalCache.putAll(newAllSubscriptionInfoInternalCache);
 
-                logl("Loaded " + mAllSubscriptionInfoInternalCache.size()
-                        + " records from the subscription database.");
-                mAllSubscriptionInfoInternalCache.forEach(
-                        (subId, subInfo) -> log("  " + subInfo.toString()));
+                    logl("Loaded " + mAllSubscriptionInfoInternalCache.size()
+                            + " records from the subscription database.");
+                    mAllSubscriptionInfoInternalCache.forEach(
+                            (subId, subInfo) -> log("  " + subInfo.toString()));
+                }
             } finally {
                 mReadWriteLock.writeLock().unlock();
             }
@@ -1933,6 +2154,30 @@ public class SubscriptionDatabaseManager extends Handler {
         builder.setCardId(publicCardId)
                 .setRemovableEmbedded(cursor.getInt(cursor.getColumnIndexOrThrow(
                         SimInfo.COLUMN_IS_REMOVABLE)))
+                .setCellBroadcastExtremeThreatAlertEnabled(cursor.getInt(cursor
+                        .getColumnIndexOrThrow(SimInfo.COLUMN_CB_EXTREME_THREAT_ALERT)))
+                .setCellBroadcastSevereThreatAlertEnabled(cursor.getInt(cursor
+                        .getColumnIndexOrThrow(SimInfo.COLUMN_CB_SEVERE_THREAT_ALERT)))
+                .setCellBroadcastAmberAlertEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_AMBER_ALERT)))
+                .setCellBroadcastEmergencyAlertEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_EMERGENCY_ALERT)))
+                .setCellBroadcastAlertSoundDuration(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_ALERT_SOUND_DURATION)))
+                .setCellBroadcastAlertReminderInterval(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_ALERT_REMINDER_INTERVAL)))
+                .setCellBroadcastAlertVibrationEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_ALERT_VIBRATE)))
+                .setCellBroadcastAlertSpeechEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_ALERT_SPEECH)))
+                .setCellBroadcastEtwsTestAlertEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_ETWS_TEST_ALERT)))
+                .setCellBroadcastAreaInfoMessageEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_CHANNEL_50_ALERT)))
+                .setCellBroadcastTestAlertEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_CMAS_TEST_ALERT)))
+                .setCellBroadcastOptOutDialogEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(
+                        SimInfo.COLUMN_CB_OPT_OUT_DIALOG)))
                 .setEnhanced4GModeEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(
                         SimInfo.COLUMN_ENHANCED_4G_MODE_ENABLED)))
                 .setVideoTelephonyEnabled(cursor.getInt(cursor.getColumnIndexOrThrow(

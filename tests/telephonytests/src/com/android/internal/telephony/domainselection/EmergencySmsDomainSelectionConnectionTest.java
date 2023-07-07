@@ -108,6 +108,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testOnWlanSelected() throws Exception {
         when(mAnm.getPreferredTransport(anyInt()))
                 .thenReturn(AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
@@ -117,15 +118,17 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
         }, mHandler::post);
 
-        mDsConnection.onWlanSelected();
+        mDsConnection.onWlanSelected(true);
         processAllMessages();
 
         assertTrue(future.isDone());
-        verify(mEmergencyStateTracker).onEmergencyTransportChanged(eq(MODE_EMERGENCY_WLAN));
+        verify(mEmergencyStateTracker).onEmergencyTransportChanged(
+                eq(EmergencyStateTracker.EMERGENCY_TYPE_SMS), eq(MODE_EMERGENCY_WLAN));
     }
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testOnWlanSelectedWithDifferentTransportType() throws Exception {
         when(mAnm.getPreferredTransport(anyInt())).thenReturn(
                 AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
@@ -136,12 +139,13 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
         }, mHandler::post);
 
-        mDsConnection.onWlanSelected();
+        mDsConnection.onWlanSelected(true);
         processAllMessages();
 
         ArgumentCaptor<Handler> handlerCaptor = ArgumentCaptor.forClass(Handler.class);
         ArgumentCaptor<Integer> msgCaptor = ArgumentCaptor.forClass(Integer.class);
-        verify(mEmergencyStateTracker).onEmergencyTransportChanged(eq(MODE_EMERGENCY_WLAN));
+        verify(mEmergencyStateTracker).onEmergencyTransportChanged(
+                eq(EmergencyStateTracker.EMERGENCY_TYPE_SMS), eq(MODE_EMERGENCY_WLAN));
         verify(mAnm).registerForQualifiedNetworksChanged(
                 handlerCaptor.capture(), msgCaptor.capture());
         verify(mPhone).notifyEmergencyDomainSelected(
@@ -158,6 +162,31 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
+    public void testOnWlanSelectedWithDifferentTransportTypeAndImsPdn() throws Exception {
+        when(mAnm.getPreferredTransport(anyInt())).thenReturn(
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+        CompletableFuture<Integer> future =
+                mDsConnection.requestDomainSelection(mDsAttr, mDscCallback);
+        future.thenAcceptAsync((domain) -> {
+            assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
+        }, mHandler::post);
+
+        mDsConnection.onWlanSelected(false);
+        processAllMessages();
+
+        verify(mEmergencyStateTracker).onEmergencyTransportChanged(
+                eq(EmergencyStateTracker.EMERGENCY_TYPE_SMS), eq(MODE_EMERGENCY_WLAN));
+        verify(mAnm, never()).registerForQualifiedNetworksChanged(any(Handler.class), anyInt());
+        verify(mPhone, never()).notifyEmergencyDomainSelected(anyInt());
+
+        assertTrue(future.isDone());
+    }
+
+    @Test
+    @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testOnWlanSelectedWithDifferentTransportTypeWhilePreferredTransportChanged()
             throws Exception {
         when(mAnm.getPreferredTransport(anyInt())).thenReturn(
@@ -169,16 +198,17 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
         }, mHandler::post);
 
-        mDsConnection.onWlanSelected();
+        mDsConnection.onWlanSelected(true);
         // When onWlanSelected() is called again,
         // it will be ignored because the change of preferred transport is in progress.
         // => onEmergencyTransportChanged() is called only once.
-        mDsConnection.onWlanSelected();
+        mDsConnection.onWlanSelected(true);
         processAllMessages();
 
         ArgumentCaptor<Handler> handlerCaptor = ArgumentCaptor.forClass(Handler.class);
         ArgumentCaptor<Integer> msgCaptor = ArgumentCaptor.forClass(Integer.class);
-        verify(mEmergencyStateTracker).onEmergencyTransportChanged(eq(MODE_EMERGENCY_WLAN));
+        verify(mEmergencyStateTracker).onEmergencyTransportChanged(
+                eq(EmergencyStateTracker.EMERGENCY_TYPE_SMS), eq(MODE_EMERGENCY_WLAN));
         verify(mAnm).registerForQualifiedNetworksChanged(
                 handlerCaptor.capture(), msgCaptor.capture());
         verify(mPhone).notifyEmergencyDomainSelected(
@@ -198,11 +228,13 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
     public void testOnWwanSelected() throws Exception {
         mDsConnection.onWwanSelected();
 
-        verify(mEmergencyStateTracker).onEmergencyTransportChanged(eq(MODE_EMERGENCY_WWAN));
+        verify(mEmergencyStateTracker).onEmergencyTransportChanged(
+                eq(EmergencyStateTracker.EMERGENCY_TYPE_SMS), eq(MODE_EMERGENCY_WWAN));
     }
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testOnDomainSelectedPs() throws Exception {
         when(mAnm.getPreferredTransport(anyInt()))
                 .thenReturn(AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
@@ -212,7 +244,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
         }, mHandler::post);
 
-        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS);
+        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS, true);
         processAllMessages();
 
         assertTrue(future.isDone());
@@ -220,6 +252,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testOnDomainSelectedPsWithDifferentTransportType() throws Exception {
         when(mAnm.getPreferredTransport(anyInt())).thenReturn(
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
@@ -230,7 +263,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
         }, mHandler::post);
 
-        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS);
+        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS, true);
         processAllMessages();
 
         ArgumentCaptor<Handler> handlerCaptor = ArgumentCaptor.forClass(Handler.class);
@@ -251,6 +284,29 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
+    public void testOnDomainSelectedPsWithDifferentTransportTypeAndImsPdn() throws Exception {
+        when(mAnm.getPreferredTransport(anyInt())).thenReturn(
+                AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+        CompletableFuture<Integer> future =
+                mDsConnection.requestDomainSelection(mDsAttr, mDscCallback);
+        future.thenAcceptAsync((domain) -> {
+            assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
+        }, mHandler::post);
+
+        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS, false);
+        processAllMessages();
+
+        verify(mAnm, never()).registerForQualifiedNetworksChanged(any(Handler.class), anyInt());
+        verify(mPhone, never()).notifyEmergencyDomainSelected(anyInt());
+
+        assertTrue(future.isDone());
+    }
+
+    @Test
+    @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testOnDomainSelectedPsWithDifferentTransportTypeAndNotChanged() throws Exception {
         when(mAnm.getPreferredTransport(anyInt())).thenReturn(
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
@@ -261,7 +317,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
         }, mHandler::post);
 
-        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS);
+        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS, true);
         processAllMessages();
 
         ArgumentCaptor<Handler> handlerCaptor = ArgumentCaptor.forClass(Handler.class);
@@ -282,6 +338,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testOnDomainSelectedPsWithDifferentTransportTypeWhilePreferredTransportChanged()
             throws Exception {
         when(mAnm.getPreferredTransport(anyInt())).thenReturn(
@@ -293,11 +350,11 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
         }, mHandler::post);
 
-        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS);
+        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS, true);
         // When onDomainSelected() is called again with the different domain,
         // it will be ignored because the change of preferred transport is in progress.
         // => The domain selection result is DOMAIN_PS.
-        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_CS);
+        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_CS, false);
         processAllMessages();
 
         ArgumentCaptor<Handler> handlerCaptor = ArgumentCaptor.forClass(Handler.class);
@@ -318,6 +375,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testOnDomainSelectedCs() throws Exception {
         when(mAnm.getPreferredTransport(anyInt()))
                 .thenReturn(AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
@@ -327,7 +385,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_CS), domain);
         }, mHandler::post);
 
-        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_CS);
+        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_CS, false);
         processAllMessages();
 
         assertTrue(future.isDone());
@@ -335,6 +393,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testFinishSelection() throws Exception {
         when(mAnm.getPreferredTransport(anyInt())).thenReturn(
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
@@ -345,7 +404,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
         }, mHandler::post);
 
-        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS);
+        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS, true);
         processAllMessages();
 
         ArgumentCaptor<Handler> handlerCaptor = ArgumentCaptor.forClass(Handler.class);
@@ -365,6 +424,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void testFinishSelectionAfterDomainSelectionCompleted() throws Exception {
         when(mAnm.getPreferredTransport(anyInt())).thenReturn(
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
@@ -375,7 +435,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
             assertEquals(Integer.valueOf(NetworkRegistrationInfo.DOMAIN_PS), domain);
         }, mHandler::post);
 
-        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS);
+        mDsConnection.onDomainSelected(NetworkRegistrationInfo.DOMAIN_PS, true);
         processAllMessages();
 
         ArgumentCaptor<Handler> handlerCaptor = ArgumentCaptor.forClass(Handler.class);

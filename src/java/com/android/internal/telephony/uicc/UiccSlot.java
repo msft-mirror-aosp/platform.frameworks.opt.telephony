@@ -33,6 +33,7 @@ import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
+import android.util.IndentingPrintWriter;
 import android.util.Log;
 import android.view.WindowManager;
 
@@ -206,15 +207,9 @@ public class UiccSlot extends Handler {
                 if (!iss.mSimPortInfos[i].mPortActive) {
                     // TODO: (b/79432584) evaluate whether should broadcast card state change
                     // even if it's inactive.
-                    if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
-                        UiccController.getInstance().updateSimStateForInactivePort(
-                                mPortIdxToPhoneId.getOrDefault(i, INVALID_PHONE_ID),
-                                iss.mSimPortInfos[i].mIccId);
-                    } else {
-                        UiccController.updateInternalIccStateForInactivePort(mContext,
-                                mPortIdxToPhoneId.getOrDefault(i, INVALID_PHONE_ID),
-                                iss.mSimPortInfos[i].mIccId);
-                    }
+                    UiccController.getInstance().updateSimStateForInactivePort(
+                            mPortIdxToPhoneId.getOrDefault(i, INVALID_PHONE_ID),
+                            iss.mSimPortInfos[i].mIccId);
                     mLastRadioState.put(i, TelephonyManager.RADIO_POWER_UNAVAILABLE);
                     if (mUiccCard != null) {
                         // Dispose the port
@@ -363,15 +358,12 @@ public class UiccSlot extends Handler {
             sendMessage(obtainMessage(EVENT_CARD_REMOVED, null));
         }
 
-        if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
-            UiccController.getInstance().updateSimState(phoneId, IccCardConstants.State.ABSENT,
-                    null);
-        } else {
-            UiccController.updateInternalIccState(mContext, IccCardConstants.State.ABSENT,
-                    null, phoneId);
-        }
+        UiccController.getInstance().updateSimState(phoneId, IccCardConstants.State.ABSENT, null);
         // no card present in the slot now; dispose port and then card if needed.
         disposeUiccCardIfNeeded(false /* sim state is not unknown */, portIndex);
+        // If SLOT_STATUS is the last event, wrong subscription is getting invalidate during
+        // slot switch event. To avoid it, reset the phoneId corresponding to the portIndex.
+        mPortIdxToPhoneId.put(portIndex, INVALID_PHONE_ID);
         mLastRadioState.put(portIndex, TelephonyManager.RADIO_POWER_UNAVAILABLE);
     }
 
@@ -387,13 +379,15 @@ public class UiccSlot extends Handler {
     }
 
     private void disposeUiccCardIfNeeded(boolean isStateUnknown, int portIndex) {
-        // First dispose UiccPort corresponding to the portIndex
         if (mUiccCard != null) {
+            // First dispose UiccPort corresponding to the portIndex
             mUiccCard.disposePort(portIndex);
             if (ArrayUtils.isEmpty(mUiccCard.getUiccPortList())) {
                 // No UiccPort objects are found, safe to dispose the card
                 nullifyUiccCard(isStateUnknown);
             }
+        } else {
+            mStateIsUnknown = isStateUnknown;
         }
     }
 
@@ -642,13 +636,8 @@ public class UiccSlot extends Handler {
         disposeUiccCardIfNeeded(true /* sim state is unknown */, portIndex);
 
         if (phoneId != INVALID_PHONE_ID) {
-            if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
-                UiccController.getInstance().updateSimState(phoneId,
-                        IccCardConstants.State.UNKNOWN, null);
-            } else {
-                UiccController.updateInternalIccState(
-                        mContext, IccCardConstants.State.UNKNOWN, null, phoneId);
-            }
+            UiccController.getInstance().updateSimState(phoneId,
+                    IccCardConstants.State.UNKNOWN, null);
         }
         mLastRadioState.put(portIndex, TelephonyManager.RADIO_POWER_UNAVAILABLE);
         // Reset CardState
@@ -666,33 +655,41 @@ public class UiccSlot extends Handler {
     private Map<Integer, String> getPrintableIccIds() {
         Map<Integer, String> printableIccIds = mIccIds.entrySet().stream()
                 .collect(Collectors.toMap(Map.Entry::getKey,
-                        e -> SubscriptionInfo.givePrintableIccid(e.getValue())));
+                        e -> SubscriptionInfo.getPrintableId(e.getValue())));
         return printableIccIds;
     }
 
     /**
      * Dump
      */
-    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
-        pw.println("UiccSlot:");
-        pw.println(" mActive=" + mActive);
-        pw.println(" mIsEuicc=" + mIsEuicc);
-        pw.println(" isEuiccSupportsMultipleEnabledProfiles="
-                + isMultipleEnabledProfileSupported());
-        pw.println(" mIsRemovable=" + mIsRemovable);
-        pw.println(" mLastRadioState=" + mLastRadioState);
-        pw.println(" mIccIds=" + getPrintableIccIds());
-        pw.println(" mPortIdxToPhoneId=" + mPortIdxToPhoneId);
-        pw.println(" mEid=" + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, mEid));
-        pw.println(" mCardState=" + mCardState);
-        pw.println(" mSupportedMepMode=" + mSupportedMepMode);
+    public void dump(FileDescriptor fd, PrintWriter printWriter, String[] args) {
+        IndentingPrintWriter pw = new IndentingPrintWriter(printWriter, "  ");
+        pw.println("mActive=" + mActive);
+        pw.println("mIsEuicc=" + mIsEuicc);
+        pw.println("isEuiccSupportsMultipleEnabledProfiles=" + isMultipleEnabledProfileSupported());
+        pw.println("mIsRemovable=" + mIsRemovable);
+        pw.println("mLastRadioState=" + mLastRadioState);
+        pw.println("mIccIds=" + getPrintableIccIds());
+        pw.println("mPortIdxToPhoneId=" + mPortIdxToPhoneId);
+        pw.println("mEid=" + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, mEid));
+        pw.println("mCardState=" + mCardState);
+        pw.println("mSupportedMepMode=" + mSupportedMepMode);
         if (mUiccCard != null) {
-            pw.println(" mUiccCard=" + mUiccCard);
+            pw.println("mUiccCard=");
             mUiccCard.dump(fd, pw, args);
         } else {
-            pw.println(" mUiccCard=null");
+            pw.println("mUiccCard=null");
         }
         pw.println();
         pw.flush();
+    }
+
+    @NonNull
+    @Override
+    public String toString() {
+        return "[UiccSlot: mActive=" + mActive + ", mIccId=" + getPrintableIccIds() + ", mIsEuicc="
+                + mIsEuicc + ", MEP=" + isMultipleEnabledProfileSupported() + ", mPortIdxToPhoneId="
+                + mPortIdxToPhoneId + ", mEid=" + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, mEid)
+                + ", mCardState=" + mCardState + " mSupportedMepMode=" + mSupportedMepMode + "]";
     }
 }

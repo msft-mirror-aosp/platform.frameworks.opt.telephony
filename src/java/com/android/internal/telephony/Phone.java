@@ -42,7 +42,6 @@ import android.os.UserHandle;
 import android.os.UserManager;
 import android.os.WorkSource;
 import android.preference.PreferenceManager;
-import android.provider.DeviceConfig;
 import android.sysprop.TelephonyProperties;
 import android.telecom.VideoProfile;
 import android.telephony.AccessNetworkConstants;
@@ -183,7 +182,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     protected static final int EVENT_RADIO_ON                    = 5;
     protected static final int EVENT_GET_BASEBAND_VERSION_DONE   = 6;
     protected static final int EVENT_USSD                        = 7;
-    protected static final int EVENT_RADIO_OFF_OR_NOT_AVAILABLE  = 8;
+    @VisibleForTesting
+    public static final int EVENT_RADIO_OFF_OR_NOT_AVAILABLE  = 8;
     private static final int EVENT_GET_SIM_STATUS_DONE           = 11;
     protected static final int EVENT_SET_CALL_FORWARD_DONE       = 12;
     protected static final int EVENT_GET_CALL_FORWARD_DONE       = 13;
@@ -379,12 +379,6 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     private int mPreferredUsageSetting = SubscriptionManager.USAGE_SETTING_UNKNOWN;
     private int mUsageSettingFromModem = SubscriptionManager.USAGE_SETTING_UNKNOWN;
     private boolean mIsUsageSettingSupported = true;
-
-    /**
-     * {@code true} if the new SubscriptionManagerService is enabled, otherwise the old
-     * SubscriptionController is used.
-     */
-    private boolean mIsSubscriptionManagerServiceEnabled = false;
 
     //IMS
     /**
@@ -630,14 +624,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         // Initialize SMS stats
         mSmsStats = new SmsStats(this);
 
-        // This is a temp flag which will be removed before U AOSP public release.
-        mIsSubscriptionManagerServiceEnabled = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_using_subscription_manager_service)
-                || DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_TELEPHONY,
-                "enable_subscription_manager_service", false);
-        if (isSubscriptionManagerServiceEnabled()) {
-            mSubscriptionManagerService = SubscriptionManagerService.getInstance();
-        }
+        mSubscriptionManagerService = SubscriptionManagerService.getInstance();
         m2gAdminUpdater = new TelephonyAdminReceiver(context, this);
 
         if (getPhoneType() == PhoneConstants.PHONE_TYPE_IMS) {
@@ -1450,8 +1437,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     @UnsupportedAppUsage
     public void setNetworkSelectionModeAutomatic(Message response) {
         Rlog.d(LOG_TAG, "setNetworkSelectionModeAutomatic, querying current mode");
-        // we don't want to do this unecesarily - it acutally causes
-        // the radio to repeate network selection and is costly
+        // we don't want to do this unnecessarily - it actually causes
+        // the radio to repeat network selection and is costly
         // first check if we're already in automatic mode
         Message msg = obtainMessage(EVENT_CHECK_FOR_NETWORK_AUTOMATIC);
         msg.obj = response;
@@ -1484,6 +1471,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         nsm.operatorAlphaShort = "";
 
         if (doAutomatic) {
+            Rlog.d(LOG_TAG, "setNetworkSelectionModeAutomatic - set network selection auto");
             Message msg = obtainMessage(EVENT_SET_NETWORK_AUTOMATIC_COMPLETE, nsm);
             mCi.setNetworkSelectionModeAutomatic(msg);
         } else {
@@ -2409,21 +2397,10 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      */
     public void loadAllowedNetworksFromSubscriptionDatabase() {
         String result = null;
-        if (isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfo = mSubscriptionManagerService
-                    .getSubscriptionInfoInternal(getSubId());
-            if (subInfo != null) {
-                result = subInfo.getAllowedNetworkTypesForReasons();
-            }
-        } else {
-            // Try to load ALLOWED_NETWORK_TYPES from SIMINFO.
-            if (SubscriptionController.getInstance() == null) {
-                return;
-            }
-
-            result = SubscriptionController.getInstance().getSubscriptionProperty(
-                    getSubId(),
-                    SubscriptionManager.ALLOWED_NETWORK_TYPES);
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                .getSubscriptionInfoInternal(getSubId());
+        if (subInfo != null) {
+            result = subInfo.getAllowedNetworkTypesForReasons();
         }
 
         // After fw load network type from DB, do unlock if subId is valid.
@@ -4118,17 +4095,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      */
     @UnsupportedAppUsage
     public int getSubId() {
-        if (isSubscriptionManagerServiceEnabled()) {
-            return mSubscriptionManagerService.getSubId(mPhoneId);
-        }
-        if (SubscriptionController.getInstance() == null) {
-            // TODO b/78359408 getInstance sometimes returns null in Treehugger tests, which causes
-            // flakiness. Even though we haven't seen this crash in the wild we should keep this
-            // check in until we've figured out the root cause.
-            Rlog.e(LOG_TAG, "SubscriptionController.getInstance = null! Returning default subId");
-            return SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
-        }
-        return SubscriptionController.getInstance().getSubId(mPhoneId);
+        return mSubscriptionManagerService.getSubId(mPhoneId);
     }
 
     /**
@@ -4444,14 +4411,10 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
     private int getResolvedUsageSetting(int subId) {
         SubscriptionInfo subInfo = null;
-        if (isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfoInternal = mSubscriptionManagerService
-                    .getSubscriptionInfoInternal(subId);
-            if (subInfoInternal != null) {
-                subInfo = subInfoInternal.toSubscriptionInfo();
-            }
-        } else {
-            subInfo = SubscriptionController.getInstance().getSubscriptionInfo(subId);
+        SubscriptionInfoInternal subInfoInternal = mSubscriptionManagerService
+                .getSubscriptionInfoInternal(subId);
+        if (subInfoInternal != null) {
+            subInfo = subInfoInternal.toSubscriptionInfo();
         }
 
         if (subInfo == null
@@ -5151,22 +5114,24 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     }
 
     /**
-     * @return {@code true} if the new {@link SubscriptionManagerService} is enabled, otherwise the
-     * old {@link SubscriptionController} is used.
+     * @return User handle associated with the phone's subscription id. {@code null} if subscription
+     * is invalid or not found.
      */
-    public boolean isSubscriptionManagerServiceEnabled() {
-        return mIsSubscriptionManagerServiceEnabled;
-    }
-
-    /**
-     * @return UserHandle from phone sub id, or null if subscription is invalid.
-     */
+    @Nullable
     public UserHandle getUserHandle() {
-        SubscriptionManager subManager = mContext.getSystemService(SubscriptionManager.class);
         int subId = getSubId();
-        return subManager.isValidSubscriptionId(subId)
-                ? subManager.getSubscriptionUserHandle(subId)
-                : null;
+
+        UserHandle userHandle = null;
+        try {
+            SubscriptionManager subManager = mContext.getSystemService(SubscriptionManager.class);
+            if (subManager != null) {
+                userHandle = subManager.getSubscriptionUserHandle(subId);
+            }
+        } catch (IllegalArgumentException ex) {
+            loge("getUserHandle: ex=" + ex);
+        }
+
+        return userHandle;
     }
 
     /**
@@ -5302,6 +5267,14 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      */
     public void isSatelliteSupported(Message result) {
         mCi.isSatelliteSupported(result);
+    }
+
+    /**
+     * Check whether the satellite modem is provisioned.
+     * @param result The Message to send the result of the operation to.
+     */
+    public void isSatelliteProvisioned(Message result) {
+        mCi.getSatelliteProvisionState(result);
     }
 
     /**
@@ -5491,8 +5464,11 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      * Send datagram over satellite.
      * @param result The Message to send the result of the operation to.
      * @param datagram Datagram to send over satellite.
+     * @param needFullScreenPointingUI this is used to indicate pointingUI app to open in
+     *                                 full screen mode.
      */
-    public void sendSatelliteDatagram(Message result, SatelliteDatagram datagram) {
+    public void sendSatelliteDatagram(Message result, SatelliteDatagram datagram,
+            boolean needFullScreenPointingUI) {
         //mCi.sendSatelliteDatagram(result, datagram);
     }
 

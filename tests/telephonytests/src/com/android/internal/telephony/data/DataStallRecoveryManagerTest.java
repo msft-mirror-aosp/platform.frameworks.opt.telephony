@@ -19,7 +19,6 @@ package com.android.internal.telephony.data;
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -29,7 +28,6 @@ import static org.mockito.Mockito.verify;
 import android.net.NetworkAgent;
 import android.telephony.Annotation.ValidationStatus;
 import android.telephony.CarrierConfigManager;
-import android.telephony.data.DataProfile;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
@@ -71,14 +69,10 @@ public class DataStallRecoveryManagerTest extends TelephonyTest {
                 .getDataStallRecoveryShouldSkipArray();
         doReturn(true).when(mDataNetworkController).isInternetDataAllowed();
 
-        doAnswer(
-                invocation -> {
-                    ((Runnable) invocation.getArguments()[0]).run();
-                    return null;
-                })
-                .when(mDataStallRecoveryManagerCallback)
-                .invokeFromExecutor(any(Runnable.class));
-        doReturn("").when(mSubscriptionController).getEnabledMobileDataPolicies(anyInt());
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArguments()[0]).run();
+            return null;
+        }).when(mDataStallRecoveryManagerCallback).invokeFromExecutor(any(Runnable.class));
 
         mDataStallRecoveryManager =
                 new DataStallRecoveryManager(
@@ -117,7 +111,7 @@ public class DataStallRecoveryManagerTest extends TelephonyTest {
                 dataNetworkControllerCallbackCaptor.getValue();
 
         if (isConnected) {
-            List<DataProfile> dataprofile = new ArrayList<DataProfile>();
+            List<DataNetwork> dataprofile = new ArrayList<>();
             dataNetworkControllerCallback.onInternetDataNetworkConnected(dataprofile);
         } else {
             dataNetworkControllerCallback.onInternetDataNetworkDisconnected();

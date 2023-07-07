@@ -18,7 +18,12 @@ package com.android.internal.telephony.satellite;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.content.Context;
+import android.os.AsyncResult;
+import android.os.Binder;
 import android.telephony.Rlog;
+import android.telephony.SubscriptionManager;
+import android.telephony.satellite.AntennaPosition;
 import android.telephony.satellite.PointingInfo;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
@@ -27,7 +32,15 @@ import android.telephony.satellite.stub.NTRadioTechnology;
 import android.telephony.satellite.stub.SatelliteError;
 import android.telephony.satellite.stub.SatelliteModemState;
 
+import com.android.internal.telephony.CommandException;
+import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneFactory;
+import com.android.internal.telephony.RILUtils;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
+
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -128,6 +141,8 @@ public class SatelliteServiceUtils {
                 return SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_RETRYING;
             case SatelliteModemState.SATELLITE_MODEM_STATE_OFF:
                 return SatelliteManager.SATELLITE_MODEM_STATE_OFF;
+            case SatelliteModemState.SATELLITE_MODEM_STATE_UNAVAILABLE:
+                return SatelliteManager.SATELLITE_MODEM_STATE_UNAVAILABLE;
             default:
                 loge("Received invalid modem state: " + modemState);
                 return SatelliteManager.SATELLITE_MODEM_STATE_UNKNOWN;
@@ -144,13 +159,23 @@ public class SatelliteServiceUtils {
         if (capabilities == null) return null;
         int[] radioTechnologies = capabilities.supportedRadioTechnologies == null
                 ? new int[0] : capabilities.supportedRadioTechnologies;
+
+        Map<Integer, AntennaPosition> antennaPositionMap = new HashMap<>();
+        int[] antennaPositionKeys = capabilities.antennaPositionKeys;
+        AntennaPosition[] antennaPositionValues = capabilities.antennaPositionValues;
+        if (antennaPositionKeys != null && antennaPositionValues != null &&
+                antennaPositionKeys.length == antennaPositionValues.length) {
+            for(int i = 0; i < antennaPositionKeys.length; i++) {
+                antennaPositionMap.put(antennaPositionKeys[i], antennaPositionValues[i]);
+            }
+        }
+
         return new SatelliteCapabilities(
                 Arrays.stream(radioTechnologies)
                         .map(SatelliteServiceUtils::fromSatelliteRadioTechnology)
                         .boxed().collect(Collectors.toSet()),
-                capabilities.isAlwaysOn,
-                capabilities.needsPointingToSatellite,
-                capabilities.needsSeparateSimProfile);
+                capabilities.isPointingRequired, capabilities.maxBytesPerOutgoingDatagram,
+                antennaPositionMap);
     }
 
     /**
@@ -161,8 +186,7 @@ public class SatelliteServiceUtils {
     @Nullable public static PointingInfo fromPointingInfo(
             android.telephony.satellite.stub.PointingInfo pointingInfo) {
         if (pointingInfo == null) return null;
-        return new PointingInfo(pointingInfo.satelliteAzimuth, pointingInfo.satelliteElevation,
-                pointingInfo.antennaAzimuth, pointingInfo.antennaPitch, pointingInfo.antennaRoll);
+        return new PointingInfo(pointingInfo.satelliteAzimuth, pointingInfo.satelliteElevation);
     }
 
     /**
@@ -178,20 +202,6 @@ public class SatelliteServiceUtils {
     }
 
     /**
-     * Convert SatelliteDatagram[] from service definition to framework definition.
-     * @param datagrams The SatelliteDatagram[] from the satellite service.
-     * @return The converted SatelliteDatagram[] for the framework.
-     */
-    @Nullable public static SatelliteDatagram[] fromSatelliteDatagrams(
-            android.telephony.satellite.stub.SatelliteDatagram[] datagrams) {
-        SatelliteDatagram[] array = new SatelliteDatagram[datagrams.length];
-        for (int i = 0; i < datagrams.length; i++) {
-            array[i] = fromSatelliteDatagram(datagrams[i]);
-        }
-        return array;
-    }
-
-    /**
      * Convert SatelliteDatagram from framework definition to service definition.
      * @param datagram The SatelliteDatagram from the framework.
      * @return The converted SatelliteDatagram for the satellite service.
@@ -202,6 +212,71 @@ public class SatelliteServiceUtils {
                 new android.telephony.satellite.stub.SatelliteDatagram();
         converted.data = datagram.getSatelliteDatagram();
         return converted;
+    }
+
+    /**
+     * Get the {@link SatelliteManager.SatelliteError} from the provided result.
+     *
+     * @param ar AsyncResult used to determine the error code.
+     * @param caller The satellite request.
+     *
+     * @return The {@link SatelliteManager.SatelliteError} error code from the request.
+     */
+    @SatelliteManager.SatelliteError public static int getSatelliteError(@NonNull AsyncResult ar,
+            @NonNull String caller) {
+        int errorCode;
+        if (ar.exception == null) {
+            errorCode = SatelliteManager.SATELLITE_ERROR_NONE;
+        } else {
+            errorCode = SatelliteManager.SATELLITE_ERROR;
+            if (ar.exception instanceof CommandException) {
+                CommandException.Error error = ((CommandException) ar.exception).getCommandError();
+                errorCode = RILUtils.convertToSatelliteError(error);
+                loge(caller + " CommandException: " + ar.exception);
+            } else if (ar.exception instanceof SatelliteManager.SatelliteException) {
+                errorCode = ((SatelliteManager.SatelliteException) ar.exception).getErrorCode();
+                loge(caller + " SatelliteException: " + ar.exception);
+            } else {
+                loge(caller + " unknown exception: " + ar.exception);
+            }
+        }
+        logd(caller + " error: " + errorCode);
+        return errorCode;
+    }
+
+    /**
+     * Get valid subscription id for satellite communication.
+     *
+     * @param subId The subscription id.
+     * @return input subId if the subscription is active else return default subscription id.
+     */
+    public static int getValidSatelliteSubId(int subId, @NonNull Context context) {
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            boolean isActive = SubscriptionManagerService.getInstance().isActiveSubId(subId,
+                    context.getOpPackageName(), context.getAttributionTag());
+
+            if (isActive) {
+                return subId;
+            }
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+        logd("getValidSatelliteSubId: use DEFAULT_SUBSCRIPTION_ID for subId=" + subId);
+        return SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
+    }
+
+    /**
+     * Return phone associated with phoneId 0.
+     *
+     * @return phone associated with phoneId 0 or {@code null} if it doesn't exist.
+     */
+    public static @Nullable Phone getPhone() {
+        return PhoneFactory.getPhone(0);
+    }
+
+    private static void logd(@NonNull String log) {
+        Rlog.d(TAG, log);
     }
 
     private static void loge(@NonNull String log) {
