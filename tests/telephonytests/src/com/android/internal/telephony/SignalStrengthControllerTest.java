@@ -23,6 +23,7 @@ import static android.telephony.SignalThresholdInfo.SIGNAL_MEASUREMENT_TYPE_SSSI
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -31,7 +32,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
-import android.content.Intent;
 import android.os.Handler;
 import android.os.Message;
 import android.os.PersistableBundle;
@@ -47,6 +47,7 @@ import android.telephony.CellSignalStrengthWcdma;
 import android.telephony.SignalStrength;
 import android.telephony.SignalStrengthUpdateRequest;
 import android.telephony.SignalThresholdInfo;
+import android.telephony.TelephonyManager;
 import android.test.suitebuilder.annotation.MediumTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
@@ -91,16 +92,13 @@ public class SignalStrengthControllerTest extends TelephonyTest {
 
     private SignalStrengthController mSsc;
     private PersistableBundle mBundle;
+    private CarrierConfigManager.CarrierConfigChangeListener mCarrierConfigChangeListener;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(this.getClass().getSimpleName());
         mHandler = Mockito.mock(Handler.class);
-
         when(mPhone.getSubId()).thenReturn(ACTIVE_SUB_ID);
-        mSsc = new SignalStrengthController(mPhone);
-        replaceInstance(Handler.class, "mLooper", mHandler, mSsc.getLooper());
-        replaceInstance(Phone.class, "mLooper", mPhone, mSsc.getLooper());
 
         // Config a fixed supported RAN/MeasurementTypes to make the test more stable
         mBundle = mContextFixture.getCarrierConfigBundle();
@@ -147,6 +145,18 @@ public class SignalStrengthControllerTest extends TelephonyTest {
                         15, /* SIGNAL_STRENGTH_GOOD */
                         30  /* SIGNAL_STRENGTH_GREAT */
                 });
+
+        // Capture listener to emulate the carrier config change notification used later
+        ArgumentCaptor<CarrierConfigManager.CarrierConfigChangeListener> listenerArgumentCaptor =
+                ArgumentCaptor.forClass(CarrierConfigManager.CarrierConfigChangeListener.class);
+        mSsc = new SignalStrengthController(mPhone);
+        verify(mCarrierConfigManager).registerCarrierConfigChangeListener(any(),
+                listenerArgumentCaptor.capture());
+        mCarrierConfigChangeListener = listenerArgumentCaptor.getAllValues().get(0);
+
+        replaceInstance(Handler.class, "mLooper", mHandler, mSsc.getLooper());
+        replaceInstance(Phone.class, "mLooper", mPhone, mSsc.getLooper());
+
         processAllMessages();
         reset(mSimulatedCommandsVerifier);
     }
@@ -724,6 +734,72 @@ public class SignalStrengthControllerTest extends TelephonyTest {
                 1 /*expectedNonEmptyThreshold*/);
     }
 
+    @Test
+    public void testSignalStrengthChangedCallback() {
+        Handler mockRegistrant = Mockito.mock(Handler.class);
+        int ssChangedEvent = 0;
+        mSsc.registerForSignalStrengthChanged(mockRegistrant, ssChangedEvent, null);
+        mSimulatedCommands.notifySignalStrength();
+        processAllMessages();
+
+        ArgumentCaptor<Message> msgCaptor = ArgumentCaptor.forClass(Message.class);
+        verify(mockRegistrant).sendMessageDelayed(msgCaptor.capture(), Mockito.anyLong());
+        assertThat(msgCaptor.getValue().what).isEqualTo(ssChangedEvent);
+    }
+
+    @Test
+    public void testSignalStrengthLevelUpdatedDueToCarrierConfigChanged() {
+        Handler mockRegistrant = Mockito.mock(Handler.class);
+        ArgumentCaptor<Message> msgCaptor = ArgumentCaptor.forClass(Message.class);
+        int ssChangedEvent = 0;
+        mSsc.registerForSignalStrengthChanged(mockRegistrant, ssChangedEvent, null);
+
+        SignalStrength ss = new SignalStrength(
+                new CellSignalStrengthCdma(),
+                new CellSignalStrengthGsm(),
+                new CellSignalStrengthWcdma(),
+                new CellSignalStrengthTdscdma(),
+                new CellSignalStrengthLte(
+                        -110, /* rssi */
+                        -114, /* rsrp */
+                        -5, /* rsrq */
+                        0, /* rssnr */
+                        SignalStrength.INVALID, /* cqi */
+                        SignalStrength.INVALID /* ta */),
+                new CellSignalStrengthNr());
+
+        mBundle.putBoolean(CarrierConfigManager.KEY_USE_ONLY_RSRP_FOR_LTE_SIGNAL_BAR_BOOL, true);
+
+        sendCarrierConfigUpdate();
+        verify(mockRegistrant).sendMessageDelayed(msgCaptor.capture(), Mockito.anyLong());
+        assertThat(msgCaptor.getValue().what).isEqualTo(ssChangedEvent);
+        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_NONE_OR_UNKNOWN,
+                mSsc.getSignalStrength().getLevel());
+
+        Mockito.clearInvocations(mockRegistrant);
+        mSimulatedCommands.setSignalStrength(ss);
+        mSimulatedCommands.notifySignalStrength();
+        processAllMessages();
+        // Default thresholds are POOR=-115 MODERATE=-105 GOOD=-95 GREAT=-85
+        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_POOR, mSsc.getSignalStrength().getLevel());
+        verify(mockRegistrant).sendMessageDelayed(msgCaptor.capture(), Mockito.anyLong());
+        assertThat(msgCaptor.getValue().what).isEqualTo(ssChangedEvent);
+
+        Mockito.clearInvocations(mockRegistrant);
+        int[] lteThresholds = {
+                -130, // SIGNAL_STRENGTH_POOR
+                -120, // SIGNAL_STRENGTH_MODERATE
+                -110, // SIGNAL_STRENGTH_GOOD
+                -100,  // SIGNAL_STRENGTH_GREAT
+        };
+        mBundle.putIntArray(CarrierConfigManager.KEY_LTE_RSRP_THRESHOLDS_INT_ARRAY, lteThresholds);
+        sendCarrierConfigUpdate();
+        assertEquals(CellSignalStrength.SIGNAL_STRENGTH_MODERATE,
+                mSsc.getSignalStrength().getLevel());
+        verify(mockRegistrant).sendMessageDelayed(msgCaptor.capture(), Mockito.anyLong());
+        assertThat(msgCaptor.getValue().what).isEqualTo(ssChangedEvent);
+    }
+
     private void verifyAllEmptyThresholdAreDisabledWhenSetSignalStrengthReportingCriteria(
             int expectedNonEmptyThreshold) {
         ArgumentCaptor<List<SignalThresholdInfo>> signalThresholdInfoCaptor =
@@ -752,9 +828,8 @@ public class SignalStrengthControllerTest extends TelephonyTest {
                 .thenReturn(mockConfigManager);
         when(mockConfigManager.getConfigForSubId(anyInt())).thenReturn(mBundle);
 
-        Intent intent = new Intent().setAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        intent.putExtra(CarrierConfigManager.EXTRA_SLOT_INDEX, PHONE_ID);
-        mContext.sendBroadcast(intent);
+        mCarrierConfigChangeListener.onCarrierConfigChanged(PHONE_ID, ACTIVE_SUB_ID,
+                TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
         processAllMessages();
     }
 
