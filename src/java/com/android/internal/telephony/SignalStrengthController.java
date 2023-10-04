@@ -18,15 +18,14 @@ package com.android.internal.telephony;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.os.PersistableBundle;
+import android.os.Registrant;
+import android.os.RegistrantList;
 import android.os.RemoteException;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
@@ -98,13 +97,13 @@ public class SignalStrengthController extends Handler {
     private static final int EVENT_POLL_SIGNAL_STRENGTH                     = 7;
     private static final int EVENT_SIGNAL_STRENGTH_UPDATE                   = 8;
     private static final int EVENT_POLL_SIGNAL_STRENGTH_DONE                = 9;
-    private static final int EVENT_CARRIER_CONFIG_CHANGED                   = 10;
 
     @NonNull
     private final Phone mPhone;
     @NonNull
     private final CommandsInterface mCi;
-
+    @NonNull
+    private final RegistrantList mSignalStrengthChangedRegistrants = new RegistrantList();
     @NonNull
     private SignalStrength mSignalStrength;
     private long mSignalStrengthUpdatedTime;
@@ -143,20 +142,6 @@ public class SignalStrengthController extends Handler {
     @NonNull
     private final LocalLog mLocalLog = new LocalLog(64);
 
-    private BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            final String action = intent.getAction();
-            if (CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED.equals(action)) {
-                int phoneId = intent.getExtras().getInt(CarrierConfigManager.EXTRA_SLOT_INDEX);
-                // Ignore the carrier config changed if the phoneId is not matched.
-                if (phoneId == mPhone.getPhoneId()) {
-                    sendEmptyMessage(EVENT_CARRIER_CONFIG_CHANGED);
-                }
-            }
-        }
-    };
-
     public SignalStrengthController(@NonNull Phone phone) {
         mPhone = phone;
         mCi = mPhone.mCi;
@@ -166,10 +151,12 @@ public class SignalStrengthController extends Handler {
         mCi.setOnSignalStrengthUpdate(this, EVENT_SIGNAL_STRENGTH_UPDATE, null);
         setSignalStrengthDefaultValues();
 
+        CarrierConfigManager ccm = mPhone.getContext().getSystemService(CarrierConfigManager.class);
         mCarrierConfig = getCarrierConfig();
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        mPhone.getContext().registerReceiver(mBroadcastReceiver, filter);
+        // Callback which directly handle config change should be executed on handler thread
+        ccm.registerCarrierConfigChangeListener(this::post,
+                (slotIndex, subId, carrierId, specificCarrierId) ->
+                        onCarrierConfigurationChanged(slotIndex));
     }
 
     @Override
@@ -282,11 +269,6 @@ public class SignalStrengthController extends Handler {
                 break;
             }
 
-            case EVENT_CARRIER_CONFIG_CHANGED: {
-                onCarrierConfigChanged();
-                break;
-            }
-
             default:
                 log("Unhandled message with number: " + msg.what);
                 break;
@@ -310,31 +292,38 @@ public class SignalStrengthController extends Handler {
     }
 
     /**
-     * send signal-strength-changed notification if changed Called both for
-     * solicited and unsolicited signal strength updates
-     *
-     * @return true if the signal strength changed and a notification was sent.
+     * Send signal-strength-changed notification if changed. Called for both solicited and
+     * unsolicited signal strength updates.
      */
-    private boolean onSignalStrengthResult(@NonNull AsyncResult ar) {
+    private void onSignalStrengthResult(@NonNull AsyncResult ar) {
+        // This signal is used for both voice and data radio signal so parse all fields.
 
-        // This signal is used for both voice and data radio signal so parse
-        // all fields
-
+        SignalStrength signalStrength;
         if ((ar.exception == null) && (ar.result != null)) {
-            mSignalStrength = (SignalStrength) ar.result;
-
-            if (mPhone.getServiceStateTracker() != null) {
-                mSignalStrength.updateLevel(mCarrierConfig, mPhone.getServiceStateTracker().mSS);
-            }
+            signalStrength = (SignalStrength) ar.result;
         } else {
-            log("onSignalStrengthResult() Exception from RIL : " + ar.exception);
-            mSignalStrength = new SignalStrength();
+            loge("onSignalStrengthResult() Exception from RIL : " + ar.exception);
+            signalStrength = new SignalStrength();
+        }
+        updateSignalStrength(signalStrength);
+    }
+
+    /**
+     * Set {@code mSignalStrength} to the input argument {@code signalStrength}, update its level,
+     * and send signal-strength-changed notification if changed.
+     *
+     * @param signalStrength The new SignalStrength used for updating {@code mSignalStrength}.
+     */
+    private void updateSignalStrength(@NonNull SignalStrength signalStrength) {
+        mSignalStrength = signalStrength;
+        ServiceStateTracker serviceStateTracker = mPhone.getServiceStateTracker();
+        if (serviceStateTracker != null) {
+            mSignalStrength.updateLevel(mCarrierConfig, serviceStateTracker.mSS);
+        } else {
+            loge("updateSignalStrength: serviceStateTracker is null");
         }
         mSignalStrengthUpdatedTime = System.currentTimeMillis();
-
-        boolean ssChanged = notifySignalStrength();
-
-        return ssChanged;
+        notifySignalStrength();
     }
 
     /**
@@ -603,19 +592,36 @@ public class SignalStrengthController extends Handler {
         mSignalStrengthUpdatedTime = System.currentTimeMillis();
     }
 
-    boolean notifySignalStrength() {
-        boolean notified = false;
+    void notifySignalStrength() {
         if (!mSignalStrength.equals(mLastSignalStrength)) {
             try {
+                mSignalStrengthChangedRegistrants.notifyRegistrants();
                 mPhone.notifySignalStrength();
-                notified = true;
                 mLastSignalStrength = mSignalStrength;
             } catch (NullPointerException ex) {
-                log("updateSignalStrength() Phone already destroyed: " + ex
+                loge("updateSignalStrength() Phone already destroyed: " + ex
                         + "SignalStrength not notified");
             }
         }
-        return notified;
+    }
+
+    /**
+     * Register for SignalStrength changed.
+     * @param h Handler to notify
+     * @param what msg.what when the message is delivered
+     * @param obj msg.obj when the message is delivered
+     */
+    public void registerForSignalStrengthChanged(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mSignalStrengthChangedRegistrants.add(r);
+    }
+
+    /**
+     * Unregister for SignalStrength changed.
+     * @param h Handler to notify
+     */
+    public void unregisterForSignalStrengthChanged(Handler h) {
+        mSignalStrengthChangedRegistrants.remove(h);
     }
 
     /**
@@ -987,12 +993,15 @@ public class SignalStrengthController extends Handler {
         return earfcnPairList;
     }
 
-    private void onCarrierConfigChanged() {
+    private void onCarrierConfigurationChanged(int slotIndex) {
+        if (slotIndex != mPhone.getPhoneId()) return;
+
         mCarrierConfig = getCarrierConfig();
         log("Carrier Config changed.");
 
         updateArfcnLists();
         updateReportingCriteria();
+        updateSignalStrength(new SignalStrength(mSignalStrength));
     }
 
     private static SignalThresholdInfo createSignalThresholdsInfo(
