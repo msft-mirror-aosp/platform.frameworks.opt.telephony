@@ -29,6 +29,7 @@ import android.os.PowerManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.Annotation;
 import android.telephony.CarrierConfigManager;
+import android.telephony.CellInfo;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.ServiceState;
@@ -40,7 +41,7 @@ import android.text.TextUtils;
 
 import com.android.internal.telephony.data.DataNetworkController.DataNetworkControllerCallback;
 import com.android.internal.telephony.data.DataUtils;
-import com.android.internal.telephony.util.ArrayUtils;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.util.IState;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.State;
@@ -52,9 +53,11 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
@@ -72,6 +75,7 @@ public class NetworkTypeController extends StateMachine {
     private static final String ICON_5G = "5g";
     private static final String ICON_5G_PLUS = "5g_plus";
     private static final String STATE_CONNECTED_NR_ADVANCED = "connected_mmwave";
+    private static final String STATE_CONNECTED_RRC_IDLE = "connected_rrc_idle";
     private static final String STATE_CONNECTED = "connected";
     private static final String STATE_NOT_RESTRICTED_RRC_IDLE = "not_restricted_rrc_idle";
     private static final String STATE_NOT_RESTRICTED_RRC_CON = "not_restricted_rrc_con";
@@ -79,8 +83,8 @@ public class NetworkTypeController extends StateMachine {
     private static final String STATE_ANY = "any";
     private static final String STATE_LEGACY = "legacy";
     private static final String[] ALL_STATES = {STATE_CONNECTED_NR_ADVANCED, STATE_CONNECTED,
-            STATE_NOT_RESTRICTED_RRC_IDLE, STATE_NOT_RESTRICTED_RRC_CON, STATE_RESTRICTED,
-            STATE_LEGACY };
+            STATE_CONNECTED_RRC_IDLE, STATE_NOT_RESTRICTED_RRC_IDLE, STATE_NOT_RESTRICTED_RRC_CON,
+            STATE_RESTRICTED, STATE_LEGACY };
 
     /** Stop all timers and go to current state. */
     public static final int EVENT_UPDATE = 0;
@@ -105,7 +109,7 @@ public class NetworkTypeController extends StateMachine {
     /** Event for preferred network mode changed. */
     private static final int EVENT_PREFERRED_NETWORK_MODE_CHANGED = 10;
     /** Event for physical channel configs changed. */
-    private static final int EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED = 11;
+    private static final int EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED = 11;
     /** Event for device idle mode changed, when device goes to deep sleep and pauses all timers. */
     private static final int EVENT_DEVICE_IDLE_MODE_CHANGED = 12;
 
@@ -123,13 +127,14 @@ public class NetworkTypeController extends StateMachine {
         sEvents[EVENT_RADIO_OFF_OR_UNAVAILABLE] = "EVENT_RADIO_OFF_OR_UNAVAILABLE";
         sEvents[EVENT_PREFERRED_NETWORK_MODE_CHANGED] = "EVENT_PREFERRED_NETWORK_MODE_CHANGED";
         sEvents[EVENT_INITIALIZE] = "EVENT_INITIALIZE";
-        sEvents[EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED] = "EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED";
+        sEvents[EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED] = "EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED";
         sEvents[EVENT_DEVICE_IDLE_MODE_CHANGED] = "EVENT_DEVICE_IDLE_MODE_CHANGED";
     }
 
-    private final @NonNull Phone mPhone;
-    private final @NonNull DisplayInfoController mDisplayInfoController;
-    private final @NonNull BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
+    @NonNull private final Phone mPhone;
+    @NonNull private final DisplayInfoController mDisplayInfoController;
+    @NonNull private final FeatureFlags mFeatureFlags;
+    @NonNull private final BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             switch (intent.getAction()) {
@@ -140,7 +145,7 @@ public class NetworkTypeController extends StateMachine {
         }
     };
 
-    private final @NonNull CarrierConfigManager.CarrierConfigChangeListener
+    @NonNull private final CarrierConfigManager.CarrierConfigChangeListener
             mCarrierConfigChangeListener =
             new CarrierConfigManager.CarrierConfigChangeListener() {
                 @Override
@@ -153,9 +158,9 @@ public class NetworkTypeController extends StateMachine {
                 }
             };
 
-    private @NonNull Map<String, OverrideTimerRule> mOverrideTimerRules = new HashMap<>();
-    private @NonNull String mLteEnhancedPattern = "";
-    private @Annotation.OverrideNetworkType int mOverrideNetworkType;
+    @NonNull private Map<String, OverrideTimerRule> mOverrideTimerRules = new HashMap<>();
+    @NonNull private String mLteEnhancedPattern = "";
+    @Annotation.OverrideNetworkType private int mOverrideNetworkType;
     private boolean mIsPhysicalChannelConfigOn;
     private boolean mIsPrimaryTimerActive;
     private boolean mIsSecondaryTimerActive;
@@ -163,34 +168,45 @@ public class NetworkTypeController extends StateMachine {
     private int mLtePlusThresholdBandwidth;
     private int mNrAdvancedThresholdBandwidth;
     private boolean mIncludeLteForNrAdvancedThresholdBandwidth;
-    private @NonNull int[] mAdditionalNrAdvancedBandsList;
-    private @NonNull String mPrimaryTimerState;
-    private @NonNull String mSecondaryTimerState;
-    private @NonNull String mPreviousState;
-    private @LinkStatus int mPhysicalLinkStatus;
+    private boolean mRatchetPccFieldsForSameAnchorNrCell;
+    @NonNull private final Set<Integer> mAdditionalNrAdvancedBands = new HashSet<>();
+    @NonNull private String mPrimaryTimerState;
+    @NonNull private String mSecondaryTimerState;
+    @NonNull private String mPreviousState;
+    @LinkStatus private int mPhysicalLinkStatus;
     private boolean mIsPhysicalChannelConfig16Supported;
     private boolean mIsNrAdvancedAllowedByPco = false;
     private int mNrAdvancedCapablePcoId = 0;
     private boolean mIsUsingUserDataForRrcDetection = false;
     private boolean mEnableNrAdvancedWhileRoaming = true;
     private boolean mIsDeviceIdleMode = false;
+    private boolean mPrimaryCellChangedWhileIdle = false;
 
-    private @Nullable DataNetworkControllerCallback mNrAdvancedCapableByPcoChangedCallback = null;
-    private @Nullable DataNetworkControllerCallback mNrPhysicalLinkStatusChangedCallback = null;
+    @Nullable private DataNetworkControllerCallback mNrAdvancedCapableByPcoChangedCallback = null;
+    @Nullable private DataNetworkControllerCallback mNrPhysicalLinkStatusChangedCallback = null;
 
     // Cached copies below to prevent race conditions
-    private @NonNull ServiceState mServiceState;
-    private @Nullable List<PhysicalChannelConfig> mPhysicalChannelConfigs;
+    @NonNull private ServiceState mServiceState;
+    @Nullable private List<PhysicalChannelConfig> mPhysicalChannelConfigs;
+
+    // Ratchet physical channel config fields to prevent 5G/5G+ flickering
+    @NonNull private Set<Integer> mRatchetedNrBands = new HashSet<>();
+    private int mRatchetedNrBandwidths = 0;
+    private int mLastAnchorNrCellId = PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN;
+    private boolean mDoesPccListIndicateIdle = false;
 
     /**
      * NetworkTypeController constructor.
      *
      * @param phone Phone object.
      * @param displayInfoController DisplayInfoController to send override network types to.
+     * @param featureFlags FeatureFlags controlling what icon features are enabled.
      */
-    public NetworkTypeController(Phone phone, DisplayInfoController displayInfoController) {
+    public NetworkTypeController(Phone phone, DisplayInfoController displayInfoController,
+            FeatureFlags featureFlags) {
         super(TAG, displayInfoController);
         mPhone = phone;
+        mFeatureFlags = featureFlags;
         mDisplayInfoController = displayInfoController;
         mOverrideNetworkType = TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE;
         mIsPhysicalChannelConfigOn = true;
@@ -202,6 +218,7 @@ public class NetworkTypeController extends StateMachine {
         addState(mLegacyState, defaultState);
         addState(mIdleState, defaultState);
         addState(mLteConnectedState, defaultState);
+        addState(mNrIdleState, defaultState);
         addState(mNrConnectedState, defaultState);
         addState(mNrConnectedAdvancedState, defaultState);
         setInitialState(defaultState);
@@ -246,7 +263,7 @@ public class NetworkTypeController extends StateMachine {
         mPhone.registerForPreferredNetworkTypeChanged(getHandler(),
                 EVENT_PREFERRED_NETWORK_MODE_CHANGED, null);
         mPhone.registerForPhysicalChannelConfig(getHandler(),
-                EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED, null);
+                EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED, null);
         mPhone.getServiceStateTracker().registerForServiceStateChanged(getHandler(),
                 EVENT_SERVICE_STATE_CHANGED, null);
         mIsPhysicalChannelConfig16Supported = mPhone.getContext().getSystemService(
@@ -293,10 +310,16 @@ public class NetworkTypeController extends StateMachine {
                 CarrierConfigManager.KEY_NR_ADVANCED_THRESHOLD_BANDWIDTH_KHZ_INT);
         mIncludeLteForNrAdvancedThresholdBandwidth = config.getBoolean(
                 CarrierConfigManager.KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH_BOOL);
+        mRatchetPccFieldsForSameAnchorNrCell = config.getBoolean(
+                CarrierConfigManager.KEY_RATCHET_NR_ADVANCED_BANDWIDTH_IF_RRC_IDLE_BOOL);
         mEnableNrAdvancedWhileRoaming = config.getBoolean(
                 CarrierConfigManager.KEY_ENABLE_NR_ADVANCED_WHILE_ROAMING_BOOL);
-        mAdditionalNrAdvancedBandsList = config.getIntArray(
+        mAdditionalNrAdvancedBands.clear();
+        int[] additionalNrAdvancedBands = config.getIntArray(
                 CarrierConfigManager.KEY_ADDITIONAL_NR_ADVANCED_BANDS_INT_ARRAY);
+        if (additionalNrAdvancedBands != null) {
+            Arrays.stream(additionalNrAdvancedBands).forEach(mAdditionalNrAdvancedBands::add);
+        }
         mNrAdvancedCapablePcoId = config.getInt(
                 CarrierConfigManager.KEY_NR_ADVANCED_CAPABLE_PCO_ID_INT);
         if (mNrAdvancedCapablePcoId > 0 && mNrAdvancedCapableByPcoChangedCallback == null) {
@@ -343,6 +366,8 @@ public class NetworkTypeController extends StateMachine {
         String overrideSecondaryTimerRule = config.getString(
                 CarrierConfigManager.KEY_5G_ICON_DISPLAY_SECONDARY_GRACE_PERIOD_STRING);
         createTimerRules(nrIconConfiguration, overrideTimerRule, overrideSecondaryTimerRule);
+        updatePhysicalChannelConfigs(
+                mPhone.getServiceStateTracker().getPhysicalChannelConfigList());
     }
 
     private void createTimerRules(String icons, String timers, String secondaryTimers) {
@@ -353,6 +378,9 @@ public class NetworkTypeController extends StateMachine {
                 String[] kv = (pair.trim().toLowerCase(Locale.ROOT)).split(":");
                 if (kv.length != 2) {
                     if (DBG) loge("Invalid 5G icon configuration, config = " + pair);
+                    continue;
+                }
+                if (!mFeatureFlags.supportNrSaRrcIdle() && kv[0].equals(STATE_CONNECTED_RRC_IDLE)) {
                     continue;
                 }
                 int icon = TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE;
@@ -382,6 +410,9 @@ public class NetworkTypeController extends StateMachine {
                     if (DBG) loge("Invalid 5G icon timer configuration, config = " + triple);
                     continue;
                 }
+                if (!mFeatureFlags.supportNrSaRrcIdle() && kv[0].equals(STATE_CONNECTED_RRC_IDLE)) {
+                    continue;
+                }
                 int duration;
                 try {
                     duration = Integer.parseInt(kv[2]);
@@ -390,6 +421,10 @@ public class NetworkTypeController extends StateMachine {
                 }
                 if (kv[0].equals(STATE_ANY)) {
                     for (String state : ALL_STATES) {
+                        if (!mFeatureFlags.supportNrSaRrcIdle()
+                                && state.equals(STATE_CONNECTED_RRC_IDLE)) {
+                            continue;
+                        }
                         OverrideTimerRule node = tempRules.get(state);
                         node.addTimer(kv[1], duration);
                     }
@@ -410,6 +445,9 @@ public class NetworkTypeController extends StateMachine {
                     }
                     continue;
                 }
+                if (kv[0].equals(STATE_CONNECTED_RRC_IDLE) && !mFeatureFlags.supportNrSaRrcIdle()) {
+                    continue;
+                }
                 int duration;
                 try {
                     duration = Integer.parseInt(kv[2]);
@@ -418,6 +456,10 @@ public class NetworkTypeController extends StateMachine {
                 }
                 if (kv[0].equals(STATE_ANY)) {
                     for (String state : ALL_STATES) {
+                        if (state.equals(STATE_CONNECTED_RRC_IDLE)
+                                && !mFeatureFlags.supportNrSaRrcIdle()) {
+                            continue;
+                        }
                         OverrideTimerRule node = tempRules.get(state);
                         node.addSecondaryTimer(kv[1], duration);
                     }
@@ -425,6 +467,23 @@ public class NetworkTypeController extends StateMachine {
                     OverrideTimerRule node = tempRules.get(kv[0]);
                     node.addSecondaryTimer(kv[1], duration);
                 }
+            }
+        }
+
+        // TODO: Remove this workaround to make STATE_CONNECTED_RRC_IDLE backwards compatible with
+        //  STATE_CONNECTED once carrier configs are updated.
+        if (mFeatureFlags.supportNrSaRrcIdle()) {
+            OverrideTimerRule nrRules = tempRules.get(STATE_CONNECTED);
+            if (!tempRules.get(STATE_CONNECTED_RRC_IDLE).isDefined() && nrRules.isDefined()) {
+                OverrideTimerRule nrIdleRules =
+                        new OverrideTimerRule(STATE_CONNECTED_RRC_IDLE, nrRules.mOverrideType);
+                for (Map.Entry<String, Integer> entry : nrIdleRules.mPrimaryTimers.entrySet()) {
+                    nrIdleRules.addTimer(entry.getKey(), entry.getValue());
+                }
+                for (Map.Entry<String, Integer> entry : nrIdleRules.mSecondaryTimers.entrySet()) {
+                    nrIdleRules.addSecondaryTimer(entry.getKey(), entry.getValue());
+                }
+                tempRules.put(STATE_CONNECTED_RRC_IDLE, nrIdleRules);
             }
         }
 
@@ -540,6 +599,7 @@ public class NetworkTypeController extends StateMachine {
     private final class DefaultState extends State {
         @Override
         public boolean processMessage(Message msg) {
+            AsyncResult ar;
             if (DBG) log("DefaultState: process " + getEventName(msg.what));
             switch (msg.what) {
                 case EVENT_UPDATE:
@@ -553,24 +613,23 @@ public class NetworkTypeController extends StateMachine {
                     quit();
                     break;
                 case EVENT_INITIALIZE:
-                    // The reason that we do it here is because some of the works below requires
-                    // other modules (e.g. DataNetworkController, ServiceStateTracker), which is not
-                    // created yet when NetworkTypeController is created.
+                    // The reason that we do it here is that the work below requires other modules
+                    // (e.g. DataNetworkController, ServiceStateTracker), which are not created
+                    // when NetworkTypeController is created.
                     registerForAllEvents();
                     parseCarrierConfigs();
                     break;
                 case EVENT_SERVICE_STATE_CHANGED:
-                    mServiceState = mPhone.getServiceStateTracker().getServiceState();
-                    if (DBG) log("ServiceState updated: " + mServiceState);
+                    onServiceStateChanged();
                     transitionToCurrentState();
                     break;
                 case EVENT_PHYSICAL_LINK_STATUS_CHANGED:
-                    AsyncResult ar = (AsyncResult) msg.obj;
+                    ar = (AsyncResult) msg.obj;
                     mPhysicalLinkStatus = (int) ar.result;
                     break;
                 case EVENT_PHYSICAL_CHANNEL_CONFIG_NOTIF_CHANGED:
-                    AsyncResult result = (AsyncResult) msg.obj;
-                    mIsPhysicalChannelConfigOn = (boolean) result.result;
+                    ar = (AsyncResult) msg.obj;
+                    mIsPhysicalChannelConfigOn = (boolean) ar.result;
                     if (DBG) {
                         log("mIsPhysicalChannelConfigOn changed to: " + mIsPhysicalChannelConfigOn);
                     }
@@ -602,6 +661,11 @@ public class NetworkTypeController extends StateMachine {
                 case EVENT_RADIO_OFF_OR_UNAVAILABLE:
                     if (DBG) log("Reset timers since radio is off or unavailable.");
                     resetAllTimers();
+                    mRatchetedNrBands.clear();
+                    mRatchetedNrBandwidths = 0;
+                    mLastAnchorNrCellId = PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN;
+                    mDoesPccListIndicateIdle = false;
+                    mPhysicalChannelConfigs = null;
                     transitionTo(mLegacyState);
                     break;
                 case EVENT_PREFERRED_NETWORK_MODE_CHANGED:
@@ -609,10 +673,9 @@ public class NetworkTypeController extends StateMachine {
                     resetAllTimers();
                     transitionToCurrentState();
                     break;
-                case EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED:
-                    mPhysicalChannelConfigs =
-                            mPhone.getServiceStateTracker().getPhysicalChannelConfigList();
-                    if (DBG) log("Physical channel configs updated: " + mPhysicalChannelConfigs);
+                case EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED:
+                    ar = (AsyncResult) msg.obj;
+                    updatePhysicalChannelConfigs((List<PhysicalChannelConfig>) ar.result);
                     if (isUsingPhysicalChannelConfigForRrcDetection()) {
                         mPhysicalLinkStatus = getPhysicalLinkStatusFromPhysicalChannelConfig();
                     }
@@ -664,10 +727,10 @@ public class NetworkTypeController extends StateMachine {
         public boolean processMessage(Message msg) {
             if (DBG) log("LegacyState: process " + getEventName(msg.what));
             updateTimers();
+            AsyncResult ar;
             switch (msg.what) {
                 case EVENT_SERVICE_STATE_CHANGED:
-                    mServiceState = mPhone.getServiceStateTracker().getServiceState();
-                    if (DBG) log("ServiceState updated: " + mServiceState);
+                    onServiceStateChanged();
                     // fallthrough
                 case EVENT_UPDATE:
                     int rat = getDataNetworkType();
@@ -675,7 +738,9 @@ public class NetworkTypeController extends StateMachine {
                         if (isNrAdvanced()) {
                             transitionTo(mNrConnectedAdvancedState);
                         } else {
-                            transitionTo(mNrConnectedState);
+                            transitionTo(isPhysicalLinkActive()
+                                    || !mFeatureFlags.supportNrSaRrcIdle()
+                                    ? mNrConnectedState : mNrIdleState);
                         }
                     } else if (isLte(rat) && isNrNotRestricted()) {
                         transitionWithTimerTo(isPhysicalLinkActive()
@@ -689,10 +754,9 @@ public class NetworkTypeController extends StateMachine {
                     }
                     mIsNrRestricted = isNrRestricted();
                     break;
-                case EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED:
-                    mPhysicalChannelConfigs =
-                            mPhone.getServiceStateTracker().getPhysicalChannelConfigList();
-                    if (DBG) log("Physical channel configs updated: " + mPhysicalChannelConfigs);
+                case EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED:
+                    ar = (AsyncResult) msg.obj;
+                    updatePhysicalChannelConfigs((List<PhysicalChannelConfig>) ar.result);
                     if (isUsingPhysicalChannelConfigForRrcDetection()) {
                         mPhysicalLinkStatus = getPhysicalLinkStatusFromPhysicalChannelConfig();
                         if (mIsTimerResetEnabledForLegacyStateRrcIdle && !isPhysicalLinkActive()) {
@@ -702,7 +766,7 @@ public class NetworkTypeController extends StateMachine {
                     }
                     break;
                 case EVENT_PHYSICAL_LINK_STATUS_CHANGED:
-                    AsyncResult ar = (AsyncResult) msg.obj;
+                    ar = (AsyncResult) msg.obj;
                     mPhysicalLinkStatus = (int) ar.result;
                     if (mIsTimerResetEnabledForLegacyStateRrcIdle && !isPhysicalLinkActive()) {
                         if (DBG) log("Reset timers since timer reset is enabled for RRC idle.");
@@ -745,10 +809,10 @@ public class NetworkTypeController extends StateMachine {
         public boolean processMessage(Message msg) {
             if (DBG) log("IdleState: process " + getEventName(msg.what));
             updateTimers();
+            AsyncResult ar;
             switch (msg.what) {
                 case EVENT_SERVICE_STATE_CHANGED:
-                    mServiceState = mPhone.getServiceStateTracker().getServiceState();
-                    if (DBG) log("ServiceState updated: " + mServiceState);
+                    onServiceStateChanged();
                     // fallthrough
                 case EVENT_UPDATE:
                     int rat = getDataNetworkType();
@@ -757,7 +821,9 @@ public class NetworkTypeController extends StateMachine {
                         if (isNrAdvanced()) {
                             transitionTo(mNrConnectedAdvancedState);
                         } else {
-                            transitionTo(mNrConnectedState);
+                            transitionTo(isPhysicalLinkActive()
+                                    || !mFeatureFlags.supportNrSaRrcIdle()
+                                    ? mNrConnectedState : mNrIdleState);
                         }
                     } else if (!isLte(rat) || !isNrNotRestricted()) {
                         transitionWithTimerTo(mLegacyState);
@@ -770,10 +836,9 @@ public class NetworkTypeController extends StateMachine {
                         }
                     }
                     break;
-                case EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED:
-                    mPhysicalChannelConfigs =
-                            mPhone.getServiceStateTracker().getPhysicalChannelConfigList();
-                    if (DBG) log("Physical channel configs updated: " + mPhysicalChannelConfigs);
+                case EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED:
+                    ar = (AsyncResult) msg.obj;
+                    updatePhysicalChannelConfigs((List<PhysicalChannelConfig>) ar.result);
                     if (isUsingPhysicalChannelConfigForRrcDetection()) {
                         mPhysicalLinkStatus = getPhysicalLinkStatusFromPhysicalChannelConfig();
                         if (isPhysicalLinkActive()) {
@@ -785,7 +850,7 @@ public class NetworkTypeController extends StateMachine {
                     }
                     break;
                 case EVENT_PHYSICAL_LINK_STATUS_CHANGED:
-                    AsyncResult ar = (AsyncResult) msg.obj;
+                    ar = (AsyncResult) msg.obj;
                     mPhysicalLinkStatus = (int) ar.result;
                     if (isPhysicalLinkActive()) {
                         transitionWithTimerTo(mLteConnectedState);
@@ -829,10 +894,10 @@ public class NetworkTypeController extends StateMachine {
         public boolean processMessage(Message msg) {
             if (DBG) log("LteConnectedState: process " + getEventName(msg.what));
             updateTimers();
+            AsyncResult ar;
             switch (msg.what) {
                 case EVENT_SERVICE_STATE_CHANGED:
-                    mServiceState = mPhone.getServiceStateTracker().getServiceState();
-                    if (DBG) log("ServiceState updated: " + mServiceState);
+                    onServiceStateChanged();
                     // fallthrough
                 case EVENT_UPDATE:
                     int rat = getDataNetworkType();
@@ -841,7 +906,9 @@ public class NetworkTypeController extends StateMachine {
                         if (isNrAdvanced()) {
                             transitionTo(mNrConnectedAdvancedState);
                         } else {
-                            transitionTo(mNrConnectedState);
+                            transitionTo(isPhysicalLinkActive()
+                                    || !mFeatureFlags.supportNrSaRrcIdle()
+                                    ? mNrConnectedState : mNrIdleState);
                         }
                     } else if (!isLte(rat) || !isNrNotRestricted()) {
                         transitionWithTimerTo(mLegacyState);
@@ -854,10 +921,9 @@ public class NetworkTypeController extends StateMachine {
                         }
                     }
                     break;
-                case EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED:
-                    mPhysicalChannelConfigs =
-                            mPhone.getServiceStateTracker().getPhysicalChannelConfigList();
-                    if (DBG) log("Physical channel configs updated: " + mPhysicalChannelConfigs);
+                case EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED:
+                    ar = (AsyncResult) msg.obj;
+                    updatePhysicalChannelConfigs((List<PhysicalChannelConfig>) ar.result);
                     if (isUsingPhysicalChannelConfigForRrcDetection()) {
                         mPhysicalLinkStatus = getPhysicalLinkStatusFromPhysicalChannelConfig();
                         if (!isPhysicalLinkActive()) {
@@ -869,7 +935,7 @@ public class NetworkTypeController extends StateMachine {
                     }
                     break;
                 case EVENT_PHYSICAL_LINK_STATUS_CHANGED:
-                    AsyncResult ar = (AsyncResult) msg.obj;
+                    ar = (AsyncResult) msg.obj;
                     mPhysicalLinkStatus = (int) ar.result;
                     if (!isPhysicalLinkActive()) {
                         transitionWithTimerTo(mIdleState);
@@ -896,6 +962,85 @@ public class NetworkTypeController extends StateMachine {
     private final LteConnectedState mLteConnectedState = new LteConnectedState();
 
     /**
+     * Device is connected to 5G NR as the primary or secondary cell but not actively using data.
+     */
+    private final class NrIdleState extends State {
+        @Override
+        public void enter() {
+            if (DBG) log("Entering NrIdleState");
+            updateTimers();
+            updateOverrideNetworkType();
+            if (!mIsPrimaryTimerActive && !mIsSecondaryTimerActive) {
+                mPreviousState = getName();
+            }
+        }
+
+        @Override
+        public boolean processMessage(Message msg) {
+            if (DBG) log("NrIdleState: process " + getEventName(msg.what));
+            updateTimers();
+            AsyncResult ar;
+            switch (msg.what) {
+                case EVENT_SERVICE_STATE_CHANGED:
+                    onServiceStateChanged();
+                    // fallthrough
+                case EVENT_UPDATE:
+                    int rat = getDataNetworkType();
+                    if (rat == TelephonyManager.NETWORK_TYPE_NR
+                            || (isLte(rat) && isNrConnected())) {
+                        if (isNrAdvanced()) {
+                            transitionTo(mNrConnectedAdvancedState);
+                        } else if (isPhysicalLinkActive()) {
+                            transitionWithTimerTo(mNrConnectedState);
+                        } else {
+                            // Update in case the override network type changed
+                            updateOverrideNetworkType();
+                        }
+                    } else if (isLte(rat) && isNrNotRestricted()) {
+                        transitionWithTimerTo(isPhysicalLinkActive()
+                                ? mLteConnectedState : mIdleState);
+                    } else {
+                        transitionWithTimerTo(mLegacyState);
+                    }
+                    break;
+                case EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED:
+                    ar = (AsyncResult) msg.obj;
+                    updatePhysicalChannelConfigs((List<PhysicalChannelConfig>) ar.result);
+                    if (isUsingPhysicalChannelConfigForRrcDetection()) {
+                        mPhysicalLinkStatus = getPhysicalLinkStatusFromPhysicalChannelConfig();
+                    }
+                    // Check NR advanced in case NR advanced bands were added
+                    if (isNrAdvanced()) {
+                        transitionTo(mNrConnectedAdvancedState);
+                    } else if (isPhysicalLinkActive()) {
+                        transitionWithTimerTo(mNrConnectedState);
+                    }
+                    break;
+                case EVENT_PHYSICAL_LINK_STATUS_CHANGED:
+                    ar = (AsyncResult) msg.obj;
+                    mPhysicalLinkStatus = (int) ar.result;
+                    if (isPhysicalLinkActive()) {
+                        transitionWithTimerTo(mNrConnectedState);
+                    }
+                    break;
+                default:
+                    return NOT_HANDLED;
+            }
+            if (!mIsPrimaryTimerActive && !mIsSecondaryTimerActive) {
+                mPreviousState = getName();
+            }
+            return HANDLED;
+        }
+
+        @Override
+        public String getName() {
+            return mFeatureFlags.supportNrSaRrcIdle() ? STATE_CONNECTED_RRC_IDLE : STATE_CONNECTED;
+        }
+    }
+
+    private final NrIdleState mNrIdleState = new NrIdleState();
+
+    /**
      * Device is connected to 5G NR as the primary or secondary cell.
      */
     private final class NrConnectedState extends State {
@@ -913,10 +1058,10 @@ public class NetworkTypeController extends StateMachine {
         public boolean processMessage(Message msg) {
             if (DBG) log("NrConnectedState: process " + getEventName(msg.what));
             updateTimers();
+            AsyncResult ar;
             switch (msg.what) {
                 case EVENT_SERVICE_STATE_CHANGED:
-                    mServiceState = mPhone.getServiceStateTracker().getServiceState();
-                    if (DBG) log("ServiceState updated: " + mServiceState);
+                    onServiceStateChanged();
                     // fallthrough
                 case EVENT_UPDATE:
                     int rat = getDataNetworkType();
@@ -924,6 +1069,8 @@ public class NetworkTypeController extends StateMachine {
                             || (isLte(rat) && isNrConnected())) {
                         if (isNrAdvanced()) {
                             transitionTo(mNrConnectedAdvancedState);
+                        } else if (!isPhysicalLinkActive() && mFeatureFlags.supportNrSaRrcIdle()) {
+                            transitionWithTimerTo(mNrIdleState);
                         } else {
                             // Update in case the override network type changed
                             updateOverrideNetworkType();
@@ -935,21 +1082,25 @@ public class NetworkTypeController extends StateMachine {
                         transitionWithTimerTo(mLegacyState);
                     }
                     break;
-                case EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED:
-                    mPhysicalChannelConfigs =
-                            mPhone.getServiceStateTracker().getPhysicalChannelConfigList();
-                    if (DBG) log("Physical channel configs updated: " + mPhysicalChannelConfigs);
+                case EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED:
+                    ar = (AsyncResult) msg.obj;
+                    updatePhysicalChannelConfigs((List<PhysicalChannelConfig>) ar.result);
                     if (isUsingPhysicalChannelConfigForRrcDetection()) {
                         mPhysicalLinkStatus = getPhysicalLinkStatusFromPhysicalChannelConfig();
                     }
                     // Check NR advanced in case NR advanced bands were added
                     if (isNrAdvanced()) {
                         transitionTo(mNrConnectedAdvancedState);
+                    } else if (!isPhysicalLinkActive() && mFeatureFlags.supportNrSaRrcIdle()) {
+                        transitionWithTimerTo(mNrIdleState);
                     }
                     break;
                 case EVENT_PHYSICAL_LINK_STATUS_CHANGED:
-                    AsyncResult ar = (AsyncResult) msg.obj;
+                    ar = (AsyncResult) msg.obj;
                     mPhysicalLinkStatus = (int) ar.result;
+                    if (!isPhysicalLinkActive() && mFeatureFlags.supportNrSaRrcIdle()) {
+                        transitionWithTimerTo(mNrIdleState);
+                    }
                     break;
                 default:
                     return NOT_HANDLED;
@@ -987,10 +1138,10 @@ public class NetworkTypeController extends StateMachine {
         public boolean processMessage(Message msg) {
             if (DBG) log("NrConnectedAdvancedState: process " + getEventName(msg.what));
             updateTimers();
+            AsyncResult ar;
             switch (msg.what) {
                 case EVENT_SERVICE_STATE_CHANGED:
-                    mServiceState = mPhone.getServiceStateTracker().getServiceState();
-                    if (DBG) log("ServiceState updated: " + mServiceState);
+                    onServiceStateChanged();
                     // fallthrough
                 case EVENT_UPDATE:
                     int rat = getDataNetworkType();
@@ -1007,7 +1158,9 @@ public class NetworkTypeController extends StateMachine {
                                 mOverrideNetworkType =
                                         TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE;
                             }
-                            transitionWithTimerTo(mNrConnectedState);
+                            transitionWithTimerTo(isPhysicalLinkActive()
+                                    || !mFeatureFlags.supportNrSaRrcIdle()
+                                    ? mNrConnectedState : mNrIdleState);
                         }
                     } else if (isLte(rat) && isNrNotRestricted()) {
                         transitionWithTimerTo(isPhysicalLinkActive()
@@ -1016,20 +1169,21 @@ public class NetworkTypeController extends StateMachine {
                         transitionWithTimerTo(mLegacyState);
                     }
                     break;
-                case EVENT_PHYSICAL_CHANNEL_CONFIG_CHANGED:
-                    mPhysicalChannelConfigs =
-                            mPhone.getServiceStateTracker().getPhysicalChannelConfigList();
-                    if (DBG) log("Physical channel configs updated: " + mPhysicalChannelConfigs);
+                case EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED:
+                    ar = (AsyncResult) msg.obj;
+                    updatePhysicalChannelConfigs((List<PhysicalChannelConfig>) ar.result);
                     if (isUsingPhysicalChannelConfigForRrcDetection()) {
                         mPhysicalLinkStatus = getPhysicalLinkStatusFromPhysicalChannelConfig();
                     }
                     // Check NR advanced in case NR advanced bands were removed
                     if (!isNrAdvanced()) {
-                        transitionWithTimerTo(mNrConnectedState);
+                        transitionWithTimerTo(isPhysicalLinkActive()
+                                || !mFeatureFlags.supportNrSaRrcIdle()
+                                ? mNrConnectedState : mNrIdleState);
                     }
                     break;
                 case EVENT_PHYSICAL_LINK_STATUS_CHANGED:
-                    AsyncResult ar = (AsyncResult) msg.obj;
+                    ar = (AsyncResult) msg.obj;
                     mPhysicalLinkStatus = (int) ar.result;
                     break;
                 default:
@@ -1049,6 +1203,99 @@ public class NetworkTypeController extends StateMachine {
 
     private final NrConnectedAdvancedState mNrConnectedAdvancedState =
             new NrConnectedAdvancedState();
+
+    /** On service state changed. */
+    private void onServiceStateChanged() {
+        ServiceState newSS = mPhone.getServiceStateTracker().getServiceState();
+        if (!TextUtils.equals(mServiceState.getOperatorAlpha(), newSS.getOperatorAlpha())) {
+            log("PLMN changed, reset any timers");
+            resetAllTimers();
+        }
+        mServiceState = newSS;
+        if (DBG) log("ServiceState updated: " + mServiceState);
+    }
+
+    private void updatePhysicalChannelConfigs(List<PhysicalChannelConfig> physicalChannelConfigs) {
+        boolean isPccListEmpty = physicalChannelConfigs == null || physicalChannelConfigs.isEmpty();
+        if (isPccListEmpty && isUsingPhysicalChannelConfigForRrcDetection()) {
+            log("Physical channel configs updated: not updating PCC fields for empty PCC list "
+                    + "indicating RRC idle.");
+            mPrimaryCellChangedWhileIdle = false;
+            mPhysicalChannelConfigs = physicalChannelConfigs;
+            mDoesPccListIndicateIdle = true;
+            return;
+        }
+
+        int anchorNrCellId = PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN;
+        int anchorLteCellId = PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN;
+        int nrBandwidths = 0;
+        Set<Integer> nrBands = new HashSet<>();
+        if (physicalChannelConfigs != null) {
+            for (PhysicalChannelConfig config : physicalChannelConfigs) {
+                if (config.getNetworkType() == TelephonyManager.NETWORK_TYPE_NR) {
+                    if (config.getConnectionStatus() == CellInfo.CONNECTION_PRIMARY_SERVING
+                            && anchorNrCellId == PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN) {
+                        anchorNrCellId = config.getPhysicalCellId();
+                    }
+                    nrBandwidths += config.getCellBandwidthDownlinkKhz();
+                    nrBands.add(config.getBand());
+                } else if (config.getNetworkType() == TelephonyManager.NETWORK_TYPE_LTE) {
+                    if (config.getConnectionStatus() == CellInfo.CONNECTION_PRIMARY_SERVING
+                            && anchorLteCellId == PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN) {
+                        anchorLteCellId = config.getPhysicalCellId();
+                    }
+                    if (mIncludeLteForNrAdvancedThresholdBandwidth) {
+                        nrBandwidths += config.getCellBandwidthDownlinkKhz();
+                    }
+                }
+            }
+        }
+
+        // Update anchor NR cell from anchor LTE cell for NR NSA
+        if (anchorNrCellId == PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN
+                && anchorLteCellId != PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN) {
+            anchorNrCellId = anchorLteCellId;
+        }
+
+        if (anchorNrCellId == PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN) {
+            if (!isPccListEmpty) {
+                log("Ignoring physical channel config fields without an anchor NR cell, "
+                        + "either due to LTE-only configs or an unspecified cell ID.");
+            }
+            mRatchetedNrBandwidths = 0;
+            mRatchetedNrBands.clear();
+        } else if (anchorNrCellId == mLastAnchorNrCellId && mRatchetPccFieldsForSameAnchorNrCell) {
+            log("Ratchet physical channel config fields since anchor NR cell is the same.");
+            mRatchetedNrBandwidths = Math.max(mRatchetedNrBandwidths, nrBandwidths);
+            mRatchetedNrBands.addAll(nrBands);
+        } else {
+            if (mFeatureFlags.supportNrSaRrcIdle() && mDoesPccListIndicateIdle
+                    && isUsingPhysicalChannelConfigForRrcDetection()
+                    && !mPrimaryCellChangedWhileIdle && isTimerActiveForRrcIdle()
+                    && !isNrAdvancedForPccFields(nrBandwidths, nrBands)) {
+                log("Allow primary cell change during RRC idle timer without changing state: "
+                        + mLastAnchorNrCellId + " -> " + anchorNrCellId);
+                mPrimaryCellChangedWhileIdle = true;
+                mLastAnchorNrCellId = anchorNrCellId;
+                return;
+            }
+            if (mRatchetPccFieldsForSameAnchorNrCell) {
+                log("Not ratcheting physical channel config fields since anchor NR cell changed: "
+                        + mLastAnchorNrCellId + " -> " + anchorNrCellId);
+            }
+            mRatchetedNrBandwidths = nrBandwidths;
+            mRatchetedNrBands = nrBands;
+        }
+
+        mLastAnchorNrCellId = anchorNrCellId;
+        mPhysicalChannelConfigs = physicalChannelConfigs;
+        mDoesPccListIndicateIdle = false;
+        if (DBG) {
+            log("Physical channel configs updated: anchorNrCell=" + mLastAnchorNrCellId
+                    + ", nrBandwidths=" + mRatchetedNrBandwidths + ", nrBands=" +  mRatchetedNrBands
+                    + ", configs=" + mPhysicalChannelConfigs);
+        }
+    }
 
     private void transitionWithTimerTo(IState destState) {
         String destName = destState.getName();
@@ -1091,7 +1338,11 @@ public class NetworkTypeController extends StateMachine {
             if (isNrAdvanced()) {
                 transitionState = mNrConnectedAdvancedState;
             } else {
-                transitionState = mNrConnectedState;
+                if (isPhysicalLinkActive() || !mFeatureFlags.supportNrSaRrcIdle()) {
+                    transitionState = mNrConnectedState;
+                } else {
+                    transitionState = mNrIdleState;
+                }
             }
         } else if (isLte(dataRat) && isNrNotRestricted()) {
             if (isPhysicalLinkActive()) {
@@ -1120,7 +1371,9 @@ public class NetworkTypeController extends StateMachine {
 
         String currentState = getCurrentState().getName();
 
-        if (mIsPrimaryTimerActive && getOverrideNetworkType() == getCurrentOverrideNetworkType()) {
+        if (mIsPrimaryTimerActive && getOverrideNetworkType() == getCurrentOverrideNetworkType()
+                && getDataNetworkType()
+                == mDisplayInfoController.getTelephonyDisplayInfo().getNetworkType()) {
             // remove primary timer if device goes back to the original icon
             if (DBG) {
                 log("Remove primary timer since icon of primary state and current icon equal: "
@@ -1172,6 +1425,18 @@ public class NetworkTypeController extends StateMachine {
         mIsSecondaryTimerActive = false;
         mPrimaryTimerState = "";
         mSecondaryTimerState = "";
+    }
+
+    private boolean isTimerActiveForRrcIdle() {
+        if (mIsPrimaryTimerActive) {
+            return mPrimaryTimerState.equals(STATE_CONNECTED_RRC_IDLE)
+                    || mPrimaryTimerState.equals(STATE_NOT_RESTRICTED_RRC_IDLE);
+        } else if (mIsSecondaryTimerActive) {
+            return mSecondaryTimerState.equals(STATE_CONNECTED_RRC_IDLE)
+                    || mSecondaryTimerState.equals(STATE_NOT_RESTRICTED_RRC_IDLE);
+        } else {
+            return false;
+        }
     }
 
     /**
@@ -1246,6 +1511,16 @@ public class NetworkTypeController extends StateMachine {
             return secondaryTimer == null ? 0 : secondaryTimer;
         }
 
+        /**
+         * @return Whether timer rules have been defined for this {@link #mState}.
+         */
+        public boolean isDefined() {
+            // TODO: Remove this method added to make STATE_CONNECTED_RRC_IDLE backwards compatible
+            //  with STATE_CONNECTED once carrier configs are updated.
+            return mOverrideType != TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE
+                    || !mPrimaryTimers.isEmpty() || !mSecondaryTimers.isEmpty();
+        }
+
         @Override
         public String toString() {
             return "{mState=" + mState
@@ -1272,56 +1547,55 @@ public class NetworkTypeController extends StateMachine {
      * @return {@code true} if the device is in NR advanced mode (i.e. 5G+).
      */
     private boolean isNrAdvanced() {
+        return isNrAdvancedForPccFields(mRatchetedNrBandwidths, mRatchetedNrBands);
+    }
+
+    private boolean isNrAdvancedForPccFields(int bandwidths, Set<Integer> bands) {
         // Check PCO requirement. For carriers using PCO to indicate whether the data connection is
         // NR advanced capable, mNrAdvancedCapablePcoId should be configured to non-zero.
         if (mNrAdvancedCapablePcoId > 0 && !mIsNrAdvancedAllowedByPco) {
+            if (DBG) log("isNrAdvanced: not allowed by PCO for PCO ID " + mNrAdvancedCapablePcoId);
             return false;
         }
 
         // Check if NR advanced is enabled when the device is roaming. Some carriers disable it
         // while the device is roaming.
         if (mServiceState.getDataRoaming() && !mEnableNrAdvancedWhileRoaming) {
+            if (DBG) log("isNrAdvanced: false because NR advanced is unavailable while roaming.");
             return false;
-        }
-
-        int bandwidths = 0;
-        if (mPhone.getServiceStateTracker().getPhysicalChannelConfigList() != null) {
-            bandwidths = mPhone.getServiceStateTracker().getPhysicalChannelConfigList()
-                    .stream()
-                    .filter(config -> mIncludeLteForNrAdvancedThresholdBandwidth
-                            || config.getNetworkType() == TelephonyManager.NETWORK_TYPE_NR)
-                    .map(PhysicalChannelConfig::getCellBandwidthDownlinkKhz)
-                    .mapToInt(Integer::intValue)
-                    .sum();
         }
 
         // Check if meeting minimum bandwidth requirement. For most carriers, there is no minimum
         // bandwidth requirement and mNrAdvancedThresholdBandwidth is 0.
         if (mNrAdvancedThresholdBandwidth > 0 && bandwidths < mNrAdvancedThresholdBandwidth) {
+            if (DBG) {
+                log("isNrAdvanced: false because bandwidths=" + bandwidths
+                        + " does not meet the threshold=" + mNrAdvancedThresholdBandwidth);
+            }
             return false;
         }
 
         // If all above tests passed, then check if the device is using millimeter wave bands or
         // carrier designated bands.
-        return isNrMmwave() || isAdditionalNrAdvancedBand();
+        return isNrMmwave() || isAdditionalNrAdvancedBand(bands);
     }
 
     private boolean isNrMmwave() {
         return mServiceState.getNrFrequencyRange() == ServiceState.FREQUENCY_RANGE_MMWAVE;
     }
 
-    private boolean isAdditionalNrAdvancedBand() {
-        if (ArrayUtils.isEmpty(mAdditionalNrAdvancedBandsList)
-                || mPhysicalChannelConfigs == null) {
+    private boolean isAdditionalNrAdvancedBand(Set<Integer> bands) {
+        if (mAdditionalNrAdvancedBands.isEmpty() || bands.isEmpty()) {
+            if (DBG && !mAdditionalNrAdvancedBands.isEmpty()) {
+                // Only log if mAdditionalNrAdvancedBands is empty to prevent log spam
+                log("isAdditionalNrAdvancedBand: false because bands are empty; configs="
+                        + mAdditionalNrAdvancedBands + ", bands=" + bands);
+            }
             return false;
         }
-        for (PhysicalChannelConfig item : mPhysicalChannelConfigs) {
-            if (item.getNetworkType() == TelephonyManager.NETWORK_TYPE_NR
-                    && ArrayUtils.contains(mAdditionalNrAdvancedBandsList, item.getBand())) {
-                return true;
-            }
-        }
-        return false;
+        Set<Integer> intersection = new HashSet<>(mAdditionalNrAdvancedBands);
+        intersection.retainAll(bands);
+        return !intersection.isEmpty();
     }
 
     private boolean isLte(int rat) {
@@ -1334,7 +1608,8 @@ public class NetworkTypeController extends StateMachine {
     }
 
     private int getPhysicalLinkStatusFromPhysicalChannelConfig() {
-        return (mPhysicalChannelConfigs == null || mPhysicalChannelConfigs.isEmpty())
+        return (mPhysicalChannelConfigs == null || mPhysicalChannelConfigs.isEmpty()
+                || mDoesPccListIndicateIdle)
                 ? DataCallResponse.LINK_STATUS_DORMANT : DataCallResponse.LINK_STATUS_ACTIVE;
     }
 
@@ -1379,6 +1654,7 @@ public class NetworkTypeController extends StateMachine {
         pw.flush();
         pw.increaseIndent();
         pw.println("mSubId=" + mPhone.getSubId());
+        pw.println("supportNrSaRrcIdle=" + mFeatureFlags.supportNrSaRrcIdle());
         pw.println("mOverrideTimerRules=" + mOverrideTimerRules.toString());
         pw.println("mLteEnhancedPattern=" + mLteEnhancedPattern);
         pw.println("mIsPhysicalChannelConfigOn=" + mIsPhysicalChannelConfigOn);
@@ -1388,8 +1664,14 @@ public class NetworkTypeController extends StateMachine {
                 + mIsTimerResetEnabledForLegacyStateRrcIdle);
         pw.println("mLtePlusThresholdBandwidth=" + mLtePlusThresholdBandwidth);
         pw.println("mNrAdvancedThresholdBandwidth=" + mNrAdvancedThresholdBandwidth);
-        pw.println("mAdditionalNrAdvancedBandsList="
-                + Arrays.toString(mAdditionalNrAdvancedBandsList));
+        pw.println("mIncludeLteForNrAdvancedThresholdBandwidth="
+                + mIncludeLteForNrAdvancedThresholdBandwidth);
+        pw.println("mRatchetPccFieldsForSameAnchorNrCell=" + mRatchetPccFieldsForSameAnchorNrCell);
+        pw.println("mRatchetedNrBandwidths=" + mRatchetedNrBandwidths);
+        pw.println("mAdditionalNrAdvancedBandsList=" + mAdditionalNrAdvancedBands);
+        pw.println("mRatchetedNrBands=" + mRatchetedNrBands);
+        pw.println("mLastAnchorNrCellId=" + mLastAnchorNrCellId);
+        pw.println("mDoesPccListIndicateIdle=" + mDoesPccListIndicateIdle);
         pw.println("mPrimaryTimerState=" + mPrimaryTimerState);
         pw.println("mSecondaryTimerState=" + mSecondaryTimerState);
         pw.println("mPreviousState=" + mPreviousState);
@@ -1398,6 +1680,7 @@ public class NetworkTypeController extends StateMachine {
         pw.println("mIsNrAdvancedAllowedByPco=" + mIsNrAdvancedAllowedByPco);
         pw.println("mNrAdvancedCapablePcoId=" + mNrAdvancedCapablePcoId);
         pw.println("mIsUsingUserDataForRrcDetection=" + mIsUsingUserDataForRrcDetection);
+        pw.println("mPrimaryCellChangedWhileIdle=" + mPrimaryCellChangedWhileIdle);
         pw.println("mEnableNrAdvancedWhileRoaming=" + mEnableNrAdvancedWhileRoaming);
         pw.println("mIsDeviceIdleMode=" + mIsDeviceIdleMode);
         pw.decreaseIndent();

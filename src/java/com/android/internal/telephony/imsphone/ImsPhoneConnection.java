@@ -82,7 +82,7 @@ public class ImsPhoneConnection extends Connection implements
     private ImsPhoneCall mParent;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private ImsCall mImsCall;
-    private Bundle mExtras = new Bundle();
+    private final Bundle mExtras = new Bundle();
     private TelephonyMetrics mMetrics = TelephonyMetrics.getInstance();
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
@@ -1357,17 +1357,15 @@ public class ImsPhoneConnection extends Connection implements
      * @param imsCall The call to check for changes in extras.
      * @return Whether the extras fields have been changed.
      */
-     boolean updateExtras(ImsCall imsCall) {
+    boolean updateExtras(ImsCall imsCall) {
         if (imsCall == null) {
             return false;
         }
-
         final ImsCallProfile callProfile = imsCall.getCallProfile();
         final Bundle extras = callProfile != null ? callProfile.mCallExtras : null;
         if (extras == null && DBG) {
             Rlog.d(LOG_TAG, "Call profile extras are null.");
         }
-
         final boolean changed = !areBundlesEqual(extras, mExtras);
         if (changed) {
             updateImsCallRatFromExtras(extras);
@@ -1377,9 +1375,42 @@ public class ImsPhoneConnection extends Connection implements
             if (extras != null) {
                 mExtras.putAll(extras);
             }
+            if (com.android.server.telecom.flags.Flags.businessCallComposer()) {
+                maybeInjectBusinessComposerExtras(mExtras);
+            }
             setConnectionExtras(mExtras);
         }
         return changed;
+    }
+
+    /**
+     * The Ims Vendor is responsible for setting the ImsCallProfile business call composer
+     * values (ImsCallProfile.EXTRA_IS_BUSINESS_CALL and
+     * ImsCallProfile.EXTRA_ASSERTED_DISPLAY_NAME). This helper notifies Telecom of the business
+     * composer values which will then be injected into the android.telecom.Call object.
+     */
+    private void maybeInjectBusinessComposerExtras(Bundle extras) {
+        if (extras == null) {
+            return;
+        }
+        try {
+            if (extras.containsKey(ImsCallProfile.EXTRA_IS_BUSINESS_CALL)
+                    && !extras.containsKey(android.telecom.Call.EXTRA_IS_BUSINESS_CALL)) {
+                boolean v = extras.getBoolean(ImsCallProfile.EXTRA_IS_BUSINESS_CALL);
+                Rlog.i(LOG_TAG, String.format("mIBCE: EXTRA_IS_BUSINESS_CALL=[%s]", v));
+                extras.putBoolean(android.telecom.Call.EXTRA_IS_BUSINESS_CALL, v);
+            }
+
+            if (extras.containsKey(ImsCallProfile.EXTRA_ASSERTED_DISPLAY_NAME)
+                    && !extras.containsKey(android.telecom.Call.EXTRA_ASSERTED_DISPLAY_NAME)) {
+                String v = extras.getString(ImsCallProfile.EXTRA_ASSERTED_DISPLAY_NAME);
+                Rlog.i(LOG_TAG, String.format("mIBCE: ASSERTED_DISPLAY_NAME=[%s]", v));
+                extras.putString(android.telecom.Call.EXTRA_ASSERTED_DISPLAY_NAME, v);
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private static boolean areBundlesEqual(Bundle extras, Bundle newExtras) {
@@ -1491,7 +1522,10 @@ public class ImsPhoneConnection extends Connection implements
      * @return boolean: true if cross sim calling, false otherwise
      */
     public boolean isCrossSimCall() {
-        return mImsCall != null && mImsCall.isCrossSimCall();
+        if (mImsCall == null) {
+            return mExtras.getBoolean(ImsCallProfile.EXTRA_IS_CROSS_SIM_CALL);
+        }
+        return mImsCall.isCrossSimCall();
     }
 
     /**

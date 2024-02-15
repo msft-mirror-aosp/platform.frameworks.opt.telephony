@@ -29,12 +29,14 @@ import android.os.AsyncResult;
 import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
 import android.telephony.ServiceState;
-import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
+import androidx.test.filters.SmallTest;
+
 import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.flags.FeatureFlags;
 
 import org.junit.After;
 import org.junit.Before;
@@ -57,6 +59,7 @@ public class ImsPhoneMmiCodeTest extends TelephonyTest {
 
     // Mocked classes
     private ServiceState mServiceState;
+    private FeatureFlags mFeatureFlags;
 
     private final Executor mExecutor = Runnable::run;
 
@@ -64,12 +67,14 @@ public class ImsPhoneMmiCodeTest extends TelephonyTest {
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
         mServiceState = mock(ServiceState.class);
+        mFeatureFlags = mock(FeatureFlags.class);
+
         doReturn(mExecutor).when(mContext).getMainExecutor();
         doReturn(mPhone).when(mPhone).getDefaultPhone();
         doReturn(mServiceState).when(mPhone).getServiceState();
         doReturn(false).when(mServiceState).getVoiceRoaming();
         doReturn(false).when(mPhone).supportsConversionOfCdmaCallerIdMmiCodesWhileRoaming();
-        mImsPhoneUT = new ImsPhone(mContext, mNotifier, mPhone);
+        mImsPhoneUT = new ImsPhone(mContext, mNotifier, mPhone, mFeatureFlags);
         setCarrierSupportsCallerIdVerticalServiceCodesCarrierConfig();
     }
 

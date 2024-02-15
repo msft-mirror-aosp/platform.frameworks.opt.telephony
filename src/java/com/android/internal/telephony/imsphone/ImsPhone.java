@@ -21,8 +21,10 @@ import static android.telephony.ims.ImsManager.EXTRA_WFC_REGISTRATION_FAILURE_TI
 import static android.telephony.ims.RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED;
 import static android.telephony.ims.RegistrationManager.REGISTRATION_STATE_REGISTERED;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_NONE;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_RAT_BLOCK;
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_NONE;
 
 import static com.android.internal.telephony.CommandsInterface.CB_FACILITY_BAIC;
@@ -120,6 +122,7 @@ import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.emergency.EmergencyStateTracker;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.metrics.ImsStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
@@ -139,6 +142,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 /**
  * {@hide}
@@ -453,14 +457,15 @@ public class ImsPhone extends ImsPhoneBase {
     }
 
     // Constructors
-    public ImsPhone(Context context, PhoneNotifier notifier, Phone defaultPhone) {
-        this(context, notifier, defaultPhone, ImsManager::getInstance, false);
+    public ImsPhone(Context context, PhoneNotifier notifier,
+            Phone defaultPhone, FeatureFlags featureFlags) {
+        this(context, notifier, defaultPhone, ImsManager::getInstance, false, featureFlags);
     }
 
     @VisibleForTesting
     public ImsPhone(Context context, PhoneNotifier notifier, Phone defaultPhone,
-            ImsManagerFactory imsManagerFactory, boolean unitTestMode) {
-        super("ImsPhone", context, notifier, unitTestMode);
+            ImsManagerFactory imsManagerFactory, boolean unitTestMode, FeatureFlags featureFlags) {
+        super("ImsPhone", context, notifier, unitTestMode, featureFlags);
 
         mDefaultPhone = defaultPhone;
         mImsManagerFactory = imsManagerFactory;
@@ -479,7 +484,7 @@ public class ImsPhone extends ImsPhoneBase {
                         .inject(ImsNrSaModeHandler.class.getName())
                         .makeImsNrSaModeHandler(this);
         mCT = TelephonyComponentFactory.getInstance().inject(ImsPhoneCallTracker.class.getName())
-                .makeImsPhoneCallTracker(this);
+                .makeImsPhoneCallTracker(this, featureFlags);
         mCT.registerPhoneStateListener(mExternalCallTracker);
         mExternalCallTracker.setCallPuller(mCT);
 
@@ -2429,7 +2434,9 @@ public class ImsPhone extends ImsPhoneBase {
 
         if (mCT.getState() == PhoneConstants.State.IDLE) {
             if (DBG) logd("updateRoamingState now: " + newRoamingState);
-            mLastKnownRoamingState = newRoamingState;
+            if (!mFeatureFlags.updateRoamingStateToSetWfcMode()) {
+                mLastKnownRoamingState = newRoamingState;
+            }
             CarrierConfigManager configManager = (CarrierConfigManager)
                     getContext().getSystemService(Context.CARRIER_CONFIG_SERVICE);
             // Don't set wfc mode if carrierconfig has not loaded. It will be set by GsmCdmaPhone
@@ -2438,6 +2445,9 @@ public class ImsPhone extends ImsPhoneBase {
                     configManager.getConfigForSubId(getSubId()))) {
                 ImsManager imsManager = mImsManagerFactory.create(mContext, mPhoneId);
                 imsManager.setWfcMode(imsManager.getWfcMode(newRoamingState), newRoamingState);
+                if (mFeatureFlags.updateRoamingStateToSetWfcMode()) {
+                    mLastKnownRoamingState = newRoamingState;
+                }
             }
         } else {
             if (DBG) logd("updateRoamingState postponed: " + newRoamingState);
@@ -2476,7 +2486,7 @@ public class ImsPhone extends ImsPhoneBase {
             setServiceState(ServiceState.STATE_IN_SERVICE);
             getDefaultPhone().setImsRegistrationState(true);
             mMetrics.writeOnImsConnectionState(mPhoneId, ImsConnectionState.State.CONNECTED, null);
-            mImsStats.onImsRegistered(imsRadioTech);
+            mImsStats.onImsRegistered(attributes);
             mImsNrSaModeHandler.onImsRegistered(
                     attributes.getRegistrationTechnology(), attributes.getFeatureTags());
             updateImsRegistrationInfo(REGISTRATION_STATE_REGISTERED,
@@ -2522,10 +2532,21 @@ public class ImsPhone extends ImsPhoneBase {
                 if ((suggestedAction == SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK)
                         || (suggestedAction == SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT)) {
                     suggestedModemAction = suggestedAction;
+                } else if (mFeatureFlags.addRatRelatedSuggestedActionToImsRegistration()) {
+                    if ((suggestedAction == SUGGESTED_ACTION_TRIGGER_RAT_BLOCK)
+                            || (suggestedAction == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS)) {
+                        suggestedModemAction = suggestedAction;
+                    }
                 }
             }
             updateImsRegistrationInfo(REGISTRATION_STATE_NOT_REGISTERED,
                     imsRadioTech, suggestedModemAction);
+
+            if (mFeatureFlags.clearCachedImsPhoneNumberWhenDeviceLostImsRegistration()) {
+                // Clear the phone number from P-Associated-Uri
+                setCurrentSubscriberUris(null);
+                clearPhoneNumberForSourceIms();
+            }
         }
 
         @Override
@@ -2536,13 +2557,21 @@ public class ImsPhone extends ImsPhoneBase {
         }
     };
 
+    /** Clear the IMS phone number from IMS associated Uris when IMS registration is lost. */
+    @VisibleForTesting
+    public void clearPhoneNumberForSourceIms() {
+        int subId = getSubId();
+        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
+            return;
+        }
+
+        if (DBG) logd("clearPhoneNumberForSourceIms");
+        mSubscriptionManagerService.setNumberFromIms(subId, new String(""));
+    }
+
     /** Sets the IMS phone number from IMS associated URIs, if any found. */
     @VisibleForTesting
     public void setPhoneNumberForSourceIms(Uri[] uris) {
-        String phoneNumber = extractPhoneNumberFromAssociatedUris(uris);
-        if (phoneNumber == null) {
-            return;
-        }
         int subId = getSubId();
         if (!SubscriptionManager.isValidSubscriptionId(subId)) {
             // Defending b/219080264:
@@ -2551,16 +2580,33 @@ public class ImsPhone extends ImsPhoneBase {
             // IMS callbacks are sent back to telephony after SIM state changed.
             return;
         }
-
         SubscriptionInfoInternal subInfo = mSubscriptionManagerService
                 .getSubscriptionInfoInternal(subId);
-        if (subInfo != null) {
-            phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber,
-                    subInfo.getCountryIso());
+        if (subInfo == null) {
+            loge("trigger setPhoneNumberForSourceIms, but subInfo is null");
+            return;
+        }
+        String subCountryIso = subInfo.getCountryIso();
+        String phoneNumber = extractPhoneNumberFromAssociatedUris(uris, /*isGlobalFormat*/true);
+        if (phoneNumber != null) {
+            phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber, subCountryIso);
             if (phoneNumber == null) {
+                loge("format to E164 failed");
                 return;
             }
             mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
+        } else if (isAllowNonGlobalNumberFormat()) {
+            // If carrier config has true for KEY_IGNORE_GLOBAL_PHONE_NUMBER_FORMAT_BOOL and
+            // P-Associated-Uri does not have global number,
+            // try to find phone number excluding '+' one more time.
+            phoneNumber = extractPhoneNumberFromAssociatedUris(uris, /*isGlobalFormat*/false);
+            if (phoneNumber == null) {
+                loge("extract phone number without '+' failed");
+                return;
+            }
+            mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
+        } else {
+            logd("extract phone number failed");
         }
     }
 
@@ -2570,24 +2616,40 @@ public class ImsPhone extends ImsPhoneBase {
      * <p>Associated URIs are public user identities, and phone number could be used:
      * see 3GPP TS 24.229 5.4.1.2 and 3GPP TS 23.003 13.4. This algotihm look for the
      * possible "global number" in E.164 format.
+     * <p>If true try finding phone number even if the P-Associated-Uri does not have global
+     * number format.
      */
-    private static String extractPhoneNumberFromAssociatedUris(Uri[] uris) {
+    private static String extractPhoneNumberFromAssociatedUris(Uri[] uris, boolean isGlobalFormat) {
         if (uris == null) {
             return null;
         }
-        return Arrays.stream(uris)
+
+        Stream<String> intermediate = Arrays.stream(uris)
                 // Phone number is an opaque URI "tel:<phone-number>" or "sip:<phone-number>@<...>"
                 .filter(u -> u != null && u.isOpaque())
                 .filter(u -> "tel".equalsIgnoreCase(u.getScheme())
                         || "sip".equalsIgnoreCase(u.getScheme()))
-                .map(Uri::getSchemeSpecificPart)
-                // "Global number" should be in E.164 format starting with "+" e.g. "+447539447777"
-                .filter(ssp -> ssp != null && ssp.startsWith("+"))
-                // Remove whatever after "@" for sip URI
-                .map(ssp -> ssp.split("@")[0])
-                // Returns the first winner
-                .findFirst()
-                .orElse(null);
+                .map(Uri::getSchemeSpecificPart);
+
+        if (isGlobalFormat) {
+            // "Global number" should be in E.164 format starting with "+" e.g. "+447539447777"
+            return intermediate.filter(ssp -> ssp != null && ssp.startsWith("+"))
+                    // Remove whatever after "@" for sip URI
+                    .map(ssp -> ssp.split("@")[0])
+                    // Returns the first winner
+                    .findFirst()
+                    .orElse(null);
+        } else {
+            // non global number format
+            return intermediate.filter(ssp -> ssp != null)
+                    // Remove whatever after "@" for sip URI
+                    .map(ssp -> ssp.split("@")[0])
+                    // regular expression, allow only number
+                    .filter(ssp -> ssp.matches("^[0-9]+$"))
+                    // Returns the first winner
+                    .findFirst()
+                    .orElse(null);
+        }
     }
 
     public IccRecords getIccRecords() {
@@ -2676,9 +2738,13 @@ public class ImsPhone extends ImsPhoneBase {
             @RegistrationManager.SuggestedAction int suggestedAction) {
 
         if (regState == mImsRegistrationState) {
+            // In NOT_REGISTERED state, the current PLMN can be blocked with a suggested action.
+            // But in this case, the same behavior is able to occur in different PLMNs with
+            // same radio tech and suggested action.
             if ((regState == REGISTRATION_STATE_REGISTERED && imsRadioTech == mImsRegistrationTech)
                     || (regState == REGISTRATION_STATE_NOT_REGISTERED
-                            && suggestedAction == mImsRegistrationSuggestedAction
+                            && suggestedAction == SUGGESTED_ACTION_NONE
+                            && mImsRegistrationSuggestedAction == SUGGESTED_ACTION_NONE
                             && imsRadioTech == mImsDeregistrationTech)) {
                 // Filter duplicate notification.
                 return;
@@ -2763,6 +2829,15 @@ public class ImsPhone extends ImsPhoneBase {
         mCT.triggerNotifyAnbr(mediaType, direction, bitsPerSecond);
     }
 
+    /**
+     * Check whether making a call using Wi-Fi is possible or not.
+     * @return {code true} if IMS is registered over IWLAN else return {code false}.
+     */
+    public boolean canMakeWifiCall() {
+        return isImsRegistered() && (getImsRegistrationTech()
+                == ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN);
+    }
+
     @Override
     public void dump(FileDescriptor fd, PrintWriter printWriter, String[] args) {
         IndentingPrintWriter pw = new IndentingPrintWriter(printWriter, "  ");
@@ -2788,6 +2863,22 @@ public class ImsPhone extends ImsPhoneBase {
         mRegLocalLog.dump(pw);
         pw.decreaseIndent();
         pw.flush();
+    }
+
+    private boolean isAllowNonGlobalNumberFormat() {
+        PersistableBundle persistableBundle = null;
+        CarrierConfigManager carrierConfigManager = (CarrierConfigManager) mContext
+                .getSystemService(Context.CARRIER_CONFIG_SERVICE);
+        if (carrierConfigManager != null) {
+            persistableBundle = carrierConfigManager.getConfigForSubId(getSubId(),
+                    CarrierConfigManager.Ims.KEY_ALLOW_NON_GLOBAL_PHONE_NUMBER_FORMAT_BOOL);
+        }
+        if (persistableBundle != null) {
+            return persistableBundle.getBoolean(
+                    CarrierConfigManager.Ims.KEY_ALLOW_NON_GLOBAL_PHONE_NUMBER_FORMAT_BOOL, false);
+        }
+
+        return false;
     }
 
     private void logi(String s) {

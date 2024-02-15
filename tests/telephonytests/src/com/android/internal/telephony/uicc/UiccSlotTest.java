@@ -42,7 +42,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class UiccSlotTest extends TelephonyTest {
-    private UiccSlot mUiccSlot;
     private UiccSlotTestHandlerThread mTestHandlerThread;
     private Handler mTestHandler;
 
@@ -263,7 +262,7 @@ public class UiccSlotTest extends TelephonyTest {
 
         // assert on updated values
         assertTrue(mUiccSlot.isActive());
-        assertEquals(mUiccSlot.getMinimumVoltageClass(), UiccSlot.VOLTAGE_CLASS_A);
+        assertEquals(UiccSlot.VOLTAGE_CLASS_A, mUiccSlot.getMinimumVoltageClass());
     }
 
     @Test
@@ -429,7 +428,7 @@ public class UiccSlotTest extends TelephonyTest {
         mUiccSlot.update(mSimulatedCommands, mIccCardStatus, phoneId, slotIndex);
         verify(mTelephonyComponentFactory).makeUiccProfile(
                 anyObject(), eq(mSimulatedCommands), eq(mIccCardStatus), anyInt(), anyObject(),
-                anyObject());
+                anyObject(), anyObject());
         assertEquals(IccCardStatus.CardState.CARDSTATE_PRESENT, mUiccSlot.getCardState());
         assertNotNull(mUiccSlot.getUiccCard());
 
@@ -452,7 +451,7 @@ public class UiccSlotTest extends TelephonyTest {
         mUiccSlot.update(mSimulatedCommands, mIccCardStatus, phoneId, slotIndex);
         verify(mTelephonyComponentFactory).makeUiccProfile(
                 anyObject(), eq(mSimulatedCommands), eq(mIccCardStatus), anyInt(), anyObject(),
-                anyObject());
+                anyObject(), anyObject());
         assertEquals(IccCardStatus.CardState.CARDSTATE_PRESENT, mUiccSlot.getCardState());
         assertNotNull(mUiccSlot.getUiccCard());
 

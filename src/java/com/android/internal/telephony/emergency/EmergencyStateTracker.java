@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony.emergency;
 
+import static android.telephony.CarrierConfigManager.ImsEmergency.KEY_EMERGENCY_CALLBACK_MODE_SUPPORTED_BOOL;
+
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_CALLBACK;
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_NONE;
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_WWAN;
@@ -26,24 +28,30 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.os.UserHandle;
+import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.sysprop.TelephonyProperties;
+import android.telephony.AccessNetworkConstants;
 import android.telephony.Annotation.DisconnectCauses;
 import android.telephony.CarrierConfigManager;
 import android.telephony.DisconnectCause;
-import android.telephony.EmergencyRegResult;
+import android.telephony.EmergencyRegistrationResult;
 import android.telephony.NetworkRegistrationInfo;
+import android.telephony.PreciseDataConnectionState;
 import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyCallback;
 import android.telephony.TelephonyManager;
-import android.telephony.emergency.EmergencyNumber;
+import android.telephony.data.ApnSetting;
 import android.util.ArraySet;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -54,6 +62,7 @@ import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.data.PhoneSwitcher;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.telephony.Rlog;
 
 import java.lang.annotation.Retention;
@@ -62,6 +71,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 /**
@@ -75,11 +85,16 @@ public class EmergencyStateTracker {
      * Timeout before we continue with the emergency call without waiting for DDS switch response
      * from the modem.
      */
-    private static final int DEFAULT_DATA_SWITCH_TIMEOUT_MS = 1000;
+    private static final int DEFAULT_DATA_SWITCH_TIMEOUT_MS = 1 * 1000;
+    @VisibleForTesting
+    public static final int DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS = 3 * 1000;
     /** Default value for if Emergency Callback Mode is supported. */
     private static final boolean DEFAULT_EMERGENCY_CALLBACK_MODE_SUPPORTED = true;
     /** Default Emergency Callback Mode exit timeout value. */
     private static final long DEFAULT_ECM_EXIT_TIMEOUT_MS = 300000;
+    private static final int DEFAULT_EPDN_DISCONNECTION_TIMEOUT_MS = 500;
+
+    private static final int DEFAULT_TRANSPORT_CHANGE_TIMEOUT_MS = 1 * 1000;
 
     /** The emergency types used when setting the emergency mode on modem. */
     @Retention(RetentionPolicy.SOURCE)
@@ -94,6 +109,8 @@ public class EmergencyStateTracker {
     /** Indicates the emergency type is SMS. */
     public static final int EMERGENCY_TYPE_SMS = 2;
 
+    private static final String KEY_NO_SIM_ECBM_SUPPORT = "no_sim_ecbm_support";
+
     private static EmergencyStateTracker INSTANCE = null;
 
     private final Context mContext;
@@ -105,7 +122,7 @@ public class EmergencyStateTracker {
     @EmergencyConstants.EmergencyMode
     private int mEmergencyMode = MODE_EMERGENCY_NONE;
     private boolean mWasEmergencyModeSetOnModem;
-    private EmergencyRegResult mLastEmergencyRegResult;
+    private EmergencyRegistrationResult mLastEmergencyRegistrationResult;
     private boolean mIsEmergencyModeInProgress;
     private boolean mIsEmergencyCallStartedDuringEmergencySms;
 
@@ -114,10 +131,13 @@ public class EmergencyStateTracker {
     // A runnable which is used to automatically exit from Ecm after a period of time.
     private final Runnable mExitEcmRunnable = this::exitEmergencyCallbackMode;
     // Tracks emergency calls by callId that have reached {@link Call.State#ACTIVE}.
-    private final Set<String> mActiveEmergencyCalls = new ArraySet<>();
+    private final Set<android.telecom.Connection> mActiveEmergencyCalls = new ArraySet<>();
+    private Phone mPhoneToExit;
+    private int mPdnDisconnectionTimeoutMs = DEFAULT_EPDN_DISCONNECTION_TIMEOUT_MS;
+    private final Object mLock = new Object();
     private Phone mPhone;
-    // Tracks ongoing emergency callId to handle a second emergency call
-    private String mOngoingCallId;
+    // Tracks ongoing emergency connection to handle a second emergency call
+    private android.telecom.Connection mOngoingConnection;
     // Domain of the active emergency call. Assuming here that there will only be one domain active.
     private int mEmergencyCallDomain = NetworkRegistrationInfo.DOMAIN_UNKNOWN;
     private CompletableFuture<Integer> mCallEmergencyModeFuture;
@@ -125,12 +145,21 @@ public class EmergencyStateTracker {
     private boolean mIsInEcm;
     private boolean mIsTestEmergencyNumber;
     private Runnable mOnEcmExitCompleteRunnable;
+    private int mOngoingCallProperties;
 
     /** For emergency SMS */
     private final Set<String> mOngoingEmergencySmsIds = new ArraySet<>();
     private Phone mSmsPhone;
     private CompletableFuture<Integer> mSmsEmergencyModeFuture;
     private boolean mIsTestEmergencyNumberForSms;
+
+    private CompletableFuture<Boolean> mEmergencyTransportChangedFuture;
+
+    private final android.util.ArrayMap<Integer, Boolean> mNoSimEcbmSupported =
+            new android.util.ArrayMap<>();
+    private final CarrierConfigManager.CarrierConfigChangeListener mCarrierConfigChangeListener =
+            (slotIndex, subId, carrierId, specificCarrierId) -> onCarrierConfigurationChanged(
+                    slotIndex, subId);
 
     /**
      * Listens for Emergency Callback Mode state change intents
@@ -152,6 +181,29 @@ public class EmergencyStateTracker {
             }
         }
     };
+
+    /**
+     * TelephonyCallback used to monitor whether ePDN on cellular network is disconnected or not.
+     */
+    private final class PreciseDataConnectionStateListener extends TelephonyCallback implements
+            TelephonyCallback.PreciseDataConnectionStateListener {
+        @Override
+        public void onPreciseDataConnectionStateChanged(
+                @NonNull PreciseDataConnectionState dataConnectionState) {
+            ApnSetting apnSetting = dataConnectionState.getApnSetting();
+            if ((apnSetting == null)
+                    || ((apnSetting.getApnTypeBitmask() | ApnSetting.TYPE_EMERGENCY) == 0)
+                    || (dataConnectionState.getTransportType()
+                            != AccessNetworkConstants.TRANSPORT_TYPE_WWAN)) {
+                return;
+            }
+            int state = dataConnectionState.getState();
+            Rlog.d(TAG, "onPreciseDataConnectionStateChanged ePDN state=" + state);
+            if (state == TelephonyManager.DATA_DISCONNECTED) exitEmergencyModeIfDelayed();
+        }
+    }
+
+    private PreciseDataConnectionStateListener mDataConnectionStateListener;
 
     /** PhoneFactory Dependencies for testing. */
     @VisibleForTesting
@@ -176,13 +228,14 @@ public class EmergencyStateTracker {
     @VisibleForTesting
     public interface TelephonyManagerProxy {
         int getPhoneCount();
+        void registerTelephonyCallback(int subId, Executor executor, TelephonyCallback callback);
+        void unregisterTelephonyCallback(TelephonyCallback callback);
     }
 
     private final TelephonyManagerProxy mTelephonyManagerProxy;
 
     private static class TelephonyManagerProxyImpl implements TelephonyManagerProxy {
         private final TelephonyManager mTelephonyManager;
-
 
         TelephonyManagerProxyImpl(Context context) {
             mTelephonyManager = new TelephonyManager(context);
@@ -191,6 +244,18 @@ public class EmergencyStateTracker {
         @Override
         public int getPhoneCount() {
             return mTelephonyManager.getActiveModemCount();
+        }
+
+        @Override
+        public void registerTelephonyCallback(int subId,
+                Executor executor, TelephonyCallback callback) {
+            TelephonyManager tm = mTelephonyManager.createForSubscriptionId(subId);
+            tm.registerTelephonyCallback(executor, callback);
+        }
+
+        @Override
+        public void unregisterTelephonyCallback(TelephonyCallback callback) {
+            mTelephonyManager.unregisterTelephonyCallback(callback);
         }
     }
 
@@ -203,11 +268,15 @@ public class EmergencyStateTracker {
     }
 
     @VisibleForTesting
-    public static final int MSG_SET_EMERGENCY_MODE_DONE = 1;
+    public static final int MSG_SET_EMERGENCY_MODE = 1;
     @VisibleForTesting
-    public static final int MSG_EXIT_EMERGENCY_MODE_DONE = 2;
+    public static final int MSG_EXIT_EMERGENCY_MODE = 2;
     @VisibleForTesting
-    public static final int MSG_SET_EMERGENCY_CALLBACK_MODE_DONE = 3;
+    public static final int MSG_SET_EMERGENCY_MODE_DONE = 3;
+    @VisibleForTesting
+    public static final int MSG_EXIT_EMERGENCY_MODE_DONE = 4;
+    @VisibleForTesting
+    public static final int MSG_SET_EMERGENCY_CALLBACK_MODE_DONE = 5;
 
     private class MyHandler extends Handler {
 
@@ -224,13 +293,17 @@ public class EmergencyStateTracker {
                     Rlog.v(TAG, "MSG_SET_EMERGENCY_MODE_DONE for "
                             + emergencyTypeToString(emergencyType));
                     if (ar.exception == null) {
-                        mLastEmergencyRegResult = (EmergencyRegResult) ar.result;
+                        mLastEmergencyRegistrationResult = (EmergencyRegistrationResult) ar.result;
                     } else {
-                        mLastEmergencyRegResult = null;
-                        Rlog.w(TAG, "LastEmergencyRegResult not set. AsyncResult.exception: "
+                        mLastEmergencyRegistrationResult = null;
+                        Rlog.w(TAG,
+                                "LastEmergencyRegistrationResult not set. AsyncResult.exception: "
                                 + ar.exception);
                     }
                     setEmergencyModeInProgress(false);
+
+                    // Transport changed from WLAN to WWAN or CALLBACK to WWAN
+                    maybeNotifyTransportChangeCompleted(emergencyType, false);
 
                     if (emergencyType == EMERGENCY_TYPE_CALL) {
                         setIsInEmergencyCall(true);
@@ -251,7 +324,7 @@ public class EmergencyStateTracker {
                             if (mIsEmergencyCallStartedDuringEmergencySms) {
                                 Phone phone = mPhone;
                                 mPhone = null;
-                                exitEmergencyMode(mSmsPhone, emergencyType);
+                                exitEmergencyMode(mSmsPhone, emergencyType, false);
                                 // Restore call phone for further use.
                                 mPhone = phone;
 
@@ -310,6 +383,27 @@ public class EmergencyStateTracker {
                     }
                     break;
                 }
+                case MSG_EXIT_EMERGENCY_MODE: {
+                    Rlog.v(TAG, "MSG_EXIT_EMERGENCY_MODE");
+                    exitEmergencyModeIfDelayed();
+                    break;
+                }
+                case MSG_SET_EMERGENCY_MODE: {
+                    AsyncResult ar = (AsyncResult) msg.obj;
+                    Integer emergencyType = (Integer) ar.userObj;
+                    Rlog.v(TAG, "MSG_SET_EMERGENCY_MODE for "
+                            + emergencyTypeToString(emergencyType) + ", " + mEmergencyMode);
+                    // Should be reached here only when starting a new emergency service
+                    // while exiting emergency callback mode on the other slot.
+                    if (mEmergencyMode != MODE_EMERGENCY_WWAN) return;
+                    final Phone phone = (mPhone != null) ? mPhone : mSmsPhone;
+                    if (phone != null) {
+                        mWasEmergencyModeSetOnModem = true;
+                        phone.setEmergencyMode(MODE_EMERGENCY_WWAN,
+                                mHandler.obtainMessage(MSG_SET_EMERGENCY_MODE_DONE, emergencyType));
+                    }
+                    break;
+                }
                 default:
                     break;
             }
@@ -356,6 +450,13 @@ public class EmergencyStateTracker {
         mWakeLock = (pm != null) ? pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
                 "telephony:" + TAG) : null;
         mConfigManager = context.getSystemService(CarrierConfigManager.class);
+        if (mConfigManager != null) {
+            // Carrier config changed callback should be executed in handler thread
+            mConfigManager.registerCarrierConfigChangeListener(mHandler::post,
+                    mCarrierConfigChangeListener);
+        } else {
+            Rlog.e(TAG, "CarrierConfigLoader is not available.");
+        }
 
         // Register receiver for ECM exit.
         IntentFilter filter = new IntentFilter();
@@ -392,6 +493,8 @@ public class EmergencyStateTracker {
         mEcmExitTimeoutMs = ecmExitTimeoutMs;
         mWakeLock = null; // Don't declare a wakelock in tests
         mConfigManager = context.getSystemService(CarrierConfigManager.class);
+        mConfigManager.registerCarrierConfigChangeListener(mHandler::post,
+                mCarrierConfigChangeListener);
         IntentFilter filter = new IntentFilter();
         filter.addAction(TelephonyIntents.ACTION_EMERGENCY_CALLBACK_MODE_CHANGED);
         context.registerReceiver(mEcmExitReceiver, filter, null, mHandler);
@@ -404,22 +507,34 @@ public class EmergencyStateTracker {
      * Handles turning on radio and switching DDS.
      *
      * @param phone                 the {@code Phone} on which to process the emergency call.
-     * @param callId                the call id on which to process the emergency call.
+     * @param c                     the {@code Connection} on which to process the emergency call.
      * @param isTestEmergencyNumber whether this is a test emergency number.
      * @return a {@code CompletableFuture} that results in {@code DisconnectCause.NOT_DISCONNECTED}
      *         if emergency call successfully started.
      */
     public CompletableFuture<Integer> startEmergencyCall(@NonNull Phone phone,
-            @NonNull String callId, boolean isTestEmergencyNumber) {
-        Rlog.i(TAG, "startEmergencyCall: phoneId=" + phone.getPhoneId() + ", callId=" + callId);
+            @NonNull android.telecom.Connection c, boolean isTestEmergencyNumber) {
+        Rlog.i(TAG, "startEmergencyCall: phoneId=" + phone.getPhoneId()
+                + ", callId=" + c.getTelecomCallId());
 
         if (mPhone != null) {
             // Create new future to return as to not interfere with any uncompleted futures.
             // Case1) When 2nd emergency call is initiated during an active call on the same phone.
             // Case2) While the device is in ECBM, an emergency call is initiated on the same phone.
             if (isSamePhone(mPhone, phone) && (!mActiveEmergencyCalls.isEmpty() || isInEcm())) {
-                mOngoingCallId = callId;
+                mOngoingConnection = c;
                 mIsTestEmergencyNumber = isTestEmergencyNumber;
+                // Ensure that domain selector requests scan.
+                mLastEmergencyRegistrationResult = new EmergencyRegistrationResult(
+                        AccessNetworkConstants.AccessNetworkType.UNKNOWN,
+                        NetworkRegistrationInfo.REGISTRATION_STATE_UNKNOWN,
+                        NetworkRegistrationInfo.DOMAIN_UNKNOWN, false, false, 0, 0, "", "", "");
+                if (isInEcm()) {
+                    // Remove pending exit ECM runnable.
+                    mHandler.removeCallbacks(mExitEcmRunnable);
+                    releaseWakeLock();
+                    ((GsmCdmaPhone) mPhone).notifyEcbmTimerReset(Boolean.TRUE);
+                }
                 return CompletableFuture.completedFuture(DisconnectCause.NOT_DISCONNECTED);
             }
 
@@ -427,6 +542,7 @@ public class EmergencyStateTracker {
             return CompletableFuture.completedFuture(DisconnectCause.ERROR_UNSPECIFIED);
         }
 
+        mOngoingCallProperties = 0;
         mCallEmergencyModeFuture = new CompletableFuture<>();
 
         if (mSmsPhone != null) {
@@ -437,17 +553,17 @@ public class EmergencyStateTracker {
             // exit the emergency mode when receiving the result of setting the emergency mode and
             // the emergency mode for this call will be restarted after the exit complete.
             if (isInEmergencyMode() && !isEmergencyModeInProgress()) {
-                exitEmergencyMode(mSmsPhone, EMERGENCY_TYPE_SMS);
+                exitEmergencyMode(mSmsPhone, EMERGENCY_TYPE_SMS, false);
             }
 
             mPhone = phone;
-            mOngoingCallId = callId;
+            mOngoingConnection = c;
             mIsTestEmergencyNumber = isTestEmergencyNumber;
             return mCallEmergencyModeFuture;
         }
 
         mPhone = phone;
-        mOngoingCallId = callId;
+        mOngoingConnection = c;
         mIsTestEmergencyNumber = isTestEmergencyNumber;
         turnOnRadioAndSwitchDds(mPhone, EMERGENCY_TYPE_CALL, mIsTestEmergencyNumber);
         return mCallEmergencyModeFuture;
@@ -460,38 +576,41 @@ public class EmergencyStateTracker {
      * Enter ECM only once all active emergency calls have ended. If a call never reached
      * {@link Call.State#ACTIVE}, then no need to enter ECM.
      *
-     * @param callId the call id on which to end the emergency call.
+     * @param c the emergency call disconnected.
      */
-    public void endCall(@NonNull String callId) {
-        boolean wasActive = mActiveEmergencyCalls.remove(callId);
+    public void endCall(@NonNull android.telecom.Connection c) {
+        boolean wasActive = mActiveEmergencyCalls.remove(c);
 
-        if (Objects.equals(mOngoingCallId, callId)) {
-            mOngoingCallId = null;
+        if (Objects.equals(mOngoingConnection, c)) {
+            mOngoingConnection = null;
+            mOngoingCallProperties = 0;
         }
 
         if (wasActive && mActiveEmergencyCalls.isEmpty()
                 && isEmergencyCallbackModeSupported()) {
             enterEmergencyCallbackMode();
 
-            if (mOngoingCallId == null) {
+            if (mOngoingConnection == null) {
                 mIsEmergencyCallStartedDuringEmergencySms = false;
                 mCallEmergencyModeFuture = null;
             }
-        } else if (mOngoingCallId == null) {
+        } else if (mOngoingConnection == null) {
             if (isInEcm()) {
                 mIsEmergencyCallStartedDuringEmergencySms = false;
                 mCallEmergencyModeFuture = null;
                 // If the emergency call was initiated during the emergency callback mode,
                 // the emergency callback mode should be restored when the emergency call is ended.
                 if (mActiveEmergencyCalls.isEmpty()) {
-                    setEmergencyMode(mPhone, EMERGENCY_TYPE_CALL, MODE_EMERGENCY_CALLBACK,
-                            MSG_SET_EMERGENCY_CALLBACK_MODE_DONE);
+                    enterEmergencyCallbackMode();
                 }
             } else {
-                exitEmergencyMode(mPhone, EMERGENCY_TYPE_CALL);
+                exitEmergencyMode(mPhone, EMERGENCY_TYPE_CALL, false);
                 clearEmergencyCallInfo();
             }
         }
+
+        // Release any blocked thread immediately
+        maybeNotifyTransportChangeCompleted(EMERGENCY_TYPE_CALL, true);
     }
 
     private void clearEmergencyCallInfo() {
@@ -499,7 +618,8 @@ public class EmergencyStateTracker {
         mIsTestEmergencyNumber = false;
         mIsEmergencyCallStartedDuringEmergencySms = false;
         mCallEmergencyModeFuture = null;
-        mOngoingCallId = null;
+        mOngoingConnection = null;
+        mOngoingCallProperties = 0;
         mPhone = null;
     }
 
@@ -511,10 +631,10 @@ public class EmergencyStateTracker {
                 Rlog.e(TAG, "DDS Switch failed.");
             }
             // Once radio is on and DDS switched, must call setEmergencyMode() before selecting
-            // emergency domain. EmergencyRegResult is required to determine domain and this is the
-            // only API that can receive it before starting domain selection. Once domain selection
-            // is finished, the actual emergency mode will be set when onEmergencyTransportChanged()
-            // is called.
+            // emergency domain. EmergencyRegistrationResult is required to determine domain and
+            // this is the only API that can receive it before starting domain selection.
+            // Once domain selection is finished, the actual emergency mode will be set when
+            // onEmergencyTransportChanged() is called.
             setEmergencyMode(phone, emergencyType, MODE_EMERGENCY_WWAN,
                     MSG_SET_EMERGENCY_MODE_DONE);
         });
@@ -534,14 +654,15 @@ public class EmergencyStateTracker {
                 + emergencyTypeToString(emergencyType));
 
         if (mEmergencyMode == mode) {
+            // Initial transport selection of DomainSelector
+            maybeNotifyTransportChangeCompleted(emergencyType, false);
             return;
         }
         mEmergencyMode = mode;
         setEmergencyModeInProgress(true);
 
         Message m = mHandler.obtainMessage(msg, Integer.valueOf(emergencyType));
-        if ((mIsTestEmergencyNumber && emergencyType == EMERGENCY_TYPE_CALL)
-                || (mIsTestEmergencyNumberForSms && emergencyType == EMERGENCY_TYPE_SMS)) {
+        if (mIsTestEmergencyNumberForSms && emergencyType == EMERGENCY_TYPE_SMS) {
             Rlog.d(TAG, "TestEmergencyNumber for " + emergencyTypeToString(emergencyType)
                     + ": Skipping setting emergency mode on modem.");
             // Send back a response for the command, but with null information
@@ -552,8 +673,27 @@ public class EmergencyStateTracker {
             return;
         }
 
-        mWasEmergencyModeSetOnModem = true;
-        phone.setEmergencyMode(mode, m);
+        synchronized (mLock) {
+            unregisterForDataConnectionStateChanges();
+            if (mPhoneToExit != null) {
+                if (emergencyType != EMERGENCY_TYPE_CALL) {
+                    setIsInEmergencyCall(false);
+                }
+                mOnEcmExitCompleteRunnable = null;
+                if (mPhoneToExit != phone) {
+                    // Exit emergency mode on the other phone first,
+                    // then set emergency mode on the given phone.
+                    mPhoneToExit.exitEmergencyMode(
+                            mHandler.obtainMessage(MSG_SET_EMERGENCY_MODE,
+                            Integer.valueOf(emergencyType)));
+                    mPhoneToExit = null;
+                    return;
+                }
+                mPhoneToExit = null;
+            }
+            mWasEmergencyModeSetOnModem = true;
+            phone.setEmergencyMode(mode, m);
+        }
     }
 
     private void completeEmergencyMode(@EmergencyType int emergencyType) {
@@ -626,8 +766,10 @@ public class EmergencyStateTracker {
      *
      * @param phone the {@code Phone} to exit the emergency mode.
      * @param emergencyType the emergency type to identify an emergency call or SMS.
+     * @param waitForPdnDisconnect indicates whether it shall wait for the disconnection of ePDN.
      */
-    private void exitEmergencyMode(Phone phone, @EmergencyType int emergencyType) {
+    private void exitEmergencyMode(Phone phone, @EmergencyType int emergencyType,
+            boolean waitForPdnDisconnect) {
         Rlog.i(TAG, "exitEmergencyMode for " + emergencyTypeToString(emergencyType));
 
         if (emergencyType == EMERGENCY_TYPE_CALL) {
@@ -663,13 +805,91 @@ public class EmergencyStateTracker {
             return;
         }
 
-        mWasEmergencyModeSetOnModem = false;
-        phone.exitEmergencyMode(m);
+        synchronized (mLock) {
+            mWasEmergencyModeSetOnModem = false;
+            if (waitForPdnDisconnect) {
+                registerForDataConnectionStateChanges(phone);
+                mPhoneToExit = phone;
+                if (mPdnDisconnectionTimeoutMs > 0) {
+                    // To avoid waiting for the disconnection indefinitely.
+                    mHandler.sendEmptyMessageDelayed(MSG_EXIT_EMERGENCY_MODE,
+                            mPdnDisconnectionTimeoutMs);
+                }
+                return;
+            } else {
+                unregisterForDataConnectionStateChanges();
+                mPhoneToExit = null;
+            }
+            phone.exitEmergencyMode(m);
+        }
     }
 
-    /** Returns last {@link EmergencyRegResult} as set by {@code setEmergencyMode()}. */
-    public EmergencyRegResult getEmergencyRegResult() {
-        return mLastEmergencyRegResult;
+    /** Returns last {@link EmergencyRegistrationResult} as set by {@code setEmergencyMode()}. */
+    public EmergencyRegistrationResult getEmergencyRegistrationResult() {
+        return mLastEmergencyRegistrationResult;
+    }
+
+    private void waitForTransportChangeCompleted(CompletableFuture<Boolean> future) {
+        if (future != null) {
+            synchronized (future) {
+                if ((mEmergencyMode == MODE_EMERGENCY_NONE)
+                        || mHandler.getLooper().isCurrentThread()) {
+                    // Do not block the Handler's thread
+                    return;
+                }
+                long now = SystemClock.elapsedRealtime();
+                long deadline = now + DEFAULT_TRANSPORT_CHANGE_TIMEOUT_MS;
+                // Guard with while loop to handle spurious wakeups
+                while (!future.isDone() && now < deadline) {
+                    try {
+                        future.wait(deadline - now);
+                    } catch (Exception e) {
+                        Rlog.e(TAG, "waitForTransportChangeCompleted wait e=" + e);
+                    }
+                    now = SystemClock.elapsedRealtime();
+                }
+            }
+        }
+    }
+
+    private void maybeNotifyTransportChangeCompleted(@EmergencyType int emergencyType,
+            boolean enforced) {
+        if (emergencyType != EMERGENCY_TYPE_CALL) {
+            // It's not for the emergency call
+            return;
+        }
+        CompletableFuture<Boolean> future = mEmergencyTransportChangedFuture;
+        if (future != null) {
+            synchronized (future) {
+                if (!future.isDone()
+                        && ((!isEmergencyModeInProgress() && mEmergencyMode == MODE_EMERGENCY_WWAN)
+                                || enforced)) {
+                    future.complete(Boolean.TRUE);
+                    future.notifyAll();
+                }
+            }
+        }
+    }
+
+    /**
+     * Handles emergency transport change by setting new emergency mode.
+     *
+     * @param emergencyType the emergency type to identify an emergency call or SMS
+     * @param mode the new emergency mode
+     */
+    public void onEmergencyTransportChangedAndWait(@EmergencyType int emergencyType,
+            @EmergencyConstants.EmergencyMode int mode) {
+        // Wait for the completion of setting MODE_EMERGENCY_WWAN only for emergency calls
+        if (emergencyType == EMERGENCY_TYPE_CALL && mode == MODE_EMERGENCY_WWAN) {
+            CompletableFuture<Boolean> future = new CompletableFuture<>();
+            synchronized (future) {
+                mEmergencyTransportChangedFuture = future;
+                onEmergencyTransportChanged(emergencyType, mode);
+                waitForTransportChangeCompleted(future);
+            }
+            return;
+        }
+        onEmergencyTransportChanged(emergencyType, mode);
     }
 
     /**
@@ -701,10 +921,10 @@ public class EmergencyStateTracker {
     /**
      * Notify the tracker that the emergency call domain has been updated.
      * @param phoneType The new PHONE_TYPE_* of the call.
-     * @param callId The ID of the call
+     * @param c The connection of the call
      */
-    public void onEmergencyCallDomainUpdated(int phoneType, String callId) {
-        Rlog.d(TAG, "domain update for callId: " + callId);
+    public void onEmergencyCallDomainUpdated(int phoneType, android.telecom.Connection c) {
+        Rlog.d(TAG, "domain update for callId: " + c.getTelecomCallId());
         int domain = -1;
         switch(phoneType) {
             case (PhoneConstants.PHONE_TYPE_CDMA_LTE):
@@ -732,21 +952,81 @@ public class EmergencyStateTracker {
      * Handles emergency call state change.
      *
      * @param state the new call state
-     * @param callId the callId whose state has changed
+     * @param c the call whose state has changed
      */
-    public void onEmergencyCallStateChanged(Call.State state, String callId) {
+    public void onEmergencyCallStateChanged(Call.State state, android.telecom.Connection c) {
         if (state == Call.State.ACTIVE) {
-            mActiveEmergencyCalls.add(callId);
+            mActiveEmergencyCalls.add(c);
+            if (Objects.equals(mOngoingConnection, c)) {
+                Rlog.i(TAG, "call connected " + c.getTelecomCallId());
+                if (mPhone != null
+                        && isVoWiFi(mOngoingCallProperties)
+                        && mEmergencyMode == EmergencyConstants.MODE_EMERGENCY_WLAN) {
+                    // Recover normal service in cellular when VoWiFi is connected
+                    mPhone.cancelEmergencyNetworkScan(true, null);
+                }
+            }
         }
+    }
+
+    /**
+     * Handles the change of emergency call properties.
+     *
+     * @param properties the new call properties.
+     * @param c the call whose state has changed.
+     */
+    public void onEmergencyCallPropertiesChanged(int properties, android.telecom.Connection c) {
+        if (Objects.equals(mOngoingConnection, c)) {
+            mOngoingCallProperties = properties;
+        }
+    }
+
+    /**
+     * Handles the radio power off request.
+     */
+    public void onCellularRadioPowerOffRequested() {
+        synchronized (mLock) {
+            if (isInEcm()) {
+                exitEmergencyCallbackMode(null);
+            }
+            exitEmergencyModeIfDelayed();
+        }
+    }
+
+    private static boolean isVoWiFi(int properties) {
+        return (properties & android.telecom.Connection.PROPERTY_WIFI) > 0
+                || (properties & android.telecom.Connection.PROPERTY_CROSS_SIM) > 0;
     }
 
     /**
      * Returns {@code true} if device and carrier support emergency callback mode.
      */
-    private boolean isEmergencyCallbackModeSupported() {
-        return getConfig(mPhone.getSubId(),
-                CarrierConfigManager.ImsEmergency.KEY_EMERGENCY_CALLBACK_MODE_SUPPORTED_BOOL,
-                DEFAULT_EMERGENCY_CALLBACK_MODE_SUPPORTED);
+    @VisibleForTesting
+    public boolean isEmergencyCallbackModeSupported() {
+        int subId = mPhone.getSubId();
+        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
+            // If there is no SIM, refer to the saved last carrier configuration with valid
+            // subscription.
+            int phoneId = mPhone.getPhoneId();
+            Boolean savedConfig = mNoSimEcbmSupported.get(Integer.valueOf(phoneId));
+            if (savedConfig == null) {
+                // Exceptional case such as with poor boot performance.
+                // Usually, the first carrier config change will update the cache.
+                // But with poor boot performance, the carrier config change
+                // can be delayed for a long time.
+                SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(mContext);
+                savedConfig = Boolean.valueOf(
+                        sp.getBoolean(KEY_NO_SIM_ECBM_SUPPORT + phoneId, false));
+                Rlog.i(TAG, "ECBM value not cached, load from preference");
+                mNoSimEcbmSupported.put(Integer.valueOf(phoneId), savedConfig);
+            }
+            Rlog.i(TAG, "isEmergencyCallbackModeSupported savedConfig=" + savedConfig);
+            return savedConfig;
+        } else {
+            return getConfig(subId,
+                    CarrierConfigManager.ImsEmergency.KEY_EMERGENCY_CALLBACK_MODE_SUPPORTED_BOOL,
+                    DEFAULT_EMERGENCY_CALLBACK_MODE_SUPPORTED);
+        }
     }
 
     /**
@@ -769,20 +1049,23 @@ public class EmergencyStateTracker {
                 // ECBM (see ImsPhone#handleEnterEmergencyCallbackMode)
                 ((GsmCdmaPhone) mPhone).notifyEmergencyCallRegistrants(true);
             }
-
-            // Set emergency mode on modem.
-            setEmergencyMode(mPhone, EMERGENCY_TYPE_CALL, MODE_EMERGENCY_CALLBACK,
-                    MSG_SET_EMERGENCY_CALLBACK_MODE_DONE);
-
-            // Post this runnable so we will automatically exit if no one invokes
-            // exitEmergencyCallbackMode() directly.
-            long delayInMillis = TelephonyProperties.ecm_exit_timer()
-                    .orElse(mEcmExitTimeoutMs);
-            mHandler.postDelayed(mExitEcmRunnable, delayInMillis);
-
-            // We don't want to go to sleep while in ECM.
-            if (mWakeLock != null) mWakeLock.acquire(delayInMillis);
+        } else {
+            // Inform to reset the ECBM timer.
+            ((GsmCdmaPhone) mPhone).notifyEcbmTimerReset(Boolean.FALSE);
         }
+
+        // Set emergency mode on modem.
+        setEmergencyMode(mPhone, EMERGENCY_TYPE_CALL, MODE_EMERGENCY_CALLBACK,
+                MSG_SET_EMERGENCY_CALLBACK_MODE_DONE);
+
+        // Post this runnable so we will automatically exit if no one invokes
+        // exitEmergencyCallbackMode() directly.
+        long delayInMillis = TelephonyProperties.ecm_exit_timer()
+                .orElse(mEcmExitTimeoutMs);
+        mHandler.postDelayed(mExitEcmRunnable, delayInMillis);
+
+        // We don't want to go to sleep while in ECM.
+        if (mWakeLock != null) mWakeLock.acquire(delayInMillis);
     }
 
     /**
@@ -800,14 +1083,7 @@ public class EmergencyStateTracker {
             }
 
             // Release wakeLock.
-            if (mWakeLock != null && mWakeLock.isHeld()) {
-                try {
-                    mWakeLock.release();
-                } catch (Exception e) {
-                    // Ignore the exception if the system has already released this WakeLock.
-                    Rlog.d(TAG, "WakeLock already released: " + e.toString());
-                }
-            }
+            releaseWakeLock();
 
             GsmCdmaPhone gsmCdmaPhone = (GsmCdmaPhone) mPhone;
             // Send intents that ECM has changed.
@@ -815,12 +1091,26 @@ public class EmergencyStateTracker {
             gsmCdmaPhone.notifyEmergencyCallRegistrants(false);
 
             // Exit emergency mode on modem.
-            exitEmergencyMode(gsmCdmaPhone, EMERGENCY_TYPE_CALL);
+            // b/299866883: Wait for the disconnection of ePDN before calling exitEmergencyMode.
+            exitEmergencyMode(gsmCdmaPhone, EMERGENCY_TYPE_CALL,
+                    mEmergencyCallDomain == NetworkRegistrationInfo.DOMAIN_PS);
         }
 
         mEmergencyCallDomain = NetworkRegistrationInfo.DOMAIN_UNKNOWN;
         mIsTestEmergencyNumber = false;
         mPhone = null;
+    }
+
+    private void releaseWakeLock() {
+        // Release wakeLock.
+        if (mWakeLock != null && mWakeLock.isHeld()) {
+            try {
+                mWakeLock.release();
+            } catch (Exception e) {
+                // Ignore the exception if the system has already released this WakeLock.
+                Rlog.d(TAG, "WakeLock already released: " + e.toString());
+            }
+        }
     }
 
     /**
@@ -938,9 +1228,10 @@ public class EmergencyStateTracker {
      * This should be called once an emergency SMS is sent.
      *
      * @param smsId the SMS id on which to end the emergency SMS.
-     * @param emergencyNumber the emergency number which was used for the emergency SMS.
+     * @param success the flag specifying whether an emergency SMS is successfully sent or not.
+     *                {@code true} if SMS is successfully sent, {@code false} otherwise.
      */
-    public void endSms(@NonNull String smsId, EmergencyNumber emergencyNumber) {
+    public void endSms(@NonNull String smsId, boolean success) {
         mOngoingEmergencySmsIds.remove(smsId);
 
         // If the outgoing emergency SMSs are empty, we can try to exit the emergency mode.
@@ -948,12 +1239,12 @@ public class EmergencyStateTracker {
             if (isInEcm()) {
                 // When the emergency mode is not in MODE_EMERGENCY_CALLBACK,
                 // it needs to notify the emergency callback mode to modem.
-                if (mActiveEmergencyCalls.isEmpty() && mOngoingCallId == null) {
+                if (mActiveEmergencyCalls.isEmpty() && mOngoingConnection == null) {
                     setEmergencyMode(mPhone, EMERGENCY_TYPE_CALL, MODE_EMERGENCY_CALLBACK,
                             MSG_SET_EMERGENCY_CALLBACK_MODE_DONE);
                 }
             } else {
-                exitEmergencyMode(mSmsPhone, EMERGENCY_TYPE_SMS);
+                exitEmergencyMode(mSmsPhone, EMERGENCY_TYPE_SMS, false);
             }
 
             clearEmergencySmsInfo();
@@ -991,8 +1282,8 @@ public class EmergencyStateTracker {
      *
      * <p>
      * Once radio is on and DDS switched, must call setEmergencyMode() before completing the future
-     * and selecting emergency domain. EmergencyRegResult is required to determine domain and
-     * setEmergencyMode() is the only API that can receive it before starting domain selection.
+     * and selecting emergency domain. EmergencyRegistrationResult is required to determine domain
+     * and setEmergencyMode() is the only API that can receive it before starting domain selection.
      * Once domain selection is finished, the actual emergency mode will be set when
      * onEmergencyTransportChanged() is called.
      *
@@ -1005,40 +1296,63 @@ public class EmergencyStateTracker {
             boolean isTestEmergencyNumber) {
         final boolean isAirplaneModeOn = isAirplaneModeOn(mContext);
         boolean needToTurnOnRadio = !isRadioOn() || isAirplaneModeOn;
+        final SatelliteController satelliteController = SatelliteController.getInstance();
+        boolean needToTurnOffSatellite = satelliteController.isSatelliteEnabled();
 
-        if (needToTurnOnRadio) {
+        if (needToTurnOnRadio || needToTurnOffSatellite) {
             Rlog.i(TAG, "turnOnRadioAndSwitchDds: phoneId=" + phone.getPhoneId() + " for "
                     + emergencyTypeToString(emergencyType));
             if (mRadioOnHelper == null) {
                 mRadioOnHelper = new RadioOnHelper(mContext);
             }
 
+            final Phone phoneForEmergency = phone;
+            final android.telecom.Connection expectedConnection = mOngoingConnection;
+            final int waitForInServiceTimeout =
+                    needToTurnOnRadio ? DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS : 0;
+            Rlog.i(TAG, "turnOnRadioAndSwitchDds: timeout=" + waitForInServiceTimeout);
             mRadioOnHelper.triggerRadioOnAndListen(new RadioOnStateListener.Callback() {
                 @Override
                 public void onComplete(RadioOnStateListener listener, boolean isRadioReady) {
                     if (!isRadioReady) {
-                        // Could not turn radio on
-                        Rlog.e(TAG, "Failed to turn on radio.");
-                        completeEmergencyMode(emergencyType, DisconnectCause.POWER_OFF);
+                        if (satelliteController.isSatelliteEnabled()) {
+                            // Could not turn satellite off
+                            Rlog.e(TAG, "Failed to turn off satellite modem.");
+                            completeEmergencyMode(emergencyType, DisconnectCause.SATELLITE_ENABLED);
+                        } else {
+                            // Could not turn radio on
+                            Rlog.e(TAG, "Failed to turn on radio.");
+                            completeEmergencyMode(emergencyType, DisconnectCause.POWER_OFF);
+                        }
                     } else {
+                        if (!Objects.equals(mOngoingConnection, expectedConnection)) {
+                            Rlog.i(TAG, "onComplete "
+                                    + expectedConnection.getTelecomCallId() + " canceled.");
+                            return;
+                        }
                         switchDdsAndSetEmergencyMode(phone, emergencyType);
                     }
                 }
 
                 @Override
                 public boolean isOkToCall(Phone phone, int serviceState, boolean imsVoiceCapable) {
-                    // We currently only look to make sure that the radio is on before dialing. We
-                    // should be able to make emergency calls at any time after the radio has been
-                    // powered on and isn't in the UNAVAILABLE state, even if it is reporting the
-                    // OUT_OF_SERVICE state.
-                    return phone.getServiceStateTracker().isRadioOn();
+                    // Wait for normal service state or timeout if required.
+                    if (phone == phoneForEmergency
+                            && waitForInServiceTimeout > 0
+                            && !isNetworkRegistered(phone)) {
+                        return false;
+                    }
+                    return phone.getServiceStateTracker().isRadioOn()
+                            && !satelliteController.isSatelliteEnabled();
                 }
 
                 @Override
                 public boolean onTimeout(Phone phone, int serviceState, boolean imsVoiceCapable) {
-                    return true;
+                    // onTimeout shall be called only with the Phone for emergency
+                    return phone.getServiceStateTracker().isRadioOn()
+                            && !satelliteController.isSatelliteEnabled();
                 }
-            }, !isTestEmergencyNumber, phone, isTestEmergencyNumber, 0);
+            }, !isTestEmergencyNumber, phone, isTestEmergencyNumber, waitForInServiceTimeout);
         } else {
             switchDdsAndSetEmergencyMode(phone, emergencyType);
         }
@@ -1191,6 +1505,27 @@ public class EmergencyStateTracker {
                 || phone.getServiceState().isEmergencyOnly();
     }
 
+    private static boolean isNetworkRegistered(Phone phone) {
+        ServiceState ss = phone.getServiceStateTracker().getServiceState();
+        if (ss != null) {
+            NetworkRegistrationInfo nri = ss.getNetworkRegistrationInfo(
+                    NetworkRegistrationInfo.DOMAIN_PS,
+                    AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+            if (nri != null && nri.isNetworkRegistered()) {
+                // PS is IN_SERVICE state.
+                return true;
+            }
+            nri = ss.getNetworkRegistrationInfo(
+                    NetworkRegistrationInfo.DOMAIN_CS,
+                    AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+            if (nri != null && nri.isNetworkRegistered()) {
+                // CS is IN_SERVICE state.
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Checks whether both {@code Phone}s are same or not.
      */
@@ -1204,5 +1539,106 @@ public class EmergencyStateTracker {
             case EMERGENCY_TYPE_SMS: return "SMS";
             default: return "UNKNOWN";
         }
+    }
+
+    private void onCarrierConfigurationChanged(int slotIndex, int subId) {
+        Rlog.i(TAG, "onCarrierConfigChanged slotIndex=" + slotIndex + ", subId=" + subId);
+
+        if (slotIndex < 0) {
+            return;
+        }
+
+        updateNoSimEcbmSupported(slotIndex, subId);
+    }
+
+    private void updateNoSimEcbmSupported(int slotIndex, int subId) {
+        SharedPreferences sp = null;
+        Boolean savedConfig = mNoSimEcbmSupported.get(Integer.valueOf(slotIndex));
+        if (savedConfig == null) {
+            sp = PreferenceManager.getDefaultSharedPreferences(mContext);
+            savedConfig = Boolean.valueOf(
+                    sp.getBoolean(KEY_NO_SIM_ECBM_SUPPORT + slotIndex, false));
+            mNoSimEcbmSupported.put(Integer.valueOf(slotIndex), savedConfig);
+            Rlog.i(TAG, "updateNoSimEcbmSupported load from preference slotIndex=" + slotIndex
+                    + ", supported=" + savedConfig);
+        }
+
+        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
+            // invalid subId
+            return;
+        }
+
+        PersistableBundle b = getConfigBundle(subId, KEY_EMERGENCY_CALLBACK_MODE_SUPPORTED_BOOL);
+        if (b.isEmpty()) {
+            Rlog.e(TAG, "updateNoSimEcbmSupported empty result");
+            return;
+        }
+
+        if (!CarrierConfigManager.isConfigForIdentifiedCarrier(b)) {
+            Rlog.i(TAG, "updateNoSimEcbmSupported not carrier specific configuration");
+            return;
+        }
+
+        boolean carrierConfig = b.getBoolean(KEY_EMERGENCY_CALLBACK_MODE_SUPPORTED_BOOL);
+        if (carrierConfig == savedConfig) {
+            return;
+        }
+
+        mNoSimEcbmSupported.put(Integer.valueOf(slotIndex), Boolean.valueOf(carrierConfig));
+
+        if (sp == null) {
+            sp = PreferenceManager.getDefaultSharedPreferences(mContext);
+        }
+        SharedPreferences.Editor editor = sp.edit();
+        editor.putBoolean(KEY_NO_SIM_ECBM_SUPPORT + slotIndex, carrierConfig);
+        editor.apply();
+
+        Rlog.i(TAG, "updateNoSimEcbmSupported preference updated slotIndex=" + slotIndex
+                + ", supported=" + carrierConfig);
+    }
+
+    /** For test purpose only */
+    @VisibleForTesting
+    public void setPdnDisconnectionTimeoutMs(int timeout) {
+        mPdnDisconnectionTimeoutMs = timeout;
+    }
+
+    private void exitEmergencyModeIfDelayed() {
+        synchronized (mLock) {
+            if (mPhoneToExit != null) {
+                unregisterForDataConnectionStateChanges();
+                mPhoneToExit.exitEmergencyMode(
+                        mHandler.obtainMessage(MSG_EXIT_EMERGENCY_MODE_DONE,
+                                Integer.valueOf(EMERGENCY_TYPE_CALL)));
+                mPhoneToExit = null;
+            }
+        }
+    }
+
+    /**
+     * Registers for changes to data connection state.
+     */
+    private void registerForDataConnectionStateChanges(Phone phone) {
+        if ((mDataConnectionStateListener != null) || (phone == null)) {
+            return;
+        }
+        Rlog.i(TAG, "registerForDataConnectionStateChanges");
+
+        mDataConnectionStateListener = new PreciseDataConnectionStateListener();
+        mTelephonyManagerProxy.registerTelephonyCallback(phone.getSubId(),
+                mHandler::post, mDataConnectionStateListener);
+    }
+
+    /**
+     * Unregisters for changes to data connection state.
+     */
+    private void unregisterForDataConnectionStateChanges() {
+        if (mDataConnectionStateListener == null) {
+            return;
+        }
+        Rlog.i(TAG, "unregisterForDataConnectionStateChanges");
+
+        mTelephonyManagerProxy.unregisterTelephonyCallback(mDataConnectionStateListener);
+        mDataConnectionStateListener = null;
     }
 }

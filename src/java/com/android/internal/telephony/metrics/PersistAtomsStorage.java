@@ -407,6 +407,9 @@ public class PersistAtomsStorage {
             existingStats.videoAvailableMillis += stats.videoAvailableMillis;
             existingStats.utCapableMillis += stats.utCapableMillis;
             existingStats.utAvailableMillis += stats.utAvailableMillis;
+            existingStats.registeringMillis += stats.registeringMillis;
+            existingStats.unregisteredMillis += stats.unregisteredMillis;
+            existingStats.registeredTimes += stats.registeredTimes;
             existingStats.lastUsedMillis = getWallTimeMillis();
         } else {
             stats.lastUsedMillis = getWallTimeMillis();
@@ -1709,7 +1712,10 @@ public class PersistAtomsStorage {
                     && state.carrierId == key.carrierId
                     && state.isEmergencyOnly == key.isEmergencyOnly
                     && state.isInternetPdnUp == key.isInternetPdnUp
-                    && state.foldState == key.foldState) {
+                    && state.foldState == key.foldState
+                    && state.overrideVoiceService == key.overrideVoiceService
+                    && state.isDataEnabled == key.isDataEnabled
+                    && state.isIwlanCrossSim == key.isIwlanCrossSim) {
                 return state;
             }
         }
@@ -1757,7 +1763,8 @@ public class PersistAtomsStorage {
         for (ImsRegistrationStats stats : mAtoms.imsRegistrationStats) {
             if (stats.carrierId == key.carrierId
                     && stats.simSlotIndex == key.simSlotIndex
-                    && stats.rat == key.rat) {
+                    && stats.rat == key.rat
+                    && stats.isIwlanCrossSim == key.isIwlanCrossSim) {
                 return stats;
             }
         }
@@ -1773,6 +1780,7 @@ public class PersistAtomsStorage {
             if (termination.carrierId == key.carrierId
                     && termination.isMultiSim == key.isMultiSim
                     && termination.ratAtEnd == key.ratAtEnd
+                    && termination.isIwlanCrossSim == key.isIwlanCrossSim
                     && termination.setupFailed == key.setupFailed
                     && termination.reasonCode == key.reasonCode
                     && termination.extraCode == key.extraCode
@@ -2066,7 +2074,9 @@ public class PersistAtomsStorage {
             if (stats.isDisplaySosMessageSent == key.isDisplaySosMessageSent
                     && stats.countOfTimerStarted == key.countOfTimerStarted
                     && stats.isImsRegistered == key.isImsRegistered
-                    && stats.cellularServiceState == key.cellularServiceState) {
+                    && stats.cellularServiceState == key.cellularServiceState
+                    && stats.isMultiSim == key.isMultiSim
+                    && stats.recommendingHandoverType == key.recommendingHandoverType) {
                 return stats;
             }
         }
@@ -2277,6 +2287,10 @@ public class PersistAtomsStorage {
                     normalizeDurationTo24H(stats[i].utCapableMillis, intervalMillis);
             stats[i].utAvailableMillis =
                     normalizeDurationTo24H(stats[i].utAvailableMillis, intervalMillis);
+            stats[i].registeringMillis =
+                    normalizeDurationTo24H(stats[i].registeringMillis, intervalMillis);
+            stats[i].unregisteredMillis =
+                    normalizeDurationTo24H(stats[i].unregisteredMillis, intervalMillis);
         }
         return stats;
     }

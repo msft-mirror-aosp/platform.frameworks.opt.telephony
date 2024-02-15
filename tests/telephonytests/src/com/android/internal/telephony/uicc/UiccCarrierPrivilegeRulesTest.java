@@ -28,9 +28,10 @@ import android.content.pm.Signature;
 import android.os.AsyncResult;
 import android.os.Message;
 import android.telephony.UiccAccessRule;
-import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
+
+import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.TelephonyTest;
@@ -570,7 +571,7 @@ public class UiccCarrierPrivilegeRulesTest extends TelephonyTest {
             public Void answer(InvocationOnMock invocation) throws Throwable {
                 currentFileId.set((String) invocation.getArguments()[6]);
                 Message message = (Message) invocation.getArguments()[8];
-                AsyncResult ar = new AsyncResult(null, new int[]{2}, null);
+                AsyncResult ar = new AsyncResult(null, new IccIoResult(0x90, 0x00, ""), null);
                 message.obj = ar;
                 message.sendToTarget();
                 return null;
@@ -668,7 +669,7 @@ public class UiccCarrierPrivilegeRulesTest extends TelephonyTest {
             public Void answer(InvocationOnMock invocation) throws Throwable {
                 currentFileId.set((String) invocation.getArguments()[6]);
                 Message message = (Message) invocation.getArguments()[8];
-                AsyncResult ar = new AsyncResult(null, new int[]{2}, null);
+                AsyncResult ar = new AsyncResult(null, new IccIoResult(0x90, 0x00, ""), null);
                 message.obj = ar;
                 message.sendToTarget();
                 return null;
