@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony.metrics;
 
+import android.telephony.satellite.SatelliteManager;
+
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteController;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteIncomingDatagram;
@@ -67,6 +69,14 @@ public class SatelliteStats {
         private final int mTotalServiceUptimeSec;
         private final int mTotalBatteryConsumptionPercent;
         private final int mTotalBatteryChargedTimeSec;
+        private final int mCountOfDemoModeSatelliteServiceEnablementsSuccess;
+        private final int mCountOfDemoModeSatelliteServiceEnablementsFail;
+        private final int mCountOfDemoModeOutgoingDatagramSuccess;
+        private final int mCountOfDemoModeOutgoingDatagramFail;
+        private final int mCountOfDemoModeIncomingDatagramSuccess;
+        private final int mCountOfDemoModeIncomingDatagramFail;
+        private final int mCountOfDatagramTypeKeepAliveSuccess;
+        private final int mCountOfDatagramTypeKeepAliveFail;
 
         private SatelliteControllerParams(Builder builder) {
             this.mCountOfSatelliteServiceEnablementsSuccess =
@@ -90,6 +100,22 @@ public class SatelliteStats {
             this.mTotalServiceUptimeSec = builder.mTotalServiceUptimeSec;
             this.mTotalBatteryConsumptionPercent = builder.mTotalBatteryConsumptionPercent;
             this.mTotalBatteryChargedTimeSec = builder.mTotalBatteryChargedTimeSec;
+            this.mCountOfDemoModeSatelliteServiceEnablementsSuccess =
+                    builder.mCountOfDemoModeSatelliteServiceEnablementsSuccess;
+            this.mCountOfDemoModeSatelliteServiceEnablementsFail =
+                    builder.mCountOfDemoModeSatelliteServiceEnablementsFail;
+            this.mCountOfDemoModeOutgoingDatagramSuccess =
+                    builder.mCountOfDemoModeOutgoingDatagramSuccess;
+            this.mCountOfDemoModeOutgoingDatagramFail =
+                    builder.mCountOfDemoModeOutgoingDatagramFail;
+            this.mCountOfDemoModeIncomingDatagramSuccess =
+                    builder.mCountOfDemoModeIncomingDatagramSuccess;
+            this.mCountOfDemoModeIncomingDatagramFail =
+                    builder.mCountOfDemoModeIncomingDatagramFail;
+            this.mCountOfDatagramTypeKeepAliveSuccess =
+                    builder.mCountOfDatagramTypeKeepAliveSuccess;
+            this.mCountOfDatagramTypeKeepAliveFail =
+                    builder.mCountOfDatagramTypeKeepAliveFail;
         }
 
         public int getCountOfSatelliteServiceEnablementsSuccess() {
@@ -160,6 +186,38 @@ public class SatelliteStats {
             return mTotalBatteryChargedTimeSec;
         }
 
+        public int getCountOfDemoModeSatelliteServiceEnablementsSuccess() {
+            return mCountOfDemoModeSatelliteServiceEnablementsSuccess;
+        }
+
+        public int getCountOfDemoModeSatelliteServiceEnablementsFail() {
+            return mCountOfDemoModeSatelliteServiceEnablementsFail;
+        }
+
+        public int getCountOfDemoModeOutgoingDatagramSuccess() {
+            return mCountOfDemoModeOutgoingDatagramSuccess;
+        }
+
+        public int getCountOfDemoModeOutgoingDatagramFail() {
+            return mCountOfDemoModeOutgoingDatagramFail;
+        }
+
+        public int getCountOfDemoModeIncomingDatagramSuccess() {
+            return mCountOfDemoModeIncomingDatagramSuccess;
+        }
+
+        public int getCountOfDemoModeIncomingDatagramFail() {
+            return mCountOfDemoModeIncomingDatagramFail;
+        }
+
+        public int getCountOfDatagramTypeKeepAliveSuccess() {
+            return mCountOfDatagramTypeKeepAliveSuccess;
+        }
+
+        public int getCountOfDatagramTypeKeepAliveFail() {
+            return mCountOfDatagramTypeKeepAliveFail;
+        }
+
         /**
          * A builder class to create {@link SatelliteControllerParams} data structure class
          */
@@ -181,6 +239,14 @@ public class SatelliteStats {
             private int mTotalServiceUptimeSec = 0;
             private int mTotalBatteryConsumptionPercent = 0;
             private int mTotalBatteryChargedTimeSec = 0;
+            private int mCountOfDemoModeSatelliteServiceEnablementsSuccess = 0;
+            private int mCountOfDemoModeSatelliteServiceEnablementsFail = 0;
+            private int mCountOfDemoModeOutgoingDatagramSuccess = 0;
+            private int mCountOfDemoModeOutgoingDatagramFail = 0;
+            private int mCountOfDemoModeIncomingDatagramSuccess = 0;
+            private int mCountOfDemoModeIncomingDatagramFail = 0;
+            private int mCountOfDatagramTypeKeepAliveSuccess = 0;
+            private int mCountOfDatagramTypeKeepAliveFail = 0;
 
             /**
              * Sets countOfSatelliteServiceEnablementsSuccess value of {@link SatelliteController}
@@ -345,6 +411,90 @@ public class SatelliteStats {
             }
 
             /**
+             * Sets countOfDemoModeSatelliteServiceEnablementsSuccess value of
+             * {@link SatelliteController} atom then returns Builder class
+             */
+            public Builder setCountOfDemoModeSatelliteServiceEnablementsSuccess(
+                    int countOfDemoModeSatelliteServiceEnablementsSuccess) {
+                this.mCountOfDemoModeSatelliteServiceEnablementsSuccess =
+                        countOfDemoModeSatelliteServiceEnablementsSuccess;
+                return this;
+            }
+
+            /**
+             * Sets countOfDemoModeSatelliteServiceEnablementsFail value of
+             * {@link SatelliteController} atom then returns Builder class
+             */
+            public Builder setCountOfDemoModeSatelliteServiceEnablementsFail(
+                    int countOfDemoModeSatelliteServiceEnablementsFail) {
+                this.mCountOfDemoModeSatelliteServiceEnablementsFail =
+                        countOfDemoModeSatelliteServiceEnablementsFail;
+                return this;
+            }
+
+            /**
+             * Sets countOfDemoModeOutgoingDatagramSuccess value of {@link SatelliteController} atom
+             * then returns Builder class
+             */
+            public Builder setCountOfDemoModeOutgoingDatagramSuccess(
+                    int countOfDemoModeOutgoingDatagramSuccess) {
+                this.mCountOfDemoModeOutgoingDatagramSuccess =
+                        countOfDemoModeOutgoingDatagramSuccess;
+                return this;
+            }
+
+            /**
+             * Sets countOfDemoModeOutgoingDatagramFail value of {@link SatelliteController} atom
+             * then returns Builder class
+             */
+            public Builder setCountOfDemoModeOutgoingDatagramFail(
+                    int countOfDemoModeOutgoingDatagramFail) {
+                this.mCountOfDemoModeOutgoingDatagramFail = countOfDemoModeOutgoingDatagramFail;
+                return this;
+            }
+
+            /**
+             * Sets countOfDemoModeIncomingDatagramSuccess value of {@link SatelliteController} atom
+             * then returns Builder class
+             */
+            public Builder setCountOfDemoModeIncomingDatagramSuccess(
+                    int countOfDemoModeIncomingDatagramSuccess) {
+                this.mCountOfDemoModeIncomingDatagramSuccess =
+                        countOfDemoModeIncomingDatagramSuccess;
+                return this;
+            }
+
+            /**
+             * Sets countOfDemoModeIncomingDatagramFail value of {@link SatelliteController} atom
+             * then returns Builder class
+             */
+            public Builder setCountOfDemoModeIncomingDatagramFail(
+                    int countOfDemoModeIncomingDatagramFail) {
+                this.mCountOfDemoModeIncomingDatagramFail = countOfDemoModeIncomingDatagramFail;
+                return this;
+            }
+
+            /**
+             * Sets countOfDatagramTypeKeepAliveSuccess value of {@link SatelliteController} atom
+             * then returns Builder class
+             */
+            public Builder setCountOfDatagramTypeKeepAliveSuccess(
+                    int countOfDatagramTypeKeepAliveSuccess) {
+                this.mCountOfDatagramTypeKeepAliveSuccess = countOfDatagramTypeKeepAliveSuccess;
+                return this;
+            }
+
+            /**
+             * Sets countOfDatagramTypeKeepAliveFail value of {@link SatelliteController} atom
+             * then returns Builder class
+             */
+            public Builder setCountOfDatagramTypeKeepAliveFail(
+                    int countOfDatagramTypeKeepAliveFail) {
+                this.mCountOfDatagramTypeKeepAliveFail = countOfDatagramTypeKeepAliveFail;
+                return this;
+            }
+
+            /**
              * Returns ControllerParams, which contains whole component of
              * {@link SatelliteController} atom
              */
@@ -374,6 +524,22 @@ public class SatelliteStats {
                     + ", serviceUptimeSec=" + mTotalServiceUptimeSec
                     + ", batteryConsumptionPercent=" + mTotalBatteryConsumptionPercent
                     + ", batteryChargedTimeSec=" + mTotalBatteryChargedTimeSec
+                    + ", countOfDemoModeSatelliteServiceEnablementsSuccess="
+                    + mCountOfDemoModeSatelliteServiceEnablementsSuccess
+                    + ", countOfDemoModeSatelliteServiceEnablementsFail="
+                    + mCountOfDemoModeSatelliteServiceEnablementsFail
+                    + ", countOfDemoModeOutgoingDatagramSuccess="
+                    + mCountOfDemoModeOutgoingDatagramSuccess
+                    + ", countOfDemoModeOutgoingDatagramFail="
+                    + mCountOfDemoModeOutgoingDatagramFail
+                    + ", countOfDemoModeIncomingDatagramSuccess="
+                    + mCountOfDemoModeIncomingDatagramSuccess
+                    + ", countOfDemoModeIncomingDatagramFail="
+                    + mCountOfDemoModeIncomingDatagramFail
+                    + ", countOfDatagramTypeKeepAliveSuccess="
+                    + mCountOfDatagramTypeKeepAliveSuccess
+                    + ", countOfDatagramTypeKeepAliveFail="
+                    + mCountOfDatagramTypeKeepAliveFail
                     + ")";
         }
     }
@@ -385,11 +551,30 @@ public class SatelliteStats {
     public class SatelliteSessionParams {
         private final int mSatelliteServiceInitializationResult;
         private final int mSatelliteTechnology;
+        private final int mTerminationResult;
+        private final long mInitializationProcessingTimeMillis;
+        private final long mTerminationProcessingTimeMillis;
+        private final int mSessionDurationSec;
+        private final int mCountOfOutgoingDatagramSuccess;
+        private final int mCountOfOutgoingDatagramFailed;
+        private final int mCountOfIncomingDatagramSuccess;
+        private final int mCountOfIncomingDatagramFailed;
+        private final boolean mIsDemoMode;
 
         private SatelliteSessionParams(Builder builder) {
             this.mSatelliteServiceInitializationResult =
                     builder.mSatelliteServiceInitializationResult;
             this.mSatelliteTechnology = builder.mSatelliteTechnology;
+            this.mTerminationResult = builder.mTerminationResult;
+            this.mInitializationProcessingTimeMillis = builder.mInitializationProcessingTimeMillis;
+            this.mTerminationProcessingTimeMillis =
+                    builder.mTerminationProcessingTimeMillis;
+            this.mSessionDurationSec = builder.mSessionDurationSec;
+            this.mCountOfOutgoingDatagramSuccess = builder.mCountOfOutgoingDatagramSuccess;
+            this.mCountOfOutgoingDatagramFailed = builder.mCountOfOutgoingDatagramFailed;
+            this.mCountOfIncomingDatagramSuccess = builder.mCountOfIncomingDatagramSuccess;
+            this.mCountOfIncomingDatagramFailed = builder.mCountOfIncomingDatagramFailed;
+            this.mIsDemoMode = builder.mIsDemoMode;
         }
 
         public int getSatelliteServiceInitializationResult() {
@@ -400,12 +585,57 @@ public class SatelliteStats {
             return mSatelliteTechnology;
         }
 
+        public int getTerminationResult() {
+            return mTerminationResult;
+        }
+
+        public long getInitializationProcessingTime() {
+            return mInitializationProcessingTimeMillis;
+        }
+
+        public long getTerminationProcessingTime() {
+            return mTerminationProcessingTimeMillis;
+        }
+
+        public int getSessionDuration() {
+            return mSessionDurationSec;
+        }
+
+        public int getCountOfOutgoingDatagramSuccess() {
+            return mCountOfOutgoingDatagramSuccess;
+        }
+
+        public int getCountOfOutgoingDatagramFailed() {
+            return mCountOfOutgoingDatagramFailed;
+        }
+
+        public int getCountOfIncomingDatagramSuccess() {
+            return mCountOfIncomingDatagramSuccess;
+        }
+
+        public int getCountOfIncomingDatagramFailed() {
+            return mCountOfIncomingDatagramFailed;
+        }
+
+        public boolean getIsDemoMode() {
+            return mIsDemoMode;
+        }
+
         /**
          * A builder class to create {@link SatelliteSessionParams} data structure class
          */
         public static class Builder {
             private int mSatelliteServiceInitializationResult = -1;
             private int mSatelliteTechnology = -1;
+            private int mTerminationResult = -1;
+            private long mInitializationProcessingTimeMillis = -1;
+            private long mTerminationProcessingTimeMillis = -1;
+            private int mSessionDurationSec = -1;
+            private int mCountOfOutgoingDatagramSuccess = -1;
+            private int mCountOfOutgoingDatagramFailed = -1;
+            private int mCountOfIncomingDatagramSuccess = -1;
+            private int mCountOfIncomingDatagramFailed = -1;
+            private boolean mIsDemoMode = false;
 
             /**
              * Sets satelliteServiceInitializationResult value of {@link SatelliteSession}
@@ -426,6 +656,61 @@ public class SatelliteStats {
                 return this;
             }
 
+            /** Sets the satellite de-initialization result. */
+            public Builder setTerminationResult(
+                    @SatelliteManager.SatelliteResult int result) {
+                this.mTerminationResult = result;
+                return this;
+            }
+
+            /** Sets the satellite initialization processing time. */
+            public Builder setInitializationProcessingTime(long processingTime) {
+                this.mInitializationProcessingTimeMillis = processingTime;
+                return this;
+            }
+
+            /** Sets the satellite de-initialization processing time. */
+            public Builder setTerminationProcessingTime(long processingTime) {
+                this.mTerminationProcessingTimeMillis = processingTime;
+                return this;
+            }
+
+            /** Sets the total enabled time for the satellite session. */
+            public Builder setSessionDuration(int sessionDurationSec) {
+                this.mSessionDurationSec = sessionDurationSec;
+                return this;
+            }
+
+            /** Sets the total number of successful outgoing datagram transmission. */
+            public Builder setCountOfOutgoingDatagramSuccess(int countOfoutgoingDatagramSuccess) {
+                this.mCountOfOutgoingDatagramSuccess = countOfoutgoingDatagramSuccess;
+                return this;
+            }
+
+            /** Sets the total number of failed outgoing datagram transmission. */
+            public Builder setCountOfOutgoingDatagramFailed(int countOfoutgoingDatagramFailed) {
+                this.mCountOfOutgoingDatagramFailed = countOfoutgoingDatagramFailed;
+                return this;
+            }
+
+            /** Sets the total number of successful incoming datagram transmission. */
+            public Builder setCountOfIncomingDatagramSuccess(int countOfincomingDatagramSuccess) {
+                this.mCountOfIncomingDatagramSuccess = countOfincomingDatagramSuccess;
+                return this;
+            }
+
+            /** Sets the total number of failed incoming datagram transmission. */
+            public Builder setCountOfIncomingDatagramFailed(int countOfincomingDatagramFailed) {
+                this.mCountOfIncomingDatagramFailed = countOfincomingDatagramFailed;
+                return this;
+            }
+
+            /** Sets whether enabled satellite session is for demo mode or not. */
+            public Builder setIsDemoMode(boolean isDemoMode) {
+                this.mIsDemoMode = isDemoMode;
+                return this;
+            }
+
             /**
              * Returns SessionParams, which contains whole component of
              * {@link SatelliteSession} atom
@@ -441,7 +726,15 @@ public class SatelliteStats {
             return "SessionParams("
                     + ", satelliteServiceInitializationResult="
                     + mSatelliteServiceInitializationResult
-                    + ", satelliteTechnology=" + mSatelliteTechnology
+                    + ", TerminationResult=" + mTerminationResult
+                    + ", InitializationProcessingTimeMillis=" + mInitializationProcessingTimeMillis
+                    + ", TerminationProcessingTimeMillis=" + mTerminationProcessingTimeMillis
+                    + ", SessionDurationSec=" + mSessionDurationSec
+                    + ", CountOfOutgoingDatagramSuccess=" + mCountOfOutgoingDatagramSuccess
+                    + ", CountOfOutgoingDatagramFailed=" + mCountOfOutgoingDatagramFailed
+                    + ", CountOfIncomingDatagramSuccess=" + mCountOfIncomingDatagramSuccess
+                    + ", CountOfIncomingDatagramFailed=" + mCountOfIncomingDatagramFailed
+                    + ", IsDemoMode=" + mIsDemoMode
                     + ")";
         }
     }
@@ -454,11 +747,13 @@ public class SatelliteStats {
         private final int mResultCode;
         private final int mDatagramSizeBytes;
         private final long mDatagramTransferTimeMillis;
+        private final boolean mIsDemoMode;
 
         private SatelliteIncomingDatagramParams(Builder builder) {
             this.mResultCode = builder.mResultCode;
             this.mDatagramSizeBytes = builder.mDatagramSizeBytes;
             this.mDatagramTransferTimeMillis = builder.mDatagramTransferTimeMillis;
+            this.mIsDemoMode = builder.mIsDemoMode;
         }
 
         public int getResultCode() {
@@ -473,6 +768,10 @@ public class SatelliteStats {
             return mDatagramTransferTimeMillis;
         }
 
+        public boolean getIsDemoMode() {
+            return mIsDemoMode;
+        }
+
         /**
          * A builder class to create {@link SatelliteIncomingDatagramParams} data structure class
          */
@@ -480,6 +779,7 @@ public class SatelliteStats {
             private int mResultCode = -1;
             private int mDatagramSizeBytes = -1;
             private long mDatagramTransferTimeMillis = -1;
+            private boolean mIsDemoMode = false;
 
             /**
              * Sets resultCode value of {@link SatelliteIncomingDatagram} atom
@@ -509,6 +809,15 @@ public class SatelliteStats {
             }
 
             /**
+             * Sets whether transferred datagram is in demo mode or not
+             * then returns Builder class
+             */
+            public Builder setIsDemoMode(boolean isDemoMode) {
+                this.mIsDemoMode = isDemoMode;
+                return this;
+            }
+
+            /**
              * Returns IncomingDatagramParams, which contains whole component of
              * {@link SatelliteIncomingDatagram} atom
              */
@@ -523,7 +832,9 @@ public class SatelliteStats {
             return "IncomingDatagramParams("
                     + ", resultCode=" + mResultCode
                     + ", datagramSizeBytes=" + mDatagramSizeBytes
-                    + ", datagramTransferTimeMillis=" + mDatagramTransferTimeMillis + ")";
+                    + ", datagramTransferTimeMillis=" + mDatagramTransferTimeMillis
+                    + ", isDemoMode=" + mIsDemoMode
+                    + ")";
         }
     }
 
@@ -536,12 +847,14 @@ public class SatelliteStats {
         private final int mResultCode;
         private final int mDatagramSizeBytes;
         private final long mDatagramTransferTimeMillis;
+        private final boolean mIsDemoMode;
 
         private SatelliteOutgoingDatagramParams(Builder builder) {
             this.mDatagramType = builder.mDatagramType;
             this.mResultCode = builder.mResultCode;
             this.mDatagramSizeBytes = builder.mDatagramSizeBytes;
             this.mDatagramTransferTimeMillis = builder.mDatagramTransferTimeMillis;
+            this.mIsDemoMode = builder.mIsDemoMode;
         }
 
         public int getDatagramType() {
@@ -560,6 +873,10 @@ public class SatelliteStats {
             return mDatagramTransferTimeMillis;
         }
 
+        public boolean getIsDemoMode() {
+            return mIsDemoMode;
+        }
+
         /**
          * A builder class to create {@link SatelliteOutgoingDatagramParams} data structure class
          */
@@ -568,6 +885,7 @@ public class SatelliteStats {
             private int mResultCode = -1;
             private int mDatagramSizeBytes = -1;
             private long mDatagramTransferTimeMillis = -1;
+            private boolean mIsDemoMode = false;
 
             /**
              * Sets datagramType value of {@link SatelliteOutgoingDatagram} atom
@@ -606,6 +924,15 @@ public class SatelliteStats {
             }
 
             /**
+             * Sets whether transferred datagram is in demo mode or not
+             * then returns Builder class
+             */
+            public Builder setIsDemoMode(boolean isDemoMode) {
+                this.mIsDemoMode = isDemoMode;
+                return this;
+            }
+
+            /**
              * Returns OutgoingDatagramParams, which contains whole component of
              * {@link SatelliteOutgoingDatagram} atom
              */
@@ -621,7 +948,9 @@ public class SatelliteStats {
                     + "datagramType=" + mDatagramType
                     + ", resultCode=" + mResultCode
                     + ", datagramSizeBytes=" + mDatagramSizeBytes
-                    + ", datagramTransferTimeMillis=" + mDatagramTransferTimeMillis + ")";
+                    + ", datagramTransferTimeMillis=" + mDatagramTransferTimeMillis
+                    + ", isDemoMode=" + mIsDemoMode
+                    + ")";
         }
     }
 
@@ -901,7 +1230,18 @@ public class SatelliteStats {
         proto.totalServiceUptimeSec = param.getTotalServiceUptimeSec();
         proto.totalBatteryConsumptionPercent = param.getTotalBatteryConsumptionPercent();
         proto.totalBatteryChargedTimeSec = param.getTotalBatteryChargedTimeSec();
-
+        proto.countOfDemoModeSatelliteServiceEnablementsSuccess =
+                param.getCountOfDemoModeSatelliteServiceEnablementsSuccess();
+        proto.countOfDemoModeSatelliteServiceEnablementsFail =
+                param.getCountOfDemoModeSatelliteServiceEnablementsFail();
+        proto.countOfDemoModeOutgoingDatagramSuccess =
+                param.getCountOfDemoModeOutgoingDatagramSuccess();
+        proto.countOfDemoModeOutgoingDatagramFail = param.getCountOfDemoModeOutgoingDatagramFail();
+        proto.countOfDemoModeIncomingDatagramSuccess =
+                param.getCountOfDemoModeIncomingDatagramSuccess();
+        proto.countOfDemoModeIncomingDatagramFail = param.getCountOfDemoModeIncomingDatagramFail();
+        proto.countOfDatagramTypeKeepAliveSuccess = param.getCountOfDatagramTypeKeepAliveSuccess();
+        proto.countOfDatagramTypeKeepAliveFail = param.getCountOfDatagramTypeKeepAliveFail();
         mAtomsStorage.addSatelliteControllerStats(proto);
     }
 
@@ -912,6 +1252,15 @@ public class SatelliteStats {
                 param.getSatelliteServiceInitializationResult();
         proto.satelliteTechnology = param.getSatelliteTechnology();
         proto.count = 1;
+        proto.satelliteServiceTerminationResult = param.getTerminationResult();
+        proto.initializationProcessingTimeMillis = param.getInitializationProcessingTime();
+        proto.terminationProcessingTimeMillis = param.getTerminationProcessingTime();
+        proto.sessionDurationSeconds = param.getSessionDuration();
+        proto.countOfOutgoingDatagramSuccess = param.getCountOfIncomingDatagramSuccess();
+        proto.countOfOutgoingDatagramFailed = param.getCountOfOutgoingDatagramFailed();
+        proto.countOfIncomingDatagramSuccess = param.getCountOfIncomingDatagramSuccess();
+        proto.countOfIncomingDatagramFailed = param.getCountOfOutgoingDatagramFailed();
+        proto.isDemoMode = param.getIsDemoMode();
         mAtomsStorage.addSatelliteSessionStats(proto);
     }
 
@@ -922,6 +1271,7 @@ public class SatelliteStats {
         proto.resultCode = param.getResultCode();
         proto.datagramSizeBytes = param.getDatagramSizeBytes();
         proto.datagramTransferTimeMillis = param.getDatagramTransferTimeMillis();
+        proto.isDemoMode = param.getIsDemoMode();
         mAtomsStorage.addSatelliteIncomingDatagramStats(proto);
     }
 
@@ -933,6 +1283,7 @@ public class SatelliteStats {
         proto.resultCode = param.getResultCode();
         proto.datagramSizeBytes = param.getDatagramSizeBytes();
         proto.datagramTransferTimeMillis = param.getDatagramTransferTimeMillis();
+        proto.isDemoMode = param.getIsDemoMode();
         mAtomsStorage.addSatelliteOutgoingDatagramStats(proto);
     }
 

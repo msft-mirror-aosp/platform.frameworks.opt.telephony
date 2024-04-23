@@ -201,6 +201,9 @@ public class DataNetwork extends StateMachine {
     /** Event for bandwidth estimation from the modem changed. */
     private static final int EVENT_BANDWIDTH_ESTIMATE_FROM_MODEM_CHANGED = 11;
 
+    /** Event to report anomaly {@link #EVENT_NOTIFY_HANDOVER_CANCELLED_RESPONSE} not received. */
+    private static final int EVENT_CANCEL_HANDOVER_NO_RESPONSE = 12;
+
     /** Event for display info changed. This is for getting 5G NSA or mmwave information. */
     private static final int EVENT_DISPLAY_INFO_CHANGED = 13;
 
@@ -1338,11 +1341,13 @@ public class DataNetwork extends StateMachine {
                     break;
                 }
                 case EVENT_NOTIFY_HANDOVER_CANCELLED_RESPONSE:
+                    removeMessages(EVENT_CANCEL_HANDOVER_NO_RESPONSE);
                     log("Notified handover cancelled.");
                     break;
                 case EVENT_BANDWIDTH_ESTIMATE_FROM_MODEM_CHANGED:
                 case EVENT_TEAR_DOWN_NETWORK:
                 case EVENT_STUCK_IN_TRANSIENT_STATE:
+                case EVENT_CANCEL_HANDOVER_NO_RESPONSE:
                 case EVENT_DISPLAY_INFO_CHANGED:
                 case EVENT_WAITING_FOR_TEARING_DOWN_CONDITION_MET:
                 case EVENT_CSS_INDICATOR_CHANGED:
@@ -1438,7 +1443,10 @@ public class DataNetwork extends StateMachine {
                         setupData();
                     } else {
                         mRetryDelayMillis = DataCallResponse.RETRY_DURATION_UNDEFINED;
-                        mFailCause = DataFailCause.NO_RETRY_FAILURE;
+                        if (!mFlags.keepEmptyRequestsNetwork()) {
+                            // This will mark the data profile as no retry perm failure.
+                            mFailCause = DataFailCause.NO_RETRY_FAILURE;
+                        }
                         transitionTo(mDisconnectedState);
                     }
                     break;
@@ -1516,7 +1524,7 @@ public class DataNetwork extends StateMachine {
 
             int apnTypeBitmask = mDataProfile.getApnSetting() != null
                     ? mDataProfile.getApnSetting().getApnTypeBitmask() : ApnSetting.TYPE_NONE;
-            mDataCallSessionStats.onSetupDataCall(apnTypeBitmask);
+            mDataCallSessionStats.onSetupDataCall(apnTypeBitmask, isSatellite());
 
             logl("setupData: accessNetwork="
                     + AccessNetworkType.toString(accessNetwork) + ", " + mDataProfile
@@ -1564,12 +1572,7 @@ public class DataNetwork extends StateMachine {
 
                 updateDataNetwork(response);
 
-                // TODO: Evaluate all network requests and see if each request still can be
-                //  satisfied.
-                //  For requests that can't be satisfied anymore, we need to put them back to the
-                //  unsatisfied pool. If none of network requests can be satisfied, then there is no
-                //  need to mark network agent connected. Just silently deactivate the data network.
-                if (mAttachedNetworkRequestList.isEmpty()) {
+                if (!mFlags.keepEmptyRequestsNetwork() && mAttachedNetworkRequestList.isEmpty()) {
                     log("Tear down the network since there is no live network request.");
                     // Directly call onTearDown here. Calling tearDown will cause deadlock because
                     // EVENT_TEAR_DOWN_NETWORK is deferred until state machine enters connected
@@ -1732,6 +1735,12 @@ public class DataNetwork extends StateMachine {
                     // Network validation request can be accepted if the data is in connected state
                     handleDataNetworkValidationRequest((Consumer<Integer>) msg.obj);
                     break;
+                case EVENT_CANCEL_HANDOVER_NO_RESPONSE:
+                    reportAnomaly("Cancel handover no response within "
+                            + TimeUnit.MILLISECONDS.toSeconds(
+                            mDataConfigManager.getNetworkHandoverTimeoutMs())
+                            + " seconds.", "ad320988-0601-4955-836a-e6b67289c294");
+                    break;
                 default:
                     return NOT_HANDLED;
             }
@@ -1747,6 +1756,7 @@ public class DataNetwork extends StateMachine {
     private final class HandoverState extends State {
         @Override
         public void enter() {
+            removeMessages(EVENT_CANCEL_HANDOVER_NO_RESPONSE);
             sendMessageDelayed(EVENT_STUCK_IN_TRANSIENT_STATE,
                     mDataConfigManager.getNetworkHandoverTimeoutMs());
             notifyPreciseDataConnectionState();
@@ -2824,22 +2834,22 @@ public class DataNetwork extends StateMachine {
                             == AccessNetworkConstants.TRANSPORT_TYPE_WWAN
                             ? "RIL" : "IWLAN data service";
                     if (protocol == ApnSetting.PROTOCOL_IP) {
-                        if (response.getAddresses().stream().anyMatch(
-                                la -> la.getAddress() instanceof java.net.Inet6Address)) {
-                            loge("Invalid DataCallResponse. Requested IPv4 but got IPv6 address."
-                                    + response);
+                        if (response.getAddresses().stream().noneMatch(
+                                la -> la.getAddress() instanceof java.net.Inet4Address)) {
+                            loge("Invalid DataCallResponse. Requested IPv4 but didn't get an "
+                                    + "IPv4 address." + response);
                             reportAnomaly(underlyingDataService + " reported mismatched IP "
-                                            + "type. Requested IPv4 but got IPv6 address.",
-                                    "7744f920-fb64-4db0-ba47-de0eae485a81");
+                                    + "type. Requested IPv4 but didn't get an IPv4 "
+                                    + "address.", "7744f920-fb64-4db0-ba47-de0eae485a82");
                         }
                     } else if (protocol == ApnSetting.PROTOCOL_IPV6) {
-                        if (response.getAddresses().stream().anyMatch(
-                                la -> la.getAddress() instanceof java.net.Inet4Address)) {
-                            loge("Invalid DataCallResponse. Requested IPv6 but got IPv4 address."
-                                    + response);
+                        if (response.getAddresses().stream().noneMatch(
+                                la -> la.getAddress() instanceof java.net.Inet6Address)) {
+                            loge("Invalid DataCallResponse. Requested IPv6 but didn't get an "
+                                    + "IPv6 address." + response);
                             reportAnomaly(underlyingDataService + " reported mismatched IP "
-                                            + "type. Requested IPv6 but got IPv4 address.",
-                                    "7744f920-fb64-4db0-ba47-de0eae485a81");
+                                    + "type. Requested IPv6 but didn't get an IPv6 "
+                                    + "address.", "7744f920-fb64-4db0-ba47-de0eae485a82");
                         }
                     }
                 }
@@ -3584,6 +3594,8 @@ public class DataNetwork extends StateMachine {
             // id can be released if it is preserved for handover.
             mDataServiceManagers.get(mTransport).cancelHandover(mCid.get(mTransport),
                     obtainMessage(EVENT_NOTIFY_HANDOVER_CANCELLED_RESPONSE));
+            sendMessageDelayed(EVENT_CANCEL_HANDOVER_NO_RESPONSE,
+                    mDataConfigManager.getNetworkHandoverTimeoutMs());
 
             long retry = response != null ? response.getRetryDurationMillis()
                     : DataCallResponse.RETRY_DURATION_UNDEFINED;
@@ -3896,6 +3908,8 @@ public class DataNetwork extends StateMachine {
                 return "EVENT_DETACH_ALL_NETWORK_REQUESTS";
             case EVENT_BANDWIDTH_ESTIMATE_FROM_MODEM_CHANGED:
                 return "EVENT_BANDWIDTH_ESTIMATE_FROM_MODEM_CHANGED";
+            case EVENT_CANCEL_HANDOVER_NO_RESPONSE:
+                return "EVENT_CANCEL_HANDOVER_NO_RESPONSE";
             case EVENT_DISPLAY_INFO_CHANGED:
                 return "EVENT_DISPLAY_INFO_CHANGED";
             case EVENT_HANDOVER_RESPONSE:

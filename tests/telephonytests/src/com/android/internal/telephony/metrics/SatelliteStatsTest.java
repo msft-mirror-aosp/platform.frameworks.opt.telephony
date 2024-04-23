@@ -81,6 +81,14 @@ public class SatelliteStatsTest extends TelephonyTest {
                         .setTotalServiceUptimeSec(60 * 60 * 24 * 7)
                         .setTotalBatteryConsumptionPercent(7)
                         .setTotalBatteryChargedTimeSec(60 * 60 * 3)
+                        .setCountOfDemoModeSatelliteServiceEnablementsSuccess(3)
+                        .setCountOfDemoModeSatelliteServiceEnablementsFail(1)
+                        .setCountOfDemoModeOutgoingDatagramSuccess(4)
+                        .setCountOfDemoModeOutgoingDatagramFail(2)
+                        .setCountOfDemoModeIncomingDatagramSuccess(3)
+                        .setCountOfDemoModeIncomingDatagramFail(2)
+                        .setCountOfDatagramTypeKeepAliveSuccess(1)
+                        .setCountOfDatagramTypeKeepAliveFail(2)
                         .build();
 
         mSatelliteStats.onSatelliteControllerMetrics(param);
@@ -123,6 +131,22 @@ public class SatelliteStatsTest extends TelephonyTest {
                 stats.totalBatteryConsumptionPercent);
         assertEquals(param.getTotalBatteryChargedTimeSec(),
                 stats.totalBatteryChargedTimeSec);
+        assertEquals(param.getCountOfDemoModeSatelliteServiceEnablementsSuccess(),
+                stats.countOfDemoModeSatelliteServiceEnablementsSuccess);
+        assertEquals(param.getCountOfDemoModeSatelliteServiceEnablementsFail(),
+                stats.countOfDemoModeSatelliteServiceEnablementsFail);
+        assertEquals(param.getCountOfDemoModeOutgoingDatagramSuccess(),
+                stats.countOfDemoModeOutgoingDatagramSuccess);
+        assertEquals(param.getCountOfDemoModeOutgoingDatagramFail(),
+                stats.countOfDemoModeOutgoingDatagramFail);
+        assertEquals(param.getCountOfDemoModeIncomingDatagramSuccess(),
+                stats.countOfDemoModeIncomingDatagramSuccess);
+        assertEquals(param.getCountOfDemoModeIncomingDatagramFail(),
+                stats.countOfDemoModeIncomingDatagramFail);
+        assertEquals(param.getCountOfDatagramTypeKeepAliveSuccess(),
+                stats.countOfDatagramTypeKeepAliveSuccess);
+        assertEquals(param.getCountOfDatagramTypeKeepAliveFail(),
+                stats.countOfDatagramTypeKeepAliveFail);
 
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
@@ -134,6 +158,15 @@ public class SatelliteStatsTest extends TelephonyTest {
                         .setSatelliteServiceInitializationResult(
                                 SatelliteProtoEnums.SATELLITE_ERROR_NONE)
                         .setSatelliteTechnology(SatelliteProtoEnums.NT_RADIO_TECHNOLOGY_PROPRIETARY)
+                        .setTerminationResult(SatelliteProtoEnums.SATELLITE_ERROR_NONE)
+                        .setInitializationProcessingTime(100)
+                        .setTerminationProcessingTime(200)
+                        .setSessionDuration(3)
+                        .setCountOfOutgoingDatagramSuccess(1)
+                        .setCountOfOutgoingDatagramFailed(0)
+                        .setCountOfIncomingDatagramSuccess(1)
+                        .setCountOfIncomingDatagramFailed(0)
+                        .setIsDemoMode(false)
                         .build();
 
         mSatelliteStats.onSatelliteSessionMetrics(param);
@@ -144,7 +177,19 @@ public class SatelliteStatsTest extends TelephonyTest {
         SatelliteSession stats = captor.getValue();
         assertEquals(param.getSatelliteServiceInitializationResult(),
                 stats.satelliteServiceInitializationResult);
-        assertEquals(param.getSatelliteTechnology(), stats.satelliteTechnology);
+        assertEquals(param.getTerminationResult(), stats.satelliteServiceTerminationResult);
+        assertEquals(param.getInitializationProcessingTime(),
+                stats.initializationProcessingTimeMillis);
+        assertEquals(param.getTerminationProcessingTime(), stats.terminationProcessingTimeMillis);
+        assertEquals(param.getSessionDuration(), stats.sessionDurationSeconds);
+        assertEquals(param.getCountOfOutgoingDatagramSuccess(),
+                stats.countOfOutgoingDatagramSuccess);
+        assertEquals(param.getCountOfOutgoingDatagramFailed(), stats.countOfOutgoingDatagramFailed);
+        assertEquals(param.getCountOfIncomingDatagramSuccess(),
+                stats.countOfIncomingDatagramSuccess);
+        assertEquals(param.getCountOfIncomingDatagramFailed(), stats.countOfIncomingDatagramFailed);
+        assertEquals(param.getIsDemoMode(), stats.isDemoMode);
+
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -155,6 +200,7 @@ public class SatelliteStatsTest extends TelephonyTest {
                         .setResultCode(SatelliteProtoEnums.SATELLITE_ERROR_NONE)
                         .setDatagramSizeBytes(1 * 1024)
                         .setDatagramTransferTimeMillis(3 * 1000)
+                        .setIsDemoMode(true)
                         .build();
 
         mSatelliteStats.onSatelliteIncomingDatagramMetrics(param);
@@ -166,6 +212,7 @@ public class SatelliteStatsTest extends TelephonyTest {
         assertEquals(param.getResultCode(), stats.resultCode);
         assertEquals(param.getDatagramSizeBytes(), stats.datagramSizeBytes);
         assertEquals(param.getDatagramTransferTimeMillis(), stats.datagramTransferTimeMillis);
+        assertEquals(param.getIsDemoMode(), stats.isDemoMode);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -177,6 +224,7 @@ public class SatelliteStatsTest extends TelephonyTest {
                         .setResultCode(SatelliteProtoEnums.SATELLITE_ERROR_NONE)
                         .setDatagramSizeBytes(1 * 1024)
                         .setDatagramTransferTimeMillis(3 * 1000)
+                        .setIsDemoMode(true)
                         .build();
 
         mSatelliteStats.onSatelliteOutgoingDatagramMetrics(param);
@@ -189,6 +237,7 @@ public class SatelliteStatsTest extends TelephonyTest {
         assertEquals(param.getResultCode(), stats.resultCode);
         assertEquals(param.getDatagramSizeBytes(), stats.datagramSizeBytes);
         assertEquals(param.getDatagramTransferTimeMillis(), stats.datagramTransferTimeMillis);
+        assertEquals(param.getIsDemoMode(), stats.isDemoMode);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 

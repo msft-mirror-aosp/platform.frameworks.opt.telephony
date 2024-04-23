@@ -45,6 +45,7 @@ import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.IndentingPrintWriter;
 import android.util.LocalLog;
+import android.util.LruCache;
 
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCallback;
@@ -102,8 +103,9 @@ public class DataProfileManager extends Handler {
     /** The preferred data profile used for internet. */
     private @Nullable DataProfile mPreferredDataProfile = null;
 
-    /** The last data profile that's successful for internet connection. */
-    private @Nullable DataProfile mLastInternetDataProfile = null;
+    /** The last data profile that's successful for internet connection by subscription id. */
+    private @NonNull LruCache<Integer, DataProfile> mLastInternetDataProfiles =
+            new LruCache<>(256);
 
     /** Preferred data profile set id. */
     private int mPreferredDataProfileSetId = Telephony.Carriers.NO_APN_SET_ID;
@@ -452,9 +454,11 @@ public class DataProfileManager extends Handler {
             }
         }
 
-        // Update a working internet data profile as a future candidate for preferred data profile
-        // after APNs are reset to default
-        mLastInternetDataProfile = defaultProfile;
+        // Update a working internet data profile by subid as a future candidate for preferred
+        // data profile after APNs are reset to default
+        if (defaultProfile != null) {
+            mLastInternetDataProfiles.put(mPhone.getSubId(), defaultProfile);
+        }
 
         // If the live default internet network is not using the preferred data profile, since
         // brought up a network means it passed sophisticated checks, update the preferred data
@@ -542,7 +546,8 @@ public class DataProfileManager extends Handler {
      */
     private boolean updatePreferredDataProfile() {
         DataProfile preferredDataProfile;
-        if (SubscriptionManager.isValidSubscriptionId(mPhone.getSubId())) {
+        int subId = mPhone.getSubId();
+        if (SubscriptionManager.isValidSubscriptionId(subId)) {
             preferredDataProfile = getPreferredDataProfileFromDb();
             if (preferredDataProfile == null) {
                 preferredDataProfile = getPreferredDataProfileFromConfig();
@@ -551,7 +556,8 @@ public class DataProfileManager extends Handler {
                     setPreferredDataProfile(preferredDataProfile);
                 } else {
                     preferredDataProfile = mAllDataProfiles.stream()
-                            .filter(dp -> areDataProfilesSharingApn(dp, mLastInternetDataProfile))
+                            .filter(dp -> areDataProfilesSharingApn(dp,
+                                    mLastInternetDataProfiles.get(subId)))
                             .findFirst()
                             .orElse(null);
                     if (preferredDataProfile != null) {
@@ -980,23 +986,6 @@ public class DataProfileManager extends Handler {
                                 a.getLingeringNetworkTypeBitmask()),
                         "9af73e18-b523-4dc5-adab-4bb24355d838");
             }
-            for (int j = i + 1; j < profiles.size(); j++) {
-                ApnSetting b = profiles.get(j).getApnSetting();
-                if (b == null || b.getEditedStatus() != Telephony.Carriers.UNEDITED) continue;
-                String apnNameA = a.getApnName();
-                String apnNameB = b.getApnName();
-                if (TextUtils.equals(apnNameA, apnNameB)
-                        // TelephonyManager.NETWORK_TYPE_BITMASK_UNKNOWN means all network types
-                        && (a.getNetworkTypeBitmask()
-                        == (int) TelephonyManager.NETWORK_TYPE_BITMASK_UNKNOWN
-                        || b.getNetworkTypeBitmask()
-                        == (int) TelephonyManager.NETWORK_TYPE_BITMASK_UNKNOWN
-                        || (a.getNetworkTypeBitmask() & b.getNetworkTypeBitmask()) != 0)) {
-                    reportAnomaly("Found overlapped network type under the APN name "
-                                    + a.getApnName(),
-                            "9af73e18-b523-4dc5-adab-4bb24555d839");
-                }
-            }
         }
     }
 
@@ -1225,7 +1214,10 @@ public class DataProfileManager extends Handler {
         pw.println("Preferred data profile from db=" + getPreferredDataProfileFromDb());
         pw.println("Preferred data profile from config=" + getPreferredDataProfileFromConfig());
         pw.println("Preferred data profile set id=" + mPreferredDataProfileSetId);
-        pw.println("Last internet data profile=" + mLastInternetDataProfile);
+        pw.println("Last internet data profile for=");
+        pw.increaseIndent();
+        mLastInternetDataProfiles.snapshot().forEach((key, value) -> pw.println(key + ":" + value));
+        pw.decreaseIndent();
         pw.println("Initial attach data profile=" + mInitialAttachDataProfile);
         pw.println("isTetheringDataProfileExisting=" + isTetheringDataProfileExisting(
                 TelephonyManager.NETWORK_TYPE_LTE));

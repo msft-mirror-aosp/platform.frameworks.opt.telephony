@@ -243,7 +243,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         doReturn(false).when(mFlags).enforceTelephonyFeatureMappingForPublicApis();
         doReturn(true).when(mPackageManager).hasSystemFeature(
                 eq(PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION));
-
         logd("SubscriptionManagerServiceTest -Setup!");
     }
 
@@ -426,18 +425,32 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     @Test
     public void testSetAdminOwned() {
         mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
-        mSubscriptionManagerServiceUT.addSubInfo(FAKE_ICCID1, FAKE_CARRIER_NAME1,
-                0, SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
+        mSubscriptionManagerServiceUT.addSubInfo(FAKE_ICCID1, FAKE_CARRIER_NAME1, 0,
+                SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
         processAllMessages();
         String groupOwner = "test";
 
         mSubscriptionManagerServiceUT.setGroupOwner(1, groupOwner);
 
-        SubscriptionInfoInternal subInfo = mSubscriptionManagerServiceUT
-                .getSubscriptionInfoInternal(1);
+        SubscriptionInfoInternal subInfo =
+                mSubscriptionManagerServiceUT.getSubscriptionInfoInternal(1);
         assertThat(subInfo).isNotNull();
         assertThat(subInfo.getGroupOwner()).isEqualTo(groupOwner);
         verify(mMockedSubscriptionManagerServiceCallback).onSubscriptionChanged(eq(1));
+    }
+
+    @Test
+    public void testSetGroupOwner_callerMissingpPermission_throws() {
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
+        mSubscriptionManagerServiceUT.addSubInfo(FAKE_ICCID1, FAKE_CARRIER_NAME1, 0,
+                SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
+        processAllMessages();
+        String groupOwner = "test";
+        // Remove MODIFY_PHONE_STATE
+        mContextFixture.removeCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
+
+        assertThrows(SecurityException.class,
+                () -> mSubscriptionManagerServiceUT.setGroupOwner(1, groupOwner));
     }
 
     @Test
@@ -1788,6 +1801,45 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     }
 
     @Test
+    public void testGetPhoneNumberSourcePriority() throws Exception {
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PHONE_NUMBERS);
+
+        String phoneNumberFromCarrier = "8675309";
+        String phoneNumberFromUicc = "1112223333";
+        String phoneNumberFromIms = "5553466";
+        String phoneNumberFromPhoneObject = "8001234567";
+
+        doReturn(phoneNumberFromPhoneObject).when(mPhone).getLine1Number();
+
+        SubscriptionInfoInternal multiNumberSubInfo =
+                new SubscriptionInfoInternal.Builder(FAKE_SUBSCRIPTION_INFO1)
+                        .setNumberFromCarrier(phoneNumberFromCarrier)
+                        .setNumber(phoneNumberFromUicc)
+                        .setNumberFromIms(phoneNumberFromIms)
+                        .build();
+        int subId = insertSubscription(multiNumberSubInfo);
+
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(
+                subId, CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(phoneNumberFromCarrier);
+
+        multiNumberSubInfo =
+                new SubscriptionInfoInternal.Builder(multiNumberSubInfo)
+                        .setNumberFromCarrier("")
+                        .setNumber(phoneNumberFromUicc)
+                        .setNumberFromIms(phoneNumberFromIms)
+                        .build();
+        subId = insertSubscription(multiNumberSubInfo);
+
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(
+                subId, CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(phoneNumberFromPhoneObject);
+
+        doReturn("").when(mPhone).getLine1Number();
+
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(
+                subId, CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(phoneNumberFromIms);
+    }
+
+    @Test
     public void testSetUiccApplicationsEnabled() {
         insertSubscription(FAKE_SUBSCRIPTION_INFO1);
 
@@ -2480,6 +2532,39 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         assertThat(mSubscriptionManagerServiceUT.getPhoneNumber(1,
                 SubscriptionManager.PHONE_NUMBER_SOURCE_UICC, CALLING_PACKAGE, CALLING_FEATURE))
                 .isEqualTo(FAKE_PHONE_NUMBER2);
+    }
+
+    @Test
+    public void testGetPhoneNumberFromDefaultSubscription() {
+        doReturn(true).when(mFlags).saferGetPhoneNumber();
+
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
+        int subId = insertSubscription(FAKE_SUBSCRIPTION_INFO1);
+
+        mSubscriptionManagerServiceUT.setDefaultVoiceSubId(subId);
+
+        assertThat(
+                mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(
+                        subId, CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER1);
+        assertThat(
+                mSubscriptionManagerServiceUT.getPhoneNumber(
+                        SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                        SubscriptionManager.PHONE_NUMBER_SOURCE_UICC,
+                        CALLING_PACKAGE,
+                        CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER1);
+        assertThat(
+                mSubscriptionManagerServiceUT.getPhoneNumber(
+                        SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                        SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER,
+                        CALLING_PACKAGE,
+                        CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER1);
+        assertThat(
+                mSubscriptionManagerServiceUT.getPhoneNumber(
+                        SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                        SubscriptionManager.PHONE_NUMBER_SOURCE_IMS,
+                        CALLING_PACKAGE,
+                        CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER1);
     }
 
     @Test

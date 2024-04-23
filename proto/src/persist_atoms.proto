@@ -287,6 +287,7 @@ message VoiceCallSession {
     optional bool is_iwlan_cross_sim_at_end = 38;
     optional bool is_iwlan_cross_sim_at_connected = 39;
     optional bool vonr_enabled = 40;
+    optional bool is_ntn = 41;
 
     // Internal use only
     optional int64 setup_begin_millis = 10001;
@@ -379,6 +380,8 @@ message DataCallSession {
     repeated int32 handover_failure_rat = 21;
     optional bool is_non_dds = 22;
     optional bool is_iwlan_cross_sim = 23;
+    optional bool is_ntn = 24;
+    optional bool is_satellite_transport = 25;
 }
 
 message CellularServiceState {
@@ -397,6 +400,7 @@ message CellularServiceState {
     optional bool override_voice_service = 13;
     optional bool isDataEnabled = 14;
     optional bool is_iwlan_cross_sim = 15;
+    optional bool is_ntn = 16;
 
     // Internal use only
     optional int64 last_used_millis = 10001;
@@ -467,6 +471,12 @@ message NetworkRequestsV2 {
         PRIORITIZE_BANDWIDTH = 2;
         CBS = 3;
         ENTERPRISE = 4;
+        SATELLITE_INTERNET_RESTRICTED = 5;
+        SATELLITE_MMS_RESTRICTED = 6;
+        SATELLITE_IMS_RESTRICTED = 7;
+        SATELLITE_XCAP_RESTRICTED = 8;
+        SATELLITE_EIMS_RESTRICTED = 9;
+        SATELLITE_SUPL_RESTRICTED =10;
     }
     optional int32 carrier_id = 1;
     optional NetworkCapability capability = 2;
@@ -662,18 +672,36 @@ message SatelliteController {
     optional int32 total_service_uptime_sec = 15;
     optional int32 total_battery_consumption_percent = 16;
     optional int32 total_battery_charged_time_sec = 17;
+    optional int32 count_of_demo_mode_satellite_service_enablements_success = 18;
+    optional int32 count_of_demo_mode_satellite_service_enablements_fail = 19;
+    optional int32 count_of_demo_mode_outgoing_datagram_success = 20;
+    optional int32 count_of_demo_mode_outgoing_datagram_fail = 21;
+    optional int32 count_of_demo_mode_incoming_datagram_success = 22;
+    optional int32 count_of_demo_mode_incoming_datagram_fail = 23;
+    optional int32 count_of_datagram_type_keep_alive_success = 24;
+    optional int32 count_of_datagram_type_keep_alive_fail = 25;
 }
 
 message SatelliteSession {
     optional int32 satellite_service_initialization_result = 1;
     optional int32 satellite_technology = 2;
     optional int32 count = 3;
+    optional int32 satellite_service_termination_result = 4;
+    optional int64 initialization_processing_time_millis = 5;
+    optional int64 termination_processing_time_millis = 6;
+    optional int32 session_duration_seconds = 7;
+    optional int32 count_of_outgoing_datagram_success = 8;
+    optional int32 count_of_outgoing_datagram_failed = 9;
+    optional int32 count_of_incoming_datagram_success = 10;
+    optional int32 count_of_incoming_datagram_failed = 11;
+    optional bool is_demo_mode = 12;
 }
 
 message SatelliteIncomingDatagram {
     optional int32 result_code = 1;
     optional int32 datagram_size_bytes = 2;
     optional int64 datagram_transfer_time_millis = 3;
+    optional bool is_demo_mode = 4;
 }
 
 message SatelliteOutgoingDatagram {
@@ -681,6 +709,7 @@ message SatelliteOutgoingDatagram {
     optional int32 result_code = 2;
     optional int32 datagram_size_bytes = 3;
     optional int64 datagram_transfer_time_millis = 4;
+    optional bool is_demo_mode = 5;
 }
 
 message SatelliteProvision {

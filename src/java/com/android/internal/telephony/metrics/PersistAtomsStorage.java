@@ -745,6 +745,22 @@ public class PersistAtomsStorage {
                 += stats.totalBatteryConsumptionPercent;
         atom.totalBatteryChargedTimeSec
                 += stats.totalBatteryChargedTimeSec;
+        atom.countOfDemoModeSatelliteServiceEnablementsSuccess
+                += stats.countOfDemoModeSatelliteServiceEnablementsSuccess;
+        atom.countOfDemoModeSatelliteServiceEnablementsFail
+                += stats.countOfDemoModeSatelliteServiceEnablementsFail;
+        atom.countOfDemoModeOutgoingDatagramSuccess
+                += stats.countOfDemoModeOutgoingDatagramSuccess;
+        atom.countOfDemoModeOutgoingDatagramFail
+                += stats.countOfDemoModeOutgoingDatagramFail;
+        atom.countOfDemoModeIncomingDatagramSuccess
+                += stats.countOfDemoModeIncomingDatagramSuccess;
+        atom.countOfDemoModeIncomingDatagramFail
+                += stats.countOfDemoModeIncomingDatagramFail;
+        atom.countOfDatagramTypeKeepAliveSuccess
+                += stats.countOfDatagramTypeKeepAliveSuccess;
+        atom.countOfDatagramTypeKeepAliveFail
+                += stats.countOfDatagramTypeKeepAliveFail;
 
         mAtoms.satelliteController = atomArray;
         saveAtomsToFile(SAVE_TO_FILE_DELAY_FOR_UPDATE_MILLIS);
@@ -1766,7 +1782,8 @@ public class PersistAtomsStorage {
                     && state.foldState == key.foldState
                     && state.overrideVoiceService == key.overrideVoiceService
                     && state.isDataEnabled == key.isDataEnabled
-                    && state.isIwlanCrossSim == key.isIwlanCrossSim) {
+                    && state.isIwlanCrossSim == key.isIwlanCrossSim
+                    && state.isNtn == key.isNtn) {
                 return state;
             }
         }
@@ -2108,7 +2125,18 @@ public class PersistAtomsStorage {
         for (SatelliteSession stats : mAtoms.satelliteSession) {
             if (stats.satelliteServiceInitializationResult
                     == key.satelliteServiceInitializationResult
-                    && stats.satelliteTechnology == key.satelliteTechnology) {
+                    && stats.satelliteTechnology == key.satelliteTechnology
+                    && stats.satelliteServiceTerminationResult
+                    == key.satelliteServiceTerminationResult
+                    && stats.initializationProcessingTimeMillis
+                    == key.initializationProcessingTimeMillis
+                    && stats.terminationProcessingTimeMillis == key.terminationProcessingTimeMillis
+                    && stats.sessionDurationSeconds == key.sessionDurationSeconds
+                    && stats.countOfOutgoingDatagramSuccess == key.countOfOutgoingDatagramSuccess
+                    && stats.countOfOutgoingDatagramFailed == key.countOfOutgoingDatagramFailed
+                    && stats.countOfIncomingDatagramSuccess == key.countOfIncomingDatagramSuccess
+                    && stats.countOfIncomingDatagramFailed == key.countOfIncomingDatagramFailed
+                    && stats.isDemoMode == key.isDemoMode) {
                 return stats;
             }
         }

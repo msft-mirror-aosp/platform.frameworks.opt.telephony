@@ -993,7 +993,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 state.foldState,
                 state.overrideVoiceService,
                 state.isDataEnabled,
-                state.isIwlanCrossSim);
+                state.isIwlanCrossSim,
+                state.isNtn);
     }
 
     private static StatsEvent buildStatsEvent(VoiceCallRatUsage usage) {
@@ -1051,7 +1052,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 session.isIwlanCrossSimAtStart,
                 session.isIwlanCrossSimAtEnd,
                 session.isIwlanCrossSimAtConnected,
-                session.vonrEnabled);
+                session.vonrEnabled,
+                session.isNtn);
 
     }
 
@@ -1128,7 +1130,9 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 dataCallSession.handoverFailureCauses,
                 dataCallSession.handoverFailureRat,
                 dataCallSession.isNonDds,
-                dataCallSession.isIwlanCrossSim);
+                dataCallSession.isIwlanCrossSim,
+                dataCallSession.isNtn,
+                dataCallSession.isSatelliteTransport);
     }
 
     private static StatsEvent buildStatsEvent(ImsRegistrationStats stats) {
@@ -1363,7 +1367,15 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 satelliteController.countOfDeprovisionFail,
                 satelliteController.totalServiceUptimeSec,
                 satelliteController.totalBatteryConsumptionPercent,
-                satelliteController.totalBatteryChargedTimeSec);
+                satelliteController.totalBatteryChargedTimeSec,
+                satelliteController.countOfDemoModeSatelliteServiceEnablementsSuccess,
+                satelliteController.countOfDemoModeSatelliteServiceEnablementsFail,
+                satelliteController.countOfDemoModeOutgoingDatagramSuccess,
+                satelliteController.countOfDemoModeOutgoingDatagramFail,
+                satelliteController.countOfDemoModeIncomingDatagramSuccess,
+                satelliteController.countOfDemoModeIncomingDatagramFail,
+                satelliteController.countOfDatagramTypeKeepAliveSuccess,
+                satelliteController.countOfDatagramTypeKeepAliveFail);
     }
 
     private static StatsEvent buildStatsEvent(SatelliteSession satelliteSession) {
@@ -1371,7 +1383,16 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 SATELLITE_SESSION,
                 satelliteSession.satelliteServiceInitializationResult,
                 satelliteSession.satelliteTechnology,
-                satelliteSession.count);
+                satelliteSession.count,
+                satelliteSession.satelliteServiceTerminationResult,
+                satelliteSession.initializationProcessingTimeMillis,
+                satelliteSession.terminationProcessingTimeMillis,
+                satelliteSession.sessionDurationSeconds,
+                satelliteSession.countOfOutgoingDatagramSuccess,
+                satelliteSession.countOfOutgoingDatagramFailed,
+                satelliteSession.countOfIncomingDatagramSuccess,
+                satelliteSession.countOfIncomingDatagramFailed,
+                satelliteSession.isDemoMode);
     }
 
     private static StatsEvent buildStatsEvent(SatelliteIncomingDatagram stats) {
@@ -1379,7 +1400,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 SATELLITE_INCOMING_DATAGRAM,
                 stats.resultCode,
                 stats.datagramSizeBytes,
-                stats.datagramTransferTimeMillis);
+                stats.datagramTransferTimeMillis,
+                stats.isDemoMode);
     }
 
     private static StatsEvent buildStatsEvent(SatelliteOutgoingDatagram stats) {
@@ -1388,7 +1410,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 stats.datagramType,
                 stats.resultCode,
                 stats.datagramSizeBytes,
-                stats.datagramTransferTimeMillis);
+                stats.datagramTransferTimeMillis,
+                stats.isDemoMode);
     }
 
     private static StatsEvent buildStatsEvent(SatelliteProvision stats) {
