@@ -17,6 +17,7 @@
 
 package com.android.internal.telephony;
 
+import android.annotation.NonNull;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.os.AsyncResult;
@@ -26,6 +27,7 @@ import android.os.Message;
 import android.os.Registrant;
 import android.os.RegistrantList;
 import android.telephony.Annotation.RadioPowerState;
+import android.telephony.BarringInfo;
 import android.telephony.TelephonyManager;
 import android.telephony.emergency.EmergencyNumber;
 
@@ -65,8 +67,6 @@ public abstract class BaseCommands implements CommandsInterface {
     protected RegistrantList mIccSlotStatusChangedRegistrants = new RegistrantList();
     protected RegistrantList mVoicePrivacyOnRegistrants = new RegistrantList();
     protected RegistrantList mVoicePrivacyOffRegistrants = new RegistrantList();
-    @UnsupportedAppUsage
-    protected Registrant mUnsolOemHookRawRegistrant;
     @UnsupportedAppUsage
     protected RegistrantList mOtaProvisionRegistrants = new RegistrantList();
     @UnsupportedAppUsage
@@ -114,6 +114,12 @@ public abstract class BaseCommands implements CommandsInterface {
     protected RegistrantList mBarringInfoChangedRegistrants = new RegistrantList();
     protected RegistrantList mSimPhonebookChangedRegistrants = new RegistrantList();
     protected RegistrantList mSimPhonebookRecordsReceivedRegistrants = new RegistrantList();
+    protected RegistrantList mEmergencyNetworkScanRegistrants = new RegistrantList();
+    protected RegistrantList mConnectionSetupFailureRegistrants = new RegistrantList();
+    protected RegistrantList mNotifyAnbrRegistrants = new RegistrantList();
+    protected RegistrantList mTriggerImsDeregistrationRegistrants = new RegistrantList();
+    protected RegistrantList mImeiInfoRegistrants = new RegistrantList();
+    protected RegistrantList mCellularIdentifierDisclosedRegistrants = new RegistrantList();
 
     @UnsupportedAppUsage
     protected Registrant mGsmSmsRegistrant;
@@ -160,6 +166,8 @@ public abstract class BaseCommands implements CommandsInterface {
     // Cache last emergency number list indication from radio
     private final List<EmergencyNumber> mLastEmergencyNumberListIndication = new ArrayList<>();
 
+    // The last barring information received
+    protected BarringInfo mLastBarringInfo = new BarringInfo();
     // Preferred network type received from PhoneFactory.
     // This is used when establishing a connection to the
     // vendor ril so it starts up in the correct mode.
@@ -665,17 +673,6 @@ public abstract class BaseCommands implements CommandsInterface {
         mSignalInfoRegistrants.addUnique(h, what, obj);
     }
 
-    public void setOnUnsolOemHookRaw(Handler h, int what, Object obj) {
-        mUnsolOemHookRawRegistrant = new Registrant (h, what, obj);
-    }
-
-    public void unSetOnUnsolOemHookRaw(Handler h) {
-        if (mUnsolOemHookRawRegistrant != null && mUnsolOemHookRawRegistrant.getHandler() == h) {
-            mUnsolOemHookRawRegistrant.clear();
-            mUnsolOemHookRawRegistrant = null;
-        }
-    }
-
     @Override
     public void unregisterForSignalInfo(Handler h) {
         mSignalInfoRegistrants.remove(h);
@@ -900,6 +897,7 @@ public abstract class BaseCommands implements CommandsInterface {
                     || mState == TelephonyManager.RADIO_POWER_UNAVAILABLE)
                     && (oldState == TelephonyManager.RADIO_POWER_ON)) {
                 mOffOrNotAvailRegistrants.notifyRegistrants();
+                mLastBarringInfo = new BarringInfo();
             }
         }
     }
@@ -916,6 +914,12 @@ public abstract class BaseCommands implements CommandsInterface {
         synchronized (mLastEmergencyNumberListIndicationLock) {
             return new ArrayList<>(mLastEmergencyNumberListIndication);
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public @NonNull BarringInfo getLastBarringInfo() {
+        return mLastBarringInfo;
     }
 
     /**
@@ -985,18 +989,6 @@ public abstract class BaseCommands implements CommandsInterface {
     @Override
     public void unregisterForRadioCapabilityChanged(Handler h) {
         mPhoneRadioCapabilityChangedRegistrants.remove(h);
-    }
-
-    @Override
-    public void startLceService(int reportIntervalMs, boolean pullMode, Message result) {
-    }
-
-    @Override
-    public void stopLceService(Message result) {
-    }
-
-    @Override
-    public void pullLceData(Message result) {
     }
 
     @Override
@@ -1131,5 +1123,75 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void updateSimPhonebookRecord(SimPhonebookRecord phonebookRecord, Message result) {
+    }
+
+    /**
+     * Register for Emergency network scan result.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    @Override
+    public void registerForEmergencyNetworkScan(Handler h, int what, Object obj) {
+        mEmergencyNetworkScanRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregister for Emergency network scan result.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    @Override
+    public void unregisterForEmergencyNetworkScan(Handler h) {
+        mEmergencyNetworkScanRegistrants.remove(h);
+    }
+
+    @Override
+    public void registerForConnectionSetupFailure(Handler h, int what, Object obj) {
+        mConnectionSetupFailureRegistrants.addUnique(h, what, obj);
+    }
+
+    @Override
+    public void unregisterForConnectionSetupFailure(Handler h) {
+        mConnectionSetupFailureRegistrants.remove(h);
+    }
+
+    @Override
+    public void registerForNotifyAnbr(Handler h, int what, Object obj) {
+        mNotifyAnbrRegistrants.addUnique(h, what, obj);
+    }
+
+    @Override
+    public void unregisterForNotifyAnbr(Handler h) {
+        mNotifyAnbrRegistrants.remove(h);
+    }
+
+    @Override
+    public void registerForTriggerImsDeregistration(Handler h, int what, Object obj) {
+        mTriggerImsDeregistrationRegistrants.add(h, what, obj);
+    }
+
+    @Override
+    public void unregisterForTriggerImsDeregistration(Handler h) {
+        mTriggerImsDeregistrationRegistrants.remove(h);
+    }
+
+    /**
+     * Register to listen for the changes in the primary IMEI with respect to the sim slot.
+     */
+    @Override
+    public void registerForImeiMappingChanged(Handler h, int what, Object obj) {
+        mImeiInfoRegistrants.add(h, what, obj);
+    }
+
+    @Override
+    public void registerForCellularIdentifierDisclosures(Handler h, int what, Object obj) {
+        mCellularIdentifierDisclosedRegistrants.add(h, what, obj);
+    }
+
+    @Override
+    public void unregisterForCellularIdentifierDisclosures(Handler h) {
+        mCellularIdentifierDisclosedRegistrants.remove(h);
     }
 }

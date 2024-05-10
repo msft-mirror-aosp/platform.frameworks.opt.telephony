@@ -16,9 +16,12 @@
 
 package com.android.internal.telephony.data;
 
+import static org.junit.Assert.assertNotEquals;
+
 import android.net.InetAddresses;
 import android.net.LinkAddress;
 import android.os.Parcel;
+import android.telephony.PreciseDataConnectionState;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
 import android.telephony.data.EpsQos;
@@ -34,6 +37,7 @@ public class DataCallResponseTest extends AndroidTestCase {
     private static final String FAKE_ADDRESS = "99.88.77.66";
     private static final String FAKE_DNS = "55.66.77.88";
     private static final String FAKE_DNN = "FAKE_DNN";
+    private static final String FAKE_DNN_2 = "FAKE_DNN_2";
     private static final String FAKE_GATEWAY = "11.22.33.44";
     private static final String FAKE_IFNAME = "FAKE IFNAME";
     private static final String FAKE_PCSCF_ADDRESS = "22.33.44.55";
@@ -70,6 +74,8 @@ public class DataCallResponseTest extends AndroidTestCase {
                 .setQosBearerSessions(new ArrayList<>())
                 .setTrafficDescriptors(
                         Arrays.asList(new TrafficDescriptor(FAKE_DNN, FAKE_OS_APP_ID)))
+                .setNetworkValidationStatus(
+                        PreciseDataConnectionState.NETWORK_VALIDATION_UNSUPPORTED)
                 .build();
 
         Parcel p = Parcel.obtain();
@@ -81,7 +87,7 @@ public class DataCallResponseTest extends AndroidTestCase {
     }
 
     @SmallTest
-    public void testEquals() {
+    public void testEqualsAndHashCode() {
         DataCallResponse response = new DataCallResponse.Builder()
                 .setCause(0)
                 .setRetryDurationMillis(-1L)
@@ -99,6 +105,8 @@ public class DataCallResponseTest extends AndroidTestCase {
                 .setMtuV6(1400)
                 .setTrafficDescriptors(
                         Arrays.asList(new TrafficDescriptor(FAKE_DNN, FAKE_OS_APP_ID)))
+                .setNetworkValidationStatus(
+                        PreciseDataConnectionState.NETWORK_VALIDATION_IN_PROGRESS)
                 .build();
 
         DataCallResponse response1 = new DataCallResponse.Builder()
@@ -118,10 +126,13 @@ public class DataCallResponseTest extends AndroidTestCase {
                 .setMtuV6(1400)
                 .setTrafficDescriptors(
                         Arrays.asList(new TrafficDescriptor(FAKE_DNN, FAKE_OS_APP_ID)))
+                .setNetworkValidationStatus(
+                        PreciseDataConnectionState.NETWORK_VALIDATION_IN_PROGRESS)
                 .build();
 
         assertEquals(response, response);
         assertEquals(response, response1);
+        assertEquals(response.hashCode(), response1.hashCode());
 
         DataCallResponse response2 = new DataCallResponse.Builder()
                 .setCause(1)
@@ -140,12 +151,45 @@ public class DataCallResponseTest extends AndroidTestCase {
                         InetAddresses.parseNumericAddress(FAKE_PCSCF_ADDRESS)))
                 .setMtuV4(1441)
                 .setMtuV6(1440)
-                .setTrafficDescriptors(
-                        Arrays.asList(new TrafficDescriptor("FAKE_DNN_2", FAKE_OS_APP_ID_2)))
+                .setTrafficDescriptors(Arrays.asList(
+                        new TrafficDescriptor(FAKE_DNN, FAKE_OS_APP_ID),
+                        new TrafficDescriptor(FAKE_DNN_2, FAKE_OS_APP_ID_2)))
+                .setNetworkValidationStatus(PreciseDataConnectionState.NETWORK_VALIDATION_SUCCESS)
                 .build();
 
         assertNotSame(response1, response2);
         assertNotSame(response1, null);
         assertNotSame(response1, new String[1]);
+        assertNotEquals(response1.getNetworkValidationStatus(),
+                response2.getNetworkValidationStatus());
+        assertNotSame(response1.hashCode(), response2.hashCode());
+
+        DataCallResponse response3 = new DataCallResponse.Builder()
+                .setCause(1)
+                .setRetryDurationMillis(-1L)
+                .setId(1)
+                .setLinkStatus(3)
+                .setProtocolType(ApnSetting.PROTOCOL_IP)
+                .setInterfaceName(FAKE_IFNAME)
+                .setAddresses(Arrays.asList(
+                        new LinkAddress(InetAddresses.parseNumericAddress(FAKE_ADDRESS), 0)))
+                .setDnsAddresses(Arrays.asList(InetAddresses.parseNumericAddress(FAKE_DNS),
+                        InetAddresses.parseNumericAddress(FAKE_DNS)))
+                .setGatewayAddresses(Arrays.asList(InetAddresses.parseNumericAddress(FAKE_GATEWAY)))
+                .setPcscfAddresses(Arrays.asList(
+                        InetAddresses.parseNumericAddress(FAKE_PCSCF_ADDRESS),
+                        InetAddresses.parseNumericAddress(FAKE_PCSCF_ADDRESS)))
+                .setMtuV4(1441)
+                .setMtuV6(1440)
+                .setTrafficDescriptors(Arrays.asList(
+                        new TrafficDescriptor(FAKE_DNN_2, FAKE_OS_APP_ID_2),
+                        new TrafficDescriptor(FAKE_DNN, FAKE_OS_APP_ID)))
+                .setNetworkValidationStatus(PreciseDataConnectionState.NETWORK_VALIDATION_SUCCESS)
+                .build();
+
+        assertEquals(response2, response3);
+        assertEquals(response2.getNetworkValidationStatus(),
+                response3.getNetworkValidationStatus());
+        assertEquals(response2.hashCode(), response3.hashCode());
     }
 }

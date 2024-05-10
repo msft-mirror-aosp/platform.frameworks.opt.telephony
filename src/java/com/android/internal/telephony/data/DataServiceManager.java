@@ -22,11 +22,9 @@ import static android.text.format.DateUtils.SECOND_IN_MILLIS;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.AppOpsManager;
-import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
@@ -57,6 +55,7 @@ import android.telephony.data.NetworkSliceInfo;
 import android.telephony.data.TrafficDescriptor;
 import android.text.TextUtils;
 
+import com.android.internal.telephony.IIntegerConsumer;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConfigurationManager;
 import com.android.internal.telephony.util.TelephonyUtils;
@@ -120,22 +119,6 @@ public class DataServiceManager extends Handler {
     private String mLastBoundPackageName;
 
     private List<DataCallResponse> mLastDataCallResponseList = Collections.EMPTY_LIST;
-
-    private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            final String action = intent.getAction();
-            if (CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED.equals(action)
-                    && mPhone.getPhoneId() == intent.getIntExtra(
-                    CarrierConfigManager.EXTRA_SLOT_INDEX, 0)) {
-                // We should wait for carrier config changed event because the target binding
-                // package name can come from the carrier config. Note that we still get this event
-                // even when SIM is absent.
-                if (DBG) log("Carrier config changed. Try to bind data service.");
-                sendEmptyMessage(EVENT_BIND_DATA_SERVICE);
-            }
-        }
-    };
 
     private class DataServiceManagerDeathRecipient implements IBinder.DeathRecipient {
         @Override
@@ -409,16 +392,18 @@ public class DataServiceManager extends Handler {
                 Context.LEGACY_PERMISSION_SERVICE);
         mAppOps = (AppOpsManager) phone.getContext().getSystemService(Context.APP_OPS_SERVICE);
 
-        IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        try {
-            Context contextAsUser = phone.getContext().createPackageContextAsUser(
-                    phone.getContext().getPackageName(), 0, UserHandle.ALL);
-            contextAsUser.registerReceiver(mBroadcastReceiver, intentFilter,
-                    null /* broadcastPermission */, null);
-        } catch (PackageManager.NameNotFoundException e) {
-            loge("Package name not found: " + e.getMessage());
-        }
+        // Callback is executed in handler thread to directly handle config change.
+        mCarrierConfigManager.registerCarrierConfigChangeListener(this::post,
+                (slotIndex, subId, carrierId, specificCarrierId) -> {
+                    if (slotIndex == mPhone.getPhoneId()) {
+                        // We should wait for carrier config changed event because the
+                        // target binding package name can come from the carrier config.
+                        // Note that we still get this event even when SIM is absent.
+                        if (DBG) log("Carrier config changed. Try to bind data service.");
+                        rebindDataService();
+                    }
+                });
+
         PhoneConfigurationManager.registerForMultiSimConfigChange(
                 this, EVENT_BIND_DATA_SERVICE, null);
 
@@ -587,9 +572,10 @@ public class DataServiceManager extends Handler {
         // Read package name from resource overlay
         packageName = mPhone.getContext().getResources().getString(resourceId);
 
-        PersistableBundle b = mCarrierConfigManager.getConfigForSubId(mPhone.getSubId());
-
-        if (b != null && !TextUtils.isEmpty(b.getString(carrierConfig))) {
+        PersistableBundle b =
+                CarrierConfigManager.getCarrierConfigSubset(
+                        mPhone.getContext(), mPhone.getSubId(), carrierConfig);
+        if (!b.isEmpty() && !TextUtils.isEmpty(b.getString(carrierConfig))) {
             // If carrier config overrides it, use the one from carrier config
             packageName = b.getString(carrierConfig, packageName);
         }
@@ -636,9 +622,10 @@ public class DataServiceManager extends Handler {
         // Read package name from resource overlay
         className = mPhone.getContext().getResources().getString(resourceId);
 
-        PersistableBundle b = mCarrierConfigManager.getConfigForSubId(mPhone.getSubId());
-
-        if (b != null && !TextUtils.isEmpty(b.getString(carrierConfig))) {
+        PersistableBundle b =
+                CarrierConfigManager.getCarrierConfigSubset(
+                        mPhone.getContext(), mPhone.getSubId(), carrierConfig);
+        if (!b.isEmpty() && !TextUtils.isEmpty(b.getString(carrierConfig))) {
             // If carrier config overrides it, use the one from carrier config
             className = b.getString(carrierConfig, className);
         }
@@ -823,11 +810,12 @@ public class DataServiceManager extends Handler {
      * Set an APN to initial attach network.
      *
      * @param dataProfile Data profile used for data network setup. See {@link DataProfile}.
+     *                  {@code null} to clear any previous data profiles.
      * @param isRoaming True if the device is data roaming.
      * @param onCompleteMessage The result message for this request. Null if the client does not
      * care about the result.
      */
-    public void setInitialAttachApn(DataProfile dataProfile, boolean isRoaming,
+    public void setInitialAttachApn(@Nullable DataProfile dataProfile, boolean isRoaming,
                                     Message onCompleteMessage) {
         if (DBG) log("setInitialAttachApn");
         if (!mBound) {
@@ -956,6 +944,47 @@ public class DataServiceManager extends Handler {
     public void unregisterForApnUnthrottled(Handler h) {
         if (h != null) {
             mApnUnthrottledRegistrants.remove(h);
+        }
+    }
+
+    /**
+     * Request data network validation.
+     *
+     * <p>Validates a given data network to ensure that the network can work properly.
+     *
+     * <p>Depending on the {@link DataServiceCallback.ResultCode}, Listener can determine whether
+     * validation has been triggered, has an error or whether it is a feature that is not supported.
+     *
+     * @param cid The identifier of the data network which is provided in DataCallResponse
+     * @param onCompleteMessage The result message for this request. Null if the client does not
+     * care about the result.
+     */
+    public void requestValidation(int cid, @Nullable Message onCompleteMessage) {
+        if (DBG) log("requestValidation");
+        if (!mBound) {
+            loge("DataService is not bound.");
+            sendCompleteMessage(onCompleteMessage, DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE);
+            return;
+        }
+
+        IIntegerConsumer callback = new IIntegerConsumer.Stub() {
+            @Override
+            public void accept(int result) {
+                mMessageMap.remove(asBinder());
+                sendCompleteMessage(onCompleteMessage, result);
+            }
+        };
+        if (onCompleteMessage != null) {
+            mMessageMap.put(callback.asBinder(), onCompleteMessage);
+        }
+        try {
+            mIDataService.requestValidation(mPhone.getPhoneId(), cid, callback);
+        } catch (RemoteException e) {
+            loge("Cannot invoke requestValidation on data service.");
+            if (callback != null) {
+                mMessageMap.remove(callback.asBinder());
+            }
+            sendCompleteMessage(onCompleteMessage, DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE);
         }
     }
 

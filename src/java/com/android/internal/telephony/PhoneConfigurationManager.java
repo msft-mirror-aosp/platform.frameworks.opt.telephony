@@ -19,6 +19,7 @@ package com.android.internal.telephony;
 import static android.telephony.TelephonyManager.ACTION_MULTI_SIM_CONFIG_CHANGED;
 import static android.telephony.TelephonyManager.EXTRA_ACTIVE_SIM_SUPPORTED_COUNT;
 
+import android.annotation.NonNull;
 import android.content.Context;
 import android.content.Intent;
 import android.os.AsyncResult;
@@ -28,13 +29,17 @@ import android.os.Message;
 import android.os.PowerManager;
 import android.os.RegistrantList;
 import android.os.SystemProperties;
+import android.provider.DeviceConfig;
 import android.sysprop.TelephonyProperties;
 import android.telephony.PhoneCapability;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.telephony.Rlog;
 
 import java.util.HashMap;
@@ -45,18 +50,21 @@ import java.util.NoSuchElementException;
  * This class manages phone's configuration which defines the potential capability (static) of the
  * phone and its current activated capability (current).
  * It gets and monitors static and current phone capability from the modem; send broadcast
- * if they change, and and sends commands to modem to enable or disable phones.
+ * if they change, and sends commands to modem to enable or disable phones.
  */
 public class PhoneConfigurationManager {
     public static final String DSDA = "dsda";
     public static final String DSDS = "dsds";
     public static final String TSTS = "tsts";
     public static final String SSSS = "";
+    /** DeviceConfig key for whether Virtual DSDA is enabled. */
+    private static final String KEY_ENABLE_VIRTUAL_DSDA = "enable_virtual_dsda";
     private static final String LOG_TAG = "PhoneCfgMgr";
     private static final int EVENT_SWITCH_DSDS_CONFIG_DONE = 100;
     private static final int EVENT_GET_MODEM_STATUS = 101;
     private static final int EVENT_GET_MODEM_STATUS_DONE = 102;
     private static final int EVENT_GET_PHONE_CAPABILITY_DONE = 103;
+    private static final int EVENT_DEVICE_CONFIG_CHANGED = 104;
 
     private static PhoneConfigurationManager sInstance = null;
     private final Context mContext;
@@ -69,17 +77,28 @@ public class PhoneConfigurationManager {
     private final Map<Integer, Boolean> mPhoneStatusMap;
     private MockableInterface mMi = new MockableInterface();
     private TelephonyManager mTelephonyManager;
+
+    /** Feature flags */
+    @NonNull
+    private final FeatureFlags mFeatureFlags;
+    /**
+     * True if 'Virtual DSDA' i.e., in-call IMS connectivity on both subs with only single logical
+     * modem, is enabled.
+     */
+    private boolean mVirtualDsdaEnabled;
     private static final RegistrantList sMultiSimConfigChangeRegistrants = new RegistrantList();
     private static final String ALLOW_MOCK_MODEM_PROPERTY = "persist.radio.allow_mock_modem";
+    private static final String BOOT_ALLOW_MOCK_MODEM_PROPERTY = "ro.boot.radio.allow_mock_modem";
     private static final boolean DEBUG = !"user".equals(Build.TYPE);
     /**
      * Init method to instantiate the object
      * Should only be called once.
      */
-    public static PhoneConfigurationManager init(Context context) {
+    public static PhoneConfigurationManager init(Context context,
+            @NonNull FeatureFlags featureFlags) {
         synchronized (PhoneConfigurationManager.class) {
             if (sInstance == null) {
-                sInstance = new PhoneConfigurationManager(context);
+                sInstance = new PhoneConfigurationManager(context, featureFlags);
             } else {
                 Log.wtf(LOG_TAG, "init() called multiple times!  sInstance = " + sInstance);
             }
@@ -91,8 +110,9 @@ public class PhoneConfigurationManager {
      * Constructor.
      * @param context context needed to send broadcast.
      */
-    private PhoneConfigurationManager(Context context) {
+    private PhoneConfigurationManager(Context context, @NonNull FeatureFlags featureFlags) {
         mContext = context;
+        mFeatureFlags = featureFlags;
         // TODO: send commands to modem once interface is ready.
         mTelephonyManager = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
         //initialize with default, it'll get updated when RADIO is ON/AVAILABLE
@@ -100,6 +120,16 @@ public class PhoneConfigurationManager {
         mRadioConfig = RadioConfig.getInstance();
         mHandler = new ConfigManagerHandler();
         mPhoneStatusMap = new HashMap<>();
+        mVirtualDsdaEnabled = DeviceConfig.getBoolean(
+                DeviceConfig.NAMESPACE_TELEPHONY, KEY_ENABLE_VIRTUAL_DSDA, false);
+        DeviceConfig.addOnPropertiesChangedListener(
+                DeviceConfig.NAMESPACE_TELEPHONY, Runnable::run,
+                properties -> {
+                    if (TextUtils.equals(DeviceConfig.NAMESPACE_TELEPHONY,
+                            properties.getNamespace())) {
+                        mHandler.sendEmptyMessage(EVENT_DEVICE_CONFIG_CHANGED);
+                    }
+                });
 
         notifyCapabilityChanged();
 
@@ -119,6 +149,18 @@ public class PhoneConfigurationManager {
             return PhoneCapability.DEFAULT_DSDS_CAPABILITY;
         } else {
             return PhoneCapability.DEFAULT_SSSS_CAPABILITY;
+        }
+    }
+
+    // If virtual DSDA is enabled for this UE, then updates maxActiveVoiceSubscriptions to 2.
+    private PhoneCapability maybeUpdateMaxActiveVoiceSubscriptions(
+            final PhoneCapability staticCapability) {
+        if (staticCapability.getLogicalModemList().size() > 1 && mVirtualDsdaEnabled) {
+            return new PhoneCapability.Builder(staticCapability)
+                    .setMaxActiveVoiceSubscriptions(2)
+                    .build();
+        } else {
+            return staticCapability;
         }
     }
 
@@ -185,6 +227,17 @@ public class PhoneConfigurationManager {
                         log(msg.what + " failure. Not getting phone capability." + ar.exception);
                     }
                     break;
+                case EVENT_DEVICE_CONFIG_CHANGED:
+                    boolean isVirtualDsdaEnabled = DeviceConfig.getBoolean(
+                            DeviceConfig.NAMESPACE_TELEPHONY, KEY_ENABLE_VIRTUAL_DSDA, false);
+                    if (isVirtualDsdaEnabled != mVirtualDsdaEnabled) {
+                        log("EVENT_DEVICE_CONFIG_CHANGED: from " + mVirtualDsdaEnabled + " to "
+                                + isVirtualDsdaEnabled);
+                        mVirtualDsdaEnabled = isVirtualDsdaEnabled;
+                    }
+                    break;
+                default:
+                    log("Unknown event: " + msg.what);
             }
         }
     }
@@ -298,6 +351,7 @@ public class PhoneConfigurationManager {
                     mHandler, EVENT_GET_PHONE_CAPABILITY_DONE);
             mRadioConfig.getPhoneCapability(callback);
         }
+        mStaticCapability = maybeUpdateMaxActiveVoiceSubscriptions(mStaticCapability);
         log("getStaticPhoneCapability: mStaticCapability " + mStaticCapability);
         return mStaticCapability;
     }
@@ -314,7 +368,7 @@ public class PhoneConfigurationManager {
     }
 
     private void notifyCapabilityChanged() {
-        PhoneNotifier notifier = new DefaultPhoneNotifier(mContext);
+        PhoneNotifier notifier = new DefaultPhoneNotifier(mContext, mFeatureFlags);
 
         notifier.notifyPhoneCapabilityChanged(mStaticCapability);
     }
@@ -366,7 +420,7 @@ public class PhoneConfigurationManager {
             // eg if we are going from 2 phones to 1 phone, we need to deregister RIL for the
             // second phone. This loop does nothing if numOfActiveModems is increasing.
             for (int phoneId = numOfActiveModems; phoneId < oldNumOfActiveModems; phoneId++) {
-                SubscriptionController.getInstance().clearSubInfoRecord(phoneId);
+                SubscriptionManagerService.getInstance().markSubscriptionsInactive(phoneId);
                 subInfoCleared = true;
                 mPhones[phoneId].mCi.onSlotActiveStatusChange(
                         SubscriptionManager.isValidPhoneId(phoneId));
@@ -400,7 +454,7 @@ public class PhoneConfigurationManager {
                         + "setting VOICE & SMS subId to -1 (No Preference)");
 
                 //Set the default VOICE subId to -1 ("No Preference")
-                SubscriptionController.getInstance().setDefaultVoiceSubId(
+                SubscriptionManagerService.getInstance().setDefaultVoiceSubId(
                         SubscriptionManager.INVALID_SUBSCRIPTION_ID);
 
                 //TODO:: Set the default SMS sub to "No Preference". Tracking this bug (b/227386042)
@@ -465,34 +519,46 @@ public class PhoneConfigurationManager {
      * @return true if the modem service is set successfully, false otherwise.
      */
     public boolean setModemService(String serviceName) {
-        if (mRadioConfig == null || mPhones[0] == null) {
-            return false;
-        }
-
         log("setModemService: " + serviceName);
         boolean statusRadioConfig = false;
         boolean statusRil = false;
         final boolean isAllowed = SystemProperties.getBoolean(ALLOW_MOCK_MODEM_PROPERTY, false);
+        final boolean isAllowedForBoot =
+                SystemProperties.getBoolean(BOOT_ALLOW_MOCK_MODEM_PROPERTY, false);
 
-        // Check for ALLOW_MOCK_MODEM_PROPERTY on user builds
-        if (isAllowed || DEBUG) {
-            if (serviceName != null) {
+        // Check for ALLOW_MOCK_MODEM_PROPERTY and BOOT_ALLOW_MOCK_MODEM_PROPERTY on user builds
+        if (isAllowed || isAllowedForBoot || DEBUG) {
+            if (mRadioConfig != null) {
                 statusRadioConfig = mRadioConfig.setModemService(serviceName);
-
-                //TODO: consider multi-sim case (b/210073692)
-                statusRil = mPhones[0].mCi.setModemService(serviceName);
-            } else {
-                statusRadioConfig = mRadioConfig.setModemService(null);
-
-                //TODO: consider multi-sim case
-                statusRil = mPhones[0].mCi.setModemService(null);
             }
 
-            return statusRadioConfig && statusRil;
+            if (!statusRadioConfig) {
+                loge("setModemService: switching modem service for radioconfig fail");
+                return false;
+            }
+
+            for (int i = 0; i < getPhoneCount(); i++) {
+                if (mPhones[i] != null) {
+                    statusRil = mPhones[i].mCi.setModemService(serviceName);
+                }
+
+                if (!statusRil) {
+                    loge("setModemService: switch modem for radio " + i + " fail");
+
+                    // Disconnect the switched service
+                    mRadioConfig.setModemService(null);
+                    for (int t = 0; t < i; t++) {
+                        mPhones[t].mCi.setModemService(null);
+                    }
+                    return false;
+                }
+            }
         } else {
             loge("setModemService is not allowed");
             return false;
         }
+
+        return true;
     }
 
      /**
@@ -500,7 +566,6 @@ public class PhoneConfigurationManager {
      * @return the service name of the connected service.
      */
     public String getModemService() {
-        //TODO: consider multi-sim case
         if (mPhones[0] == null) {
             return "";
         }

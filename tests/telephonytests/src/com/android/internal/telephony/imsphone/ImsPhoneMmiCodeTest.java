@@ -20,16 +20,22 @@ import static junit.framework.Assert.fail;
 
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
+import android.os.AsyncResult;
 import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
 import android.telephony.ServiceState;
+import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
+import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.flags.FeatureFlags;
 
 import org.junit.After;
 import org.junit.Before;
@@ -52,6 +58,7 @@ public class ImsPhoneMmiCodeTest extends TelephonyTest {
 
     // Mocked classes
     private ServiceState mServiceState;
+    private FeatureFlags mFeatureFlags;
 
     private final Executor mExecutor = Runnable::run;
 
@@ -59,12 +66,14 @@ public class ImsPhoneMmiCodeTest extends TelephonyTest {
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
         mServiceState = mock(ServiceState.class);
+        mFeatureFlags = mock(FeatureFlags.class);
+
         doReturn(mExecutor).when(mContext).getMainExecutor();
         doReturn(mPhone).when(mPhone).getDefaultPhone();
         doReturn(mServiceState).when(mPhone).getServiceState();
         doReturn(false).when(mServiceState).getVoiceRoaming();
         doReturn(false).when(mPhone).supportsConversionOfCdmaCallerIdMmiCodesWhileRoaming();
-        mImsPhoneUT = new ImsPhone(mContext, mNotifier, mPhone);
+        mImsPhoneUT = new ImsPhone(mContext, mNotifier, mPhone, mFeatureFlags);
         setCarrierSupportsCallerIdVerticalServiceCodesCarrierConfig();
     }
 
@@ -116,5 +125,21 @@ public class ImsPhoneMmiCodeTest extends TelephonyTest {
         bundle.putBoolean(CarrierConfigManager
                 .KEY_CARRIER_SUPPORTS_CALLER_ID_VERTICAL_SERVICE_CODES_BOOL, true);
         doReturn(bundle).when(mCarrierConfigManager).getConfigForSubId(anyInt());
+    }
+
+    /**
+     * Ensure that when an operation is not supported that the correct message is returned.
+     */
+    @Test
+    @SmallTest
+    public void testOperationNotSupported() {
+        mImsPhoneMmiCode = ImsPhoneMmiCode.newNetworkInitiatedUssd(null, true, mImsPhoneUT);
+
+        // Emulate request not supported from the network.
+        AsyncResult ar = new AsyncResult(null, null,
+                new CommandException(CommandException.Error.REQUEST_NOT_SUPPORTED));
+        mImsPhoneMmiCode.getMmiErrorMessage(ar);
+        verify(mContext.getResources()).getText(
+                eq(com.android.internal.R.string.mmiErrorNotSupported));
     }
 }

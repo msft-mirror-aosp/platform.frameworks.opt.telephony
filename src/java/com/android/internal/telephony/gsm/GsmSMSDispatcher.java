@@ -120,6 +120,21 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
     }
 
     @Override
+    protected SmsMessageBase.SubmitPduBase getSubmitPdu(String scAddr, String destAddr,
+            String message, boolean statusReportRequested, SmsHeader smsHeader, int priority,
+            int validityPeriod, int messageRef) {
+        return SMSDispatcherUtil.getSubmitPduGsm(scAddr, destAddr, message, statusReportRequested,
+                validityPeriod, messageRef);
+    }
+
+    @Override
+    protected SmsMessageBase.SubmitPduBase getSubmitPdu(String scAddr, String destAddr,
+            int destPort, byte[] message, boolean statusReportRequested, int messageRef) {
+        return SMSDispatcherUtil.getSubmitPduGsm(scAddr, destAddr, destPort, message,
+                statusReportRequested, messageRef);
+    }
+
+    @Override
     protected TextEncodingDetails calculateLength(CharSequence messageBody, boolean use7bitOnly) {
         return SMSDispatcherUtil.calculateLengthGsm(messageBody, use7bitOnly);
     }
@@ -156,6 +171,7 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
             if(mPhone.getServiceState().getRilDataRadioTechnology()
                     != ServiceState.RIL_RADIO_TECHNOLOGY_NR) {
                 tracker.onFailed(mContext, getNotInServiceError(ss), NO_ERROR_CODE);
+                notifySmsSentFailedToEmergencyStateTracker(tracker);
                 return;
             }
         }

@@ -16,11 +16,22 @@
 
 package com.android.internal.telephony.metrics;
 
+import static android.telephony.TelephonyManager.DATA_CONNECTED;
+import static android.telephony.TelephonyManager.DATA_UNKNOWN;
+
+import static com.android.internal.telephony.TelephonyStatsLog.CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_CLOSED;
+import static com.android.internal.telephony.TelephonyStatsLog.CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_UNKNOWN;
+import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_CS;
+import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
+import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_UNKNOWN;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
@@ -33,10 +44,12 @@ import android.telephony.Annotation.NetworkType;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
+import android.telephony.ims.stub.ImsRegistrationImplBase;
 import android.test.suitebuilder.annotation.SmallTest;
 
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.data.DataNetwork;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularDataServiceSwitch;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularServiceState;
 import com.android.internal.telephony.uicc.IccCardStatus.CardState;
@@ -46,6 +59,9 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+
+import java.util.Collections;
+import java.util.Set;
 
 public class ServiceStateStatsTest extends TelephonyTest {
     private static final long START_TIME_MILLIS = 2000L;
@@ -105,6 +121,9 @@ public class ServiceStateStatsTest extends TelephonyTest {
         mockWwanPsRat(TelephonyManager.NETWORK_TYPE_LTE);
         doReturn(TelephonyManager.NETWORK_TYPE_LTE).when(mImsStats).getImsVoiceRadioTech();
 
+        doReturn(DATA_CONNECTED).when(mDataNetworkController).getInternetDataNetworkState();
+        doReturn(mDataNetworkController).when(mSecondPhone).getDataNetworkController();
+
         mServiceStateStats = new TestableServiceStateStats(mPhone);
     }
 
@@ -139,6 +158,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -149,7 +170,9 @@ public class ServiceStateStatsTest extends TelephonyTest {
         doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getDataRegState();
         doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mServiceState).getVoiceNetworkType();
         doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mServiceState).getDataNetworkType();
+        mockWwanCsRat(TelephonyManager.NETWORK_TYPE_UNKNOWN);
         mockWwanPsRat(TelephonyManager.NETWORK_TYPE_UNKNOWN);
+        doReturn(DATA_UNKNOWN).when(mDataNetworkController).getInternetDataNetworkState();
         mServiceStateStats.onServiceStateChanged(mServiceState);
 
         mServiceStateStats.incTimeMillis(100L);
@@ -171,6 +194,7 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(false, state.isInternetPdnUp);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -216,6 +240,7 @@ public class ServiceStateStatsTest extends TelephonyTest {
         doReturn(CardState.CARDSTATE_ABSENT).when(mPhysicalSlot0).getCardState();
         mockLimitedService(TelephonyManager.NETWORK_TYPE_UMTS);
         doReturn(-1).when(mPhone).getCarrierId();
+        doReturn(DATA_UNKNOWN).when(mDataNetworkController).getInternetDataNetworkState();
         mServiceStateStats.onServiceStateChanged(mServiceState);
 
         mServiceStateStats.incTimeMillis(100L);
@@ -237,6 +262,7 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(-1, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(true, state.isEmergencyOnly);
+        assertEquals(false, state.isInternetPdnUp);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -248,8 +274,10 @@ public class ServiceStateStatsTest extends TelephonyTest {
         doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getDataRegState();
         doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mServiceState).getVoiceNetworkType();
         doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mServiceState).getDataNetworkType();
+        mockWwanCsRat(TelephonyManager.NETWORK_TYPE_UNKNOWN);
         mockWwanPsRat(TelephonyManager.NETWORK_TYPE_UNKNOWN);
         doReturn(-1).when(mPhone).getCarrierId();
+        doReturn(DATA_UNKNOWN).when(mDataNetworkController).getInternetDataNetworkState();
         mServiceStateStats.onServiceStateChanged(mServiceState);
 
         mServiceStateStats.incTimeMillis(100L);
@@ -271,6 +299,7 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(-1, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(false, state.isInternetPdnUp);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -302,6 +331,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = captor.getAllValues().get(1);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
@@ -313,6 +344,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -349,6 +382,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = captor.getAllValues().get(1);
         assertEquals(TelephonyManager.NETWORK_TYPE_IWLAN, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_UNKNOWN, state.dataRat);
@@ -360,6 +395,79 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(200L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
+        verifyNoMoreInteractions(mPersistAtomsStorage);
+    }
+
+    @Test
+    @SmallTest
+    public void onImsVoiceRegistrationChanged_crossSimCalling() throws Exception {
+        mServiceStateStats.onServiceStateChanged(mServiceState);
+        mockWwanPsRat(TelephonyManager.NETWORK_TYPE_UNKNOWN);
+        doReturn(TelephonyManager.NETWORK_TYPE_IWLAN).when(mImsStats).getImsVoiceRadioTech();
+        doReturn(ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM).when(mImsPhone)
+                .getImsRegistrationTech();
+        mServiceStateStats.incTimeMillis(100L);
+        mServiceStateStats.onImsVoiceRegistrationChanged();
+        mServiceStateStats.incTimeMillis(200L);
+        mServiceStateStats.conclude();
+
+        ArgumentCaptor<CellularServiceState> captor =
+                ArgumentCaptor.forClass(CellularServiceState.class);
+        verify(mPersistAtomsStorage, times(2))
+                .addCellularServiceStateAndCellularDataServiceSwitch(captor.capture(), eq(null));
+        CellularServiceState state = captor.getAllValues().get(1);
+
+        assertEquals(200L, state.totalTimeMillis);
+        assertEquals(TelephonyManager.NETWORK_TYPE_IWLAN, state.voiceRat);
+        assertTrue(state.isIwlanCrossSim);
+    }
+
+    @Test
+    @SmallTest
+    public void onInternetDataNetworkDisconnected() throws Exception {
+         // Using default service state for LTE
+        mServiceStateStats.onServiceStateChanged(mServiceState);
+        // Set internet network connected
+        mServiceStateStats.onConnectedInternetDataNetworksChanged(Set.of(mock(DataNetwork.class)));
+        clearInvocations(mPersistAtomsStorage);
+
+        mServiceStateStats.incTimeMillis(100L);
+        mServiceStateStats.onConnectedInternetDataNetworksChanged(Collections.emptySet());
+        mServiceStateStats.incTimeMillis(200L);
+        mServiceStateStats.conclude();
+
+        ArgumentCaptor<CellularServiceState> captor =
+                ArgumentCaptor.forClass(CellularServiceState.class);
+        verify(mPersistAtomsStorage, times(2))
+                .addCellularServiceStateAndCellularDataServiceSwitch(captor.capture(), eq(null));
+        assertNotSame(captor.getAllValues().get(0), captor.getAllValues().get(1));
+        CellularServiceState state = captor.getAllValues().get(0);
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
+        assertEquals(ServiceState.ROAMING_TYPE_NOT_ROAMING, state.voiceRoamingType);
+        assertEquals(ServiceState.ROAMING_TYPE_NOT_ROAMING, state.dataRoamingType);
+        assertFalse(state.isEndc);
+        assertEquals(0, state.simSlotIndex);
+        assertFalse(state.isMultiSim);
+        assertEquals(CARRIER1_ID, state.carrierId);
+        assertEquals(100L, state.totalTimeMillis);
+        assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
+        state = captor.getAllValues().get(1);
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
+        assertEquals(ServiceState.ROAMING_TYPE_NOT_ROAMING, state.voiceRoamingType);
+        assertEquals(ServiceState.ROAMING_TYPE_NOT_ROAMING, state.dataRoamingType);
+        assertFalse(state.isEndc);
+        assertEquals(0, state.simSlotIndex);
+        assertFalse(state.isMultiSim);
+        assertEquals(CARRIER1_ID, state.carrierId);
+        assertEquals(200L, state.totalTimeMillis);
+        assertEquals(false, state.isEmergencyOnly);
+        assertEquals(false, state.isInternetPdnUp);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -388,6 +496,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -395,6 +505,7 @@ public class ServiceStateStatsTest extends TelephonyTest {
     @SmallTest
     public void onServiceStateChanged_differentDataRats() throws Exception {
         doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mServiceState).getDataNetworkType();
+        mockWwanCsRat(TelephonyManager.NETWORK_TYPE_UNKNOWN);
         mockWwanPsRat(TelephonyManager.NETWORK_TYPE_UNKNOWN);
 
         mServiceStateStats.onServiceStateChanged(mServiceState);
@@ -424,6 +535,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = serviceStateCaptor.getAllValues().get(1);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
@@ -435,6 +548,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         CellularDataServiceSwitch serviceSwitch = serviceSwitchCaptor.getAllValues().get(0);
         assertEquals(TelephonyManager.NETWORK_TYPE_UNKNOWN, serviceSwitch.ratFrom);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, serviceSwitch.ratTo);
@@ -475,6 +590,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertFalse(state.isMultiSim);
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = captor.getAllValues().get(1);
         assertEquals(TelephonyManager.NETWORK_TYPE_IWLAN, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
@@ -485,6 +602,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertFalse(state.isMultiSim);
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -513,6 +632,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(0L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -553,6 +674,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = captor.getAllValues().get(1);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
@@ -564,6 +687,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(200L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = captor.getAllValues().get(2);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
@@ -575,6 +700,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(400L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = captor.getAllValues().get(3);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
@@ -586,6 +713,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(800L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -630,6 +759,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = captor.getAllValues().get(1);
         assertEquals(TelephonyManager.NETWORK_TYPE_UNKNOWN, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_UNKNOWN, state.dataRat);
@@ -641,6 +772,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(-1, state.carrierId);
         assertEquals(5000L, state.totalTimeMillis);
         assertEquals(true, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = captor.getAllValues().get(2);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
@@ -652,6 +785,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER2_ID, state.carrierId);
         assertEquals(200L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -668,11 +803,31 @@ public class ServiceStateStatsTest extends TelephonyTest {
         mockWwanPsRat(TelephonyManager.NETWORK_TYPE_UMTS);
         mockWwanCsRat(TelephonyManager.NETWORK_TYPE_UMTS);
         doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mImsStats).getImsVoiceRadioTech();
-        doReturn(ServiceState.ROAMING_TYPE_INTERNATIONAL).when(mServiceState).getVoiceRoamingType();
+        NetworkRegistrationInfo voiceNri = new NetworkRegistrationInfo.Builder()
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_UMTS)
+                // This sets mNetworkRegistrationState
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING)
+                .build();
+        voiceNri.setRoamingType(ServiceState.ROAMING_TYPE_INTERNATIONAL);
+        doReturn(voiceNri)
+                .when(mServiceState)
+                .getNetworkRegistrationInfo(
+                        NetworkRegistrationInfo.DOMAIN_CS,
+                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
         mServiceStateStats.onServiceStateChanged(mServiceState);
         mServiceStateStats.incTimeMillis(200L);
         // Voice and data roaming
-        doReturn(ServiceState.ROAMING_TYPE_INTERNATIONAL).when(mServiceState).getDataRoamingType();
+        NetworkRegistrationInfo dataNri = new NetworkRegistrationInfo.Builder()
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_UMTS)
+                // This sets mNetworkRegistrationState
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING)
+                .build();
+        dataNri.setRoamingType(ServiceState.ROAMING_TYPE_INTERNATIONAL);
+        doReturn(dataNri)
+                .when(mServiceState)
+                .getNetworkRegistrationInfo(
+                        NetworkRegistrationInfo.DOMAIN_PS,
+                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
         mServiceStateStats.onServiceStateChanged(mServiceState);
         mServiceStateStats.incTimeMillis(400L);
 
@@ -696,6 +851,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = serviceStateCaptor.getAllValues().get(1);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.dataRat);
@@ -707,6 +864,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(200L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = serviceStateCaptor.getAllValues().get(2);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.dataRat);
@@ -718,6 +877,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(400L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         CellularDataServiceSwitch serviceSwitch = serviceSwitchCaptor.getAllValues().get(0);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, serviceSwitch.ratFrom);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, serviceSwitch.ratTo);
@@ -727,6 +888,76 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(1, serviceSwitch.switchCount);
         assertNull(serviceSwitchCaptor.getAllValues().get(1));
         assertNull(serviceSwitchCaptor.getAllValues().get(2)); // produced by conclude()
+        verifyNoMoreInteractions(mPersistAtomsStorage);
+    }
+
+    @Test
+    @SmallTest
+    public void onServiceStateChanged_roamingWithOverride() throws Exception {
+        // Using default service state for LTE
+
+        mServiceStateStats.onServiceStateChanged(mServiceState);
+        mServiceStateStats.incTimeMillis(100L);
+        // Voice roaming
+        doReturn(TelephonyManager.NETWORK_TYPE_UMTS).when(mServiceState).getVoiceNetworkType();
+        doReturn(TelephonyManager.NETWORK_TYPE_UMTS).when(mServiceState).getDataNetworkType();
+        NetworkRegistrationInfo roamingNri = new NetworkRegistrationInfo.Builder()
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_UMTS)
+                // This sets mNetworkRegistrationState
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING)
+                .build();
+        roamingNri.setRoamingType(ServiceState.ROAMING_TYPE_NOT_ROAMING);
+        doReturn(roamingNri).when(mServiceState)
+                .getNetworkRegistrationInfo(
+                        anyInt(), eq(AccessNetworkConstants.TRANSPORT_TYPE_WWAN));
+        doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mImsStats).getImsVoiceRadioTech();
+        mServiceStateStats.onServiceStateChanged(mServiceState);
+        mServiceStateStats.incTimeMillis(400L);
+
+        // There should be 2 service states and 1 data service switch (LTE to UMTS)
+        mServiceStateStats.conclude();
+        ArgumentCaptor<CellularServiceState> serviceStateCaptor =
+                ArgumentCaptor.forClass(CellularServiceState.class);
+        ArgumentCaptor<CellularDataServiceSwitch> serviceSwitchCaptor =
+                ArgumentCaptor.forClass(CellularDataServiceSwitch.class);
+        verify(mPersistAtomsStorage, times(2))
+                .addCellularServiceStateAndCellularDataServiceSwitch(
+                        serviceStateCaptor.capture(), serviceSwitchCaptor.capture());
+        CellularServiceState state = serviceStateCaptor.getAllValues().get(0);
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
+        assertEquals(ServiceState.ROAMING_TYPE_NOT_ROAMING, state.voiceRoamingType);
+        assertEquals(ServiceState.ROAMING_TYPE_NOT_ROAMING, state.dataRoamingType);
+        assertFalse(state.isEndc);
+        assertEquals(0, state.simSlotIndex);
+        assertFalse(state.isMultiSim);
+        assertEquals(CARRIER1_ID, state.carrierId);
+        assertEquals(100L, state.totalTimeMillis);
+        assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
+        state = serviceStateCaptor.getAllValues().get(1);
+        assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.voiceRat);
+        assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.dataRat);
+        // Atom should show roaming, despite type being unknown
+        assertEquals(ServiceState.ROAMING_TYPE_UNKNOWN, state.voiceRoamingType);
+        assertEquals(ServiceState.ROAMING_TYPE_UNKNOWN, state.dataRoamingType);
+        assertFalse(state.isEndc);
+        assertEquals(0, state.simSlotIndex);
+        assertFalse(state.isMultiSim);
+        assertEquals(CARRIER1_ID, state.carrierId);
+        assertEquals(400L, state.totalTimeMillis);
+        assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
+        CellularDataServiceSwitch serviceSwitch = serviceSwitchCaptor.getAllValues().get(0);
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, serviceSwitch.ratFrom);
+        assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, serviceSwitch.ratTo);
+        assertEquals(0, serviceSwitch.simSlotIndex);
+        assertFalse(serviceSwitch.isMultiSim);
+        assertEquals(CARRIER1_ID, serviceSwitch.carrierId);
+        assertEquals(1, serviceSwitch.switchCount);
+        assertNull(serviceSwitchCaptor.getAllValues().get(1)); // produced by conclude()
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -774,6 +1005,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = serviceStateCaptor.getAllValues().get(1);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
@@ -785,6 +1018,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = serviceStateCaptor.getAllValues().get(2);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.dataRat);
@@ -796,6 +1031,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(200L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = serviceStateCaptor.getAllValues().get(3);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, state.dataRat);
@@ -807,6 +1044,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(200L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         CellularDataServiceSwitch serviceSwitch = serviceSwitchCaptor.getAllValues().get(0);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, serviceSwitch.ratFrom);
         assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, serviceSwitch.ratTo);
@@ -867,6 +1106,8 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(100L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
         state = captor.getAllValues().get(1);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.voiceRat);
         assertEquals(TelephonyManager.NETWORK_TYPE_LTE, state.dataRat);
@@ -878,6 +1119,207 @@ public class ServiceStateStatsTest extends TelephonyTest {
         assertEquals(CARRIER1_ID, state.carrierId);
         assertEquals(200L, state.totalTimeMillis);
         assertEquals(false, state.isEmergencyOnly);
+        assertEquals(true, state.isInternetPdnUp);
+        assertEquals(true, state.isDataEnabled);
+        verifyNoMoreInteractions(mPersistAtomsStorage);
+    }
+
+    @Test
+    @SmallTest
+    public void getVoiceRat_bearer() throws Exception {
+        mockWwanPsRat(TelephonyManager.NETWORK_TYPE_LTE);
+        mockWwanCsRat(TelephonyManager.NETWORK_TYPE_LTE);
+        doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mImsStats).getImsVoiceRadioTech();
+        assertEquals(TelephonyManager.NETWORK_TYPE_UNKNOWN, mServiceStateStats.getVoiceRat(
+                mPhone, mServiceState, VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS));
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mServiceStateStats.getVoiceRat(
+                mPhone, mServiceState, VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_CS));
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mServiceStateStats.getVoiceRat(
+                mPhone, mServiceState, VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_UNKNOWN));
+        mockWwanPsRat(TelephonyManager.NETWORK_TYPE_UMTS);
+        mockWwanCsRat(TelephonyManager.NETWORK_TYPE_UMTS);
+        doReturn(TelephonyManager.NETWORK_TYPE_LTE).when(mImsStats).getImsVoiceRadioTech();
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mServiceStateStats.getVoiceRat(
+                mPhone, mServiceState, VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS));
+        assertEquals(TelephonyManager.NETWORK_TYPE_UMTS, mServiceStateStats.getVoiceRat(
+                mPhone, mServiceState, VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_CS));
+        assertEquals(TelephonyManager.NETWORK_TYPE_LTE, mServiceStateStats.getVoiceRat(
+                mPhone, mServiceState, VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_UNKNOWN));
+    }
+
+    @Test
+    @SmallTest
+    public void onFoldStateChanged_modemOff() throws Exception {
+        doReturn(ServiceState.STATE_POWER_OFF).when(mServiceState).getVoiceRegState();
+        doReturn(ServiceState.STATE_POWER_OFF).when(mServiceState).getDataRegState();
+        doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mServiceState).getVoiceNetworkType();
+        doReturn(TelephonyManager.NETWORK_TYPE_UNKNOWN).when(mServiceState).getDataNetworkType();
+        mockWwanPsRat(TelephonyManager.NETWORK_TYPE_UNKNOWN);
+        doReturn(-1).when(mPhone).getCarrierId();
+        mServiceStateStats.onServiceStateChanged(mServiceState);
+        mServiceStateStats.incTimeMillis(100L);
+
+        mServiceStateStats.onFoldStateChanged(CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_CLOSED);
+        verifyNoMoreInteractions(mPersistAtomsStorage);
+    }
+
+    @Test
+    @SmallTest
+    public void onFoldStateChanged_LTEMode() throws Exception {
+        // Using default service state for LTE with fold state unknown
+        mServiceStateStats.onServiceStateChanged(mServiceState);
+        mServiceStateStats.incTimeMillis(100L);
+        mServiceStateStats.onFoldStateChanged(CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_CLOSED);
+        mServiceStateStats.incTimeMillis(1000L);
+        // Same fold state as before should not generate a new atom
+        mServiceStateStats.onFoldStateChanged(CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_CLOSED);
+        mServiceStateStats.incTimeMillis(1000L);
+
+        // There should be 2 service state updates
+        mServiceStateStats.conclude();
+        ArgumentCaptor<CellularServiceState> captor =
+                ArgumentCaptor.forClass(CellularServiceState.class);
+        verify(mPersistAtomsStorage, times(2))
+                .addCellularServiceStateAndCellularDataServiceSwitch(captor.capture(), eq(null));
+        CellularServiceState state = captor.getAllValues().get(0);
+        assertEquals(CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_UNKNOWN, state.foldState);
+        state = captor.getAllValues().get(1);
+        assertEquals(CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_CLOSED, state.foldState);
+        verifyNoMoreInteractions(mPersistAtomsStorage);
+    }
+
+    @Test
+    @SmallTest
+    public void isNetworkRoaming_nullServiceState() throws Exception {
+        boolean result = ServiceStateStats.isNetworkRoaming(null);
+
+        assertEquals(false, result);
+    }
+
+    @Test
+    @SmallTest
+    public void isNetworkRoaming_notRoaming() throws Exception {
+        NetworkRegistrationInfo nri = new NetworkRegistrationInfo.Builder()
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_UMTS)
+                // This sets mNetworkRegistrationState
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_HOME)
+                .build();
+        nri.setRoamingType(ServiceState.ROAMING_TYPE_NOT_ROAMING);
+        doReturn(nri).when(mServiceState).getNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_CS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+        doReturn(nri).when(mServiceState).getNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+
+        boolean result = ServiceStateStats.isNetworkRoaming(mServiceState);
+        boolean resultCs = ServiceStateStats.isNetworkRoaming(
+                mServiceState, NetworkRegistrationInfo.DOMAIN_CS);
+        boolean resultPs = ServiceStateStats.isNetworkRoaming(
+                mServiceState, NetworkRegistrationInfo.DOMAIN_PS);
+
+        assertEquals(false, result);
+        assertEquals(false, resultCs);
+        assertEquals(false, resultPs);
+    }
+
+    @Test
+    @SmallTest
+    public void isNetworkRoaming_csRoaming() throws Exception {
+        NetworkRegistrationInfo roamingNri = new NetworkRegistrationInfo.Builder()
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_UMTS)
+                // This sets mNetworkRegistrationState
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING)
+                .build();
+        roamingNri.setRoamingType(ServiceState.ROAMING_TYPE_NOT_ROAMING);
+        doReturn(roamingNri).when(mServiceState).getNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_CS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+
+        boolean result = ServiceStateStats.isNetworkRoaming(mServiceState);
+        boolean resultCs = ServiceStateStats.isNetworkRoaming(
+                mServiceState, NetworkRegistrationInfo.DOMAIN_CS);
+        boolean resultPs = ServiceStateStats.isNetworkRoaming(
+                mServiceState, NetworkRegistrationInfo.DOMAIN_PS);
+
+        assertEquals(true, result);
+        assertEquals(true, resultCs);
+        assertEquals(false, resultPs);
+    }
+
+    @Test
+    @SmallTest
+    public void isNetworkRoaming_psRoaming() throws Exception {
+        NetworkRegistrationInfo roamingNri = new NetworkRegistrationInfo.Builder()
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_UMTS)
+                // This sets mNetworkRegistrationState
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING)
+                .build();
+        roamingNri.setRoamingType(ServiceState.ROAMING_TYPE_NOT_ROAMING);
+        doReturn(roamingNri).when(mServiceState).getNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+
+        boolean result = ServiceStateStats.isNetworkRoaming(mServiceState);
+        boolean resultCs = ServiceStateStats.isNetworkRoaming(
+                mServiceState, NetworkRegistrationInfo.DOMAIN_CS);
+        boolean resultPs = ServiceStateStats.isNetworkRoaming(
+                mServiceState, NetworkRegistrationInfo.DOMAIN_PS);
+
+        assertEquals(true, result);
+        assertEquals(false, resultCs);
+        assertEquals(true, resultPs);
+    }
+
+    @Test
+    @SmallTest
+    public void isNetworkRoaming_bothRoaming() throws Exception {
+        NetworkRegistrationInfo roamingNri = new NetworkRegistrationInfo.Builder()
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_UMTS)
+                // This sets mNetworkRegistrationState
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING)
+                .build();
+        roamingNri.setRoamingType(ServiceState.ROAMING_TYPE_NOT_ROAMING);
+        doReturn(roamingNri).when(mServiceState).getNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_CS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+        doReturn(roamingNri).when(mServiceState).getNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+
+        boolean result = ServiceStateStats.isNetworkRoaming(mServiceState);
+        boolean resultCs = ServiceStateStats.isNetworkRoaming(
+                mServiceState, NetworkRegistrationInfo.DOMAIN_CS);
+        boolean resultPs = ServiceStateStats.isNetworkRoaming(
+                mServiceState, NetworkRegistrationInfo.DOMAIN_PS);
+
+        assertEquals(true, result);
+        assertEquals(true, resultCs);
+        assertEquals(true, resultPs);
+    }
+
+    @Test
+    @SmallTest
+    public void onVoiceServiceStateOverrideChanged_voiceCallingCapabilityChange() {
+        // Using default service state for LTE
+        mServiceStateStats.onServiceStateChanged(mServiceState);
+        mServiceStateStats.incTimeMillis(100L);
+        // Voice Calling registered
+        mServiceStateStats.onVoiceServiceStateOverrideChanged(true);
+        mServiceStateStats.incTimeMillis(100L);
+        // Voice Calling unregistered
+        mServiceStateStats.onVoiceServiceStateOverrideChanged(false);
+        mServiceStateStats.incTimeMillis(100L);
+        // Voice Calling unregistered again. Same state should not generate a new atom
+        mServiceStateStats.onVoiceServiceStateOverrideChanged(false);
+        mServiceStateStats.incTimeMillis(100L);
+
+        // There should be 3 service state updates
+        mServiceStateStats.conclude();
+        ArgumentCaptor<CellularServiceState> captor =
+                ArgumentCaptor.forClass(CellularServiceState.class);
+        verify(mPersistAtomsStorage, times(3))
+                .addCellularServiceStateAndCellularDataServiceSwitch(captor.capture(), eq(null));
+        CellularServiceState state = captor.getAllValues().get(0);
+        assertEquals(false, state.overrideVoiceService);
+        state = captor.getAllValues().get(1);
+        assertEquals(true, state.overrideVoiceService);
+        state = captor.getAllValues().get(2);
+        assertEquals(false, state.overrideVoiceService);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 
@@ -933,6 +1375,7 @@ public class ServiceStateStatsTest extends TelephonyTest {
         doReturn(1).when(mSecondPhone).getPhoneId();
         doReturn(1).when(mUiccController).getSlotIdFromPhoneId(1);
         doReturn(carrierId).when(mSecondPhone).getCarrierId();
+        doReturn(mDataSettingsManager).when(mSecondPhone).getDataSettingsManager();
 
         doReturn(true).when(mPhysicalSlot1).isActive();
         doReturn(CardState.CARDSTATE_PRESENT).when(mPhysicalSlot1).getCardState();

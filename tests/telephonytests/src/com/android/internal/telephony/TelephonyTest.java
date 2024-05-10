@@ -16,7 +16,8 @@
 
 package com.android.internal.telephony;
 
-import static org.junit.Assert.assertNotNull;
+import static com.android.internal.telephony.TelephonyStatsLog.CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_UNKNOWN;
+
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -63,12 +64,14 @@ import android.os.MessageQueue;
 import android.os.RegistrantList;
 import android.os.ServiceManager;
 import android.os.StrictMode;
+import android.os.SystemClock;
 import android.os.UserManager;
 import android.permission.LegacyPermissionManager;
 import android.provider.BlockedNumberContract;
 import android.provider.DeviceConfig;
 import android.provider.Settings;
 import android.provider.Telephony;
+import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellIdentity;
@@ -92,6 +95,7 @@ import android.util.Singleton;
 import com.android.ims.ImsCall;
 import com.android.ims.ImsEcbm;
 import com.android.ims.ImsManager;
+import com.android.internal.telephony.analytics.TelephonyAnalytics;
 import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
 import com.android.internal.telephony.cdma.EriManager;
 import com.android.internal.telephony.data.AccessNetworksManager;
@@ -103,15 +107,24 @@ import com.android.internal.telephony.data.DataRetryManager;
 import com.android.internal.telephony.data.DataServiceManager;
 import com.android.internal.telephony.data.DataSettingsManager;
 import com.android.internal.telephony.data.LinkBandwidthEstimator;
+import com.android.internal.telephony.data.PhoneSwitcher;
+import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
+import com.android.internal.telephony.imsphone.ImsNrSaModeHandler;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneCallTracker;
+import com.android.internal.telephony.metrics.DeviceStateHelper;
 import com.android.internal.telephony.metrics.ImsStats;
 import com.android.internal.telephony.metrics.MetricsCollector;
 import com.android.internal.telephony.metrics.PersistAtomsStorage;
+import com.android.internal.telephony.metrics.ServiceStateStats;
 import com.android.internal.telephony.metrics.SmsStats;
 import com.android.internal.telephony.metrics.VoiceCallSessionStats;
+import com.android.internal.telephony.satellite.SatelliteController;
+import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.test.SimulatedCommands;
 import com.android.internal.telephony.test.SimulatedCommandsVerifier;
 import com.android.internal.telephony.uicc.IccCardStatus;
@@ -138,12 +151,12 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public abstract class TelephonyTest {
     protected static String TAG;
@@ -174,7 +187,9 @@ public abstract class TelephonyTest {
     }
 
     // Mocked classes
+    protected FeatureFlags mFeatureFlags;
     protected GsmCdmaPhone mPhone;
+    protected GsmCdmaPhone mPhone2;
     protected ImsPhone mImsPhone;
     protected ServiceStateTracker mSST;
     protected EmergencyNumberTracker mEmergencyNumberTracker;
@@ -182,6 +197,7 @@ public abstract class TelephonyTest {
     protected ImsPhoneCallTracker mImsCT;
     protected UiccController mUiccController;
     protected UiccProfile mUiccProfile;
+    protected UiccSlot mUiccSlot;
     protected CallManager mCallManager;
     protected PhoneNotifier mNotifier;
     protected TelephonyComponentFactory mTelephonyComponentFactory;
@@ -198,7 +214,7 @@ public abstract class TelephonyTest {
     protected GsmCdmaCall mGsmCdmaCall;
     protected ImsCall mImsCall;
     protected ImsEcbm mImsEcbm;
-    protected SubscriptionController mSubscriptionController;
+    protected SubscriptionManagerService mSubscriptionManagerService;
     protected ServiceState mServiceState;
     protected IPackageManager.Stub mMockPackageManager;
     protected LegacyPermissionManagerService mMockLegacyPermissionManager;
@@ -209,9 +225,11 @@ public abstract class TelephonyTest {
     protected UiccCardApplication mUiccCardApplication3gpp2;
     protected UiccCardApplication mUiccCardApplicationIms;
     protected SIMRecords mSimRecords;
+    protected SignalStrengthController mSignalStrengthController;
     protected RuimRecords mRuimRecords;
     protected IsimUiccRecords mIsimUiccRecords;
     protected ProxyController mProxyController;
+    protected PhoneSwitcher mPhoneSwitcher;
     protected Singleton<IActivityManager> mIActivityManagerSingleton;
     protected IActivityManager mIActivityManager;
     protected IIntentSender mIIntentSender;
@@ -225,6 +243,7 @@ public abstract class TelephonyTest {
     protected CarrierSignalAgent mCarrierSignalAgent;
     protected CarrierActionAgent mCarrierActionAgent;
     protected ImsExternalCallTracker mImsExternalCallTracker;
+    protected ImsNrSaModeHandler mImsNrSaModeHandler;
     protected AppSmsManager mAppSmsManager;
     protected IccSmsInterfaceManager mIccSmsInterfaceManager;
     protected SmsDispatchersController mSmsDispatchersController;
@@ -233,7 +252,6 @@ public abstract class TelephonyTest {
     protected IntentBroadcaster mIntentBroadcaster;
     protected NitzStateMachine mNitzStateMachine;
     protected RadioConfig mMockRadioConfig;
-    protected SubscriptionInfoUpdater mSubInfoRecordUpdater;
     protected LocaleTracker mLocaleTracker;
     protected RestrictedState mRestrictedState;
     protected PhoneConfigurationManager mPhoneConfigurationManager;
@@ -248,6 +266,7 @@ public abstract class TelephonyTest {
     protected PersistAtomsStorage mPersistAtomsStorage;
     protected MetricsCollector mMetricsCollector;
     protected SmsStats mSmsStats;
+    protected TelephonyAnalytics mTelephonyAnalytics;
     protected SignalStrength mSignalStrength;
     protected WifiManager mWifiManager;
     protected WifiInfo mWifiInfo;
@@ -259,11 +278,17 @@ public abstract class TelephonyTest {
     protected CellLocation mCellLocation;
     protected DataServiceManager mMockedWwanDataServiceManager;
     protected DataServiceManager mMockedWlanDataServiceManager;
+    protected ServiceStateStats mServiceStateStats;
+    protected SatelliteController mSatelliteController;
+    protected DeviceStateHelper mDeviceStateHelper;
+    protected CellularIdentifierDisclosureNotifier mIdentifierDisclosureNotifier;
+    protected DomainSelectionResolver mDomainSelectionResolver;
 
     // Initialized classes
     protected ActivityManager mActivityManager;
     protected ImsCallProfile mImsCallProfile;
     protected TelephonyManager mTelephonyManager;
+    protected TelecomManager mTelecomManager;
     protected TelephonyRegistryManager mTelephonyRegistryManager;
     protected SubscriptionManager mSubscriptionManager;
     protected EuiccManager mEuiccManager;
@@ -280,7 +305,7 @@ public abstract class TelephonyTest {
     protected Context mContext;
     protected FakeBlockedNumberContentProvider mFakeBlockedNumberContentProvider;
     private final ContentProvider mContentProvider = spy(new ContextFixture.FakeContentProvider());
-    private Object mLock = new Object();
+    private final Object mLock = new Object();
     private boolean mReady;
     protected HashMap<String, IBinder> mServiceManagerMockedServices = new HashMap<>();
     protected Phone[] mPhones;
@@ -294,7 +319,37 @@ public abstract class TelephonyTest {
 
     private final HashMap<InstanceKey, Object> mOldInstances = new HashMap<>();
 
-    private final LinkedList<InstanceKey> mInstanceKeys = new LinkedList<>();
+    private final List<InstanceKey> mInstanceKeys = new ArrayList<>();
+
+    protected int mIntegerConsumerResult;
+    protected Semaphore mIntegerConsumerSemaphore = new Semaphore(0);
+    protected  Consumer<Integer> mIntegerConsumer = new Consumer<Integer>() {
+        @Override
+        public void accept(Integer integer) {
+            logd("mIIntegerConsumer: result=" + integer);
+            mIntegerConsumerResult =  integer;
+            try {
+                mIntegerConsumerSemaphore.release();
+            } catch (Exception ex) {
+                logd("mIIntegerConsumer: Got exception in releasing semaphore, ex=" + ex);
+            }
+        }
+    };
+
+    protected boolean waitForIntegerConsumerResponse(int expectedNumberOfEvents) {
+        for (int i = 0; i < expectedNumberOfEvents; i++) {
+            try {
+                if (!mIntegerConsumerSemaphore.tryAcquire(500 /*Timeout*/, TimeUnit.MILLISECONDS)) {
+                    logd("Timeout to receive IIntegerConsumer() callback");
+                    return false;
+                }
+            } catch (Exception ex) {
+                logd("waitForIIntegerConsumerResult: Got exception=" + ex);
+                return false;
+            }
+        }
+        return true;
+    }
 
     private class InstanceKey {
         public final Class mClass;
@@ -313,7 +368,7 @@ public abstract class TelephonyTest {
 
         @Override
         public boolean equals(Object obj) {
-            if (obj == null || obj.getClass() != getClass()) {
+            if (obj == null || !(obj instanceof InstanceKey)) {
                 return false;
             }
 
@@ -325,15 +380,18 @@ public abstract class TelephonyTest {
 
     protected void waitUntilReady() {
         synchronized (mLock) {
-            if (!mReady) {
+            long now = SystemClock.elapsedRealtime();
+            long deadline = now + MAX_INIT_WAIT_MS;
+            while (!mReady && now < deadline) {
                 try {
                     mLock.wait(MAX_INIT_WAIT_MS);
-                } catch (InterruptedException ie) {
+                } catch (Exception e) {
+                    fail("Telephony tests failed to initialize: e=" + e);
                 }
-
-                if (!mReady) {
-                    fail("Telephony tests failed to initialize");
-                }
+                now = SystemClock.elapsedRealtime();
+            }
+            if (!mReady) {
+                fail("Telephony tests failed to initialize");
             }
         }
     }
@@ -372,10 +430,8 @@ public abstract class TelephonyTest {
     }
 
     protected synchronized void restoreInstances() throws Exception {
-        Iterator<InstanceKey> it = mInstanceKeys.descendingIterator();
-
-        while (it.hasNext()) {
-            InstanceKey key = it.next();
+        for (int i = mInstanceKeys.size() - 1; i >= 0; i--) {
+            InstanceKey key = mInstanceKeys.get(i);
             Field field = key.mClass.getDeclaredField(key.mInstName);
             field.setAccessible(true);
             field.set(key.mObj, mOldInstances.get(key));
@@ -403,7 +459,9 @@ public abstract class TelephonyTest {
     protected void setUp(String tag) throws Exception {
         TAG = tag;
         enableStrictMode();
+        mFeatureFlags = Mockito.mock(FeatureFlags.class);
         mPhone = Mockito.mock(GsmCdmaPhone.class);
+        mPhone2 = Mockito.mock(GsmCdmaPhone.class);
         mImsPhone = Mockito.mock(ImsPhone.class);
         mSST = Mockito.mock(ServiceStateTracker.class);
         mEmergencyNumberTracker = Mockito.mock(EmergencyNumberTracker.class);
@@ -411,6 +469,7 @@ public abstract class TelephonyTest {
         mImsCT = Mockito.mock(ImsPhoneCallTracker.class);
         mUiccController = Mockito.mock(UiccController.class);
         mUiccProfile = Mockito.mock(UiccProfile.class);
+        mUiccSlot = Mockito.mock(UiccSlot.class);
         mCallManager = Mockito.mock(CallManager.class);
         mNotifier = Mockito.mock(PhoneNotifier.class);
         mTelephonyComponentFactory = Mockito.mock(TelephonyComponentFactory.class);
@@ -427,7 +486,7 @@ public abstract class TelephonyTest {
         mGsmCdmaCall = Mockito.mock(GsmCdmaCall.class);
         mImsCall = Mockito.mock(ImsCall.class);
         mImsEcbm = Mockito.mock(ImsEcbm.class);
-        mSubscriptionController = Mockito.mock(SubscriptionController.class);
+        mSubscriptionManagerService = Mockito.mock(SubscriptionManagerService.class);
         mServiceState = Mockito.mock(ServiceState.class);
         mMockPackageManager = Mockito.mock(IPackageManager.Stub.class);
         mMockLegacyPermissionManager = Mockito.mock(LegacyPermissionManagerService.class);
@@ -438,9 +497,11 @@ public abstract class TelephonyTest {
         mUiccCardApplication3gpp2 = Mockito.mock(UiccCardApplication.class);
         mUiccCardApplicationIms = Mockito.mock(UiccCardApplication.class);
         mSimRecords = Mockito.mock(SIMRecords.class);
+        mSignalStrengthController = Mockito.mock(SignalStrengthController.class);
         mRuimRecords = Mockito.mock(RuimRecords.class);
         mIsimUiccRecords = Mockito.mock(IsimUiccRecords.class);
         mProxyController = Mockito.mock(ProxyController.class);
+        mPhoneSwitcher = Mockito.mock(PhoneSwitcher.class);
         mIActivityManagerSingleton = Mockito.mock(Singleton.class);
         mIActivityManager = Mockito.mock(IActivityManager.class);
         mIIntentSender = Mockito.mock(IIntentSender.class);
@@ -454,6 +515,7 @@ public abstract class TelephonyTest {
         mCarrierSignalAgent = Mockito.mock(CarrierSignalAgent.class);
         mCarrierActionAgent = Mockito.mock(CarrierActionAgent.class);
         mImsExternalCallTracker = Mockito.mock(ImsExternalCallTracker.class);
+        mImsNrSaModeHandler = Mockito.mock(ImsNrSaModeHandler.class);
         mAppSmsManager = Mockito.mock(AppSmsManager.class);
         mIccSmsInterfaceManager = Mockito.mock(IccSmsInterfaceManager.class);
         mSmsDispatchersController = Mockito.mock(SmsDispatchersController.class);
@@ -462,7 +524,6 @@ public abstract class TelephonyTest {
         mIntentBroadcaster = Mockito.mock(IntentBroadcaster.class);
         mNitzStateMachine = Mockito.mock(NitzStateMachine.class);
         mMockRadioConfig = Mockito.mock(RadioConfig.class);
-        mSubInfoRecordUpdater = Mockito.mock(SubscriptionInfoUpdater.class);
         mLocaleTracker = Mockito.mock(LocaleTracker.class);
         mRestrictedState = Mockito.mock(RestrictedState.class);
         mPhoneConfigurationManager = Mockito.mock(PhoneConfigurationManager.class);
@@ -477,6 +538,7 @@ public abstract class TelephonyTest {
         mPersistAtomsStorage = Mockito.mock(PersistAtomsStorage.class);
         mMetricsCollector = Mockito.mock(MetricsCollector.class);
         mSmsStats = Mockito.mock(SmsStats.class);
+        mTelephonyAnalytics = Mockito.mock(TelephonyAnalytics.class);
         mSignalStrength = Mockito.mock(SignalStrength.class);
         mWifiManager = Mockito.mock(WifiManager.class);
         mWifiInfo = Mockito.mock(WifiInfo.class);
@@ -488,6 +550,11 @@ public abstract class TelephonyTest {
         mCellLocation = Mockito.mock(CellLocation.class);
         mMockedWwanDataServiceManager = Mockito.mock(DataServiceManager.class);
         mMockedWlanDataServiceManager = Mockito.mock(DataServiceManager.class);
+        mServiceStateStats = Mockito.mock(ServiceStateStats.class);
+        mSatelliteController = Mockito.mock(SatelliteController.class);
+        mDeviceStateHelper = Mockito.mock(DeviceStateHelper.class);
+        mIdentifierDisclosureNotifier = Mockito.mock(CellularIdentifierDisclosureNotifier.class);
+        mDomainSelectionResolver = Mockito.mock(DomainSelectionResolver.class);
 
         TelephonyManager.disableServiceHandleCaching();
         PropertyInvalidatedCache.disableForTestMode();
@@ -513,13 +580,20 @@ public abstract class TelephonyTest {
 
         Settings.Global.getInt(mContext.getContentResolver(), Settings.Global.AIRPLANE_MODE_ON, 0);
 
+        mServiceManagerMockedServices.put("isub", mSubscriptionManagerService);
+        doReturn(mSubscriptionManagerService).when(mSubscriptionManagerService)
+                .queryLocalInterface(anyString());
+
         mPhone.mCi = mSimulatedCommands;
         mCT.mCi = mSimulatedCommands;
         doReturn(mUiccCard).when(mPhone).getUiccCard();
+        doReturn(mUiccCard).when(mUiccSlot).getUiccCard();
+        doReturn(mUiccCard).when(mUiccController).getUiccCardForPhone(anyInt());
         doReturn(mUiccPort).when(mPhone).getUiccPort();
         doReturn(mUiccProfile).when(mUiccPort).getUiccProfile();
 
         mTelephonyManager = (TelephonyManager) mContext.getSystemService(Context.TELEPHONY_SERVICE);
+        mTelecomManager = mContext.getSystemService(TelecomManager.class);
         mActivityManager = (ActivityManager) mContext.getSystemService(Context.ACTIVITY_SERVICE);
         mTelephonyRegistryManager = (TelephonyRegistryManager) mContext.getSystemService(
             Context.TELEPHONY_REGISTRY_SERVICE);
@@ -542,7 +616,7 @@ public abstract class TelephonyTest {
         doReturn(mTelephonyComponentFactory).when(mTelephonyComponentFactory).inject(anyString());
         doReturn(mSST).when(mTelephonyComponentFactory)
                 .makeServiceStateTracker(nullable(GsmCdmaPhone.class),
-                        nullable(CommandsInterface.class));
+                        nullable(CommandsInterface.class), nullable(FeatureFlags.class));
         doReturn(mEmergencyNumberTracker).when(mTelephonyComponentFactory)
                 .makeEmergencyNumberTracker(nullable(Phone.class),
                         nullable(CommandsInterface.class));
@@ -557,17 +631,19 @@ public abstract class TelephonyTest {
         doReturn(mIccPhoneBookIntManager).when(mTelephonyComponentFactory)
                 .makeIccPhoneBookInterfaceManager(nullable(Phone.class));
         doReturn(mDisplayInfoController).when(mTelephonyComponentFactory)
-                .makeDisplayInfoController(nullable(Phone.class));
+                .makeDisplayInfoController(nullable(Phone.class), any(FeatureFlags.class));
         doReturn(mWspTypeDecoder).when(mTelephonyComponentFactory)
                 .makeWspTypeDecoder(nullable(byte[].class));
         doReturn(mImsCT).when(mTelephonyComponentFactory)
-                .makeImsPhoneCallTracker(nullable(ImsPhone.class));
+                .makeImsPhoneCallTracker(nullable(ImsPhone.class), any(FeatureFlags.class));
         doReturn(mCdmaSSM).when(mTelephonyComponentFactory)
                 .getCdmaSubscriptionSourceManagerInstance(nullable(Context.class),
                         nullable(CommandsInterface.class), nullable(Handler.class),
                         anyInt(), nullable(Object.class));
         doReturn(mImsExternalCallTracker).when(mTelephonyComponentFactory)
                 .makeImsExternalCallTracker(nullable(ImsPhone.class));
+        doReturn(mImsNrSaModeHandler).when(mTelephonyComponentFactory)
+                .makeImsNrSaModeHandler(nullable(ImsPhone.class));
         doReturn(mAppSmsManager).when(mTelephonyComponentFactory)
                 .makeAppSmsManager(nullable(Context.class));
         doReturn(mCarrierSignalAgent).when(mTelephonyComponentFactory)
@@ -575,7 +651,7 @@ public abstract class TelephonyTest {
         doReturn(mCarrierActionAgent).when(mTelephonyComponentFactory)
                 .makeCarrierActionAgent(nullable(Phone.class));
         doReturn(mDeviceStateMonitor).when(mTelephonyComponentFactory)
-                .makeDeviceStateMonitor(nullable(Phone.class));
+                .makeDeviceStateMonitor(nullable(Phone.class), any(FeatureFlags.class));
         doReturn(mAccessNetworksManager).when(mTelephonyComponentFactory)
                 .makeAccessNetworksManager(nullable(Phone.class), any(Looper.class));
         doReturn(mNitzStateMachine).when(mTelephonyComponentFactory)
@@ -590,7 +666,11 @@ public abstract class TelephonyTest {
         doReturn(mDataProfileManager).when(mTelephonyComponentFactory)
                 .makeDataProfileManager(any(Phone.class), any(DataNetworkController.class),
                         any(DataServiceManager.class), any(Looper.class),
+                        any(FeatureFlags.class),
                         any(DataProfileManager.DataProfileManagerCallback.class));
+        doReturn(mIdentifierDisclosureNotifier)
+                .when(mTelephonyComponentFactory)
+                .makeIdentifierDisclosureNotifier();
 
         //mPhone
         doReturn(mContext).when(mPhone).getContext();
@@ -606,6 +686,7 @@ public abstract class TelephonyTest {
         doReturn(mSST).when(mPhone).getServiceStateTracker();
         doReturn(mDeviceStateMonitor).when(mPhone).getDeviceStateMonitor();
         doReturn(mDisplayInfoController).when(mPhone).getDisplayInfoController();
+        doReturn(mSignalStrengthController).when(mPhone).getSignalStrengthController();
         doReturn(mEmergencyNumberTracker).when(mPhone).getEmergencyNumberTracker();
         doReturn(mCarrierSignalAgent).when(mPhone).getCarrierSignalAgent();
         doReturn(mCarrierActionAgent).when(mPhone).getCarrierActionAgent();
@@ -620,6 +701,7 @@ public abstract class TelephonyTest {
         doReturn(mVoiceCallSessionStats).when(mPhone).getVoiceCallSessionStats();
         doReturn(mVoiceCallSessionStats).when(mImsPhone).getVoiceCallSessionStats();
         doReturn(mSmsStats).when(mPhone).getSmsStats();
+        doReturn(mTelephonyAnalytics).when(mPhone).getTelephonyAnalytics();
         doReturn(mImsStats).when(mImsPhone).getImsStats();
         mIccSmsInterfaceManager.mDispatchersController = mSmsDispatchersController;
         doReturn(mLinkBandwidthEstimator).when(mPhone).getLinkBandwidthEstimator();
@@ -656,7 +738,8 @@ public abstract class TelephonyTest {
                 }
             }
         }).when(mUiccController).getIccRecords(anyInt(), anyInt());
-        doReturn(new UiccSlot[] {}).when(mUiccController).getUiccSlots();
+        doReturn(new UiccSlot[] {mUiccSlot}).when(mUiccController).getUiccSlots();
+        doReturn(mUiccSlot).when(mUiccController).getUiccSlotForPhone(anyInt());
         doReturn(mPinStorage).when(mUiccController).getPinStorage();
 
         //UiccCardApplication
@@ -668,7 +751,7 @@ public abstract class TelephonyTest {
         doReturn(mSimRecords).when(mUiccProfile).getIccRecords();
         doAnswer(new Answer<IccRecords>() {
             public IccRecords answer(InvocationOnMock invocation) {
-                return (mPhone.isPhoneTypeGsm()) ? mSimRecords : mRuimRecords;
+                return mSimRecords;
             }
         }).when(mUiccProfile).getIccRecords();
 
@@ -691,14 +774,21 @@ public abstract class TelephonyTest {
         doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_LTE).when(mServiceState)
                 .getRilDataRadioTechnology();
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
-                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE))
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false))
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         doReturn(mPhone).when(mCT).getPhone();
         doReturn(mImsEcbm).when(mImsManager).getEcbmInterface();
         doReturn(mPhone).when(mInboundSmsHandler).getPhone();
         doReturn(mImsCallProfile).when(mImsCall).getCallProfile();
         doReturn(mIBinder).when(mIIntentSender).asBinder();
-        doReturn(mIIntentSender).when(mIActivityManager).getIntentSenderWithFeature(anyInt(),
+        doAnswer(invocation -> {
+            Intent[] intents = invocation.getArgument(6);
+            if (intents != null && intents.length > 0) {
+                doReturn(intents[0]).when(mIActivityManager)
+                        .getIntentForIntentSender(mIIntentSender);
+            }
+            return mIIntentSender;
+        }).when(mIActivityManager).getIntentSenderWithFeature(anyInt(),
                 nullable(String.class), nullable(String.class), nullable(IBinder.class),
                 nullable(String.class), anyInt(), nullable(Intent[].class),
                 nullable(String[].class), anyInt(), nullable(Bundle.class), anyInt());
@@ -707,6 +797,7 @@ public abstract class TelephonyTest {
 
         doReturn(TelephonyManager.PHONE_TYPE_GSM).when(mTelephonyManager).getPhoneType();
         doReturn(mServiceState).when(mSST).getServiceState();
+        doReturn(mServiceStateStats).when(mSST).getServiceStateStats();
         mSST.mSS = mServiceState;
         mSST.mRestrictedState = mRestrictedState;
         mServiceManagerMockedServices.put("connectivity_metrics_logger", mConnMetLoggerBinder);
@@ -716,13 +807,10 @@ public abstract class TelephonyTest {
         doReturn(new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
                 AccessNetworkConstants.TRANSPORT_TYPE_WLAN})
                 .when(mAccessNetworksManager).getAvailableTransports();
-        doReturn(new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
-                AccessNetworkConstants.TRANSPORT_TYPE_WLAN})
-                .when(mAccessNetworksManager).getAvailableTransports();
         doReturn(true).when(mDataSettingsManager).isDataEnabled();
         doReturn(mNetworkRegistrationInfo).when(mServiceState).getNetworkRegistrationInfo(
                 anyInt(), anyInt());
-        doReturn(RIL.RADIO_HAL_VERSION_2_0).when(mPhone).getHalVersion();
+        doReturn(RIL.RADIO_HAL_VERSION_2_0).when(mPhone).getHalVersion(anyInt());
         doReturn(2).when(mSignalStrength).getLevel();
 
         // WiFi
@@ -797,6 +885,14 @@ public abstract class TelephonyTest {
         doReturn(null).when(mContext).getFileStreamPath(anyString());
         doReturn(mPersistAtomsStorage).when(mMetricsCollector).getAtomsStorage();
         doReturn(mWifiManager).when(mContext).getSystemService(eq(Context.WIFI_SERVICE));
+        doReturn(mDeviceStateHelper).when(mMetricsCollector).getDeviceStateHelper();
+        doReturn(CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_UNKNOWN)
+                .when(mDeviceStateHelper)
+                .getFoldState();
+        doReturn(null).when(mContext).getSystemService(eq(Context.DEVICE_STATE_SERVICE));
+
+        doReturn(false).when(mDomainSelectionResolver).isDomainSelectionSupported();
+        DomainSelectionResolver.setDomainSelectionResolver(mDomainSelectionResolver);
 
         //Use reflection to mock singletons
         replaceInstance(CallManager.class, "INSTANCE", null, mCallManager);
@@ -804,8 +900,10 @@ public abstract class TelephonyTest {
                 mTelephonyComponentFactory);
         replaceInstance(UiccController.class, "mInstance", null, mUiccController);
         replaceInstance(CdmaSubscriptionSourceManager.class, "sInstance", null, mCdmaSSM);
-        replaceInstance(SubscriptionController.class, "sInstance", null, mSubscriptionController);
+        replaceInstance(SubscriptionManagerService.class, "sInstance", null,
+                mSubscriptionManagerService);
         replaceInstance(ProxyController.class, "sProxyController", null, mProxyController);
+        replaceInstance(PhoneSwitcher.class, "sPhoneSwitcher", null, mPhoneSwitcher);
         replaceInstance(ActivityManager.class, "IActivityManagerSingleton", null,
                 mIActivityManagerSingleton);
         replaceInstance(CdmaSubscriptionSourceManager.class,
@@ -822,7 +920,6 @@ public abstract class TelephonyTest {
         replaceInstance(PhoneFactory.class, "sMadeDefaults", null, true);
         replaceInstance(PhoneFactory.class, "sPhone", null, mPhone);
         replaceInstance(PhoneFactory.class, "sPhones", null, mPhones);
-        replaceInstance(PhoneFactory.class, "sSubInfoRecordUpdater", null, mSubInfoRecordUpdater);
         replaceInstance(RadioConfig.class, "sRadioConfig", null, mMockRadioConfig);
         replaceInstance(PhoneConfigurationManager.class, "sInstance", null,
                 mPhoneConfigurationManager);
@@ -830,13 +927,11 @@ public abstract class TelephonyTest {
                 mCellularNetworkValidator);
         replaceInstance(MultiSimSettingController.class, "sInstance", null,
                 mMultiSimSettingController);
-        replaceInstance(SubscriptionInfoUpdater.class, "sIsSubInfoInitialized", null, true);
         replaceInstance(PhoneFactory.class, "sCommandsInterfaces", null,
                 new CommandsInterface[] {mSimulatedCommands});
         replaceInstance(PhoneFactory.class, "sMetricsCollector", null, mMetricsCollector);
+        replaceInstance(SatelliteController.class, "sInstance", null, mSatelliteController);
 
-        assertNotNull("Failed to set up SubscriptionController singleton",
-                SubscriptionController.getInstance());
         setReady(false);
         // create default TestableLooper for test and add to list of monitored loopers
         mTestableLooper = TestableLooper.get(TelephonyTest.this);
@@ -869,7 +964,9 @@ public abstract class TelephonyTest {
         }
         if (mContext != null) {
             SharedPreferences sharedPreferences = mContext.getSharedPreferences((String) null, 0);
-            sharedPreferences.edit().clear().commit();
+            if (sharedPreferences != null) {
+                sharedPreferences.edit().clear().commit();
+            }
         }
         restoreInstances();
         TelephonyManager.enableServiceHandleCaching();
@@ -893,13 +990,13 @@ public abstract class TelephonyTest {
         mContextFixture = null;
         mContext = null;
         mFakeBlockedNumberContentProvider = null;
-        mLock = null;
         mServiceManagerMockedServices.clear();
         mServiceManagerMockedServices = null;
         mPhone = null;
         mTestableLoopers.clear();
         mTestableLoopers = null;
         mTestableLooper = null;
+        DomainSelectionResolver.setDomainSelectionResolver(null);
     }
 
     protected static void logd(String s) {
@@ -934,14 +1031,17 @@ public abstract class TelephonyTest {
         private static final String PROPERTY_DEVICE_IDENTIFIER_ACCESS_RESTRICTIONS_DISABLED =
                 DeviceConfig.NAMESPACE_PRIVACY + "/"
                         + "device_identifier_access_restrictions_disabled";
+        private HashMap<String, String> mFlags = new HashMap<>();
 
         @Override
         public Bundle call(String method, String arg, Bundle extras) {
+            logd("FakeSettingsConfigProvider: call called,  method: " + method +
+                    " request: " + arg + ", args=" + extras);
+            Bundle bundle = new Bundle();
             switch (method) {
                 case Settings.CALL_METHOD_GET_CONFIG: {
                     switch (arg) {
                         case PROPERTY_DEVICE_IDENTIFIER_ACCESS_RESTRICTIONS_DISABLED: {
-                            Bundle bundle = new Bundle();
                             bundle.putString(
                                     PROPERTY_DEVICE_IDENTIFIER_ACCESS_RESTRICTIONS_DISABLED,
                                     "0");
@@ -953,6 +1053,18 @@ public abstract class TelephonyTest {
                     }
                     break;
                 }
+                case Settings.CALL_METHOD_LIST_CONFIG:
+                    logd("LIST_config: " + mFlags);
+                    Bundle result = new Bundle();
+                    result.putSerializable(Settings.NameValueTable.VALUE, mFlags);
+                    return result;
+                case Settings.CALL_METHOD_SET_ALL_CONFIG:
+                    mFlags = (extras != null)
+                            ? (HashMap) extras.getSerializable(Settings.CALL_METHOD_FLAGS_KEY)
+                            : new HashMap<>();
+                    bundle.putInt(Settings.KEY_CONFIG_SET_ALL_RETURN,
+                            Settings.SET_ALL_RESULT_SUCCESS);
+                    return bundle;
                 default:
                     fail("Method not expected: " + method);
             }
@@ -1136,7 +1248,7 @@ public abstract class TelephonyTest {
      * Remove a TestableLooper from the list of monitored loopers
      * @param looper removed if it does exist
      */
-    public void unmonitorTestableLooper(TestableLooper looper) {
+    private void unmonitorTestableLooper(TestableLooper looper) {
         if (mTestableLoopers.contains(looper)) {
             mTestableLoopers.remove(looper);
         }

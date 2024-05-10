@@ -16,12 +16,18 @@
 
 package com.android.internal.telephony.data;
 
+import static android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE;
+
 import android.annotation.CallbackExecutor;
 import android.annotation.ElapsedRealtimeLong;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.content.Intent;
+import android.database.ContentObserver;
 import android.net.NetworkAgent;
+import android.net.NetworkCapabilities;
+import android.net.Uri;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -32,7 +38,7 @@ import android.telephony.Annotation.ValidationStatus;
 import android.telephony.CellSignalStrength;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
-import android.telephony.data.DataProfile;
+import android.text.TextUtils;
 import android.util.IndentingPrintWriter;
 import android.util.LocalLog;
 
@@ -51,7 +57,7 @@ import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Arrays;
-import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executor;
 
 /**
@@ -126,11 +132,23 @@ public class DataStallRecoveryManager extends Handler {
     /** The data stall recovered by user (Mobile Data Power off/on). */
     private static final int RECOVERED_REASON_USER = 3;
 
+    /** The number of milliseconds to wait for the DSRM prediction to complete. */
+    private static final int DSRM_PREDICT_WAITING_MILLIS = 1000;
+
+    /** Event for send data stall broadcast. */
+    private static final int EVENT_SEND_DATA_STALL_BROADCAST = 1;
+
     /** Event for triggering recovery action. */
     private static final int EVENT_DO_RECOVERY = 2;
 
     /** Event for radio state changed. */
     private static final int EVENT_RADIO_STATE_CHANGED = 3;
+
+    /** Event for recovery actions changed. */
+    private static final int EVENT_CONTENT_DSRM_ENABLED_ACTIONS_CHANGED = 4;
+
+    /** Event for duration milliseconds changed. */
+    private static final int EVENT_CONTENT_DSRM_DURATION_MILLIS_CHANGED = 5;
 
     private final @NonNull Phone mPhone;
     private final @NonNull String mLogTag;
@@ -146,7 +164,7 @@ public class DataStallRecoveryManager extends Handler {
     private final @NonNull DataServiceManager mWwanDataServiceManager;
 
     /** The data stall recovery action. */
-    private @RecoveryAction int mRecovryAction;
+    private @RecoveryAction int mRecoveryAction;
     /** The elapsed real time of last recovery attempted */
     private @ElapsedRealtimeLong long mTimeLastRecoveryStartMs;
     /** Whether current network is good or not */
@@ -158,7 +176,8 @@ public class DataStallRecoveryManager extends Handler {
     /** Whether the result of last action(RADIO_RESTART) reported. */
     private boolean mLastActionReported;
     /** The real time for data stall start. */
-    private @ElapsedRealtimeLong long mDataStallStartMs;
+    @VisibleForTesting
+    public @ElapsedRealtimeLong long mDataStallStartMs;
     /** Last data stall recovery action. */
     private @RecoveryAction int mLastAction;
     /** Last radio power state. */
@@ -173,15 +192,39 @@ public class DataStallRecoveryManager extends Handler {
     private boolean mMobileDataChangedToEnabledDuringDataStall;
     /** Whether attempted all recovery steps. */
     private boolean mIsAttemptedAllSteps;
-    /** Whether internet network connected. */
+    /** Whether internet network that require validation is connected. */
     private boolean mIsInternetNetworkConnected;
+    /** The durations for current recovery action */
+    private @ElapsedRealtimeLong long mTimeElapsedOfCurrentAction;
 
     /** The array for the timers between recovery actions. */
     private @NonNull long[] mDataStallRecoveryDelayMillisArray;
     /** The boolean array for the flags. They are used to skip the recovery actions if needed. */
     private @NonNull boolean[] mSkipRecoveryActionArray;
 
+    /**
+     * The content URI for the DSRM recovery actions.
+     *
+     * @see Settings.Global#DSRM_ENABLED_ACTIONS
+     */
+    private static final Uri CONTENT_URL_DSRM_ENABLED_ACTIONS = Settings.Global.getUriFor(
+            Settings.Global.DSRM_ENABLED_ACTIONS);
+
+    /**
+     * The content URI for the DSRM duration milliseconds.
+     *
+     * @see Settings.Global#DSRM_DURATION_MILLIS
+     */
+    private static final Uri CONTENT_URL_DSRM_DURATION_MILLIS = Settings.Global.getUriFor(
+            Settings.Global.DSRM_DURATION_MILLIS);
+
+
     private DataStallRecoveryManagerCallback mDataStallRecoveryManagerCallback;
+
+    private final DataStallRecoveryStats mStats;
+
+    /** The number of milliseconds to wait for the DSRM prediction to complete. */
+    private @ElapsedRealtimeLong long mPredictWaitingMillis = 0L;
 
     /**
      * The data stall recovery manager callback. Note this is only used for passing information
@@ -244,6 +287,8 @@ public class DataStallRecoveryManager extends Handler {
         updateDataStallRecoveryConfigs();
 
         registerAllEvents();
+
+        mStats = new DataStallRecoveryStats(mPhone, dataNetworkController);
     }
 
     /** Register for all events that data stall monitor is interested. */
@@ -263,25 +308,56 @@ public class DataStallRecoveryManager extends Handler {
                     }
 
                     @Override
-                    public void onInternetDataNetworkConnected(
-                            @NonNull List<DataProfile> dataProfiles) {
-                        mIsInternetNetworkConnected = true;
-                        logl("onInternetDataNetworkConnected");
-                    }
-
-                    @Override
-                    public void onInternetDataNetworkDisconnected() {
-                        mIsInternetNetworkConnected = false;
-                        logl("onInternetDataNetworkDisconnected");
+                    public void onConnectedInternetDataNetworksChanged(
+                            @NonNull Set<DataNetwork> internetNetworks) {
+                        boolean anyInternetRequireValidatedConnected = internetNetworks.stream()
+                                .anyMatch(nw -> {
+                                    NetworkCapabilities capabilities = nw.getNetworkCapabilities();
+                                    // Only track the networks that require validation.
+                                    // The criteria is base on NetworkMonitorUtils.java.
+                                    return capabilities.hasCapability(
+                                            NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                                            && capabilities.hasCapability(
+                                            NetworkCapabilities.NET_CAPABILITY_TRUSTED)
+                                            && capabilities.hasCapability(
+                                            NetworkCapabilities.NET_CAPABILITY_NOT_VPN);
+                                });
+                        if (mIsInternetNetworkConnected != anyInternetRequireValidatedConnected) {
+                            mIsInternetNetworkConnected = anyInternetRequireValidatedConnected;
+                            logl(mIsInternetNetworkConnected
+                                    ? "At Least One InternetDataNetwork Connected"
+                                    : "All InternetDataNetwork Disconnected");
+                        }
                     }
                 });
         mPhone.mCi.registerForRadioStateChanged(this, EVENT_RADIO_STATE_CHANGED, null);
+
+        // Register for DSRM global setting changes.
+        mPhone.getContext().getContentResolver().registerContentObserver(
+                CONTENT_URL_DSRM_ENABLED_ACTIONS, false, mContentObserver);
+        mPhone.getContext().getContentResolver().registerContentObserver(
+                CONTENT_URL_DSRM_DURATION_MILLIS, false, mContentObserver);
+
     }
 
     @Override
     public void handleMessage(Message msg) {
         logv("handleMessage = " + msg);
         switch (msg.what) {
+            case EVENT_SEND_DATA_STALL_BROADCAST:
+                mRecoveryTriggered = true;
+                // Verify that DSRM needs to process the recovery action
+                if (!isRecoveryNeeded(false)) {
+                    cancelNetworkCheckTimer();
+                    startNetworkCheckTimer(getRecoveryAction());
+                    return;
+                }
+                // Broadcast intent that data stall has been detected.
+                broadcastDataStallDetected(getRecoveryAction());
+                // Schedule the message to to wait for the predicted value.
+                sendMessageDelayed(
+                        obtainMessage(EVENT_DO_RECOVERY), mPredictWaitingMillis);
+                break;
             case EVENT_DO_RECOVERY:
                 doRecovery();
                 break;
@@ -298,9 +374,108 @@ public class DataStallRecoveryManager extends Handler {
                     }
                 }
                 break;
+            case EVENT_CONTENT_DSRM_ENABLED_ACTIONS_CHANGED:
+                updateGlobalConfigActions();
+                break;
+            case EVENT_CONTENT_DSRM_DURATION_MILLIS_CHANGED:
+                updateGlobalConfigDurations();
+                break;
             default:
                 loge("Unexpected message = " + msg);
                 break;
+        }
+    }
+
+    private final ContentObserver mContentObserver = new ContentObserver(this) {
+        @Override
+        public void onChange(boolean selfChange, Uri uri) {
+            super.onChange(selfChange, uri);
+            if (CONTENT_URL_DSRM_ENABLED_ACTIONS.equals(uri)) {
+                log("onChange URI: " + uri);
+                sendMessage(obtainMessage(EVENT_CONTENT_DSRM_ENABLED_ACTIONS_CHANGED));
+            } else if (CONTENT_URL_DSRM_DURATION_MILLIS.equals(uri)) {
+                log("onChange URI: " + uri);
+                sendMessage(obtainMessage(EVENT_CONTENT_DSRM_DURATION_MILLIS_CHANGED));
+            }
+        }
+    };
+
+
+    @VisibleForTesting
+    public ContentObserver getContentObserver() {
+        return mContentObserver;
+    }
+
+    /**
+     * Updates the skip recovery action array based on DSRM global configuration actions.
+     *
+     * @see Settings.Global#DSRM_ENABLED_ACTIONS
+     */
+    private void updateGlobalConfigActions() {
+        String enabledActions = Settings.Global.getString(
+                mPhone.getContext().getContentResolver(),
+                Settings.Global.DSRM_ENABLED_ACTIONS);
+
+        if (!TextUtils.isEmpty(enabledActions)) {
+            String[] splitEnabledActions = enabledActions.split(",");
+            boolean[] enabledActionsArray = new boolean[splitEnabledActions.length];
+            for (int i = 0; i < enabledActionsArray.length; i++) {
+                enabledActionsArray[i] = Boolean.parseBoolean(splitEnabledActions[i].trim());
+            }
+
+            int minLength = Math.min(enabledActionsArray.length,
+                    mSkipRecoveryActionArray.length);
+
+            // Update the skip recovery action array.
+            for (int i = 0; i < minLength; i++) {
+                mSkipRecoveryActionArray[i] = !enabledActionsArray[i];
+            }
+            log("SkipRecoveryAction: "
+                    + Arrays.toString(mSkipRecoveryActionArray));
+            mPredictWaitingMillis = DSRM_PREDICT_WAITING_MILLIS;
+        } else {
+            mPredictWaitingMillis = 0;
+            log("Enabled actions is null");
+        }
+    }
+
+    /**
+     * Updates the duration millis array based on DSRM global configuration durations.
+     *
+     * @see Settings.Global#DSRM_DURATION_MILLIS
+     */
+    private void updateGlobalConfigDurations() {
+        String durationMillis = Settings.Global.getString(
+                mPhone.getContext().getContentResolver(),
+                Settings.Global.DSRM_DURATION_MILLIS);
+
+        if (!TextUtils.isEmpty(durationMillis)) {
+            String[] splitDurationMillis = durationMillis.split(",");
+            long[] durationMillisArray = new long[splitDurationMillis.length];
+            for (int i = 0; i < durationMillisArray.length; i++) {
+                try {
+                    durationMillisArray[i] = Long.parseLong(splitDurationMillis[i].trim());
+                } catch (NumberFormatException e) {
+                    mPredictWaitingMillis = 0;
+                    loge("Parsing duration millis error");
+                    return;
+                }
+            }
+
+            int minLength = Math.min(durationMillisArray.length,
+                    mDataStallRecoveryDelayMillisArray.length);
+
+            // Copy the values from the durationMillisArray array to the
+            // mDataStallRecoveryDelayMillisArray array.
+            for (int i = 0; i < minLength; i++) {
+                mDataStallRecoveryDelayMillisArray[i] = durationMillisArray[i];
+            }
+            log("DataStallRecoveryDelayMillis: "
+                    + Arrays.toString(mDataStallRecoveryDelayMillisArray));
+            mPredictWaitingMillis = DSRM_PREDICT_WAITING_MILLIS;
+        } else {
+            mPredictWaitingMillis = 0;
+            log("Duration millis is null");
         }
     }
 
@@ -308,6 +483,10 @@ public class DataStallRecoveryManager extends Handler {
     private void updateDataStallRecoveryConfigs() {
         mDataStallRecoveryDelayMillisArray = mDataConfigManager.getDataStallRecoveryDelayMillis();
         mSkipRecoveryActionArray = mDataConfigManager.getDataStallRecoveryShouldSkipArray();
+
+        //Update Global settings
+        updateGlobalConfigActions();
+        updateGlobalConfigDurations();
     }
 
     /**
@@ -316,7 +495,8 @@ public class DataStallRecoveryManager extends Handler {
      * @param recoveryAction The recovery action to query.
      * @return the delay in milliseconds for the specific recovery action.
      */
-    private long getDataStallRecoveryDelayMillis(@RecoveryAction int recoveryAction) {
+    @VisibleForTesting
+    public long getDataStallRecoveryDelayMillis(@RecoveryAction int recoveryAction) {
         return mDataStallRecoveryDelayMillisArray[recoveryAction];
     }
 
@@ -326,7 +506,8 @@ public class DataStallRecoveryManager extends Handler {
      * @param recoveryAction The recovery action.
      * @return {@code true} if the action needs to be skipped.
      */
-    private boolean shouldSkipRecoveryAction(@RecoveryAction int recoveryAction) {
+    @VisibleForTesting
+    public boolean shouldSkipRecoveryAction(@RecoveryAction int recoveryAction) {
         return mSkipRecoveryActionArray[recoveryAction];
     }
 
@@ -362,7 +543,7 @@ public class DataStallRecoveryManager extends Handler {
         cancelNetworkCheckTimer();
         mTimeLastRecoveryStartMs = 0;
         mLastAction = RECOVERY_ACTION_GET_DATA_CALL_LIST;
-        mRecovryAction = RECOVERY_ACTION_GET_DATA_CALL_LIST;
+        mRecoveryAction = RECOVERY_ACTION_GET_DATA_CALL_LIST;
     }
 
     /**
@@ -381,7 +562,7 @@ public class DataStallRecoveryManager extends Handler {
             mIsValidNetwork = false;
             log("trigger data stall recovery");
             mTimeLastRecoveryStartMs = SystemClock.elapsedRealtime();
-            sendMessage(obtainMessage(EVENT_DO_RECOVERY));
+            sendMessage(obtainMessage(EVENT_SEND_DATA_STALL_BROADCAST));
         }
     }
 
@@ -402,8 +583,8 @@ public class DataStallRecoveryManager extends Handler {
     @VisibleForTesting
     @RecoveryAction
     public int getRecoveryAction() {
-        log("getRecoveryAction: " + recoveryActionToString(mRecovryAction));
-        return mRecovryAction;
+        log("getRecoveryAction: " + recoveryActionToString(mRecoveryAction));
+        return mRecoveryAction;
     }
 
     /**
@@ -413,24 +594,24 @@ public class DataStallRecoveryManager extends Handler {
      */
     @VisibleForTesting
     public void setRecoveryAction(@RecoveryAction int action) {
-        mRecovryAction = action;
+        mRecoveryAction = action;
 
         // Check if the mobile data enabled is TRUE, it means that the mobile data setting changed
         // from DISABLED to ENABLED, we will set the next recovery action to
         // RECOVERY_ACTION_RADIO_RESTART due to already did the RECOVERY_ACTION_CLEANUP.
         if (mMobileDataChangedToEnabledDuringDataStall
-                && mRecovryAction < RECOVERY_ACTION_RADIO_RESTART) {
-            mRecovryAction = RECOVERY_ACTION_RADIO_RESTART;
+                && mRecoveryAction < RECOVERY_ACTION_RADIO_RESTART) {
+            mRecoveryAction = RECOVERY_ACTION_RADIO_RESTART;
         }
         // Check if the radio state changed from off to on, it means that the modem already
         // did the radio restart, we will set the next action to RECOVERY_ACTION_RESET_MODEM.
         if (mRadioStateChangedDuringDataStall
                 && mRadioPowerState == TelephonyManager.RADIO_POWER_ON) {
-            mRecovryAction = RECOVERY_ACTION_RESET_MODEM;
+            mRecoveryAction = RECOVERY_ACTION_RESET_MODEM;
         }
         // To check the flag from DataConfigManager if we need to skip the step.
-        if (shouldSkipRecoveryAction(mRecovryAction)) {
-            switch (mRecovryAction) {
+        if (shouldSkipRecoveryAction(mRecoveryAction)) {
+            switch (mRecoveryAction) {
                 case RECOVERY_ACTION_GET_DATA_CALL_LIST:
                     setRecoveryAction(RECOVERY_ACTION_CLEANUP);
                     break;
@@ -446,7 +627,7 @@ public class DataStallRecoveryManager extends Handler {
             }
         }
 
-        log("setRecoveryAction: " + recoveryActionToString(mRecovryAction));
+        log("setRecoveryAction: " + recoveryActionToString(mRecoveryAction));
     }
 
     /**
@@ -468,6 +649,15 @@ public class DataStallRecoveryManager extends Handler {
     }
 
     /**
+     * Get duration time for current recovery action.
+     *
+     * @return the time duration for current recovery action.
+     */
+    private long getDurationOfCurrentRecoveryMs() {
+        return (SystemClock.elapsedRealtime() - mTimeElapsedOfCurrentAction);
+    }
+
+    /**
      * Broadcast intent when data stall occurred.
      *
      * @param recoveryAction Send the data stall detected intent with RecoveryAction info.
@@ -477,7 +667,23 @@ public class DataStallRecoveryManager extends Handler {
         Intent intent = new Intent(TelephonyManager.ACTION_DATA_STALL_DETECTED);
         SubscriptionManager.putPhoneIdAndSubIdExtra(intent, mPhone.getPhoneId());
         intent.putExtra(TelephonyManager.EXTRA_RECOVERY_ACTION, recoveryAction);
-        mPhone.getContext().sendBroadcast(intent);
+
+        // Get the information for DSRS state
+        final boolean isRecovered = !mDataStalled;
+        final int duration = (int) (SystemClock.elapsedRealtime() - mDataStallStartMs);
+        final @RecoveredReason int reason = getRecoveredReason(mIsValidNetwork);
+        final boolean isFirstValidationOfAction = false;
+        final int durationOfAction = (int) getDurationOfCurrentRecoveryMs();
+
+        // Get the bundled DSRS stats.
+        Bundle bundle = mStats.getDataStallRecoveryMetricsData(
+                recoveryAction, isRecovered, duration, reason, isFirstValidationOfAction,
+                durationOfAction);
+
+        // Put the bundled stats extras on the intent.
+        intent.putExtra("EXTRA_DSRS_STATS_BUNDLE", bundle);
+
+        mPhone.getContext().sendBroadcast(intent, READ_PRIVILEGED_PHONE_STATE);
     }
 
     /** Recovery Action: RECOVERY_ACTION_GET_DATA_CALL_LIST */
@@ -518,7 +724,8 @@ public class DataStallRecoveryManager extends Handler {
             mNetworkCheckTimerStarted = true;
             mTimeLastRecoveryStartMs = SystemClock.elapsedRealtime();
             sendMessageDelayed(
-                    obtainMessage(EVENT_DO_RECOVERY), getDataStallRecoveryDelayMillis(action));
+                    obtainMessage(EVENT_SEND_DATA_STALL_BROADCAST),
+                    getDataStallRecoveryDelayMillis(action));
         }
     }
 
@@ -527,7 +734,7 @@ public class DataStallRecoveryManager extends Handler {
         log("cancelNetworkCheckTimer()");
         if (mNetworkCheckTimerStarted) {
             mNetworkCheckTimerStarted = false;
-            removeMessages(EVENT_DO_RECOVERY);
+            removeMessages(EVENT_SEND_DATA_STALL_BROADCAST);
         }
     }
 
@@ -592,38 +799,65 @@ public class DataStallRecoveryManager extends Handler {
      * @param isValid true for validation passed & false for validation failed
      */
     private void setNetworkValidationState(boolean isValid) {
+        boolean isLogNeeded = false;
+        int timeDuration = 0;
+        int timeDurationOfCurrentAction = 0;
+        boolean isFirstDataStall = false;
+        boolean isFirstValidationAfterDoRecovery = false;
+        @RecoveredReason int reason = getRecoveredReason(isValid);
         // Validation status is true and was not data stall.
         if (isValid && !mDataStalled) {
             return;
         }
 
         if (!mDataStalled) {
+            // First data stall
+            isLogNeeded = true;
             mDataStalled = true;
+            isFirstDataStall = true;
             mDataStallStartMs = SystemClock.elapsedRealtime();
             logl("data stall: start time = " + DataUtils.elapsedTimeToString(mDataStallStartMs));
-            return;
-        }
-
-        if (!mLastActionReported) {
-            @RecoveredReason int reason = getRecoveredReason(isValid);
-            int timeDuration = (int) (SystemClock.elapsedRealtime() - mDataStallStartMs);
-            logl(
-                    "data stall: lastaction = "
-                            + recoveryActionToString(mLastAction)
-                            + ", isRecovered = "
-                            + isValid
-                            + ", reason = "
-                            + recoveredReasonToString(reason)
-                            + ", TimeDuration = "
-                            + timeDuration);
-            DataStallRecoveryStats.onDataStallEvent(
-                    mLastAction, mPhone, isValid, timeDuration, reason);
+        } else if (!mLastActionReported) {
+            // When the first validation status appears, enter this block.
+            isLogNeeded = true;
+            timeDuration = (int) (SystemClock.elapsedRealtime() - mDataStallStartMs);
             mLastActionReported = true;
+            isFirstValidationAfterDoRecovery = true;
         }
 
         if (isValid) {
+            // When the validation passed(mobile data resume), enter this block.
+            isLogNeeded = true;
+            timeDuration = (int) (SystemClock.elapsedRealtime() - mDataStallStartMs);
             mLastActionReported = false;
             mDataStalled = false;
+        }
+
+        if (isLogNeeded) {
+            timeDurationOfCurrentAction =
+                ((getRecoveryAction() > RECOVERY_ACTION_GET_DATA_CALL_LIST
+                   && !mIsAttemptedAllSteps)
+                 || mLastAction == RECOVERY_ACTION_RESET_MODEM)
+                 ? (int) getDurationOfCurrentRecoveryMs() : 0;
+
+            mStats.uploadMetrics(
+                    mLastAction, isValid, timeDuration, reason,
+                    isFirstValidationAfterDoRecovery, timeDurationOfCurrentAction);
+            logl(
+                    "data stall: "
+                    + (isFirstDataStall == true ? "start" : isValid == false ? "in process" : "end")
+                    + ", lastaction="
+                    + recoveryActionToString(mLastAction)
+                    + ", isRecovered="
+                    + isValid
+                    + ", reason="
+                    + recoveredReasonToString(reason)
+                    + ", isFirstValidationAfterDoRecovery="
+                    + isFirstValidationAfterDoRecovery
+                    + ", TimeDuration="
+                    + timeDuration
+                    + ", TimeDurationForCurrentRecoveryAction="
+                    + timeDurationOfCurrentAction);
         }
     }
 
@@ -657,23 +891,14 @@ public class DataStallRecoveryManager extends Handler {
     private void doRecovery() {
         @RecoveryAction final int recoveryAction = getRecoveryAction();
         final int signalStrength = mPhone.getSignalStrength().getLevel();
-        mRecoveryTriggered = true;
-
-        // DSRM used sendMessageDelayed to process the next event EVENT_DO_RECOVERY, so it need
-        // to check the condition if DSRM need to process the recovery action.
-        if (!isRecoveryNeeded(false)) {
-            cancelNetworkCheckTimer();
-            startNetworkCheckTimer(recoveryAction);
-            return;
-        }
 
         TelephonyMetrics.getInstance()
                 .writeSignalStrengthEvent(mPhone.getPhoneId(), signalStrength);
         TelephonyMetrics.getInstance().writeDataStallEvent(mPhone.getPhoneId(), recoveryAction);
         mLastAction = recoveryAction;
         mLastActionReported = false;
-        broadcastDataStallDetected(recoveryAction);
         mNetworkCheckTimerStarted = false;
+        mTimeElapsedOfCurrentAction = SystemClock.elapsedRealtime();
 
         switch (recoveryAction) {
             case RECOVERY_ACTION_GET_DATA_CALL_LIST:
@@ -833,6 +1058,7 @@ public class DataStallRecoveryManager extends Handler {
         pw.println(
                 "mMobileDataChangedToEnabledDuringDataStall="
                         + mMobileDataChangedToEnabledDuringDataStall);
+        pw.println("mPredictWaitingMillis=" + mPredictWaitingMillis);
         pw.println(
                 "DataStallRecoveryDelayMillisArray="
                         + Arrays.toString(mDataStallRecoveryDelayMillisArray));

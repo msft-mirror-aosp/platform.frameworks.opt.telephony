@@ -24,11 +24,13 @@ import android.os.RegistrantList;
 import android.sysprop.TelephonyProperties;
 import android.telephony.Annotation.DataActivityType;
 import android.telephony.CallQuality;
+import android.telephony.CallState;
 import android.telephony.NetworkScanRequest;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.telephony.TelephonyManager;
 import android.telephony.ims.ImsReasonInfo;
+import android.telephony.ims.MediaQualityStatus;
 import android.util.Pair;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -41,6 +43,7 @@ import com.android.internal.telephony.OperatorInfo;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneNotifier;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.uicc.IccFileHandler;
 import com.android.telephony.Rlog;
 
@@ -56,8 +59,9 @@ abstract class ImsPhoneBase extends Phone {
     private PhoneConstants.State mState = PhoneConstants.State.IDLE;
 
     public ImsPhoneBase(String name, Context context, PhoneNotifier notifier,
-                        boolean unitTestMode) {
-        super(name, notifier, context, new ImsPhoneCommandInterface(context), unitTestMode);
+                        boolean unitTestMode, FeatureFlags featureFlags) {
+        super(name, notifier, context, new ImsPhoneCommandInterface(context), unitTestMode,
+                featureFlags);
     }
 
     @Override
@@ -138,6 +142,10 @@ abstract class ImsPhoneBase extends Phone {
         mNotifier.notifyCallQualityChanged(this, callQuality, callNetworkType);
     }
 
+    public void onMediaQualityStatusChanged(MediaQualityStatus status) {
+        mNotifier.notifyMediaQualityStatusChanged(this, status);
+    }
+
     @Override
     public ServiceState getServiceState() {
         // FIXME: we may need to provide this when data connectivity is lost
@@ -192,7 +200,43 @@ abstract class ImsPhoneBase extends Phone {
      */
     public void notifyPreciseCallStateChanged() {
         /* we'd love it if this was package-scoped*/
-        super.notifyPreciseCallStateChangedP();
+        AsyncResult ar = new AsyncResult(null, this, null);
+        mPreciseCallStateRegistrants.notifyRegistrants(ar);
+
+        notifyPreciseCallStateToNotifier();
+    }
+
+    public void notifyPreciseCallStateToNotifier() {
+        ImsPhoneCall ringingCall = (ImsPhoneCall) getRingingCall();
+        ImsPhoneCall foregroundCall = (ImsPhoneCall) getForegroundCall();
+        ImsPhoneCall backgroundCall = (ImsPhoneCall) getBackgroundCall();
+
+        if (ringingCall != null && foregroundCall != null && backgroundCall != null) {
+            //Array for IMS call session ID of RINGING/FOREGROUND/BACKGROUND call
+            String[] imsCallIds = new String[CallState.CALL_CLASSIFICATION_MAX];
+            //Array for IMS call service type of RINGING/FOREGROUND/BACKGROUND call
+            int[] imsCallServiceTypes = new int[CallState.CALL_CLASSIFICATION_MAX];
+            //Array for IMS call type of RINGING/FOREGROUND/BACKGROUND call
+            int[] imsCallTypes = new int[CallState.CALL_CLASSIFICATION_MAX];
+            imsCallIds[CallState.CALL_CLASSIFICATION_RINGING] =
+                    ringingCall.getCallSessionId();
+            imsCallIds[CallState.CALL_CLASSIFICATION_FOREGROUND] =
+                    foregroundCall.getCallSessionId();
+            imsCallIds[CallState.CALL_CLASSIFICATION_BACKGROUND] =
+                    backgroundCall.getCallSessionId();
+            imsCallServiceTypes[CallState.CALL_CLASSIFICATION_RINGING] =
+                    ringingCall.getServiceType();
+            imsCallServiceTypes[CallState.CALL_CLASSIFICATION_FOREGROUND] =
+                    foregroundCall.getServiceType();
+            imsCallServiceTypes[CallState.CALL_CLASSIFICATION_BACKGROUND] =
+                    backgroundCall.getServiceType();
+            imsCallTypes[CallState.CALL_CLASSIFICATION_RINGING] = ringingCall.getCallType();
+            imsCallTypes[CallState.CALL_CLASSIFICATION_FOREGROUND] =
+                    foregroundCall.getCallType();
+            imsCallTypes[CallState.CALL_CLASSIFICATION_BACKGROUND] =
+                    backgroundCall.getCallType();
+            mNotifier.notifyPreciseCallState(this, imsCallIds, imsCallServiceTypes, imsCallTypes);
+        }
     }
 
     public void notifyDisconnect(Connection cn) {
@@ -297,6 +341,11 @@ abstract class ImsPhoneBase extends Phone {
     @Override
     public String getImei() {
         return null;
+    }
+
+    @Override
+    public int getImeiType() {
+        return Phone.IMEI_TYPE_UNKNOWN;
     }
 
     @Override
@@ -529,5 +578,15 @@ abstract class ImsPhoneBase extends Phone {
             Rlog.d(LOG_TAG, " ^^^ new phone state: " + mState);
             notifyPhoneStateChanged();
         }
+    }
+
+    @Override
+    public int getTerminalBasedCallWaitingState(boolean forCsOnly) {
+        return getDefaultPhone().getTerminalBasedCallWaitingState(forCsOnly);
+    }
+
+    @Override
+    public void setTerminalBasedCallWaitingSupported(boolean supported) {
+        getDefaultPhone().setTerminalBasedCallWaitingSupported(supported);
     }
 }

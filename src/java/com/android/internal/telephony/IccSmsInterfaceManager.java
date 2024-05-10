@@ -21,6 +21,7 @@ import static android.telephony.SmsManager.STATUS_ON_ICC_READ;
 import static android.telephony.SmsManager.STATUS_ON_ICC_UNREAD;
 
 import android.Manifest;
+import android.annotation.NonNull;
 import android.annotation.RequiresPermission;
 import android.app.AppOpsManager;
 import android.app.PendingIntent;
@@ -47,6 +48,7 @@ import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.cdma.CdmaSmsBroadcastConfigInfo;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
 import com.android.internal.telephony.uicc.IccConstants;
 import com.android.internal.telephony.uicc.IccFileHandler;
@@ -155,11 +157,11 @@ public class IccSmsInterfaceManager {
         }
     };
 
-    protected IccSmsInterfaceManager(Phone phone) {
+    protected IccSmsInterfaceManager(Phone phone, @NonNull FeatureFlags featureFlags) {
         this(phone, phone.getContext(),
                 (AppOpsManager) phone.getContext().getSystemService(Context.APP_OPS_SERVICE),
                 new SmsDispatchersController(
-                        phone, phone.mSmsStorageMonitor, phone.mSmsUsageMonitor),
+                        phone, phone.mSmsStorageMonitor, phone.mSmsUsageMonitor, featureFlags),
                 new SmsPermissions(phone, phone.getContext(),
                         (AppOpsManager) phone.getContext().getSystemService(
                                 Context.APP_OPS_SERVICE)));
@@ -174,6 +176,41 @@ public class IccSmsInterfaceManager {
         mAppOps = appOps;
         mDispatchersController = dispatchersController;
         mSmsPermissions = smsPermissions;
+    }
+
+    /**
+     * PhoneFactory Dependencies for testing.
+     */
+    @VisibleForTesting
+    public interface PhoneFactoryProxy {
+        Phone getPhone(int index);
+        Phone getDefaultPhone();
+        Phone[] getPhones();
+    }
+
+    private PhoneFactoryProxy mPhoneFactoryProxy = new PhoneFactoryProxy() {
+        @Override
+        public Phone getPhone(int index) {
+            return PhoneFactory.getPhone(index);
+        }
+
+        @Override
+        public Phone getDefaultPhone() {
+            return PhoneFactory.getDefaultPhone();
+        }
+
+        @Override
+        public Phone[] getPhones() {
+            return PhoneFactory.getPhones();
+        }
+    };
+
+    /**
+     * Overrides PhoneFactory dependencies for testing.
+     */
+    @VisibleForTesting
+    public void setPhoneFactoryProxy(PhoneFactoryProxy proxy) {
+        mPhoneFactoryProxy = proxy;
     }
 
     private void enforceNotOnHandlerThread(String methodName) {
@@ -457,11 +494,11 @@ public class IccSmsInterfaceManager {
      */
     public void sendText(String callingPackage, String destAddr, String scAddr,
             String text, PendingIntent sentIntent, PendingIntent deliveryIntent,
-            boolean persistMessageForNonDefaultSmsApp, long messageId) {
+            boolean persistMessageForNonDefaultSmsApp, long messageId, boolean skipShortCodeCheck) {
         sendTextInternal(callingPackage, destAddr, scAddr, text, sentIntent, deliveryIntent,
                 persistMessageForNonDefaultSmsApp, SMS_MESSAGE_PRIORITY_NOT_SPECIFIED,
                 false /* expectMore */, SMS_MESSAGE_PERIOD_NOT_SPECIFIED, false /* isForVvm */,
-                messageId);
+                messageId, skipShortCodeCheck);
     }
 
     /**
@@ -479,6 +516,16 @@ public class IccSmsInterfaceManager {
         sendTextInternal(callingPackage, destAddr, scAddr, text, sentIntent, deliveryIntent,
                 persistMessage, SMS_MESSAGE_PRIORITY_NOT_SPECIFIED, false /* expectMore */,
                 SMS_MESSAGE_PERIOD_NOT_SPECIFIED, isForVvm, 0L /* messageId */);
+    }
+
+
+    private void sendTextInternal(String callingPackage, String destAddr, String scAddr,
+            String text, PendingIntent sentIntent, PendingIntent deliveryIntent,
+            boolean persistMessageForNonDefaultSmsApp, int priority, boolean expectMore,
+            int validityPeriod, boolean isForVvm, long messageId) {
+        sendTextInternal(callingPackage, destAddr, scAddr, text, sentIntent, deliveryIntent,
+                persistMessageForNonDefaultSmsApp, priority, expectMore, validityPeriod, isForVvm,
+                messageId, false);
     }
 
     /**
@@ -527,12 +574,13 @@ public class IccSmsInterfaceManager {
      *  Any Other values including negative considered as Invalid Validity Period of the message.
      * @param messageId An id that uniquely identifies the message requested to be sent.
      *                 Used for logging and diagnostics purposes. The id may be 0.
+     * @param skipShortCodeCheck Skip check for short code type destination address.
      */
 
     private void sendTextInternal(String callingPackage, String destAddr, String scAddr,
             String text, PendingIntent sentIntent, PendingIntent deliveryIntent,
             boolean persistMessageForNonDefaultSmsApp, int priority, boolean expectMore,
-            int validityPeriod, boolean isForVvm, long messageId) {
+            int validityPeriod, boolean isForVvm, long messageId, boolean skipShortCodeCheck) {
         if (Rlog.isLoggable("SMS", Log.VERBOSE)) {
             log("sendText: destAddr=" + destAddr + " scAddr=" + scAddr
                     + " text='" + text + "' sentIntent=" + sentIntent + " deliveryIntent="
@@ -544,7 +592,7 @@ public class IccSmsInterfaceManager {
         destAddr = filterDestAddress(destAddr);
         mDispatchersController.sendText(destAddr, scAddr, text, sentIntent, deliveryIntent,
                 null/*messageUri*/, callingPackage, persistMessageForNonDefaultSmsApp,
-                priority, expectMore, validityPeriod, isForVvm, messageId);
+                priority, expectMore, validityPeriod, isForVvm, messageId, skipShortCodeCheck);
     }
 
     /**
@@ -862,6 +910,7 @@ public class IccSmsInterfaceManager {
     public String getSmscAddressFromIccEf(String callingPackage) {
         if (!mSmsPermissions.checkCallingOrSelfCanGetSmscAddress(
                 callingPackage, "getSmscAddressFromIccEf")) {
+            loge("Caller do not have permission to call GetSmscAddress");
             return null;
         }
         enforceNotOnHandlerThread("getSmscAddressFromIccEf");
@@ -883,6 +932,7 @@ public class IccSmsInterfaceManager {
     public boolean setSmscAddressOnIccEf(String callingPackage, String smsc) {
         if (!mSmsPermissions.checkCallingOrSelfCanSetSmscAddress(
                 callingPackage, "setSmscAddressOnIccEf")) {
+            loge("Caller do not have permission to call SetSmscAddress");
             return false;
         }
         enforceNotOnHandlerThread("setSmscAddressOnIccEf");
@@ -1452,11 +1502,27 @@ public class IccSmsInterfaceManager {
         return null;
     }
 
-    private void notifyIfOutgoingEmergencySms(String destAddr) {
+    @VisibleForTesting
+    public void notifyIfOutgoingEmergencySms(String destAddr) {
+        Phone[] allPhones = mPhoneFactoryProxy.getPhones();
         EmergencyNumber emergencyNumber = mPhone.getEmergencyNumberTracker().getEmergencyNumber(
                 destAddr);
         if (emergencyNumber != null) {
             mPhone.notifyOutgoingEmergencySms(emergencyNumber);
+        } else if (allPhones.length > 1) {
+            // If there are multiple active SIMs, check all instances:
+            for (Phone phone : allPhones) {
+                // If the current iteration was already checked, skip:
+                if (phone.getPhoneId() == mPhone.getPhoneId()) {
+                    continue;
+                }
+                emergencyNumber = phone.getEmergencyNumberTracker()
+                        .getEmergencyNumber(destAddr);
+                if (emergencyNumber != null) {
+                    mPhone.notifyOutgoingEmergencySms(emergencyNumber);
+                    break;
+                }
+            }
         }
     }
 

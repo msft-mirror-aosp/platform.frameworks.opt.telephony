@@ -50,7 +50,6 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
     private static final String PROVISIONING_PACKAGE_NAME = "test.provisioning.package";
 
     // Mocked classes
-    private Context mContext;
     private Resources mResources;
 
     private IccCardStatus makeCardStatus(CardState state) {
@@ -99,7 +98,8 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
 
         // The first broadcast should be sent after initialization.
         UiccCard card = new UiccCard(mContext, mSimulatedCommands,
-                makeCardStatus(CardState.CARDSTATE_PRESENT), 0 /* phoneId */, new Object(), false);
+                makeCardStatus(CardState.CARDSTATE_PRESENT), 0 /* phoneId */, new Object(),
+                IccSlotStatus.MultipleEnabledProfilesMode.NONE);
         when(UiccController.getInstance().getUiccCardForPhone(0)).thenReturn(card);
         uiccLauncher.handleMessage(msg);
 
