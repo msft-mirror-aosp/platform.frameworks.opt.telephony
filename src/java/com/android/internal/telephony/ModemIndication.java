@@ -16,13 +16,17 @@
 
 package com.android.internal.telephony;
 
+import static android.telephony.TelephonyManager.HAL_SERVICE_MODEM;
+
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_HARDWARE_CONFIG_CHANGED;
+import static com.android.internal.telephony.RILConstants.RIL_UNSOL_IMEI_MAPPING_CHANGED;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_MODEM_RESTART;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_RADIO_CAPABILITY;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_RESPONSE_RADIO_STATE_CHANGED;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_RIL_CONNECTED;
 
 import android.hardware.radio.modem.IRadioModemIndication;
+import android.hardware.radio.modem.ImeiInfo;
 import android.os.AsyncResult;
 
 import java.util.ArrayList;
@@ -44,7 +48,7 @@ public class ModemIndication extends IRadioModemIndication.Stub {
      */
     public void hardwareConfigChanged(int indicationType,
             android.hardware.radio.modem.HardwareConfig[] configs) {
-        mRil.processIndication(RIL.MODEM_SERVICE, indicationType);
+        mRil.processIndication(HAL_SERVICE_MODEM, indicationType);
 
         ArrayList<HardwareConfig> response = RILUtils.convertHalHardwareConfigList(configs);
 
@@ -62,7 +66,7 @@ public class ModemIndication extends IRadioModemIndication.Stub {
      *        restart" that explains the cause of the modem restart
      */
     public void modemReset(int indicationType, String reason) {
-        mRil.processIndication(RIL.MODEM_SERVICE, indicationType);
+        mRil.processIndication(HAL_SERVICE_MODEM, indicationType);
 
         if (mRil.isLogOrTrace()) mRil.unsljLogRet(RIL_UNSOL_MODEM_RESTART, reason);
 
@@ -78,7 +82,7 @@ public class ModemIndication extends IRadioModemIndication.Stub {
      */
     public void radioCapabilityIndication(int indicationType,
             android.hardware.radio.modem.RadioCapability radioCapability) {
-        mRil.processIndication(RIL.MODEM_SERVICE, indicationType);
+        mRil.processIndication(HAL_SERVICE_MODEM, indicationType);
 
         RadioCapability response = RILUtils.convertHalRadioCapability(radioCapability, mRil);
 
@@ -94,7 +98,7 @@ public class ModemIndication extends IRadioModemIndication.Stub {
      * @param radioState Current radio state
      */
     public void radioStateChanged(int indicationType, int radioState) {
-        mRil.processIndication(RIL.MODEM_SERVICE, indicationType);
+        mRil.processIndication(HAL_SERVICE_MODEM, indicationType);
 
         int state = RILUtils.convertHalRadioState(radioState);
         if (mRil.isLogOrTrace()) {
@@ -110,7 +114,7 @@ public class ModemIndication extends IRadioModemIndication.Stub {
      * @param indicationType Type of radio indication
      */
     public void rilConnected(int indicationType) {
-        mRil.processIndication(RIL.MODEM_SERVICE, indicationType);
+        mRil.processIndication(HAL_SERVICE_MODEM, indicationType);
 
         if (mRil.isLogOrTrace()) mRil.unsljLog(RIL_UNSOL_RIL_CONNECTED);
 
@@ -129,5 +133,19 @@ public class ModemIndication extends IRadioModemIndication.Stub {
     @Override
     public int getInterfaceVersion() {
         return IRadioModemIndication.VERSION;
+    }
+
+    /**
+     * Indicates when there is a change in the IMEI with respect to the sim slot.
+     *
+     * @param imeiInfo IMEI information
+     */
+    public void onImeiMappingChanged(int indicationType, ImeiInfo imeiInfo) {
+        mRil.processIndication(HAL_SERVICE_MODEM, indicationType);
+
+        if (mRil.isLogOrTrace()) {
+            mRil.unsljLogMore(RIL_UNSOL_IMEI_MAPPING_CHANGED, "ImeiMappingChanged");
+        }
+        mRil.notifyRegistrantsImeiMappingChanged(imeiInfo);
     }
 }

@@ -31,7 +31,9 @@
 
 package com.android.internal.telephony.subscription;
 
+import android.annotation.ColorInt;
 import android.annotation.NonNull;
+import android.annotation.UserIdInt;
 import android.os.UserHandle;
 import android.provider.Telephony.SimInfo;
 import android.telephony.SubscriptionInfo;
@@ -42,7 +44,9 @@ import android.telephony.SubscriptionManager.SimDisplayNameSource;
 import android.telephony.SubscriptionManager.SubscriptionType;
 import android.telephony.SubscriptionManager.UsageSetting;
 import android.telephony.TelephonyManager;
+import android.telephony.UiccAccessRule;
 import android.telephony.ims.ImsMmTelManager;
+import android.text.TextUtils;
 
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.util.TelephonyUtils;
@@ -59,9 +63,9 @@ import java.util.Objects;
  * The difference between {@link SubscriptionInfo} and this class is that {@link SubscriptionInfo}
  * is a subset of this class. This is intended to solve the problem that some database fields
  * required higher permission like
- * {@link android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE} to access while
+ * {@link android.Manifest.permission#READ_PRIVILEGED_PHONE_STATE} to access while
  * {@link SubscriptionManager#getActiveSubscriptionIdList()} only requires
- * {@link android.Manifest.permission.READ_PHONE_STATE} to access. Sometimes blanking out fields in
+ * {@link android.Manifest.permission#READ_PHONE_STATE} to access. Sometimes blanking out fields in
  * {@link SubscriptionInfo} creates ambiguity for clients hard to distinguish between insufficient
  * permission versus true failure.
  *
@@ -111,6 +115,7 @@ public class SubscriptionInfoInternal {
     /**
      * The color to be used for tinting the icon when displaying to the user.
      */
+    @ColorInt
     private final int mIconTint;
 
     /**
@@ -180,10 +185,70 @@ public class SubscriptionInfoInternal {
     /**
      * Whether an embedded subscription is on a removable card. Such subscriptions are marked
      * inaccessible as soon as the current card is removed. Otherwise, they will remain accessible
-     * unless explicitly deleted. Only meaningful when {@link #isEmbedded()} is {@code true}. It
+     * unless explicitly deleted. Only meaningful when {@link #getEmbedded()} is {@code 1}. It
      * is intended to use integer to fit the database format.
      */
     private final int mIsRemovableEmbedded;
+
+    /**
+     * Whether cell broadcast extreme threat alert is enabled by the user or not.
+     */
+    private int mIsExtremeThreatAlertEnabled;
+
+    /**
+     * Whether cell broadcast severe threat alert is enabled by the user or not.
+     */
+    private int mIsSevereThreatAlertEnabled;
+
+    /**
+     * Whether cell broadcast amber alert is enabled by the user or not.
+     */
+    private int mIsAmberAlertEnabled;
+
+    /**
+     * Whether cell broadcast emergency alert is enabled by the user or not.
+     */
+    private int mIsEmergencyAlertEnabled;
+
+    /**
+     * Cell broadcast alert sound duration in seconds.
+     */
+    private int mAlertSoundDuration;
+
+    /**
+     * Cell broadcast alert reminder interval in minutes.
+     */
+    private int mReminderInterval;
+
+    /**
+     * Whether cell broadcast alert vibration is enabled by the user or not.
+     */
+    private int mIsAlertVibrationEnabled;
+
+    /**
+     * Whether cell broadcast alert speech is enabled by the user or not.
+     */
+    private int mIsAlertSpeechEnabled;
+
+    /**
+     * Whether ETWS test alert is enabled by the user or not.
+     */
+    private int mIsEtwsTestAlertEnabled;
+
+    /**
+     * Whether area info message is enabled by the user or not.
+     */
+    private int mIsAreaInfoMessageEnabled;
+
+    /**
+     * Whether cell broadcast test alert is enabled by the user or not.
+     */
+    private int mIsTestAlertEnabled;
+
+    /**
+     * Whether cell broadcast opt-out dialog should be shown or not.
+     */
+    private int mIsOptOutDialogEnabled;
 
     /**
      * Whether enhanced 4G mode is enabled by the user or not. It is intended to use integer to fit
@@ -251,8 +316,8 @@ public class SubscriptionInfoInternal {
     /**
      * The profile class populated from the profile metadata if present. Otherwise,
      * the profile class defaults to {@link SubscriptionManager#PROFILE_CLASS_UNSET} if there is no
-     * profile metadata or the subscription is not on an eUICC ({@link #isEmbedded} returns
-     * {@code false}).
+     * profile metadata or the subscription is not on an eUICC ({@link #getEmbedded} returns
+     * {@code 0}).
      */
     @ProfileClass
     private final int mProfileClass;
@@ -371,6 +436,24 @@ public class SubscriptionInfoInternal {
      */
     private final int mUserId;
 
+    /**
+     * Whether satellite is enabled or disabled.
+     * By default, its disabled. It is intended to use integer to fit the database format.
+     */
+    private final int mIsSatelliteEnabled;
+
+    /**
+     * Whether satellite attach for carrier is enabled or disabled by user.
+     * By default, its disabled. It is intended to use integer to fit the database format.
+     */
+    private final int mIsSatelliteAttachEnabledForCarrier;
+
+    /**
+     * Whether this subscription is used for communicating with non-terrestrial networks.
+     * By default, its disabled. It is intended to use integer to fit the database format.
+     */
+    private final int mIsOnlyNonTerrestrialNetwork;
+
     // Below are the fields that do not exist in the SimInfo table.
     /**
      * The card ID of the SIM card. This maps uniquely to {@link #mCardString}.
@@ -409,6 +492,18 @@ public class SubscriptionInfoInternal {
         this.mNativeAccessRules = builder.mNativeAccessRules;
         this.mCarrierConfigAccessRules = builder.mCarrierConfigAccessRules;
         this.mIsRemovableEmbedded = builder.mIsRemovableEmbedded;
+        this.mIsExtremeThreatAlertEnabled = builder.mIsExtremeThreatAlertEnabled;
+        this.mIsSevereThreatAlertEnabled = builder.mIsSevereThreatAlertEnabled;
+        this.mIsAmberAlertEnabled = builder.mIsAmberAlertEnabled;
+        this.mIsEmergencyAlertEnabled = builder.mIsEmergencyAlertEnabled;
+        this.mAlertSoundDuration = builder.mAlertSoundDuration;
+        this.mReminderInterval = builder.mReminderInterval;
+        this.mIsAlertVibrationEnabled = builder.mIsAlertVibrationEnabled;
+        this.mIsAlertSpeechEnabled = builder.mIsAlertSpeechEnabled;
+        this.mIsEtwsTestAlertEnabled = builder.mIsEtwsTestAlertEnabled;
+        this.mIsAreaInfoMessageEnabled = builder.mIsAreaInfoMessageEnabled;
+        this.mIsTestAlertEnabled = builder.mIsTestAlertEnabled;
+        this.mIsOptOutDialogEnabled = builder.mIsOptOutDialogEnabled;
         this.mIsEnhanced4GModeEnabled = builder.mIsEnhanced4GModeEnabled;
         this.mIsVideoTelephonyEnabled = builder.mIsVideoTelephonyEnabled;
         this.mIsWifiCallingEnabled = builder.mIsWifiCallingEnabled;
@@ -440,6 +535,10 @@ public class SubscriptionInfoInternal {
         this.mUsageSetting = builder.mUsageSetting;
         this.mLastUsedTPMessageReference = builder.mLastUsedTPMessageReference;
         this.mUserId = builder.mUserId;
+        this.mIsSatelliteEnabled = builder.mIsSatelliteEnabled;
+        this.mIsSatelliteAttachEnabledForCarrier =
+                builder.mIsSatelliteAttachEnabledForCarrier;
+        this.mIsOnlyNonTerrestrialNetwork = builder.mIsOnlyNonTerrestrialNetwork;
 
         // Below are the fields that do not exist in the SimInfo table.
         this.mCardId = builder.mCardId;
@@ -479,7 +578,7 @@ public class SubscriptionInfoInternal {
      * @see #getCarrierName()
      */
     @NonNull
-    public CharSequence getDisplayName() {
+    public String getDisplayName() {
         return mDisplayName;
     }
 
@@ -490,7 +589,7 @@ public class SubscriptionInfoInternal {
      * @see #getDisplayName()
      */
     @NonNull
-    public CharSequence getCarrierName() {
+    public String getCarrierName() {
         return mCarrierName;
     }
 
@@ -507,6 +606,7 @@ public class SubscriptionInfoInternal {
      *
      * @return A hexadecimal color value.
      */
+    @ColorInt
     public int getIconTint() {
         return mIconTint;
     }
@@ -531,7 +631,7 @@ public class SubscriptionInfoInternal {
      * @return The mobile country code.
      */
     @NonNull
-    public String getMccString() {
+    public String getMcc() {
         return mMcc;
     }
 
@@ -539,7 +639,7 @@ public class SubscriptionInfoInternal {
      * @return The mobile network code.
      */
     @NonNull
-    public String getMncString() {
+    public String getMnc() {
         return mMnc;
     }
 
@@ -555,7 +655,7 @@ public class SubscriptionInfoInternal {
      * @return Home PLMNs associated with this subscription.
      */
     @NonNull
-    public String getHplmnsRaw() {
+    public String getHplmns() {
         return mHplmns;
     }
 
@@ -567,9 +667,9 @@ public class SubscriptionInfoInternal {
     }
 
     /**
-     * @return The raw database value of {@link #isEmbedded()}.
+     * @return {@code 1} if the subscription is from eSIM.
      */
-    public int isEmbeddedRaw() {
+    public int getEmbedded() {
         return mIsEmbedded;
     }
 
@@ -591,7 +691,7 @@ public class SubscriptionInfoInternal {
      * stored in the database.
      */
     @NonNull
-    public byte[] getNativeAccessRulesRaw() {
+    public byte[] getNativeAccessRules() {
         return mNativeAccessRules;
     }
 
@@ -600,65 +700,154 @@ public class SubscriptionInfoInternal {
      * This does not include access rules from the Uicc, whether embedded or non-embedded. This
      * is the raw string stored in the database.
      */
-    public byte[] getCarrierConfigAccessRulesRaw() {
+    public byte[] getCarrierConfigAccessRules() {
         return mCarrierConfigAccessRules;
     }
 
     /**
-     * Whether an embedded subscription is on a removable card. Such subscriptions are marked
-     * inaccessible as soon as the current card is removed. Otherwise, they will remain accessible
-     * unless explicitly deleted. Only meaningful when {@link #isEmbedded()} is {@code true}.
+     * @return {@code true} if an embedded subscription is on a removable card. Such subscriptions
+     * are marked inaccessible as soon as the current card is removed. Otherwise, they will remain
+     * accessible unless explicitly deleted. Only meaningful when {@link #getEmbedded()} is 1.
      */
     public boolean isRemovableEmbedded() {
         return mIsRemovableEmbedded != 0;
     }
 
     /**
-     * @return The raw database value of {@link #isRemovableEmbedded()}.
+     * @return {@code 1} if an embedded subscription is on a removable card. Such subscriptions are
+     * marked inaccessible as soon as the current card is removed. Otherwise, they will remain
+     * accessible unless explicitly deleted. Only meaningful when {@link #getEmbedded()} is 1.
      */
-    public int isRemovableEmbeddedRaw() {
+    public int getRemovableEmbedded() {
         return mIsRemovableEmbedded;
     }
 
     /**
-     * @return Whether enhanced 4G mode is enabled by the user or not.
+     * @return {@code 1} if cell broadcast extreme threat alert is enabled by the user.
      */
-    public boolean isEnhanced4GModeEnabled() {
-        return mIsEnhanced4GModeEnabled != 0;
+    public int getCellBroadcastExtremeThreatAlertEnabled() {
+        return mIsExtremeThreatAlertEnabled;
     }
 
     /**
-     * @return The raw database value of {@link #isEnhanced4GModeEnabled()}.
+     * @return {@code 1} if cell broadcast amber alert is enabled by the user.
      */
-    public int isEnhanced4GModeEnabledRaw() {
+    public int getCellBroadcastSevereThreatAlertEnabled() {
+        return mIsSevereThreatAlertEnabled;
+    }
+
+    /**
+     * @return {@code 1} if cell broadcast emergency alert is enabled by the user.
+     */
+    public int getCellBroadcastAmberAlertEnabled() {
+        return mIsAmberAlertEnabled;
+    }
+
+    /**
+     * @return {@code 1} if cell broadcast emergency alert is enabled by the user.
+     */
+    public int getCellBroadcastEmergencyAlertEnabled() {
+        return mIsEmergencyAlertEnabled;
+    }
+
+    /**
+     * @return {@code 1} if cell broadcast alert sound duration in seconds.
+     */
+    public int getCellBroadcastAlertSoundDuration() {
+        return mAlertSoundDuration;
+    }
+
+    /**
+     * @return Cell broadcast alert reminder interval in minutes.
+     */
+    public int getCellBroadcastAlertReminderInterval() {
+        return mReminderInterval;
+    }
+
+    /**
+     * @return {@code 1} if cell broadcast alert vibration is enabled by the user.
+     */
+    public int getCellBroadcastAlertVibrationEnabled() {
+        return mIsAlertVibrationEnabled;
+    }
+
+    /**
+     * @return {@code 1} if cell broadcast alert speech is enabled by the user.
+     */
+    public int getCellBroadcastAlertSpeechEnabled() {
+        return mIsAlertSpeechEnabled;
+    }
+
+    /**
+     * @return {@code 1} if ETWS test alert is enabled by the user.
+     */
+    public int getCellBroadcastEtwsTestAlertEnabled() {
+        return mIsEtwsTestAlertEnabled;
+    }
+
+    /**
+     * @return {@code 1} if area info message is enabled by the user.
+     */
+    public int getCellBroadcastAreaInfoMessageEnabled() {
+        return mIsAreaInfoMessageEnabled;
+    }
+
+    /**
+     * @return {@code 1} if cell broadcast test alert is enabled by the user.
+     */
+    public int getCellBroadcastTestAlertEnabled() {
+        return mIsTestAlertEnabled;
+    }
+
+    /**
+     * @return {@code 1} if cell broadcast opt-out dialog should be shown.
+     */
+    public int getCellBroadcastOptOutDialogEnabled() {
+        return mIsOptOutDialogEnabled;
+    }
+
+    /**
+     * @return {@code true} if enhanced 4G mode is enabled by the user or not.
+     */
+    public boolean isEnhanced4GModeEnabled() {
+        return mIsEnhanced4GModeEnabled == 1;
+    }
+
+    /**
+     * @return {@code 1} if enhanced 4G mode is enabled by the user or not. {@code 0} if disabled.
+     * {@code -1} if the user did not change any setting.
+     */
+    public int getEnhanced4GModeEnabled() {
         return mIsEnhanced4GModeEnabled;
     }
 
     /**
-     * @return Whether video telephony is enabled by the user or not.
+     * @return {@code true} if video telephony is enabled by the user or not.
      */
     public boolean isVideoTelephonyEnabled() {
         return mIsVideoTelephonyEnabled != 0;
     }
 
     /**
-     * @return The raw database value of {@link #isVideoTelephonyEnabled()}.
+     * @return {@code 1} if video telephony is enabled by the user or not.
      */
-    public int isVideoTelephonyEnabledRaw() {
+    public int getVideoTelephonyEnabled() {
         return mIsVideoTelephonyEnabled;
     }
 
     /**
-     * @return Whether Wi-Fi calling is enabled by the user or not when the device is not roaming.
+     * @return {@code true} if Wi-Fi calling is enabled by the user or not when the device is not
+     * roaming.
      */
     public boolean isWifiCallingEnabled() {
-        return mIsWifiCallingEnabled != 0;
+        return mIsWifiCallingEnabled == 1;
     }
 
     /**
-     * @return The raw database value of {@link #isWifiCallingEnabled()}.
+     * @return {@code 1} if Wi-Fi calling is enabled by the user or not when the device is not
+     * roaming. {@code 0} if disabled. {@code -1} if the user did not change any setting.
      */
-    public int isWifiCallingEnabledRaw() {
+    public int getWifiCallingEnabled() {
         return mIsWifiCallingEnabled;
     }
 
@@ -671,7 +860,7 @@ public class SubscriptionInfoInternal {
     }
 
     /**
-     * @return Whether Wi-Fi calling is enabled by the user or not when the device is roaming.
+     * @return Wi-Fi calling mode when the device is roaming.
      */
     @ImsMmTelManager.WiFiCallingMode
     public int getWifiCallingModeForRoaming() {
@@ -679,16 +868,17 @@ public class SubscriptionInfoInternal {
     }
 
     /**
-     * @return Whether Wi-Fi calling is enabled by the user or not when the device is roaming.
+     * @return {@code true} if Wi-Fi calling is enabled by the user or not when the device is
+     * roaming. {@code 0} if disabled. {@code -1} if the user did not change any setting.
      */
     public boolean isWifiCallingEnabledForRoaming() {
-        return mIsWifiCallingEnabledForRoaming != 0;
+        return mIsWifiCallingEnabledForRoaming == 1;
     }
 
     /**
-     * @return The raw database value of {@link #isWifiCallingEnabledForRoaming()}.
+     * @return {@code 1} if Wi-Fi calling is enabled by the user or not when the device is roaming.
      */
-    public int isWifiCallingEnabledForRoamingRaw() {
+    public int getWifiCallingEnabledForRoaming() {
         return mIsWifiCallingEnabledForRoaming;
     }
 
@@ -696,29 +886,32 @@ public class SubscriptionInfoInternal {
      * An opportunistic subscription connects to a network that is
      * limited in functionality and / or coverage.
      *
-     * @return Whether subscription is opportunistic.
+     * @return {@code true} if subscription is opportunistic.
      */
     public boolean isOpportunistic() {
         return mIsOpportunistic != 0;
     }
 
     /**
-     * @return The raw database value of {@link #isOpportunistic()}.
+     * An opportunistic subscription connects to a network that is
+     * limited in functionality and / or coverage.
+     *
+     * @return {@code 1} if subscription is opportunistic.
      */
-    public int isOpportunisticRaw() {
+    public int getOpportunistic() {
         return mIsOpportunistic;
     }
 
     /**
      * Used in scenarios where different subscriptions are bundled as a group.
-     * It's typically a primary and an opportunistic subscription. (see {@link #isOpportunistic()})
+     * It's typically a primary and an opportunistic subscription. (see {@link #getOpportunistic()})
      * Such that those subscriptions will have some affiliated behaviors such as opportunistic
      * subscription may be invisible to the user.
      *
      * @return Group UUID in string format.
      */
     @NonNull
-    public String getGroupUuidRaw() {
+    public String getGroupUuid() {
         return mGroupUuid;
     }
 
@@ -741,8 +934,8 @@ public class SubscriptionInfoInternal {
     /**
      * @return The profile class populated from the profile metadata if present. Otherwise,
      * the profile class defaults to {@link SubscriptionManager#PROFILE_CLASS_UNSET} if there is no
-     * profile metadata or the subscription is not on an eUICC ({@link #isEmbedded} return
-     * {@code false}).
+     * profile metadata or the subscription is not on an eUICC ({@link #getEmbedded} return
+     * {@code 0}).
      */
     @ProfileClass
     public int getProfileClass() {
@@ -775,7 +968,7 @@ public class SubscriptionInfoInternal {
      * @see com.android.internal.telephony.data.DataSettingsManager#getMobileDataPolicyEnabled
      */
     @NonNull
-    public String getEnabledMobileDataPoliciesRaw() {
+    public String getEnabledMobileDataPolicies() {
         return mEnabledMobileDataPolicies;
     }
 
@@ -795,14 +988,14 @@ public class SubscriptionInfoInternal {
     }
 
     /**
-     * @return The raw database value of {@link #areUiccApplicationsEnabled()}.
+     * @return {@code 1} if Uicc applications are set to be enabled or disabled.
      */
-    public int areUiccApplicationsEnabledRaw() {
+    public int getUiccApplicationsEnabled() {
         return mAreUiccApplicationsEnabled;
     }
 
     /**
-     * @return Whether the user has enabled IMS RCS User Capability Exchange (UCE) for this
+     * @return {@code true} if the user has enabled IMS RCS User Capability Exchange (UCE) for this
      * subscription.
      */
     public boolean isRcsUceEnabled() {
@@ -810,23 +1003,24 @@ public class SubscriptionInfoInternal {
     }
 
     /**
-     * @return The raw database value of {@link #isRcsUceEnabled()}.
+     * @return {@code 1} if the user has enabled IMS RCS User Capability Exchange (UCE) for this
+     * subscription.
      */
-    public int isRcsUceEnabledRaw() {
+    public int getRcsUceEnabled() {
         return mIsRcsUceEnabled;
     }
 
     /**
-     * @return Whether the user has enabled cross SIM calling for this subscription.
+     * @return {@code true} if the user has enabled cross SIM calling for this subscription.
      */
     public boolean isCrossSimCallingEnabled() {
         return mIsCrossSimCallingEnabled != 0;
     }
 
     /**
-     * @return The raw database value of {@link #isCrossSimCallingEnabled()}.
+     * @return {@code 1} if the user has enabled cross SIM calling for this subscription.
      */
-    public int isCrossSimCallingEnabledRaw() {
+    public int getCrossSimCallingEnabled() {
         return mIsCrossSimCallingEnabled;
     }
 
@@ -858,16 +1052,16 @@ public class SubscriptionInfoInternal {
     }
 
     /**
-     * @return Whether the user has opted-in voice over IMS.
+     * @return {@code true} if the user has opted-in voice over IMS.
      */
     public boolean isVoImsOptInEnabled() {
         return mIsVoImsOptInEnabled != 0;
     }
 
     /**
-     * @return The raw database value of {@link #isVoImsOptInEnabled()}.
+     * @return {@code 1} if the user has opted-in voice over IMS.
      */
-    public int isVoImsOptInEnabledRaw() {
+    public int getVoImsOptInEnabled() {
         return mIsVoImsOptInEnabled;
     }
 
@@ -880,16 +1074,17 @@ public class SubscriptionInfoInternal {
     }
 
     /**
-     * @return Whether the user has enabled NR advanced calling.
+     * @return {@code true} if the user has enabled NR advanced calling.
      */
     public boolean isNrAdvancedCallingEnabled() {
-        return mIsNrAdvancedCallingEnabled != 0;
+        return mIsNrAdvancedCallingEnabled == 1;
     }
 
     /**
-     * @return The raw database value of {@link #isNrAdvancedCallingEnabled()}.
+     * @return {@code 1} if the user has enabled NR advanced calling. {code 0} if disabled.
+     * {code -1} if the user did not change any setting.
      */
-    public int isNrAdvancedCallingEnabledRaw() {
+    public int getNrAdvancedCallingEnabled() {
         return mIsNrAdvancedCallingEnabled;
     }
 
@@ -936,8 +1131,32 @@ public class SubscriptionInfoInternal {
     /**
      * @return The user id associated with this subscription.
      */
+    @UserIdInt
     public int getUserId() {
         return mUserId;
+    }
+
+    /**
+     * @return {@code 1} if satellite is enabled.
+     */
+    public int getSatelliteEnabled() {
+        return mIsSatelliteEnabled;
+    }
+
+    /**
+     * @return {@code 1} if satellite attach for carrier is enabled by user.
+     */
+    public int getSatelliteAttachEnabledForCarrier() {
+        return mIsSatelliteAttachEnabledForCarrier;
+    }
+
+    /**
+     * An NTN subscription connects to non-terrestrial networks.
+     *
+     * @return {@code 1} if the subscription is for non-terrestrial networks. {@code 0} otherwise.
+     */
+    public int getOnlyNonTerrestrialNetwork() {
+        return mIsOnlyNonTerrestrialNetwork;
     }
 
     // Below are the fields that do not exist in SimInfo table.
@@ -961,29 +1180,62 @@ public class SubscriptionInfoInternal {
     }
 
     /**
-     * Get ID stripped PII information on user build.
-     *
-     * @param id The PII id.
-     *
-     * @return The stripped string.
+     * @return {@code true} if the subscription is from the actively used SIM.
      */
-    public static String givePrintableId(String id) {
-        String idToPrint = null;
-        if (id != null) {
-            int len = id.length();
-            if (len > 6 && !TelephonyUtils.IS_DEBUGGABLE) {
-                idToPrint = id.substring(0, len - 6) + Rlog.pii(false, id.substring(len - 6));
-            } else {
-                idToPrint = id;
-            }
-        }
-        return idToPrint;
+    public boolean isActive() {
+        return mSimSlotIndex >= 0 || mType == SubscriptionManager.SUBSCRIPTION_TYPE_REMOTE_SIM;
+    }
+
+    /**
+     * @return {@code true} if the subscription is visible to the user.
+     */
+    public boolean isVisible() {
+        return !isOpportunistic() || TextUtils.isEmpty(mGroupUuid);
+    }
+
+    /** @return converted {@link SubscriptionInfo}. */
+    @NonNull
+    public SubscriptionInfo toSubscriptionInfo() {
+        return new SubscriptionInfo.Builder()
+                .setId(mId)
+                .setIccId(mIccId)
+                .setSimSlotIndex(mSimSlotIndex)
+                .setDisplayName(mDisplayName)
+                .setCarrierName(mCarrierName)
+                .setDisplayNameSource(mDisplayNameSource)
+                .setIconTint(mIconTint)
+                .setNumber(mNumber)
+                .setDataRoaming(mDataRoaming)
+                .setMcc(mMcc)
+                .setMnc(mMnc)
+                .setEhplmns(TextUtils.isEmpty(mEhplmns) ? null : mEhplmns.split(","))
+                .setHplmns(TextUtils.isEmpty(mHplmns) ? null : mHplmns.split(","))
+                .setCountryIso(mCountryIso)
+                .setEmbedded(mIsEmbedded != 0)
+                .setNativeAccessRules(mNativeAccessRules.length == 0
+                        ? null : UiccAccessRule.decodeRules(mNativeAccessRules))
+                .setCardString(mCardString)
+                .setCardId(mCardId)
+                .setOpportunistic(mIsOpportunistic != 0)
+                .setGroupUuid(mGroupUuid)
+                .setGroupDisabled(mIsGroupDisabled)
+                .setCarrierId(mCarrierId)
+                .setProfileClass(mProfileClass)
+                .setType(mType)
+                .setGroupOwner(mGroupOwner)
+                .setCarrierConfigAccessRules(mCarrierConfigAccessRules.length == 0
+                        ? null : UiccAccessRule.decodeRules(mCarrierConfigAccessRules))
+                .setUiccApplicationsEnabled(mAreUiccApplicationsEnabled != 0)
+                .setPortIndex(mPortIndex)
+                .setUsageSetting(mUsageSetting)
+                .setOnlyNonTerrestrialNetwork(mIsOnlyNonTerrestrialNetwork == 1)
+                .build();
     }
 
     @Override
     public String toString() {
         return "[SubscriptionInfoInternal: id=" + mId
-                + " iccId=" + givePrintableId(mIccId)
+                + " iccId=" + SubscriptionInfo.getPrintableId(mIccId)
                 + " simSlotIndex=" + mSimSlotIndex
                 + " portIndex=" + mPortIndex
                 + " isEmbedded=" + mIsEmbedded
@@ -1003,7 +1255,7 @@ public class SubscriptionInfoInternal {
                 + " mnc=" + mMnc
                 + " ehplmns=" + mEhplmns
                 + " hplmns=" + mHplmns
-                + " cardString=" + givePrintableId(mCardString)
+                + " cardString=" + SubscriptionInfo.getPrintableId(mCardString)
                 + " cardId=" + mCardId
                 + " nativeAccessRules=" + IccUtils.bytesToHexString(mNativeAccessRules)
                 + " carrierConfigAccessRules=" + IccUtils.bytesToHexString(
@@ -1021,7 +1273,7 @@ public class SubscriptionInfoInternal {
                 + " wifiCallingModeForRoaming="
                 + ImsMmTelManager.wifiCallingModeToString(mWifiCallingModeForRoaming)
                 + " enabledMobileDataPolicies=" + mEnabledMobileDataPolicies
-                + " imsi=" + givePrintableId(mImsi)
+                + " imsi=" + SubscriptionInfo.getPrintableId(mImsi)
                 + " rcsUceEnabled=" + mIsRcsUceEnabled
                 + " crossSimCallingEnabled=" + mIsCrossSimCallingEnabled
                 + " rcsConfig=" + IccUtils.bytesToHexString(mRcsConfig)
@@ -1029,9 +1281,12 @@ public class SubscriptionInfoInternal {
                 + " deviceToDeviceStatusSharingPreference=" + mDeviceToDeviceStatusSharingPreference
                 + " isVoImsOptInEnabled=" + mIsVoImsOptInEnabled
                 + " deviceToDeviceStatusSharingContacts=" + mDeviceToDeviceStatusSharingContacts
-                + " numberFromCarrier=" + mNumberFromCarrier
-                + " numberFromIms=" + mNumberFromIms
+                + " numberFromCarrier=" + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, mNumberFromCarrier)
+                + " numberFromIms=" + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, mNumberFromIms)
                 + " userId=" + mUserId
+                + " isSatelliteEnabled=" + mIsSatelliteEnabled
+                + " satellite_attach_enabled_for_carrier=" + mIsSatelliteAttachEnabledForCarrier
+                + " getOnlyNonTerrestrialNetwork=" + mIsOnlyNonTerrestrialNetwork
                 + " isGroupDisabled=" + mIsGroupDisabled
                 + "]";
     }
@@ -1045,6 +1300,16 @@ public class SubscriptionInfoInternal {
                 && mDisplayNameSource == that.mDisplayNameSource && mIconTint == that.mIconTint
                 && mDataRoaming == that.mDataRoaming && mIsEmbedded == that.mIsEmbedded
                 && mIsRemovableEmbedded == that.mIsRemovableEmbedded
+                && mIsExtremeThreatAlertEnabled == that.mIsExtremeThreatAlertEnabled
+                && mIsSevereThreatAlertEnabled == that.mIsSevereThreatAlertEnabled
+                && mIsAmberAlertEnabled == that.mIsAmberAlertEnabled
+                && mIsEmergencyAlertEnabled == that.mIsEmergencyAlertEnabled
+                && mAlertSoundDuration == that.mAlertSoundDuration
+                && mReminderInterval == that.mReminderInterval
+                && mIsAlertVibrationEnabled == that.mIsAlertVibrationEnabled
+                && mIsAlertSpeechEnabled == that.mIsAlertSpeechEnabled
+                && mIsEtwsTestAlertEnabled == that.mIsEtwsTestAlertEnabled
+                && mIsAreaInfoMessageEnabled == that.mIsAreaInfoMessageEnabled
                 && mIsEnhanced4GModeEnabled == that.mIsEnhanced4GModeEnabled
                 && mIsVideoTelephonyEnabled == that.mIsVideoTelephonyEnabled
                 && mIsWifiCallingEnabled == that.mIsWifiCallingEnabled
@@ -1062,30 +1327,35 @@ public class SubscriptionInfoInternal {
                 && mIsNrAdvancedCallingEnabled == that.mIsNrAdvancedCallingEnabled
                 && mPortIndex == that.mPortIndex && mUsageSetting == that.mUsageSetting
                 && mLastUsedTPMessageReference == that.mLastUsedTPMessageReference
-                && mUserId == that.mUserId && mCardId == that.mCardId
-                && mIsGroupDisabled == that.mIsGroupDisabled && mIccId.equals(that.mIccId)
-                && mDisplayName.equals(that.mDisplayName) && mCarrierName.equals(that.mCarrierName)
-                && mNumber.equals(that.mNumber) && mMcc.equals(that.mMcc) && mMnc.equals(that.mMnc)
-                && mEhplmns.equals(that.mEhplmns) && mHplmns.equals(that.mHplmns)
-                && mCardString.equals(
-                that.mCardString) && Arrays.equals(mNativeAccessRules,
-                that.mNativeAccessRules) && Arrays.equals(mCarrierConfigAccessRules,
-                that.mCarrierConfigAccessRules) && mGroupUuid.equals(that.mGroupUuid)
-                && mCountryIso.equals(that.mCountryIso) && mGroupOwner.equals(that.mGroupOwner)
-                && mEnabledMobileDataPolicies.equals(that.mEnabledMobileDataPolicies)
-                && mImsi.equals(
-                that.mImsi) && Arrays.equals(mRcsConfig, that.mRcsConfig)
-                && mAllowedNetworkTypesForReasons.equals(that.mAllowedNetworkTypesForReasons)
-                && mDeviceToDeviceStatusSharingContacts.equals(
+                && mUserId == that.mUserId && mIsSatelliteEnabled == that.mIsSatelliteEnabled
+                && mCardId == that.mCardId && mIsGroupDisabled == that.mIsGroupDisabled
+                && mIccId.equals(that.mIccId) && mDisplayName.equals(that.mDisplayName)
+                && mCarrierName.equals(that.mCarrierName) && mNumber.equals(that.mNumber)
+                && mMcc.equals(that.mMcc) && mMnc.equals(that.mMnc) && mEhplmns.equals(
+                that.mEhplmns)
+                && mHplmns.equals(that.mHplmns) && mCardString.equals(that.mCardString)
+                && Arrays.equals(mNativeAccessRules, that.mNativeAccessRules)
+                && Arrays.equals(mCarrierConfigAccessRules, that.mCarrierConfigAccessRules)
+                && mGroupUuid.equals(that.mGroupUuid) && mCountryIso.equals(that.mCountryIso)
+                && mGroupOwner.equals(that.mGroupOwner) && mEnabledMobileDataPolicies.equals(
+                that.mEnabledMobileDataPolicies) && mImsi.equals(that.mImsi) && Arrays.equals(
+                mRcsConfig, that.mRcsConfig) && mAllowedNetworkTypesForReasons.equals(
+                that.mAllowedNetworkTypesForReasons) && mDeviceToDeviceStatusSharingContacts.equals(
                 that.mDeviceToDeviceStatusSharingContacts) && mNumberFromCarrier.equals(
-                that.mNumberFromCarrier) && mNumberFromIms.equals(that.mNumberFromIms);
+                that.mNumberFromCarrier) && mNumberFromIms.equals(that.mNumberFromIms)
+                && mIsSatelliteAttachEnabledForCarrier == that.mIsSatelliteAttachEnabledForCarrier
+                && mIsOnlyNonTerrestrialNetwork == that.mIsOnlyNonTerrestrialNetwork;
     }
 
     @Override
     public int hashCode() {
         int result = Objects.hash(mId, mIccId, mSimSlotIndex, mDisplayName, mCarrierName,
                 mDisplayNameSource, mIconTint, mNumber, mDataRoaming, mMcc, mMnc, mEhplmns, mHplmns,
-                mIsEmbedded, mCardString, mIsRemovableEmbedded, mIsEnhanced4GModeEnabled,
+                mIsEmbedded, mCardString, mIsRemovableEmbedded, mIsExtremeThreatAlertEnabled,
+                mIsSevereThreatAlertEnabled, mIsAmberAlertEnabled, mIsEmergencyAlertEnabled,
+                mAlertSoundDuration, mReminderInterval, mIsAlertVibrationEnabled,
+                mIsAlertSpeechEnabled,
+                mIsEtwsTestAlertEnabled, mIsAreaInfoMessageEnabled, mIsEnhanced4GModeEnabled,
                 mIsVideoTelephonyEnabled, mIsWifiCallingEnabled, mWifiCallingMode,
                 mWifiCallingModeForRoaming, mIsWifiCallingEnabledForRoaming, mIsOpportunistic,
                 mGroupUuid, mCountryIso, mCarrierId, mProfileClass, mType, mGroupOwner,
@@ -1095,7 +1365,8 @@ public class SubscriptionInfoInternal {
                 mDeviceToDeviceStatusSharingContacts, mIsNrAdvancedCallingEnabled,
                 mNumberFromCarrier,
                 mNumberFromIms, mPortIndex, mUsageSetting, mLastUsedTPMessageReference, mUserId,
-                mCardId, mIsGroupDisabled);
+                mIsSatelliteEnabled, mCardId, mIsGroupDisabled,
+                mIsSatelliteAttachEnabledForCarrier, mIsOnlyNonTerrestrialNetwork);
         result = 31 * result + Arrays.hashCode(mNativeAccessRules);
         result = 31 * result + Arrays.hashCode(mCarrierConfigAccessRules);
         result = 31 * result + Arrays.hashCode(mRcsConfig);
@@ -1214,25 +1485,85 @@ public class SubscriptionInfoInternal {
         /**
          * Whether an embedded subscription is on a removable card. Such subscriptions are marked
          * inaccessible as soon as the current card is removed. Otherwise, they will remain
-         * accessible unless explicitly deleted. Only meaningful when {@link #isEmbedded()} is
-         * {@code true}.
+         * accessible unless explicitly deleted. Only meaningful when {@link #getEmbedded()} is
+         * {@code 1}.
          */
         private int mIsRemovableEmbedded = 0;
 
         /**
+         * Whether cell broadcast extreme threat alert is enabled by the user or not.
+         */
+        private int mIsExtremeThreatAlertEnabled = 1;
+
+        /**
+         * Whether cell broadcast severe threat alert is enabled by the user or not.
+         */
+        private int mIsSevereThreatAlertEnabled = 1;
+
+        /**
+         * Whether cell broadcast amber alert is enabled by the user or not.
+         */
+        private int mIsAmberAlertEnabled = 1;
+
+        /**
+         * Whether cell broadcast emergency alert is enabled by the user or not.
+         */
+        private int mIsEmergencyAlertEnabled = 1;
+
+        /**
+         * Cell broadcast alert sound duration in seconds.
+         */
+        private int mAlertSoundDuration = 4;
+
+        /**
+         * Cell broadcast alert reminder interval in minutes.
+         */
+        private int mReminderInterval = 0;
+
+        /**
+         * Whether cell broadcast alert vibration is enabled by the user or not.
+         */
+        private int mIsAlertVibrationEnabled = 1;
+
+        /**
+         * Whether cell broadcast alert speech is enabled by the user or not.
+         */
+        private int mIsAlertSpeechEnabled = 1;
+
+        /**
+         * Whether ETWS test alert is enabled by the user or not.
+         */
+        private int mIsEtwsTestAlertEnabled = 0;
+
+        /**
+         * Whether area info message is enabled by the user or not.
+         */
+        private int mIsAreaInfoMessageEnabled = 1;
+
+        /**
+         * Whether cell broadcast test alert is enabled by the user or not.
+         */
+        private int mIsTestAlertEnabled = 0;
+
+        /**
+         * Whether cell broadcast opt-out dialog should be shown or not.
+         */
+        private int mIsOptOutDialogEnabled = 1;
+
+        /**
          * Whether enhanced 4G mode is enabled by the user or not.
          */
-        private int mIsEnhanced4GModeEnabled = 0;
+        private int mIsEnhanced4GModeEnabled = -1;
 
         /**
          * Whether video telephony is enabled by the user or not.
          */
-        private int mIsVideoTelephonyEnabled = 0;
+        private int mIsVideoTelephonyEnabled = -1;
 
         /**
          * Whether Wi-Fi calling is enabled by the user or not when the device is not roaming.
          */
-        private int mIsWifiCallingEnabled = 0;
+        private int mIsWifiCallingEnabled = -1;
 
         /**
          * Wi-Fi calling mode when the device is not roaming.
@@ -1249,7 +1580,7 @@ public class SubscriptionInfoInternal {
         /**
          * Whether Wi-Fi calling is enabled by the user or not when the device is roaming.
          */
-        private int mIsWifiCallingEnabledForRoaming = 0;
+        private int mIsWifiCallingEnabledForRoaming = -1;
 
         /**
          * Whether the subscription is opportunistic or not.
@@ -1278,8 +1609,8 @@ public class SubscriptionInfoInternal {
         /**
          * The profile class populated from the profile metadata if present. Otherwise, the profile
          * class defaults to {@link SubscriptionManager#PROFILE_CLASS_UNSET} if there is no profile
-         * metadata or the subscription is not on an eUICC ({@link #isEmbedded} returns
-         * {@code false}).
+         * metadata or the subscription is not on an eUICC ({@link #getEmbedded} returns
+         * {@code 0}).
          */
         @ProfileClass
         private int mProfileClass = SubscriptionManager.PROFILE_CLASS_UNSET;
@@ -1311,7 +1642,7 @@ public class SubscriptionInfoInternal {
         /**
          * Whether Uicc applications are configured to enable or not.
          */
-        private int mAreUiccApplicationsEnabled = 0;
+        private int mAreUiccApplicationsEnabled = 1;
 
         /**
          * Whether the user has enabled IMS RCS User Capability Exchange (UCE) for this
@@ -1358,7 +1689,7 @@ public class SubscriptionInfoInternal {
         /**
          * Whether the user has enabled NR advanced calling.
          */
-        private int mIsNrAdvancedCallingEnabled = 0;
+        private int mIsNrAdvancedCallingEnabled = -1;
 
         /**
          * The phone number retrieved from carrier.
@@ -1392,6 +1723,21 @@ public class SubscriptionInfoInternal {
          * The user id associated with this subscription.
          */
         private int mUserId = UserHandle.USER_NULL;
+
+        /**
+         * Whether satellite is enabled or not.
+         */
+        private int mIsSatelliteEnabled = 0;
+
+        /**
+         * Whether satellite attach for carrier is enabled by user.
+         */
+        private int mIsSatelliteAttachEnabledForCarrier = 0;
+
+        /**
+         * Whether this subscription is used for communicating with non-terrestrial network or not.
+         */
+        private int mIsOnlyNonTerrestrialNetwork = 0;
 
         // The following fields do not exist in the SimInfo table.
         /**
@@ -1437,6 +1783,18 @@ public class SubscriptionInfoInternal {
             mNativeAccessRules = info.mNativeAccessRules;
             mCarrierConfigAccessRules = info.mCarrierConfigAccessRules;
             mIsRemovableEmbedded = info.mIsRemovableEmbedded;
+            mIsExtremeThreatAlertEnabled = info.mIsExtremeThreatAlertEnabled;
+            mIsSevereThreatAlertEnabled = info.mIsSevereThreatAlertEnabled;
+            mIsAmberAlertEnabled = info.mIsAmberAlertEnabled;
+            mIsEmergencyAlertEnabled = info.mIsEmergencyAlertEnabled;
+            mAlertSoundDuration = info.mAlertSoundDuration;
+            mReminderInterval = info.mReminderInterval;
+            mIsAlertVibrationEnabled = info.mIsAlertVibrationEnabled;
+            mIsAlertSpeechEnabled = info.mIsAlertSpeechEnabled;
+            mIsEtwsTestAlertEnabled = info.mIsEtwsTestAlertEnabled;
+            mIsAreaInfoMessageEnabled = info.mIsAreaInfoMessageEnabled;
+            mIsTestAlertEnabled = info.mIsTestAlertEnabled;
+            mIsOptOutDialogEnabled = info.mIsOptOutDialogEnabled;
             mIsEnhanced4GModeEnabled = info.mIsEnhanced4GModeEnabled;
             mIsVideoTelephonyEnabled = info.mIsVideoTelephonyEnabled;
             mIsWifiCallingEnabled = info.mIsWifiCallingEnabled;
@@ -1467,6 +1825,9 @@ public class SubscriptionInfoInternal {
             mUsageSetting = info.mUsageSetting;
             mLastUsedTPMessageReference = info.getLastUsedTPMessageReference();
             mUserId = info.mUserId;
+            mIsSatelliteEnabled = info.mIsSatelliteEnabled;
+            mIsSatelliteAttachEnabledForCarrier = info.mIsSatelliteAttachEnabledForCarrier;
+            mIsOnlyNonTerrestrialNetwork = info.mIsOnlyNonTerrestrialNetwork;
             // Below are the fields that do not exist in the SimInfo table.
             mCardId = info.mCardId;
             mIsGroupDisabled = info.mIsGroupDisabled;
@@ -1658,7 +2019,7 @@ public class SubscriptionInfoInternal {
         /**
          * Set whether the subscription is from eSIM or not.
          *
-         * @param isEmbedded {@code true} if the subscription is from eSIM.
+         * @param isEmbedded {@code 1} if the subscription is from eSIM.
          *
          * @return The builder.
          */
@@ -1700,6 +2061,24 @@ public class SubscriptionInfoInternal {
         }
 
         /**
+         * Set the native access rules for this subscription, if it is embedded and defines any.
+         * This does not include access rules for non-embedded subscriptions.
+         *
+         * @param nativeAccessRules The native access rules for this subscription.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setNativeAccessRules(@NonNull List<UiccAccessRule> nativeAccessRules) {
+            Objects.requireNonNull(nativeAccessRules);
+            if (!nativeAccessRules.isEmpty()) {
+                mNativeAccessRules = UiccAccessRule.encodeRules(
+                        nativeAccessRules.toArray(new UiccAccessRule[0]));
+            }
+            return this;
+        }
+
+        /**
          * Set the carrier certificates for this subscription that are saved in carrier configs.
          * This does not include access rules from the Uicc, whether embedded or non-embedded.
          *
@@ -1717,8 +2096,8 @@ public class SubscriptionInfoInternal {
         /**
          * Set whether an embedded subscription is on a removable card. Such subscriptions are
          * marked inaccessible as soon as the current card is removed. Otherwise, they will remain
-         * accessible unless explicitly deleted. Only meaningful when {@link #isEmbedded()} is
-         * {@code true}.
+         * accessible unless explicitly deleted. Only meaningful when {@link #getEmbedded()} is
+         * {@code 1}.
          *
          * @param isRemovableEmbedded {@code true} if the subscription is from the removable
          * embedded SIM.
@@ -1726,8 +2105,190 @@ public class SubscriptionInfoInternal {
          * @return The builder.
          */
         @NonNull
+        public Builder setRemovableEmbedded(boolean isRemovableEmbedded) {
+            mIsRemovableEmbedded = isRemovableEmbedded ? 1 : 0;
+            return this;
+        }
+
+        /**
+         * Set whether an embedded subscription is on a removable card. Such subscriptions are
+         * marked inaccessible as soon as the current card is removed. Otherwise, they will remain
+         * accessible unless explicitly deleted. Only meaningful when {@link #getEmbedded()} is
+         * {@code 1}.
+         *
+         * @param isRemovableEmbedded {@code 1} if the subscription is from the removable
+         * embedded SIM.
+         *
+         * @return The builder.
+         */
+        @NonNull
         public Builder setRemovableEmbedded(int isRemovableEmbedded) {
             mIsRemovableEmbedded = isRemovableEmbedded;
+            return this;
+        }
+
+        /**
+         * Set whether cell broadcast extreme threat alert is enabled by the user or not.
+         *
+         * @param isExtremeThreatAlertEnabled whether cell broadcast extreme threat alert is enabled
+         * by the user or not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastExtremeThreatAlertEnabled(int isExtremeThreatAlertEnabled) {
+            mIsExtremeThreatAlertEnabled = isExtremeThreatAlertEnabled;
+            return this;
+        }
+
+        /**
+         * Set whether cell broadcast severe threat alert is enabled by the user or not.
+         *
+         * @param isSevereThreatAlertEnabled whether cell broadcast severe threat alert is enabled
+         * by the user or not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastSevereThreatAlertEnabled(int isSevereThreatAlertEnabled) {
+            mIsSevereThreatAlertEnabled = isSevereThreatAlertEnabled;
+            return this;
+        }
+
+        /**
+         * Set whether cell broadcast amber alert is enabled by the user or not.
+         *
+         * @param isAmberAlertEnabled whether cell broadcast amber alert is enabled by the user or
+         * not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastAmberAlertEnabled(int isAmberAlertEnabled) {
+            mIsAmberAlertEnabled = isAmberAlertEnabled;
+            return this;
+        }
+
+        /**
+         * Set whether cell broadcast emergency alert is enabled by the user or not.
+         *
+         * @param isEmergencyAlertEnabled whether cell broadcast emergency alert is enabled by the
+         * user or not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastEmergencyAlertEnabled(int isEmergencyAlertEnabled) {
+            mIsEmergencyAlertEnabled = isEmergencyAlertEnabled;
+            return this;
+        }
+
+        /**
+         * Set cell broadcast alert sound duration.
+         *
+         * @param alertSoundDuration Alert sound duration in seconds.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastAlertSoundDuration(int alertSoundDuration) {
+            mAlertSoundDuration = alertSoundDuration;
+            return this;
+        }
+
+        /**
+         * Set cell broadcast alert reminder interval in minutes.
+         *
+         * @param reminderInterval Alert reminder interval in minutes.
+         *
+         * @return The builder.
+         */
+        public Builder setCellBroadcastAlertReminderInterval(int reminderInterval) {
+            mReminderInterval = reminderInterval;
+            return this;
+        }
+
+        /**
+         * Set whether cell broadcast alert vibration is enabled by the user or not.
+         *
+         * @param isAlertVibrationEnabled whether cell broadcast alert vibration is enabled by the
+         * user or not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastAlertVibrationEnabled(int isAlertVibrationEnabled) {
+            mIsAlertVibrationEnabled = isAlertVibrationEnabled;
+            return this;
+        }
+
+        /**
+         * Set whether cell broadcast alert speech is enabled by the user or not.
+         *
+         * @param isAlertSpeechEnabled whether cell broadcast alert speech is enabled by the user or
+         * not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastAlertSpeechEnabled(int isAlertSpeechEnabled) {
+            mIsAlertSpeechEnabled = isAlertSpeechEnabled;
+            return this;
+        }
+
+        /**
+         * Set whether ETWS test alert is enabled by the user or not.
+         *
+         * @param isEtwsTestAlertEnabled whether cell broadcast ETWS test alert is enabled by the
+         * user or not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastEtwsTestAlertEnabled(int isEtwsTestAlertEnabled) {
+            mIsEtwsTestAlertEnabled = isEtwsTestAlertEnabled;
+            return this;
+        }
+
+        /**
+         * Set whether area info message is enabled by the user or not.
+         *
+         * @param isAreaInfoMessageEnabled whether cell broadcast area info message is enabled by
+         * the user or not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastAreaInfoMessageEnabled(int isAreaInfoMessageEnabled) {
+            mIsAreaInfoMessageEnabled = isAreaInfoMessageEnabled;
+            return this;
+        }
+
+        /**
+         * Set whether cell broadcast test alert is enabled by the user or not.
+         *
+         * @param isTestAlertEnabled whether cell broadcast test alert is enabled by the user or
+         * not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastTestAlertEnabled(int isTestAlertEnabled) {
+            mIsTestAlertEnabled = isTestAlertEnabled;
+            return this;
+        }
+
+        /**
+         * Set whether cell broadcast opt-out dialog should be shown or not.
+         *
+         * @param isOptOutDialogEnabled whether cell broadcast opt-out dialog should be shown or
+         * not.
+         *
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setCellBroadcastOptOutDialogEnabled(int isOptOutDialogEnabled) {
+            mIsOptOutDialogEnabled = isOptOutDialogEnabled;
             return this;
         }
 
@@ -1815,7 +2376,7 @@ public class SubscriptionInfoInternal {
         /**
          * Set whether the subscription is opportunistic or not.
          *
-         * @param isOpportunistic {@code true} if the subscription is opportunistic.
+         * @param isOpportunistic {@code 1} if the subscription is opportunistic.
          * @return The builder.
          */
         @NonNull
@@ -1933,7 +2494,7 @@ public class SubscriptionInfoInternal {
         /**
          * Set whether Uicc applications are configured to enable or not.
          *
-         * @param areUiccApplicationsEnabled {@code true} if Uicc applications are configured to
+         * @param areUiccApplicationsEnabled {@code 1} if Uicc applications are configured to
          * enable.
          * @return The builder.
          */
@@ -2121,8 +2682,45 @@ public class SubscriptionInfoInternal {
          * @return The builder.
          */
         @NonNull
-        public Builder setUserId(int userId) {
+        public Builder setUserId(@UserIdInt int userId) {
             mUserId = userId;
+            return this;
+        }
+
+        /**
+         * Set whether satellite is enabled or not.
+         * @param isSatelliteEnabled {@code 1} if satellite is enabled.
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setSatelliteEnabled(int isSatelliteEnabled) {
+            mIsSatelliteEnabled = isSatelliteEnabled;
+            return this;
+        }
+
+        /**
+         * Set whether satellite attach for carrier is enabled or disabled by user.
+         * @param isSatelliteAttachEnabledForCarrier {@code 1} if satellite attach for carrier is
+         * enabled.
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setSatelliteAttachEnabledForCarrier(
+                @NonNull int isSatelliteAttachEnabledForCarrier) {
+            mIsSatelliteAttachEnabledForCarrier = isSatelliteAttachEnabledForCarrier;
+            return this;
+        }
+
+        /**
+         * Set whether the subscription is for NTN or not.
+         *
+         * @param isOnlyNonTerrestrialNetwork {@code 1} if the subscription is for NTN, {@code 0}
+         * otherwise.
+         * @return The builder.
+         */
+        @NonNull
+        public Builder setOnlyNonTerrestrialNetwork(int isOnlyNonTerrestrialNetwork) {
+            mIsOnlyNonTerrestrialNetwork = isOnlyNonTerrestrialNetwork;
             return this;
         }
 
@@ -2145,7 +2743,7 @@ public class SubscriptionInfoInternal {
          * subscriptions in the group are deactivated (unplugged pSIM or deactivated eSIM profile),
          * we should disable this opportunistic subscription.
          *
-         * @param isGroupDisabled {@code true} if group of the subscription is disabled.
+         * @param isGroupDisabled {@code 1} if group of the subscription is disabled.
          * @return The builder.
          */
         @NonNull

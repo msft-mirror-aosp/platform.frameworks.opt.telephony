@@ -57,14 +57,6 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
     }
 
     @Override
-    public void getIccSlotsStatus(Message result) {
-    }
-
-    @Override
-    public void setLogicalToPhysicalSlotMapping(int[] physicalSlots, Message result) {
-    }
-
-    @Override
     public void supplyIccPin(String pin, Message result) {
     }
 
@@ -107,10 +99,6 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
     }
 
     @Override
-    @Deprecated public void getPDPContextList(Message result) {
-    }
-
-    @Override
     public void getDataCallList(Message result) {
     }
 
@@ -131,14 +119,6 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
 
     @Override
     public void getIMSIForApp(String aid, Message result) {
-    }
-
-    @Override
-    public void getIMEI(Message result) {
-    }
-
-    @Override
-    public void getIMEISV(Message result) {
     }
 
     @Override
@@ -187,15 +167,6 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
 
     @Override
     public void getLastCallFailCause (Message result) {
-    }
-
-    @Deprecated
-    @Override
-    public void getLastPdpFailCause (Message result) {
-    }
-
-    @Override
-    public void getLastDataCallFailCause (Message result) {
     }
 
     @Override
@@ -286,10 +257,9 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
     }
 
     @Override
-    public void setupDataCall(int accessNetworkType, DataProfile dataProfile, boolean isRoaming,
-            boolean allowRoaming, int reason, LinkProperties linkProperties, int pduSessionId,
-            NetworkSliceInfo sliceInfo, TrafficDescriptor trafficDescriptor,
-            boolean matchAllRuleAllowed, Message result) {
+    public void setupDataCall(int accessNetworkType, DataProfile dataProfile, boolean allowRoaming,
+            int reason, LinkProperties linkProperties, int pduSessionId, NetworkSliceInfo sliceInfo,
+            TrafficDescriptor trafficDescriptor, boolean matchAllRuleAllowed, Message result) {
     }
 
     @Override
@@ -416,18 +386,6 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
     }
 
     @Override
-    public void resetRadio(Message result) {
-    }
-
-    @Override
-    public void invokeOemRilRequestRaw(byte[] data, Message response) {
-    }
-
-    @Override
-    public void invokeOemRilRequestStrings(String[] strings, Message response) {
-    }
-
-    @Override
     public void setBandMode (int bandMode, Message response) {
     }
 
@@ -508,6 +466,10 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
     // ***** Methods for CDMA support
     @Override
     public void getDeviceIdentity(Message response) {
+    }
+
+    @Override
+    public void getImei(Message response) {
     }
 
     @Override
@@ -592,23 +554,24 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
     }
 
     @Override
-    public void setInitialAttachApn(DataProfile dataProfile, boolean isRoaming, Message result) {
+    public void setInitialAttachApn(DataProfile dataProfile, Message result) {
     }
 
     @Override
-    public void setDataProfile(DataProfile[] dps, boolean isRoaming, Message result) {
+    public void setDataProfile(DataProfile[] dps, Message result) {
     }
 
     @Override
     public void iccOpenLogicalChannel(String AID, int p2, Message response) {}
 
     @Override
-    public void iccCloseLogicalChannel(int channel, Message response) {}
+    public void iccCloseLogicalChannel(int channel, boolean isEs10, Message response) {}
 
     @Override
     public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction,
                                               int p1, int p2, int p3, String data,
-                                              Message response) {}
+                                              boolean isEs10Command, Message response) {}
+
     @Override
     public void iccTransmitApduBasicChannel(int cla, int instruction, int p1, int p2,
                                             int p3, String data, Message response) {}
@@ -632,18 +595,6 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
 
     @Override
     public void getRadioCapability(Message response) {
-    }
-
-    @Override
-    public void startLceService(int reportIntervalMs, boolean pullMode, Message result) {
-    }
-
-    @Override
-    public void stopLceService(Message result) {
-    }
-
-    @Override
-    public void pullLceData(Message result) {
     }
 
     @Override

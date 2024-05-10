@@ -42,9 +42,6 @@ import androidx.test.filters.FlakyTest;
 
 import com.android.internal.telephony.PhoneInternalInterface.DialArgs;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
-
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -52,6 +49,9 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper

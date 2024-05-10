@@ -16,12 +16,19 @@
 
 package com.android.internal.telephony;
 
+import static com.android.internal.telephony.CarrierServiceStateTracker.ACTION_NEVER_ASK_AGAIN;
+
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.isA;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,6 +36,7 @@ import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
@@ -43,9 +51,11 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockitoAnnotations;
 
 import java.util.Map;
+import java.util.concurrent.Executor;
 
 /**
  * Unit tests for {@link com.android.internal.telephony.CarrierServiceStateTracker}.
@@ -57,6 +67,7 @@ public class CarrierServiceStateTrackerTest extends TelephonyTest {
 
     private CarrierServiceStateTracker mSpyCarrierSST;
     private CarrierServiceStateTracker mCarrierSST;
+    private CarrierConfigManager.CarrierConfigChangeListener mCarrierConfigChangeListener;
 
     private static final int SUB_ID = 1;
 
@@ -68,10 +79,19 @@ public class CarrierServiceStateTrackerTest extends TelephonyTest {
         MockitoAnnotations.initMocks(this);
         logd(LOG_TAG + "Setup!");
         super.setUp(getClass().getSimpleName());
+        doReturn((Executor) Runnable::run).when(mContext).getMainExecutor();
         mBundle = mContextFixture.getCarrierConfigBundle();
         when(mPhone.getSubId()).thenReturn(SUB_ID);
+        when(mCarrierConfigManager.getConfigForSubId(anyInt(), any())).thenReturn(mBundle);
+        doReturn(false).when(mPackageManager).hasSystemFeature(PackageManager.FEATURE_WATCH);
 
-        mCarrierSST = new CarrierServiceStateTracker(mPhone, mSST);
+        // Capture listener to emulate the carrier config change notification used later
+        ArgumentCaptor<CarrierConfigManager.CarrierConfigChangeListener> listenerArgumentCaptor =
+                ArgumentCaptor.forClass(CarrierConfigManager.CarrierConfigChangeListener.class);
+        mCarrierSST = new CarrierServiceStateTracker(mPhone, mSST, mFeatureFlags);
+        verify(mCarrierConfigManager).registerCarrierConfigChangeListener(any(),
+                listenerArgumentCaptor.capture());
+        mCarrierConfigChangeListener = listenerArgumentCaptor.getAllValues().get(0);
         mSpyCarrierSST = spy(mCarrierSST);
 
         mNotificationManager = (NotificationManager) mContext.getSystemService(
@@ -86,6 +106,7 @@ public class CarrierServiceStateTrackerTest extends TelephonyTest {
     private void setDefaultValues() {
         mBundle.putInt(CarrierConfigManager.KEY_PREF_NETWORK_NOTIFICATION_DELAY_INT, 0);
         mBundle.putInt(CarrierConfigManager.KEY_EMERGENCY_NOTIFICATION_DELAY_INT, 0);
+        mBundle.putBoolean(CarrierConfigManager.KEY_HIDE_PREFERRED_NETWORK_TYPE_BOOL, false);
     }
 
     @After
@@ -140,8 +161,8 @@ public class CarrierServiceStateTrackerTest extends TelephonyTest {
     @SmallTest
     public void testSendPrefNetworkNotification() {
         logd(LOG_TAG + ":testSendPrefNetworkNotification()");
-        Intent intent = new Intent().setAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        mContext.sendBroadcast(intent);
+        mCarrierConfigChangeListener.onCarrierConfigChanged(0 /* slotIndex */, SUB_ID,
+                TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
         processAllMessages();
 
         Map<Integer, CarrierServiceStateTracker.NotificationType> notificationTypeMap =
@@ -190,8 +211,8 @@ public class CarrierServiceStateTrackerTest extends TelephonyTest {
     @SmallTest
     public void testSendEmergencyNetworkNotification() {
         logd(LOG_TAG + ":testSendEmergencyNetworkNotification()");
-        Intent intent = new Intent().setAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        mContext.sendBroadcast(intent);
+        mCarrierConfigChangeListener.onCarrierConfigChanged(0 /* slotIndex */, SUB_ID,
+                TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
         processAllMessages();
 
         Map<Integer, CarrierServiceStateTracker.NotificationType> notificationTypeMap =
@@ -220,5 +241,90 @@ public class CarrierServiceStateTrackerTest extends TelephonyTest {
         processAllMessages();
         verify(mNotificationManager, atLeast(2)).cancel(
                 CarrierServiceStateTracker.EMERGENCY_NOTIFICATION_TAG, SUB_ID);
+    }
+
+    @Test
+    public void testSetEnabledNotifications() {
+        logd(LOG_TAG + ":testSetEnabledNotifications()");
+
+        mBundle.putBoolean(CarrierConfigManager.KEY_HIDE_PREFERRED_NETWORK_TYPE_BOOL, true);
+
+        Notification.Builder mNotificationBuilder = new Notification.Builder(mContext);
+        doReturn(mNotificationBuilder).when(mSpyCarrierSST).getNotificationBuilder(any());
+        doReturn(mNotificationManager).when(mSpyCarrierSST).getNotificationManager(any());
+        doReturn(true).when(mPhone).isWifiCallingEnabled(); // notifiable for emergency
+        mCarrierConfigChangeListener.onCarrierConfigChanged(0 /* slotIndex */, SUB_ID,
+                TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
+        processAllMessages();
+
+        Map<Integer, CarrierServiceStateTracker.NotificationType> notificationTypeMap =
+                mCarrierSST.getNotificationTypeMap();
+        CarrierServiceStateTracker.NotificationType prefNetworkNotification =
+                notificationTypeMap.get(CarrierServiceStateTracker.NOTIFICATION_PREF_NETWORK);
+        CarrierServiceStateTracker.NotificationType emergencyNetworkNotification =
+                notificationTypeMap.get(CarrierServiceStateTracker.NOTIFICATION_EMERGENCY_NETWORK);
+        assertFalse(prefNetworkNotification.isEnabled());
+        assertTrue(emergencyNetworkNotification.isEnabled());
+
+        verify(mNotificationManager, never()).notify(
+                eq(CarrierServiceStateTracker.PREF_NETWORK_NOTIFICATION_TAG),
+                eq(SUB_ID), isA(Notification.class));
+        verify(mNotificationManager, atLeast(1)).cancel(
+                CarrierServiceStateTracker.PREF_NETWORK_NOTIFICATION_TAG, SUB_ID);
+        verify(mNotificationManager, atLeast(1)).notify(
+                eq(CarrierServiceStateTracker.EMERGENCY_NOTIFICATION_TAG),
+                eq(SUB_ID), isA(Notification.class));
+        verify(mNotificationManager, never()).cancel(
+                CarrierServiceStateTracker.EMERGENCY_NOTIFICATION_TAG, SUB_ID);
+    }
+
+    /**
+     * Verify the WIFI emergency calling notification is silenced if the user requests (via a
+     * simulated notification action)
+     */
+    @Test
+    @SmallTest
+    public void testEmergencyNotificationBehaviorWhenSilenced() {
+        when(mFeatureFlags.stopSpammingEmergencyNotification()).thenReturn(true);
+        logd(LOG_TAG + ":testEmergencyNotificationBehaviorWhenSilenced()");
+        sendMessageOnHandler(CarrierServiceStateTracker.NOTIFICATION_EMERGENCY_NETWORK);
+
+        // verify the notification was sent
+        verify(mNotificationManager, times(1)).notify(
+                eq(CarrierServiceStateTracker.EMERGENCY_NOTIFICATION_TAG),
+                eq(SUB_ID), isA(Notification.class));
+
+        // simulate the user clicking the "Do Not Show Again" button on the notification
+        mCarrierSST.mActionReceiver.onReceive(mContext, new Intent(ACTION_NEVER_ASK_AGAIN));
+
+        // resend the msg to trigger the notification to be posted
+        sendMessageOnHandler(CarrierServiceStateTracker.NOTIFICATION_EMERGENCY_NETWORK);
+
+        // verify the notification was sent
+        verify(mNotificationManager, times(1)).notify(
+                eq(CarrierServiceStateTracker.EMERGENCY_NOTIFICATION_TAG),
+                eq(SUB_ID), isA(Notification.class));
+    }
+
+
+    /** Verifies notification map is empty when device is watch. */
+    @Test
+    @SmallTest
+    public void testNotificationMapWhenDeviceIsWatch() {
+        doReturn(true).when(mPackageManager).hasSystemFeature(PackageManager.FEATURE_WATCH);
+
+        CarrierServiceStateTracker tracker = new CarrierServiceStateTracker(mPhone, mSST,
+                mFeatureFlags);
+
+        assertTrue(tracker.getNotificationTypeMap().isEmpty());
+    }
+
+    private void sendMessageOnHandler(int messageWhat) {
+        Message notificationMsg = mSpyCarrierSST.obtainMessage(messageWhat, null);
+        doReturn(true).when(mSpyCarrierSST).evaluateSendingMessage(any());
+        doReturn(0).when(mSpyCarrierSST).getDelay(any());
+        doReturn(mNotificationManager).when(mSpyCarrierSST).getNotificationManager(any());
+        mSpyCarrierSST.handleMessage(notificationMsg);
+        processAllMessages();
     }
 }

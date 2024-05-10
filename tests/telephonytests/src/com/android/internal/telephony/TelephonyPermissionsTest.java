@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -37,6 +38,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.ServiceManager;
+import android.os.UserHandle;
 import android.permission.LegacyPermissionManager;
 import android.provider.DeviceConfig;
 import android.provider.Settings;
@@ -46,6 +48,7 @@ import android.test.mock.MockContentProvider;
 import android.test.mock.MockContentResolver;
 import android.test.suitebuilder.annotation.SmallTest;
 
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.util.test.FakeSettingsProvider;
 import com.android.server.pm.permission.LegacyPermissionManagerService;
 
@@ -55,7 +58,6 @@ import org.junit.Test;
 
 import java.lang.reflect.Field;
 import java.util.Map;
-
 @SmallTest
 public class TelephonyPermissionsTest {
 
@@ -69,6 +71,7 @@ public class TelephonyPermissionsTest {
 
     // Mocked classes
     private Context mMockContext;
+    private FeatureFlags mMockFeatureFlag;
     private AppOpsManager mMockAppOps;
     private SubscriptionManager mMockSubscriptionManager;
     private ITelephony mMockTelephony;
@@ -82,10 +85,12 @@ public class TelephonyPermissionsTest {
 
     private MockContentResolver mMockContentResolver;
     private FakeSettingsConfigProvider mFakeSettingsConfigProvider;
+    private FeatureFlags mRealFeatureFlagToBeRestored;
 
     @Before
     public void setUp() throws Exception {
         mMockContext = mock(Context.class);
+        mMockFeatureFlag = mock(FeatureFlags.class);
         mMockAppOps = mock(AppOpsManager.class);
         mMockSubscriptionManager = mock(SubscriptionManager.class);
         mMockTelephony = mock(ITelephony.class);
@@ -127,13 +132,17 @@ public class TelephonyPermissionsTest {
                 .thenReturn(TelephonyManager.CARRIER_PRIVILEGE_STATUS_NO_ACCESS);
         when(mMockContext.checkPermission(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
                 PID, UID)).thenReturn(PackageManager.PERMISSION_DENIED);
+
+        replaceFeatureFlag(mMockFeatureFlag);
         setTelephonyMockAsService();
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
+        replaceFeatureFlag(mRealFeatureFlagToBeRestored);
         mMockContentResolver = null;
         mFakeSettingsConfigProvider = null;
+        mRealFeatureFlagToBeRestored = null;
     }
 
     @Test
@@ -530,6 +539,38 @@ public class TelephonyPermissionsTest {
         }
     }
 
+    @Test
+    public void testCheckSubscriptionAssociatedWithUser_emergencyNumber() {
+        doReturn(true).when(mTelephonyManagerMock).isEmergencyNumber(anyString());
+
+        assertTrue(TelephonyPermissions.checkSubscriptionAssociatedWithUser(mMockContext, SUB_ID,
+                UserHandle.SYSTEM, "911"));
+    }
+
+    @Test
+    public void testCheckSubscriptionAssociatedWithUser_badSub_flag_enabled() {
+        doReturn(true).when(mMockFeatureFlag).rejectBadSubIdInteraction();
+
+        doThrow(new IllegalArgumentException("has no records on device"))
+                .when(mMockSubscriptionManager).isSubscriptionAssociatedWithUser(SUB_ID,
+                        UserHandle.SYSTEM);
+        assertFalse(TelephonyPermissions.checkSubscriptionAssociatedWithUser(mMockContext, SUB_ID,
+                UserHandle.SYSTEM));
+    }
+
+    @Test
+    public void testCheckSubscriptionAssociatedWithUser_badSub_flag_disabled() {
+        doReturn(false).when(mMockFeatureFlag).rejectBadSubIdInteraction();
+
+        doThrow(new IllegalArgumentException("No records found for sub"))
+                .when(mMockSubscriptionManager).isSubscriptionAssociatedWithUser(SUB_ID,
+                        UserHandle.SYSTEM);
+        assertTrue(TelephonyPermissions.checkSubscriptionAssociatedWithUser(mMockContext, SUB_ID,
+                UserHandle.SYSTEM));
+        assertTrue(TelephonyPermissions.checkSubscriptionAssociatedWithUser(mMockContext,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID, UserHandle.SYSTEM));
+    }
+
     // Put mMockTelephony into service cache so that TELEPHONY_SUPPLIER will get it.
     private void setTelephonyMockAsService() throws Exception {
         when(mMockTelephonyBinder.queryLocalInterface(anyString())).thenReturn(mMockTelephony);
@@ -620,4 +661,12 @@ public class TelephonyPermissionsTest {
         field.set(providerHolder, iContentProvider);
     }
 
+    private synchronized void replaceFeatureFlag(final FeatureFlags newValue)
+            throws Exception {
+        Field field = TelephonyPermissions.class.getDeclaredField("sFeatureFlag");
+        field.setAccessible(true);
+
+        mRealFeatureFlagToBeRestored = (FeatureFlags) field.get(null);
+        field.set(null, newValue);
+    }
 }

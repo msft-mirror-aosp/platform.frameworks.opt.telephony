@@ -16,6 +16,7 @@
 
 package com.android.internal.telephony;
 
+import android.annotation.NonNull;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -23,11 +24,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.os.Handler;
 import android.os.HandlerExecutor;
 import android.os.Message;
 import android.os.PersistableBundle;
+import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.telephony.CarrierConfigManager;
 import android.telephony.RadioAccessFamily;
@@ -39,6 +43,7 @@ import android.telephony.TelephonyManager;
 import android.telephony.TelephonyManager.NetworkTypeBitMask;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.util.ArrayUtils;
 import com.android.internal.telephony.util.NotificationChannelController;
 import com.android.telephony.Rlog;
@@ -68,6 +73,11 @@ public class CarrierServiceStateTracker extends Handler {
     public static final int NOTIFICATION_PREF_NETWORK = 1000;
     public static final int NOTIFICATION_EMERGENCY_NETWORK = 1001;
 
+
+    @VisibleForTesting
+    public static final String ACTION_NEVER_ASK_AGAIN = "SilenceNoWifiEmrgCallingNotification";
+    public final NotificationActionReceiver mActionReceiver = new NotificationActionReceiver();
+
     @VisibleForTesting
     public static final String EMERGENCY_NOTIFICATION_TAG = "EmergencyNetworkNotification";
 
@@ -77,6 +87,7 @@ public class CarrierServiceStateTracker extends Handler {
     private long mAllowedNetworkType = -1;
     private AllowedNetworkTypesListener mAllowedNetworkTypesListener;
     private TelephonyManager mTelephonyManager;
+    @NonNull private final FeatureFlags mFeatureFlags;
 
     /**
      * The listener for allowed network types changed
@@ -97,13 +108,42 @@ public class CarrierServiceStateTracker extends Handler {
         }
     }
 
-    public CarrierServiceStateTracker(Phone phone, ServiceStateTracker sst) {
+    public CarrierServiceStateTracker(Phone phone, ServiceStateTracker sst,
+            @NonNull FeatureFlags featureFlags) {
+        mFeatureFlags = featureFlags;
         this.mPhone = phone;
         this.mSST = sst;
         mTelephonyManager = mPhone.getContext().getSystemService(
                 TelephonyManager.class).createForSubscriptionId(mPhone.getSubId());
-        phone.getContext().registerReceiver(mBroadcastReceiver, new IntentFilter(
-                CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED));
+        CarrierConfigManager ccm = mPhone.getContext().getSystemService(CarrierConfigManager.class);
+        ccm.registerCarrierConfigChangeListener(
+                mPhone.getContext().getMainExecutor(),
+                (slotIndex, subId, carrierId, specificCarrierId) -> {
+                    if (slotIndex != mPhone.getPhoneId()) return;
+
+                    Rlog.d(LOG_TAG, "onCarrierConfigChanged: slotIndex=" + slotIndex
+                            + ", subId=" + subId + ", carrierId=" + carrierId);
+
+                    // Only get carrier configs used for EmergencyNetworkNotification
+                    // and PrefNetworkNotification
+                    PersistableBundle b =
+                            CarrierConfigManager.getCarrierConfigSubset(
+                                    mPhone.getContext(),
+                                    mPhone.getSubId(),
+                                    CarrierConfigManager.KEY_EMERGENCY_NOTIFICATION_DELAY_INT,
+                                    CarrierConfigManager.KEY_PREF_NETWORK_NOTIFICATION_DELAY_INT,
+                                    CarrierConfigManager.KEY_HIDE_PREFERRED_NETWORK_TYPE_BOOL);
+                    if (b.isEmpty()) return;
+
+                    for (Map.Entry<Integer, NotificationType> entry :
+                            mNotificationTypeMap.entrySet()) {
+                        NotificationType notificationType = entry.getValue();
+                        notificationType.setDelay(b);
+                        notificationType.setEnabled(b);
+                    }
+                    handleConfigChanges();
+                });
+
         // Listen for subscriber changes
         SubscriptionManager.from(mPhone.getContext()).addOnSubscriptionsChangedListener(
                 new OnSubscriptionsChangedListener(this.getLooper()) {
@@ -119,12 +159,24 @@ public class CarrierServiceStateTracker extends Handler {
                     }
                 });
 
-        registerNotificationTypes();
+        if (!mPhone.getContext().getPackageManager().hasSystemFeature(
+                PackageManager.FEATURE_WATCH)) {
+            registerNotificationTypes();
+        }
+
         mAllowedNetworkType = RadioAccessFamily.getNetworkTypeFromRaf(
                 (int) mPhone.getAllowedNetworkTypes(
                         TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_USER));
         mAllowedNetworkTypesListener = new AllowedNetworkTypesListener();
         registerAllowedNetworkTypesListener();
+
+        if (mFeatureFlags.stopSpammingEmergencyNotification()) {
+            // register a receiver for notification actions
+            mPhone.getContext().registerReceiver(
+                    mActionReceiver,
+                    new IntentFilter(ACTION_NEVER_ASK_AGAIN),
+                    Context.RECEIVER_NOT_EXPORTED);
+        }
     }
 
     /**
@@ -246,7 +298,7 @@ public class CarrierServiceStateTracker extends Handler {
         TelephonyManager tm = ((TelephonyManager) context.getSystemService(
                 Context.TELEPHONY_SERVICE)).createForSubscriptionId(mPhone.getSubId());
 
-        boolean isCarrierConfigEnabled = isCarrierConfigEnableNr(context);
+        boolean isCarrierConfigEnabled = isCarrierConfigEnableNr();
         boolean isRadioAccessFamilySupported = checkSupportedBitmask(
                 tm.getSupportedRadioAccessFamily(), TelephonyManager.NETWORK_TYPE_BITMASK_NR);
         boolean isNrNetworkTypeAllowed = checkSupportedBitmask(
@@ -261,15 +313,13 @@ public class CarrierServiceStateTracker extends Handler {
         return (isCarrierConfigEnabled && isRadioAccessFamilySupported && isNrNetworkTypeAllowed);
     }
 
-    private boolean isCarrierConfigEnableNr(Context context) {
-        CarrierConfigManager carrierConfigManager = (CarrierConfigManager)
-                context.getSystemService(Context.CARRIER_CONFIG_SERVICE);
-        if (carrierConfigManager == null) {
-            Rlog.e(LOG_TAG, "isCarrierConfigEnableNr: CarrierConfigManager is null");
-            return false;
-        }
-        PersistableBundle config = carrierConfigManager.getConfigForSubId(mPhone.getSubId());
-        if (config == null) {
+    private boolean isCarrierConfigEnableNr() {
+        PersistableBundle config =
+                CarrierConfigManager.getCarrierConfigSubset(
+                        mPhone.getContext(),
+                        mPhone.getSubId(),
+                        CarrierConfigManager.KEY_CARRIER_NR_AVAILABILITIES_INT_ARRAY);
+        if (config.isEmpty()) {
             Rlog.e(LOG_TAG, "isCarrierConfigEnableNr: Cannot get config " + mPhone.getSubId());
             return false;
         }
@@ -348,40 +398,42 @@ public class CarrierServiceStateTracker extends Handler {
         return (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
     }
 
-    private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            CarrierConfigManager carrierConfigManager = (CarrierConfigManager)
-                    context.getSystemService(Context.CARRIER_CONFIG_SERVICE);
-            PersistableBundle b = carrierConfigManager.getConfigForSubId(mPhone.getSubId());
-
-            for (Map.Entry<Integer, NotificationType> entry : mNotificationTypeMap.entrySet()) {
-                NotificationType notificationType = entry.getValue();
-                notificationType.setDelay(b);
-            }
-            handleConfigChanges();
-        }
-    };
-
     /**
      * Post a notification to the NotificationManager for changing network type.
      */
     @VisibleForTesting
     public void sendNotification(NotificationType notificationType) {
+        Context context = mPhone.getContext();
+
         if (!evaluateSendingMessage(notificationType)) {
             return;
         }
 
-        Context context = mPhone.getContext();
+        if (mFeatureFlags.stopSpammingEmergencyNotification()
+                && shouldSilenceEmrgNetNotif(notificationType, context)) {
+            Rlog.i(LOG_TAG, "sendNotification: silencing NOTIFICATION_EMERGENCY_NETWORK");
+            return;
+        }
+
         Notification.Builder builder = getNotificationBuilder(notificationType);
         // set some common attributes
         builder.setWhen(System.currentTimeMillis())
+                .setShowWhen(true)
                 .setAutoCancel(true)
                 .setSmallIcon(com.android.internal.R.drawable.stat_sys_warning)
                 .setColor(context.getResources().getColor(
                        com.android.internal.R.color.system_notification_accent_color));
         getNotificationManager(context).notify(notificationType.getNotificationTag(),
                 notificationType.getNotificationId(), builder.build());
+    }
+
+    /**
+     * This helper checks if the user has set a flag to silence the notification permanently
+     */
+    private boolean shouldSilenceEmrgNetNotif(NotificationType notificationType, Context context) {
+        return notificationType.getTypeId() == NOTIFICATION_EMERGENCY_NETWORK
+                && PreferenceManager.getDefaultSharedPreferences(context)
+                .getBoolean(ACTION_NEVER_ASK_AGAIN, false);
     }
 
     /**
@@ -422,6 +474,18 @@ public class CarrierServiceStateTracker extends Handler {
         void setDelay(PersistableBundle bundle);
 
         /**
+         * Checks whether this Notification is enabled.
+         * @return {@code true} if this Notification is enabled, false otherwise
+         */
+        boolean isEnabled();
+
+        /**
+         * Sets whether this Notification is enabled. If disabled, it will not build notification.
+         * @param bundle PersistableBundle
+         */
+        void setEnabled(PersistableBundle bundle);
+
+        /**
          * returns notification type id.
          **/
         int getTypeId();
@@ -450,6 +514,7 @@ public class CarrierServiceStateTracker extends Handler {
 
         private final int mTypeId;
         private int mDelay = UNINITIALIZED_DELAY_VALUE;
+        private boolean mEnabled = false;
 
         PrefNetworkNotification(int typeId) {
             this.mTypeId = typeId;
@@ -472,6 +537,28 @@ public class CarrierServiceStateTracker extends Handler {
             return mDelay;
         }
 
+        /**
+         * Checks whether this Notification is enabled.
+         * @return {@code true} if this Notification is enabled, false otherwise
+         */
+        public boolean isEnabled() {
+            return mEnabled;
+        }
+
+        /**
+         * Sets whether this Notification is enabled. If disabled, it will not build notification.
+         * @param bundle PersistableBundle
+         */
+        public void setEnabled(PersistableBundle bundle) {
+            if (bundle == null) {
+                Rlog.e(LOG_TAG, "bundle is null");
+                return;
+            }
+            mEnabled = !bundle.getBoolean(
+                    CarrierConfigManager.KEY_HIDE_PREFERRED_NETWORK_TYPE_BOOL);
+            Rlog.i(LOG_TAG, "reading enabled notification pref network: " + mEnabled);
+        }
+
         public int getTypeId() {
             return mTypeId;
         }
@@ -489,10 +576,10 @@ public class CarrierServiceStateTracker extends Handler {
          */
         public boolean sendMessage() {
             Rlog.i(LOG_TAG, "PrefNetworkNotification: sendMessage() w/values: "
-                    + "," + isPhoneStillRegistered() + "," + mDelay + "," + isGlobalMode()
-                    + "," + mSST.isRadioOn());
-            if (mDelay == UNINITIALIZED_DELAY_VALUE || isPhoneStillRegistered() || isGlobalMode()
-                    || isRadioOffOrAirplaneMode()) {
+                    + "," + mEnabled + "," + isPhoneStillRegistered() + "," + mDelay
+                    + "," + isGlobalMode() + "," + mSST.isRadioOn());
+            if (!mEnabled || mDelay == UNINITIALIZED_DELAY_VALUE || isPhoneStillRegistered()
+                    || isGlobalMode() || isRadioOffOrAirplaneMode()) {
                 return false;
             }
             return true;
@@ -551,6 +638,22 @@ public class CarrierServiceStateTracker extends Handler {
             return mDelay;
         }
 
+        /**
+         * Checks whether this Notification is enabled.
+         * @return {@code true} if this Notification is enabled, false otherwise
+         */
+        public boolean isEnabled() {
+            return true;
+        }
+
+        /**
+         * Sets whether this Notification is enabled. If disabled, it will not build notification.
+         * @param bundle PersistableBundle
+         */
+        public void setEnabled(PersistableBundle bundle) {
+            // always allowed. There is no config to hide notifications.
+        }
+
         public int getTypeId() {
             return mTypeId;
         }
@@ -586,12 +689,57 @@ public class CarrierServiceStateTracker extends Handler {
                     com.android.internal.R.string.EmergencyCallWarningTitle);
             CharSequence details = res.getText(
                     com.android.internal.R.string.EmergencyCallWarningSummary);
-            return new Notification.Builder(context)
-                    .setContentTitle(title)
-                    .setStyle(new Notification.BigTextStyle().bigText(details))
-                    .setContentText(details)
-                    .setOngoing(true)
-                    .setChannelId(NotificationChannelController.CHANNEL_ID_WFC);
+            if (mFeatureFlags.stopSpammingEmergencyNotification()) {
+                return new Notification.Builder(context)
+                        .setContentTitle(title)
+                        .setStyle(new Notification.BigTextStyle().bigText(details))
+                        .setContentText(details)
+                        .setOngoing(true)
+                        .setActions(createDoNotShowAgainAction(context))
+                        .setChannelId(NotificationChannelController.CHANNEL_ID_WFC);
+            } else {
+                return new Notification.Builder(context)
+                        .setContentTitle(title)
+                        .setStyle(new Notification.BigTextStyle().bigText(details))
+                        .setContentText(details)
+                        .setOngoing(true)
+                        .setChannelId(NotificationChannelController.CHANNEL_ID_WFC);
+            }
+        }
+
+        /**
+         * add a button to the notification that has a broadcast intent embedded to silence the
+         * notification
+         */
+        private Notification.Action createDoNotShowAgainAction(Context context) {
+            final PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    0,
+                    new Intent(ACTION_NEVER_ASK_AGAIN),
+                    PendingIntent.FLAG_IMMUTABLE);
+            return new Notification.Action.Builder(null, "Do Not Show Again",
+                    pendingIntent).build();
+        }
+    }
+
+    /**
+     * This receiver listens to notification actions and can be utilized to do things like silence
+     * a notification that is spammy.
+     */
+    public class NotificationActionReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent.getAction().equals(ACTION_NEVER_ASK_AGAIN)) {
+                Rlog.i(LOG_TAG, "NotificationActionReceiver: ACTION_NEVER_ASK_AGAIN");
+                // insert a key to silence future notifications
+                SharedPreferences.Editor editor =
+                        PreferenceManager.getDefaultSharedPreferences(context).edit();
+                editor.putBoolean(ACTION_NEVER_ASK_AGAIN, true);
+                editor.apply();
+                // Note: If another action is added, unregistering here should be removed. However,
+                // since there is no longer a reason to broadcasts, cleanup mActionReceiver.
+                context.unregisterReceiver(mActionReceiver);
+            }
         }
     }
 }

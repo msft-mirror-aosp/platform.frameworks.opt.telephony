@@ -93,6 +93,21 @@ public class CdmaSMSDispatcher extends SMSDispatcher {
     }
 
     @Override
+    protected SmsMessageBase.SubmitPduBase getSubmitPdu(String scAddr, String destAddr,
+            String message, boolean statusReportRequested, SmsHeader smsHeader, int priority,
+            int validityPeriod, int messageRef) {
+        return SMSDispatcherUtil.getSubmitPduCdma(scAddr, destAddr, message,
+                statusReportRequested, smsHeader, priority);
+    }
+
+    @Override
+    protected SmsMessageBase.SubmitPduBase getSubmitPdu(String scAddr, String destAddr,
+            int destPort, byte[] message, boolean statusReportRequested, int messageRef) {
+        return SMSDispatcherUtil.getSubmitPduCdma(scAddr, destAddr, destPort, message,
+                statusReportRequested);
+    }
+
+    @Override
     protected TextEncodingDetails calculateLength(CharSequence messageBody, boolean use7bitOnly) {
         return SMSDispatcherUtil.calculateLengthCdma(messageBody, use7bitOnly);
     }
@@ -114,6 +129,7 @@ public class CdmaSMSDispatcher extends SMSDispatcher {
         // if sms over IMS is not supported on data and voice is not available...
         if (!isIms() && ss != ServiceState.STATE_IN_SERVICE) {
             tracker.onFailed(mContext, getNotInServiceError(ss), NO_ERROR_CODE);
+            notifySmsSentFailedToEmergencyStateTracker(tracker);
             return;
         }
 

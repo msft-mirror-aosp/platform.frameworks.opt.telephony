@@ -18,6 +18,7 @@ package com.android.internal.telephony;
 
 import android.annotation.NonNull;
 import android.content.Context;
+import android.telephony.Annotation;
 import android.telephony.Annotation.RadioPowerState;
 import android.telephony.Annotation.SrvccState;
 import android.telephony.BarringInfo;
@@ -32,10 +33,15 @@ import android.telephony.PreciseDataConnectionState;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager.DataEnabledReason;
+import android.telephony.TelephonyManager.EmergencyCallbackModeStopReason;
+import android.telephony.TelephonyManager.EmergencyCallbackModeType;
 import android.telephony.TelephonyRegistryManager;
 import android.telephony.emergency.EmergencyNumber;
+import android.telephony.ims.ImsCallSession;
 import android.telephony.ims.ImsReasonInfo;
+import android.telephony.ims.MediaQualityStatus;
 
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.telephony.Rlog;
 
 import java.util.List;
@@ -50,10 +56,15 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
 
     private TelephonyRegistryManager mTelephonyRegistryMgr;
 
+    /** Feature flags */
+    @NonNull
+    private final FeatureFlags mFeatureFlags;
 
-    public DefaultPhoneNotifier(Context context) {
+
+    public DefaultPhoneNotifier(Context context, @NonNull FeatureFlags featureFlags) {
         mTelephonyRegistryMgr = (TelephonyRegistryManager) context.getSystemService(
             Context.TELEPHONY_REGISTRY_SERVICE);
+        mFeatureFlags = featureFlags;
     }
 
     @Override
@@ -120,8 +131,16 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
 
     @Override
     public void notifyDataActivity(Phone sender) {
+
         int subId = sender.getSubId();
-        mTelephonyRegistryMgr.notifyDataActivityChanged(subId, sender.getDataActivityState());
+
+        if (mFeatureFlags.notifyDataActivityChangedWithSlot()) {
+            int phoneId = sender.getPhoneId();
+            mTelephonyRegistryMgr.notifyDataActivityChanged(phoneId, subId,
+                    sender.getDataActivityState());
+        } else {
+            mTelephonyRegistryMgr.notifyDataActivityChanged(subId, sender.getDataActivityState());
+        }
     }
 
     @Override
@@ -142,15 +161,28 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
         mTelephonyRegistryMgr.notifyCellInfoChanged(subId, cellInfo);
     }
 
-    public void notifyPreciseCallState(Phone sender) {
+    /**
+     * Notify precise call state of foreground, background and ringing call states.
+     *
+     * @param imsCallIds Array of IMS call session ID{@link ImsCallSession#getCallId} for
+     *                   ringing, foreground & background calls.
+     * @param imsCallServiceTypes Array of IMS call service type for ringing, foreground &
+     *                        background calls.
+     * @param imsCallTypes Array of IMS call type for ringing, foreground & background calls.
+     */
+    public void notifyPreciseCallState(Phone sender, String[] imsCallIds,
+            @Annotation.ImsCallServiceType int[] imsCallServiceTypes,
+            @Annotation.ImsCallType int[] imsCallTypes) {
         Call ringingCall = sender.getRingingCall();
         Call foregroundCall = sender.getForegroundCall();
         Call backgroundCall = sender.getBackgroundCall();
+
         if (ringingCall != null && foregroundCall != null && backgroundCall != null) {
-            mTelephonyRegistryMgr.notifyPreciseCallState(sender.getPhoneId(), sender.getSubId(),
-                    convertPreciseCallState(ringingCall.getState()),
+            int[] callStates = {convertPreciseCallState(ringingCall.getState()),
                     convertPreciseCallState(foregroundCall.getState()),
-                    convertPreciseCallState(backgroundCall.getState()));
+                    convertPreciseCallState(backgroundCall.getState())};
+            mTelephonyRegistryMgr.notifyPreciseCallState(sender.getPhoneId(), sender.getSubId(),
+                    callStates, imsCallIds, imsCallServiceTypes, imsCallTypes);
         }
     }
 
@@ -223,6 +255,12 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
     }
 
     @Override
+    public void notifyMediaQualityStatusChanged(Phone sender, MediaQualityStatus status) {
+        mTelephonyRegistryMgr.notifyMediaQualityStatusChanged(
+                sender.getPhoneId(), sender.getSubId(), status);
+    }
+
+    @Override
     public void notifyRegistrationFailed(Phone sender, @NonNull CellIdentity cellIdentity,
             @NonNull String chosenPlmn, int domain, int causeCode, int additionalCauseCode) {
         mTelephonyRegistryMgr.notifyRegistrationFailed(sender.getPhoneId(), sender.getSubId(),
@@ -262,6 +300,18 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
                 sender.getSubId(), linkCapacityEstimateList);
     }
 
+    @Override
+    public void notifyCallbackModeStarted(Phone sender, @EmergencyCallbackModeType int type) {
+        mTelephonyRegistryMgr.notifyCallBackModeStarted(sender.getPhoneId(),
+                sender.getSubId(), type);
+    }
+
+    @Override
+    public void notifyCallbackModeStopped(Phone sender, @EmergencyCallbackModeType int type,
+            @EmergencyCallbackModeStopReason int reason) {
+        mTelephonyRegistryMgr.notifyCallbackModeStopped(sender.getPhoneId(),
+                sender.getSubId(), type, reason);
+    }
     /**
      * Convert the {@link Call.State} enum into the PreciseCallState.PRECISE_CALL_STATE_* constants
      * for the public API.

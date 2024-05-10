@@ -16,22 +16,17 @@
 
 package com.android.internal.telephony;
 
-import static com.android.internal.telephony.RILConstants.REQUEST_NOT_SUPPORTED;
-
-import android.os.AsyncResult;
-import android.os.Message;
 import android.os.RemoteException;
 import android.telephony.CarrierRestrictionRules;
 import android.telephony.ImsiEncryptionInfo;
 import android.telephony.Rlog;
-import android.telephony.TelephonyManager;
 
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.PersoSubState;
 import com.android.internal.telephony.uicc.SimPhonebookRecord;
 
 /**
- * A holder for IRadioSim. Use getHidl to get IRadio 1.0 and call the HIDL implementations or
- * getAidl to get IRadioSim and call the AIDL implementations of the HAL APIs.
+ * A holder for IRadioSim.
+ * Use getAidl to get IRadioSim and call the AIDL implementations of the HAL APIs.
  */
 public class RadioSimProxy extends RadioServiceProxy {
     private static final String TAG = "RadioSimProxy";
@@ -41,12 +36,22 @@ public class RadioSimProxy extends RadioServiceProxy {
      * Set IRadioSim as the AIDL implementation for RadioServiceProxy
      * @param halVersion Radio HAL version
      * @param sim IRadioSim implementation
+     *
+     * @return updated HAL version
      */
-    public void setAidl(HalVersion halVersion, android.hardware.radio.sim.IRadioSim sim) {
-        mHalVersion = halVersion;
+    public HalVersion setAidl(HalVersion halVersion, android.hardware.radio.sim.IRadioSim sim) {
+        HalVersion version = halVersion;
+        try {
+            version = RIL.getServiceHalVersion(sim.getInterfaceVersion());
+        } catch (RemoteException e) {
+            Rlog.e(TAG, "setAidl: " + e);
+        }
+        mHalVersion = version;
         mSimProxy = sim;
         mIsAidl = true;
-        Rlog.d(TAG, "AIDL initialized");
+
+        Rlog.d(TAG, "AIDL initialized mHalVersion=" + mHalVersion);
+        return mHalVersion;
     }
 
     /**
@@ -150,10 +155,8 @@ public class RadioSimProxy extends RadioServiceProxy {
         if (isEmpty()) return;
         if (isAidl()) {
             mSimProxy.getAllowedCarriers(serial);
-        } else if (mHalVersion.greaterOrEqual(RIL.RADIO_HAL_VERSION_1_4)) {
-            ((android.hardware.radio.V1_4.IRadio) mRadioProxy).getAllowedCarriers_1_4(serial);
         } else {
-            mRadioProxy.getAllowedCarriers(serial);
+            mRadioProxy.getAllowedCarriers_1_4(serial);
         }
     }
 
@@ -262,14 +265,24 @@ public class RadioSimProxy extends RadioServiceProxy {
     }
 
     /**
-     * Call IRadioSim#iccCloseLogicalChannel
+     * Call IRadioSim#iccCloseLogicalChannelWithSessionInfo
      * @param serial Serial number of request
      * @param channelId Channel ID of the channel to be closed
+     * @param isEs10 Whether the logical channel is opened for performing ES10 operations.
      * @throws RemoteException
      */
-    public void iccCloseLogicalChannel(int serial, int channelId) throws RemoteException {
+    public void iccCloseLogicalChannel(int serial,
+            int channelId, boolean isEs10) throws RemoteException {
         if (isEmpty()) return;
         if (isAidl()) {
+            if (mHalVersion.greaterOrEqual(RIL.RADIO_HAL_VERSION_2_1)) {
+                android.hardware.radio.sim.SessionInfo info =
+                        new android.hardware.radio.sim.SessionInfo();
+                info.sessionId = channelId;
+                info.isEs10 = isEs10;
+                mSimProxy.iccCloseLogicalChannelWithSessionInfo(serial, info);
+                return;
+            }
             mSimProxy.iccCloseLogicalChannel(serial, channelId);
         } else {
             mRadioProxy.iccCloseLogicalChannel(serial, channelId);
@@ -352,7 +365,8 @@ public class RadioSimProxy extends RadioServiceProxy {
         if (isEmpty()) return;
         if (isAidl()) {
             mSimProxy.iccTransmitApduBasicChannel(serial,
-                    RILUtils.convertToHalSimApduAidl(0, cla, instruction, p1, p2, p3, data));
+                    RILUtils.convertToHalSimApduAidl(0, cla, instruction, p1, p2, p3, data,
+                            false, mHalVersion));
         } else {
             mRadioProxy.iccTransmitApduBasicChannel(serial,
                     RILUtils.convertToHalSimApdu(0, cla, instruction, p1, p2, p3, data));
@@ -373,10 +387,29 @@ public class RadioSimProxy extends RadioServiceProxy {
      */
     public void iccTransmitApduLogicalChannel(int serial, int channel, int cla, int instruction,
             int p1, int p2, int p3, String data) throws RemoteException {
+        iccTransmitApduLogicalChannel(serial, channel, cla, instruction, p1, p2, p3, data, false);
+    }
+
+    /**
+     * Call IRadioSim#iccTransmitApduLogicalChannel
+     * @param serial Serial number of request
+     * @param channel Channel ID of the channel to use for communication
+     * @param cla Class of the command
+     * @param instruction Instruction of the command
+     * @param p1 P1 value of the command
+     * @param p2 P2 value of the command
+     * @param p3 P3 value of the command
+     * @param data Data to be sent
+     * @param isEs10Command APDU is an isEs10 command or not
+     * @throws RemoteException
+     */
+    public void iccTransmitApduLogicalChannel(int serial, int channel, int cla, int instruction,
+            int p1, int p2, int p3, String data, boolean isEs10Command) throws RemoteException {
         if (isEmpty()) return;
         if (isAidl()) {
             mSimProxy.iccTransmitApduLogicalChannel(serial,
-                    RILUtils.convertToHalSimApduAidl(channel, cla, instruction, p1, p2, p3, data));
+                    RILUtils.convertToHalSimApduAidl(channel, cla, instruction, p1, p2, p3, data,
+                            isEs10Command, mHalVersion));
         } else {
             mRadioProxy.iccTransmitApduLogicalChannel(serial,
                     RILUtils.convertToHalSimApdu(channel, cla, instruction, p1, p2, p3, data));
@@ -481,11 +514,10 @@ public class RadioSimProxy extends RadioServiceProxy {
      * Call IRadioSim#setAllowedCarriers
      * @param serial Serial number of request
      * @param carrierRestrictionRules Allowed carriers
-     * @param result Result to return in case of error
      * @throws RemoteException
      */
-    public void setAllowedCarriers(int serial, CarrierRestrictionRules carrierRestrictionRules,
-            Message result) throws RemoteException {
+    public void setAllowedCarriers(int serial, CarrierRestrictionRules carrierRestrictionRules)
+            throws RemoteException {
         if (isEmpty()) return;
         if (isAidl()) {
             // Prepare structure with allowed list, excluded list and priority
@@ -501,7 +533,7 @@ public class RadioSimProxy extends RadioServiceProxy {
             mSimProxy.setAllowedCarriers(serial, carrierRestrictions,
                     RILUtils.convertToHalSimLockMultiSimPolicyAidl(
                             carrierRestrictionRules.getMultiSimPolicy()));
-        } else if (mHalVersion.greaterOrEqual(RIL.RADIO_HAL_VERSION_1_4)) {
+        } else {
             // Prepare structure with allowed list, excluded list and priority
             android.hardware.radio.V1_4.CarrierRestrictionsWithPriority carrierRestrictions =
                     new android.hardware.radio.V1_4.CarrierRestrictionsWithPriority();
@@ -512,35 +544,9 @@ public class RadioSimProxy extends RadioServiceProxy {
             carrierRestrictions.allowedCarriersPrioritized =
                     (carrierRestrictionRules.getDefaultCarrierRestriction()
                             == CarrierRestrictionRules.CARRIER_RESTRICTION_DEFAULT_NOT_ALLOWED);
-            ((android.hardware.radio.V1_4.IRadio) mRadioProxy).setAllowedCarriers_1_4(
-                    serial, carrierRestrictions, RILUtils.convertToHalSimLockMultiSimPolicy(
+            mRadioProxy.setAllowedCarriers_1_4(serial, carrierRestrictions,
+                    RILUtils.convertToHalSimLockMultiSimPolicy(
                             carrierRestrictionRules.getMultiSimPolicy()));
-        } else {
-            boolean isAllCarriersAllowed = carrierRestrictionRules.isAllCarriersAllowed();
-            boolean supported = (isAllCarriersAllowed
-                    || (carrierRestrictionRules.getExcludedCarriers().isEmpty()
-                    && (carrierRestrictionRules.getDefaultCarrierRestriction()
-                    == CarrierRestrictionRules.CARRIER_RESTRICTION_DEFAULT_NOT_ALLOWED)))
-                    && (RILUtils.convertToHalSimLockMultiSimPolicy(
-                    carrierRestrictionRules.getMultiSimPolicy())
-                    == android.hardware.radio.V1_4.SimLockMultiSimPolicy.NO_MULTISIM_POLICY);
-
-            if (!supported) {
-                // Feature is not supported by IRadio interface
-                if (result != null) {
-                    AsyncResult.forMessage(result, null,
-                            CommandException.fromRilErrno(REQUEST_NOT_SUPPORTED));
-                    result.sendToTarget();
-                }
-                return;
-            }
-
-            // Prepare structure with allowed list
-            android.hardware.radio.V1_0.CarrierRestrictions carrierRestrictions =
-                    new android.hardware.radio.V1_0.CarrierRestrictions();
-            carrierRestrictions.allowedCarriers = RILUtils.convertToHalCarrierRestrictionList(
-                    carrierRestrictionRules.getAllowedCarriers());
-            mRadioProxy.setAllowedCarriers(serial, isAllCarriersAllowed, carrierRestrictions);
         }
     }
 
@@ -552,7 +558,7 @@ public class RadioSimProxy extends RadioServiceProxy {
      */
     public void setCarrierInfoForImsiEncryption(int serial, ImsiEncryptionInfo imsiEncryptionInfo)
             throws RemoteException {
-        if (isEmpty() || mHalVersion.less(RIL.RADIO_HAL_VERSION_1_1)) return;
+        if (isEmpty()) return;
         if (isAidl()) {
             android.hardware.radio.sim.ImsiEncryptionInfo halImsiInfo =
                     new android.hardware.radio.sim.ImsiEncryptionInfo();
@@ -595,8 +601,7 @@ public class RadioSimProxy extends RadioServiceProxy {
                 halImsiInfo.carrierKey.add(Byte.valueOf(b));
             }
 
-            ((android.hardware.radio.V1_1.IRadio) mRadioProxy).setCarrierInfoForImsiEncryption(
-                    serial, halImsiInfo);
+            mRadioProxy.setCarrierInfoForImsiEncryption(serial, halImsiInfo);
         }
     }
 
@@ -641,35 +646,16 @@ public class RadioSimProxy extends RadioServiceProxy {
      * Call IRadioSim#setSimCardPower
      * @param serial Serial number of request
      * @param state SIM state (power down, power up, pass through)
-     * @param result Result to return in case of error
      * @throws RemoteException
      */
-    public void setSimCardPower(int serial, int state, Message result) throws RemoteException {
+    public void setSimCardPower(int serial, int state) throws RemoteException {
         if (isEmpty()) return;
         if (isAidl()) {
             mSimProxy.setSimCardPower(serial, state);
         } else if (mHalVersion.greaterOrEqual(RIL.RADIO_HAL_VERSION_1_6)) {
             ((android.hardware.radio.V1_6.IRadio) mRadioProxy).setSimCardPower_1_6(serial, state);
-        } else if (mHalVersion.greaterOrEqual(RIL.RADIO_HAL_VERSION_1_1)) {
-            ((android.hardware.radio.V1_1.IRadio) mRadioProxy).setSimCardPower_1_1(serial, state);
         } else {
-            switch (state) {
-                case TelephonyManager.CARD_POWER_DOWN: {
-                    mRadioProxy.setSimCardPower(serial, false);
-                    break;
-                }
-                case TelephonyManager.CARD_POWER_UP: {
-                    mRadioProxy.setSimCardPower(serial, true);
-                    break;
-                }
-                default: {
-                    if (result != null) {
-                        AsyncResult.forMessage(result, null,
-                                CommandException.fromRilErrno(REQUEST_NOT_SUPPORTED));
-                        result.sendToTarget();
-                    }
-                }
-            }
+            mRadioProxy.setSimCardPower_1_1(serial, state);
         }
     }
 

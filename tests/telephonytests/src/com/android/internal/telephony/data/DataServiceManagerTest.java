@@ -25,12 +25,14 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PersistableBundle;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
 import android.telephony.TelephonyManager;
@@ -89,15 +91,19 @@ public class DataServiceManagerTest extends TelephonyTest {
 
     private Handler mHandler;
     private Handler mDataServiceHandler;
+    private PersistableBundle mBundle;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mBundle = mContextFixture.getCarrierConfigBundle();
+        when(mCarrierConfigManager.getConfigForSubId(anyInt(), any())).thenReturn(mBundle);
     }
 
     @After
     public void tearDown() throws Exception {
         mDataServiceManagerUT = null;
+        mBundle = null;
         super.tearDown();
     }
 
@@ -149,7 +155,7 @@ public class DataServiceManagerTest extends TelephonyTest {
                 message);
         waitAndVerifyResult(message, DataServiceCallback.RESULT_SUCCESS);
         verify(mSimulatedCommandsVerifier).setupDataCall(anyInt(), any(DataProfile.class),
-                anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(), any(), any(), anyBoolean(),
+                anyBoolean(), anyInt(), any(), anyInt(), any(), any(), anyBoolean(),
                 any(Message.class));
     }
 
@@ -162,7 +168,7 @@ public class DataServiceManagerTest extends TelephonyTest {
                 message);
         waitAndVerifyResult(message, DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE);
         verify(mSimulatedCommandsVerifier, never()).setupDataCall(anyInt(), any(DataProfile.class),
-                anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(), any(), any(), anyBoolean(),
+                anyBoolean(), anyInt(), any(), anyInt(), any(), any(), anyBoolean(),
                 any(Message.class));
     }
 
@@ -193,7 +199,7 @@ public class DataServiceManagerTest extends TelephonyTest {
         mDataServiceManagerUT.setInitialAttachApn(mGeneralPurposeDataProfile, false, message);
         waitAndVerifyResult(message, DataServiceCallback.RESULT_SUCCESS);
         verify(mSimulatedCommandsVerifier).setInitialAttachApn(any(DataProfile.class),
-                anyBoolean(), any(Message.class));
+                any(Message.class));
     }
 
     @Test
@@ -203,7 +209,7 @@ public class DataServiceManagerTest extends TelephonyTest {
         mDataServiceManagerUT.setInitialAttachApn(mGeneralPurposeDataProfile, false, message);
         waitAndVerifyResult(message, DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE);
         verify(mSimulatedCommandsVerifier, never()).setInitialAttachApn(any(DataProfile.class),
-                anyBoolean(), any(Message.class));
+                any(Message.class));
     }
 
     @Test
@@ -212,7 +218,7 @@ public class DataServiceManagerTest extends TelephonyTest {
         Message message = mHandler.obtainMessage(1234);
         mDataServiceManagerUT.setDataProfile(List.of(mGeneralPurposeDataProfile), false, message);
         waitAndVerifyResult(message, DataServiceCallback.RESULT_SUCCESS);
-        verify(mSimulatedCommandsVerifier).setDataProfile(any(DataProfile[].class), anyBoolean(),
+        verify(mSimulatedCommandsVerifier).setDataProfile(any(DataProfile[].class),
                 any(Message.class));
     }
 
@@ -223,7 +229,7 @@ public class DataServiceManagerTest extends TelephonyTest {
         mDataServiceManagerUT.setDataProfile(List.of(mGeneralPurposeDataProfile), false, message);
         waitAndVerifyResult(message, DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE);
         verify(mSimulatedCommandsVerifier, never()).setDataProfile(any(DataProfile[].class),
-                anyBoolean(), any(Message.class));
+                any(Message.class));
     }
 
     @Test
@@ -260,5 +266,21 @@ public class DataServiceManagerTest extends TelephonyTest {
         mDataServiceManagerUT.cancelHandover(123, message);
         waitAndVerifyResult(message, DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE);
         verify(mSimulatedCommandsVerifier, never()).cancelHandover(any(Message.class), anyInt());
+    }
+
+    @Test
+    public void testRequestValidation_ServiceNotBound() throws Exception {
+        createDataServiceManager(false);
+        Message message = mHandler.obtainMessage(1234);
+        mDataServiceManagerUT.requestValidation(123, message);
+        waitAndVerifyResult(message, DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE);
+    }
+
+    @Test
+    public void testRequestValidation_ServiceBound() throws Exception {
+        createDataServiceManager(true);
+        Message message = mHandler.obtainMessage(1234);
+        mDataServiceManagerUT.requestValidation(123, message);
+        waitAndVerifyResult(message, DataServiceCallback.RESULT_ERROR_UNSUPPORTED);
     }
 }

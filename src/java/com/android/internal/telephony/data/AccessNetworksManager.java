@@ -19,23 +19,19 @@ package com.android.internal.telephony.data;
 import android.annotation.CallbackExecutor;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.annotation.StringDef;
-import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.content.pm.PackageManager;
+import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.Registrant;
 import android.os.RegistrantList;
 import android.os.RemoteException;
-import android.os.SystemProperties;
-import android.os.UserHandle;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
 import android.telephony.AccessNetworkConstants.RadioAccessNetworkType;
@@ -45,6 +41,7 @@ import android.telephony.Annotation.NetCapability;
 import android.telephony.AnomalyReporter;
 import android.telephony.CarrierConfigManager;
 import android.telephony.data.ApnSetting;
+import android.telephony.data.DataServiceCallback;
 import android.telephony.data.IQualifiedNetworksService;
 import android.telephony.data.IQualifiedNetworksServiceCallback;
 import android.telephony.data.QualifiedNetworksService;
@@ -55,15 +52,15 @@ import android.util.IndentingPrintWriter;
 import android.util.LocalLog;
 import android.util.SparseArray;
 
+import com.android.internal.telephony.IIntegerConsumer;
 import com.android.internal.telephony.Phone;
-import com.android.internal.telephony.RIL;
 import com.android.internal.telephony.SlidingWindowEventCounter;
+import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.util.FunctionalUtils;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -72,6 +69,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -81,35 +79,9 @@ import java.util.stream.Collectors;
  */
 public class AccessNetworksManager extends Handler {
     private static final boolean DBG = false;
-    public static final String SYSTEM_PROPERTIES_IWLAN_OPERATION_MODE =
-            "ro.telephony.iwlan_operation_mode";
 
-    @Retention(RetentionPolicy.SOURCE)
-    @StringDef(prefix = {"IWLAN_OPERATION_MODE_"},
-            value = {
-                    IWLAN_OPERATION_MODE_DEFAULT,
-                    IWLAN_OPERATION_MODE_LEGACY,
-                    IWLAN_OPERATION_MODE_AP_ASSISTED})
-    public @interface IwlanOperationMode {}
-
-    /**
-     * IWLAN default mode. On device that has IRadio 1.4 or above, it means
-     * {@link #IWLAN_OPERATION_MODE_AP_ASSISTED}. On device that has IRadio 1.3 or below, it means
-     * {@link #IWLAN_OPERATION_MODE_LEGACY}.
-     */
-    public static final String IWLAN_OPERATION_MODE_DEFAULT = "default";
-
-    /**
-     * IWLAN legacy mode. IWLAN is completely handled by the modem, and when the device is on
-     * IWLAN, modem reports IWLAN as a RAT.
-     */
-    public static final String IWLAN_OPERATION_MODE_LEGACY = "legacy";
-
-    /**
-     * IWLAN application processor assisted mode. IWLAN is handled by the bound IWLAN data service
-     * and network service separately.
-     */
-    public static final String IWLAN_OPERATION_MODE_AP_ASSISTED = "AP-assisted";
+    /** Event to guide a transport type for initial data connection of emergency data network. */
+    private static final int EVENT_GUIDE_TRANSPORT_TYPE_FOR_EMERGENCY = 1;
 
     /**
      * The counters to detect frequent QNS attempt to change preferred network transport by ApnType.
@@ -154,22 +126,6 @@ public class AccessNetworksManager extends Handler {
 
     private final RegistrantList mQualifiedNetworksChangedRegistrants = new RegistrantList();
 
-    private final BroadcastReceiver mConfigChangedReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            final String action = intent.getAction();
-            if (CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED.equals(action)
-                    && mPhone.getPhoneId() == intent.getIntExtra(
-                    CarrierConfigManager.EXTRA_SLOT_INDEX, 0)) {
-                // We should wait for carrier config changed event because the target binding
-                // package name can come from the carrier config. Note that we still get this event
-                // even when SIM is absent.
-                if (DBG) log("Carrier config changed. Try to bind qualified network service.");
-                bindQualifiedNetworksService();
-            }
-        }
-    };
-
     /**
      * The preferred transport of the APN type. The key is the APN type, and the value is the
      * transport. The preferred transports are updated as soon as QNS changes the preference.
@@ -181,6 +137,8 @@ public class AccessNetworksManager extends Handler {
      */
     private final @NonNull Set<AccessNetworksManagerCallback> mAccessNetworksManagerCallbacks =
             new ArraySet<>();
+
+    private final FeatureFlags mFeatureFlags;
 
     /**
      * Represents qualified network types list on a specific APN type.
@@ -207,6 +165,19 @@ public class AccessNetworksManager extends Handler {
                     .mapToObj(AccessNetworkType::toString)
                     .collect(Collectors.joining(","))
                     + "]";
+        }
+    }
+
+    @Override
+    public void handleMessage(@NonNull Message msg) {
+        switch (msg.what) {
+            case EVENT_GUIDE_TRANSPORT_TYPE_FOR_EMERGENCY:
+                AsyncResult ar = (AsyncResult) msg.obj;
+                int transport = (int) ar.result;
+                onEmergencyDataNetworkPreferredTransportChanged(transport);
+                break;
+            default:
+                loge("Unexpected event " + msg.what);
         }
     }
 
@@ -330,6 +301,57 @@ public class AccessNetworksManager extends Handler {
                 mQualifiedNetworksChangedRegistrants.notifyResult(qualifiedNetworksList);
             }
         }
+
+        /**
+         * Called when QualifiedNetworksService requests network validation.
+         *
+         * Since the data network in the connected state corresponding to the given network
+         * capability must be validated, a request is tossed to the data network controller.
+         * @param networkCapability network capability
+         */
+        @Override
+        public void onNetworkValidationRequested(@NetCapability int networkCapability,
+                @NonNull IIntegerConsumer resultCodeCallback) {
+            DataNetworkController dnc = mPhone.getDataNetworkController();
+            if (!mFeatureFlags.networkValidation()) {
+                FunctionalUtils.ignoreRemoteException(resultCodeCallback::accept)
+                        .accept(DataServiceCallback.RESULT_ERROR_UNSUPPORTED);
+                return;
+            }
+
+            log("onNetworkValidationRequested: networkCapability = ["
+                    + DataUtils.networkCapabilityToString(networkCapability) + "]");
+
+            dnc.requestNetworkValidation(networkCapability, new Consumer<Integer>() {
+                @Override
+                public void accept(Integer result) {
+                    post(() -> {
+                        try {
+                            log("onNetworkValidationRequestDone:"
+                                    + DataServiceCallback.resultCodeToString(result));
+                            resultCodeCallback.accept(result.intValue());
+                        } catch (RemoteException e) {
+                            // Ignore if the remote process is no longer available to call back.
+                            loge("onNetworkValidationRequestDone RemoteException" + e);
+                        }
+                    });
+                }
+            });
+        }
+    }
+
+    private void onEmergencyDataNetworkPreferredTransportChanged(
+            @AccessNetworkConstants.TransportType int transportType) {
+        try {
+            logl("onEmergencyDataNetworkPreferredTransportChanged: "
+                    + AccessNetworkConstants.transportTypeToString(transportType));
+            if (mIQualifiedNetworksService != null) {
+                mIQualifiedNetworksService.reportEmergencyDataNetworkPreferredTransportChanged(
+                        mPhone.getPhoneId(), transportType);
+            }
+        } catch (Exception ex) {
+            loge("onEmergencyDataNetworkPreferredTransportChanged: ", ex);
+        }
     }
 
     /**
@@ -359,35 +381,30 @@ public class AccessNetworksManager extends Handler {
      * @param phone The phone object.
      * @param looper Looper for the handler.
      */
-    public AccessNetworksManager(@NonNull Phone phone, @NonNull Looper looper) {
+    public AccessNetworksManager(@NonNull Phone phone, @NonNull Looper looper,
+            @NonNull FeatureFlags featureFlags) {
         super(looper);
         mPhone = phone;
         mCarrierConfigManager = (CarrierConfigManager) phone.getContext().getSystemService(
                 Context.CARRIER_CONFIG_SERVICE);
         mLogTag = "ANM-" + mPhone.getPhoneId();
         mApnTypeToQnsChangeNetworkCounter = new SparseArray<>();
+        mAvailableTransports = new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                AccessNetworkConstants.TRANSPORT_TYPE_WLAN};
+        mFeatureFlags = featureFlags;
 
-        if (isInLegacyMode()) {
-            log("operates in legacy mode.");
-            // For legacy mode, WWAN is the only transport to handle all data connections, even
-            // the IWLAN ones.
-            mAvailableTransports = new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN};
-        } else {
-            log("operates in AP-assisted mode.");
-            mAvailableTransports = new int[]{AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
-                    AccessNetworkConstants.TRANSPORT_TYPE_WLAN};
-            IntentFilter intentFilter = new IntentFilter();
-            intentFilter.addAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-            try {
-                Context contextAsUser = phone.getContext().createPackageContextAsUser(
-                        phone.getContext().getPackageName(), 0, UserHandle.ALL);
-                contextAsUser.registerReceiver(mConfigChangedReceiver, intentFilter,
-                        null /* broadcastPermission */, null);
-            } catch (PackageManager.NameNotFoundException e) {
-                loge("Package name not found: ", e);
-            }
-            bindQualifiedNetworksService();
-        }
+        // bindQualifiedNetworksService posts real work to handler thread. So here we can
+        // let the callback execute in binder thread to avoid post twice.
+        mCarrierConfigManager.registerCarrierConfigChangeListener(Runnable::run,
+                (slotIndex, subId, carrierId, specificCarrierId) -> {
+                    if (slotIndex != mPhone.getPhoneId()) return;
+                    // We should wait for carrier config changed event because the target binding
+                    // package name can come from the carrier config. Note that we still get this
+                    // event even when SIM is absent.
+                    if (DBG) log("Carrier config changed. Try to bind qualified network service.");
+                    bindQualifiedNetworksService();
+                });
+        bindQualifiedNetworksService();
 
         // Using post to delay the registering because data retry manager and data config
         // manager instances are created later than access networks manager.
@@ -415,6 +432,8 @@ public class AccessNetworksManager extends Handler {
                             mApnTypeToQnsChangeNetworkCounter.clear();
                         }
                     });
+            mPhone.registerForEmergencyDomainSelected(
+                    this, EVENT_GUIDE_TRANSPORT_TYPE_FOR_EMERGENCY, null);
         });
     }
 
@@ -490,24 +509,29 @@ public class AccessNetworksManager extends Handler {
     /**
      * Get the qualified network service package.
      *
-     * @return package name of the qualified networks service package. Return empty string when in
-     * legacy mode (i.e. Dedicated IWLAN data/network service is not supported).
+     * @return package name of the qualified networks service package.
      */
     private String getQualifiedNetworksServicePackageName() {
         // Read package name from the resource
         String packageName = mPhone.getContext().getResources().getString(
                 com.android.internal.R.string.config_qualified_networks_service_package);
 
-        PersistableBundle b = mCarrierConfigManager.getConfigForSubId(mPhone.getSubId());
-
-        if (b != null) {
-            // If carrier config overrides it, use the one from carrier config
-            String carrierConfigPackageName =  b.getString(CarrierConfigManager
-                    .KEY_CARRIER_QUALIFIED_NETWORKS_SERVICE_PACKAGE_OVERRIDE_STRING);
-            if (!TextUtils.isEmpty(carrierConfigPackageName)) {
-                if (DBG) log("Found carrier config override " + carrierConfigPackageName);
-                packageName = carrierConfigPackageName;
+        PersistableBundle b;
+        try {
+            b = mCarrierConfigManager.getConfigForSubId(mPhone.getSubId(),
+                    CarrierConfigManager
+                            .KEY_CARRIER_QUALIFIED_NETWORKS_SERVICE_PACKAGE_OVERRIDE_STRING);
+            if (b != null && !b.isEmpty()) {
+                // If carrier config overrides it, use the one from carrier config
+                String carrierConfigPackageName = b.getString(CarrierConfigManager
+                        .KEY_CARRIER_QUALIFIED_NETWORKS_SERVICE_PACKAGE_OVERRIDE_STRING);
+                if (!TextUtils.isEmpty(carrierConfigPackageName)) {
+                    if (DBG) log("Found carrier config override " + carrierConfigPackageName);
+                    packageName = carrierConfigPackageName;
+                }
             }
+        } catch (RuntimeException e) {
+            loge("Carrier config loader is not available.");
         }
 
         return packageName;
@@ -523,16 +547,22 @@ public class AccessNetworksManager extends Handler {
         String className = mPhone.getContext().getResources().getString(
                 com.android.internal.R.string.config_qualified_networks_service_class);
 
-        PersistableBundle b = mCarrierConfigManager.getConfigForSubId(mPhone.getSubId());
-
-        if (b != null) {
-            // If carrier config overrides it, use the one from carrier config
-            String carrierConfigClassName =  b.getString(CarrierConfigManager
-                    .KEY_CARRIER_QUALIFIED_NETWORKS_SERVICE_CLASS_OVERRIDE_STRING);
-            if (!TextUtils.isEmpty(carrierConfigClassName)) {
-                if (DBG) log("Found carrier config override " + carrierConfigClassName);
-                className = carrierConfigClassName;
+        PersistableBundle b;
+        try {
+            b = mCarrierConfigManager.getConfigForSubId(mPhone.getSubId(),
+                    CarrierConfigManager
+                            .KEY_CARRIER_QUALIFIED_NETWORKS_SERVICE_CLASS_OVERRIDE_STRING);
+            if (b != null && !b.isEmpty()) {
+                // If carrier config overrides it, use the one from carrier config
+                String carrierConfigClassName = b.getString(CarrierConfigManager
+                        .KEY_CARRIER_QUALIFIED_NETWORKS_SERVICE_CLASS_OVERRIDE_STRING);
+                if (!TextUtils.isEmpty(carrierConfigClassName)) {
+                    if (DBG) log("Found carrier config override " + carrierConfigClassName);
+                    className = carrierConfigClassName;
+                }
             }
+        } catch (RuntimeException e) {
+            loge("Carrier config loader is not available.");
         }
 
         return className;
@@ -568,30 +598,9 @@ public class AccessNetworksManager extends Handler {
     }
 
     /**
-     * @return {@code true} if the device operates in legacy mode, otherwise {@code false}.
+     * @return The available transports.
      */
-    public boolean isInLegacyMode() {
-        // Get IWLAN operation mode from the system property. If the system property is configured
-        // to default or not configured, the mode is tied to IRadio version. For 1.4 or above, it's
-        // AP-assisted mode, for 1.3 or below, it's legacy mode.
-        String mode = SystemProperties.get(SYSTEM_PROPERTIES_IWLAN_OPERATION_MODE);
-
-        if (mode.equals(IWLAN_OPERATION_MODE_AP_ASSISTED)) {
-            return false;
-        } else if (mode.equals(IWLAN_OPERATION_MODE_LEGACY)) {
-            return true;
-        }
-
-        return mPhone.getHalVersion().less(RIL.RADIO_HAL_VERSION_1_4);
-    }
-
-    /**
-     * @return The available transports. Note that on legacy devices, the only available transport
-     * would be WWAN only. If the device is configured as AP-assisted mode, the available transport
-     * will always be WWAN and WLAN (even if the device is not camped on IWLAN).
-     * See {@link #isInLegacyMode()} for mode details.
-     */
-    public synchronized @NonNull int[] getAvailableTransports() {
+    public @NonNull int[] getAvailableTransports() {
         return mAvailableTransports;
     }
 
@@ -626,11 +635,6 @@ public class AccessNetworksManager extends Handler {
      * @return The preferred transport.
      */
     public @TransportType int getPreferredTransport(@ApnType int apnType) {
-        // In legacy mode, always preferred on cellular.
-        if (isInLegacyMode()) {
-            return AccessNetworkConstants.TRANSPORT_TYPE_WWAN;
-        }
-
         return mPreferredTransports.get(apnType) == null
                 ? AccessNetworkConstants.TRANSPORT_TYPE_WWAN : mPreferredTransports.get(apnType);
     }
@@ -733,9 +737,6 @@ public class AccessNetworksManager extends Handler {
         }
 
         pw.decreaseIndent();
-        pw.println("isInLegacy=" + isInLegacyMode());
-        pw.println("IWLAN operation mode="
-                + SystemProperties.get(SYSTEM_PROPERTIES_IWLAN_OPERATION_MODE));
         pw.println("Local logs=");
         pw.increaseIndent();
         mLocalLog.dump(fd, pw, args);

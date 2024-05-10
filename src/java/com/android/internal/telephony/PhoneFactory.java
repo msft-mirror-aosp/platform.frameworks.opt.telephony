@@ -16,11 +16,14 @@
 
 package com.android.internal.telephony;
 
+import static android.telephony.TelephonyManager.HAL_SERVICE_RADIO;
+
 import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_CDMA;
 import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_CDMA_LTE;
 
 import static java.util.Arrays.copyOf;
 
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
@@ -29,7 +32,6 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.LocalServerSocket;
 import android.os.Build;
-import android.os.HandlerThread;
 import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
@@ -46,6 +48,8 @@ import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.data.TelephonyNetworkFactory;
 import com.android.internal.telephony.euicc.EuiccCardController;
 import com.android.internal.telephony.euicc.EuiccController;
+import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneFactory;
 import com.android.internal.telephony.metrics.MetricsCollector;
@@ -58,6 +62,7 @@ import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -86,8 +91,6 @@ public class PhoneFactory {
     private static @Nullable EuiccCardController sEuiccCardController;
     private static SubscriptionManagerService sSubscriptionManagerService;
 
-    static private SubscriptionInfoUpdater sSubInfoRecordUpdater = null;
-
     @UnsupportedAppUsage
     static private boolean sMadeDefaults = false;
     @UnsupportedAppUsage
@@ -103,11 +106,17 @@ public class PhoneFactory {
     static private final HashMap<String, LocalLog>sLocalLogs = new HashMap<String, LocalLog>();
     private static MetricsCollector sMetricsCollector;
     private static RadioInterfaceCapabilityController sRadioHalCapabilities;
+    private static @NonNull FeatureFlags sFeatureFlags = new FeatureFlagsImpl();
 
     //***** Class Methods
 
-    public static void makeDefaultPhones(Context context) {
-        makeDefaultPhone(context);
+    /**
+     * @param context The context.
+     * @param featureFlags The feature flag.
+     */
+    public static void makeDefaultPhones(Context context, @NonNull FeatureFlags featureFlags) {
+        sFeatureFlags = featureFlags;
+        makeDefaultPhone(context, featureFlags);
     }
 
     /**
@@ -115,10 +124,11 @@ public class PhoneFactory {
      * instances
      */
     @UnsupportedAppUsage
-    public static void makeDefaultPhone(Context context) {
+    public static void makeDefaultPhone(Context context, @NonNull FeatureFlags featureFlags) {
         synchronized (sLockProxyPhones) {
             if (!sMadeDefaults) {
                 sContext = context;
+
                 // create the telephony device controller.
                 TelephonyDevController.create();
 
@@ -151,9 +161,9 @@ public class PhoneFactory {
                 }
 
                 // register statsd pullers.
-                sMetricsCollector = new MetricsCollector(context);
+                sMetricsCollector = new MetricsCollector(context, sFeatureFlags);
 
-                sPhoneNotifier = new DefaultPhoneNotifier(context);
+                sPhoneNotifier = new DefaultPhoneNotifier(context, featureFlags);
 
                 int cdmaSubscription = CdmaSubscriptionSourceManager.getDefault(context);
                 Rlog.i(LOG_TAG, "Cdma Subscription set to " + cdmaSubscription);
@@ -181,7 +191,7 @@ public class PhoneFactory {
 
                 if (numPhones > 0) {
                     final RadioConfig radioConfig = RadioConfig.make(context,
-                            sCommandsInterfaces[0].getHalVersion());
+                            sCommandsInterfaces[0].getHalVersion(HAL_SERVICE_RADIO));
                     sRadioHalCapabilities = RadioInterfaceCapabilityController.init(radioConfig,
                             sCommandsInterfaces[0]);
                 } else {
@@ -196,18 +206,12 @@ public class PhoneFactory {
                 // call getInstance()
                 sUiccController = UiccController.make(context);
 
-                if (sContext.getResources().getBoolean(
-                        com.android.internal.R.bool.config_using_subscription_manager_service)) {
-                    Rlog.i(LOG_TAG, "Creating SubscriptionManagerService");
-                    sSubscriptionManagerService = new SubscriptionManagerService(context);
-                } else {
-                    Rlog.i(LOG_TAG, "Creating SubscriptionController");
-                    TelephonyComponentFactory.getInstance().inject(SubscriptionController.class
-                            .getName()).initSubscriptionController(context);
-                }
+                Rlog.i(LOG_TAG, "Creating SubscriptionManagerService");
+                sSubscriptionManagerService = new SubscriptionManagerService(context,
+                        Looper.myLooper(), featureFlags);
+
                 TelephonyComponentFactory.getInstance().inject(MultiSimSettingController.class.
-                        getName()).initMultiSimSettingController(context,
-                        SubscriptionController.getInstance());
+                        getName()).initMultiSimSettingController(context);
 
                 if (context.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_TELEPHONY_EUICC)) {
@@ -239,14 +243,6 @@ public class PhoneFactory {
 
                 sMadeDefaults = true;
 
-                Rlog.i(LOG_TAG, "Creating SubInfoRecordUpdater ");
-                HandlerThread pfhandlerThread = new HandlerThread("PhoneFactoryHandlerThread");
-                pfhandlerThread.start();
-                sSubInfoRecordUpdater = TelephonyComponentFactory.getInstance().inject(
-                        SubscriptionInfoUpdater.class.getName()).
-                        makeSubscriptionInfoUpdater(pfhandlerThread.
-                        getLooper(), context, SubscriptionController.getInstance());
-
                 // Only bring up IMS if the device supports having an IMS stack.
                 if (context.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_TELEPHONY_IMS)) {
@@ -260,7 +256,7 @@ public class PhoneFactory {
                     Rlog.i(LOG_TAG, "IMS is not supported on this device, skipping ImsResolver.");
                 }
 
-                sPhoneConfigurationManager = PhoneConfigurationManager.init(sContext);
+                sPhoneConfigurationManager = PhoneConfigurationManager.init(sContext, featureFlags);
 
                 sCellularNetworkValidator = CellularNetworkValidator.make(sContext);
 
@@ -269,7 +265,8 @@ public class PhoneFactory {
 
                 sPhoneSwitcher = TelephonyComponentFactory.getInstance().inject(
                         PhoneSwitcher.class.getName()).
-                        makePhoneSwitcher(maxActivePhones, sContext, Looper.myLooper());
+                        makePhoneSwitcher(maxActivePhones, sContext, Looper.myLooper(),
+                                featureFlags);
 
                 sProxyController = ProxyController.getInstance(context);
 
@@ -332,7 +329,7 @@ public class PhoneFactory {
 
         return injectedComponentFactory.makePhone(context,
                 sCommandsInterfaces[phoneId], sPhoneNotifier, phoneId, phoneType,
-                TelephonyComponentFactory.getInstance());
+                TelephonyComponentFactory.getInstance(), sFeatureFlags);
     }
 
     @UnsupportedAppUsage
@@ -384,10 +381,6 @@ public class PhoneFactory {
         }
     }
 
-    public static SubscriptionInfoUpdater getSubscriptionInfoUpdater() {
-        return sSubInfoRecordUpdater;
-    }
-
     /**
      * Get the network factory associated with a given phone ID.
      * @param phoneId the phone id
@@ -424,7 +417,6 @@ public class PhoneFactory {
      * @param phoneId The phone's id.
      * @return the preferred network mode bitmask that should be set.
      */
-    // TODO: Fix when we "properly" have TelephonyDevController/SubscriptionController ..
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static int calculatePreferredNetworkType(int phoneId) {
         if (getPhone(phoneId) == null) {
@@ -441,7 +433,7 @@ public class PhoneFactory {
     /* Gets the default subscription */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static int getDefaultSubscription() {
-        return SubscriptionController.getInstance().getDefaultSubId();
+        return SubscriptionManagerService.getInstance().getDefaultSubId();
     }
 
     /* Returns User SMS Prompt property,  enabled or not */
@@ -465,23 +457,11 @@ public class PhoneFactory {
      * @return the {@code ImsPhone} object or null if the exception occured
      */
     public static Phone makeImsPhone(PhoneNotifier phoneNotifier, Phone defaultPhone) {
-        return ImsPhoneFactory.makePhone(sContext, phoneNotifier, defaultPhone);
+        return ImsPhoneFactory.makePhone(sContext, phoneNotifier, defaultPhone, sFeatureFlags);
     }
 
     /**
-     * Request a refresh of the embedded subscription list.
-     *
-     * @param cardId the card ID of the eUICC.
-     * @param callback Optional callback to execute after the refresh completes. Must terminate
-     *     quickly as it will be called from SubscriptionInfoUpdater's handler thread.
-     */
-    public static void requestEmbeddedSubscriptionInfoListRefresh(
-            int cardId, @Nullable Runnable callback) {
-        sSubInfoRecordUpdater.requestEmbeddedSubscriptionInfoListRefresh(cardId, callback);
-    }
-
-    /**
-     * Get a the SmsController.
+     * Get the instance of {@link SmsController}.
      */
     public static SmsController getSmsController() {
         synchronized (sLockProxyPhones) {
@@ -543,6 +523,27 @@ public class PhoneFactory {
         return sMetricsCollector;
     }
 
+    /**
+     * Print all feature flag configurations that Telephony is using for debugging purposes.
+     */
+    private static void reflectAndPrintFlagConfigs(IndentingPrintWriter pw) {
+
+        try {
+            // Look away, a forbidden technique (reflection) is being used to allow us to get
+            // all flag configs without having to add them manually to this method.
+            Method[] methods = FeatureFlags.class.getMethods();
+            if (methods.length == 0) {
+                pw.println("NONE");
+                return;
+            }
+            for (Method m : methods) {
+                pw.println(m.getName() + "-> " + m.invoke(sFeatureFlags));
+            }
+        } catch (Exception e) {
+            pw.println("[ERROR]");
+        }
+    }
+
     public static void dump(FileDescriptor fd, PrintWriter printwriter, String[] args) {
         IndentingPrintWriter pw = new IndentingPrintWriter(printwriter, "  ");
         pw.println("PhoneFactory:");
@@ -584,21 +585,14 @@ public class PhoneFactory {
         pw.decreaseIndent();
         pw.println("++++++++++++++++++++++++++++++++");
 
-        pw.println("SubscriptionController:");
-        pw.increaseIndent();
-        try {
-            SubscriptionController.getInstance().dump(fd, pw, args);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
         pw.flush();
         pw.decreaseIndent();
         pw.println("++++++++++++++++++++++++++++++++");
 
-        pw.println("SubInfoRecordUpdater:");
+        pw.println("sRadioHalCapabilities:");
         pw.increaseIndent();
         try {
-            sSubInfoRecordUpdater.dump(fd, pw, args);
+            sRadioHalCapabilities.dump(fd, pw, args);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -642,8 +636,15 @@ public class PhoneFactory {
         } catch (Exception e) {
             e.printStackTrace();
         }
-
         pw.flush();
         pw.decreaseIndent();
+
+        pw.println("++++++++++++++++++++++++++++++++");
+        pw.println("Flag Configurations:");
+        pw.increaseIndent();
+        reflectAndPrintFlagConfigs(pw);
+        pw.flush();
+        pw.decreaseIndent();
+        pw.println("++++++++++++++++++++++++++++++++");
     }
 }
