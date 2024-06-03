@@ -89,6 +89,7 @@ import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
 import com.android.internal.telephony.analytics.TelephonyAnalytics;
 import com.android.internal.telephony.analytics.TelephonyAnalytics.SmsMmsAnalytics;
 import com.android.internal.telephony.cdma.sms.UserData;
+import com.android.internal.telephony.satellite.metrics.CarrierRoamingSatelliteSessionStats;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.IccRecords;
@@ -1054,7 +1055,8 @@ public abstract class SMSDispatcher extends Handler {
             tracker.onSent(mContext);
             mPhone.notifySmsSent(tracker.mDestAddress);
             mSmsDispatchersController.notifySmsSentToEmergencyStateTracker(
-                    tracker.mDestAddress, tracker.mMessageId, false);
+                    tracker.mDestAddress, tracker.mMessageId, false,
+                    tracker.isSinglePartOrLastPart());
 
             mPhone.getSmsStats().onOutgoingSms(
                     tracker.mImsRetry > 0 /* isOverIms */,
@@ -1065,6 +1067,9 @@ public abstract class SMSDispatcher extends Handler {
                     tracker.isFromDefaultSmsApplication(mContext),
                     tracker.getInterval(),
                     mTelephonyManager.isEmergencyNumber(tracker.mDestAddress));
+            CarrierRoamingSatelliteSessionStats sessionStats =
+                    CarrierRoamingSatelliteSessionStats.getInstance(mPhone.getSubId());
+            sessionStats.onOutgoingSms();
             if (mPhone != null) {
                 TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
                 if (telephonyAnalytics != null) {
@@ -2610,6 +2615,14 @@ public abstract class SMSDispatcher extends Handler {
          */
         protected long getInterval() {
             return SystemClock.elapsedRealtime() - mTimestamp;
+        }
+
+        /**
+         * Returns the flag specifying whether this {@link SmsTracker} is a single part or
+         * the last part of multipart message.
+         */
+        protected boolean isSinglePartOrLastPart() {
+            return mUnsentPartCount != null ? (mUnsentPartCount.get() == 0) : true;
         }
 
         /**

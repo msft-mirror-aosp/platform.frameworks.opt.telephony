@@ -4915,15 +4915,15 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     /**
      * @return The data network controller
      */
-    public @Nullable DataNetworkController getDataNetworkController() {
+    public @NonNull DataNetworkController getDataNetworkController() {
         return mDataNetworkController;
     }
 
     /**
      * @return The data settings manager
      */
-    public @Nullable DataSettingsManager getDataSettingsManager() {
-        if (mDataNetworkController == null) return null;
+    @NonNull
+    public DataSettingsManager getDataSettingsManager() {
         return mDataNetworkController.getDataSettingsManager();
     }
 
@@ -5311,6 +5311,18 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             @TelephonyManager.EmergencyCallbackModeStopReason int reason) {
         Rlog.d(LOG_TAG, "stopCallbackMode:type=" + type + ", reason=" + reason);
         mNotifier.notifyCallbackModeStopped(this, type, reason);
+    }
+
+    /**
+     * Notify carrier roaming non-terrestrial network mode changed
+     * @param active {@code true} If the device is connected to carrier roaming
+     *                           non-terrestrial network or was connected within the
+     *                           {CarrierConfigManager#KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT}
+     *                           duration, {code false} otherwise.
+     */
+    public void notifyCarrierRoamingNtnModeChanged(boolean active) {
+        logd("notifyCarrierRoamingNtnModeChanged active:" + active);
+        mNotifier.notifyCarrierRoamingNtnModeChanged(this, active);
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {

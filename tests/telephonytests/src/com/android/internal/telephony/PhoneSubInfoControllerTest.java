@@ -43,7 +43,8 @@ import android.os.Binder;
 import android.os.Build;
 import android.os.RemoteException;
 import android.telephony.TelephonyManager;
-import android.test.suitebuilder.annotation.SmallTest;
+
+import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.uicc.IsimUiccRecords;
 import com.android.internal.telephony.uicc.SIMRecords;
@@ -230,7 +231,12 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     @Test
     @SmallTest
     @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
-    public void testGetNai_EnabledEnforceTelephonyFeatureMappingForPublicApis() {
+    public void testGetNai_EnabledEnforceTelephonyFeatureMappingForPublicApis() throws Exception {
+        // Replace field to set SDK version of vendor partition to Android V
+        int vendorApiLevel = Build.VERSION_CODES.VANILLA_ICE_CREAM;
+        replaceInstance(PhoneSubInfoController.class, "mVendorApiLevel",
+                mPhoneSubInfoControllerUT, vendorApiLevel);
+
         // FeatureFlags enabled, System has required feature
         doReturn(true).when(mFeatureFlags).enforceTelephonyFeatureMappingForPublicApis();
         doReturn(true).when(mPm).hasSystemFeature(

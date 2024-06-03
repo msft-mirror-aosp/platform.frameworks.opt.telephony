@@ -1,12 +1,5 @@
 package: "com.android.internal.telephony.flags"
-
-# OWNER=linggm TARGET=24Q1
-flag {
-  name: "reject_bad_sub_id_interaction"
-  namespace: "telephony"
-  description: "Previously, the DB allows insertion of a random sub Id, but doesn't allow query it. This change rejects such interaction."
-  bug: "294125411"
-}
+container: "system"
 
 # OWNER=hwangoo TARGET=24Q2
 flag {
@@ -23,4 +16,26 @@ flag {
   namespace: "telephony"
   description: "This flag controls the support of the new MMS error code MMS_ERROR_MMS_DISABLED."
   bug: "305062594"
+}
+
+# OWNER=linggm TARGET=24Q4
+flag {
+  name: "mms_get_apn_from_pdsc"
+  namespace: "telephony"
+  description: "This flag controls get APN details from PDSC instead of telephony provider."
+  bug: "324280016"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+# OWNER=stevestatia TARGET=24Q3
+flag {
+    name: "unregister_sms_broadcast_receiver_from_cat_service"
+    namespace: "telephony"
+    description: "This flag will unregister the sms broadcast receiver in the CatService when the process is disposed."
+    bug: "338936403"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }

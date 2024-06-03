@@ -62,6 +62,8 @@ public class PointingAppController {
     @NonNull private final Context mContext;
     private boolean mStartedSatelliteTransmissionUpdates;
     private boolean mLastNeedFullScreenPointingUI;
+    private boolean mLastIsDemoMode;
+    private boolean mLastIsEmergency;
     private boolean mListenerForPointingUIRegistered;
     @NonNull private String mPointingUiPackageName = "";
     @NonNull private String mPointingUiClassName = "";
@@ -105,6 +107,8 @@ public class PointingAppController {
         mContext = context;
         mStartedSatelliteTransmissionUpdates = false;
         mLastNeedFullScreenPointingUI = false;
+        mLastIsDemoMode = false;
+        mLastIsEmergency = false;
         mListenerForPointingUIRegistered = false;
         mActivityManager = mContext.getSystemService(ActivityManager.class);
     }
@@ -130,15 +134,6 @@ public class PointingAppController {
     }
 
     /**
-     * Get the flag mStartedSatelliteTransmissionUpdates
-     * @return returns mStartedSatelliteTransmissionUpdates
-     */
-    @VisibleForTesting
-    public boolean getLastNeedFullScreenPointingUI() {
-        return mLastNeedFullScreenPointingUI;
-    }
-
-    /**
      * Listener for handling pointing UI App in the event of crash
      */
     @VisibleForTesting
@@ -153,19 +148,22 @@ public class PointingAppController {
             if (callerPackages != null) {
                 if (Arrays.stream(callerPackages).anyMatch(pointingUiPackage::contains)) {
                     logd("Restarting pointingUI");
-                    startPointingUI(mLastNeedFullScreenPointingUI);
+                    startPointingUI(mLastNeedFullScreenPointingUI, mLastIsDemoMode,
+                            mLastIsEmergency);
                 }
             }
         }
     }
 
     private static final class DatagramTransferStateHandlerRequest {
+        public int datagramType;
         public int datagramTransferState;
         public int pendingCount;
         public int errorCode;
 
-        DatagramTransferStateHandlerRequest(int datagramTransferState, int pendingCount,
-                int errorCode) {
+        DatagramTransferStateHandlerRequest(int datagramType, int datagramTransferState,
+                int pendingCount, int errorCode) {
+            this.datagramType = datagramType;
             this.datagramTransferState = datagramTransferState;
             this.pendingCount = pendingCount;
             this.errorCode = errorCode;
@@ -232,8 +230,9 @@ public class PointingAppController {
                     List<IBinder> toBeRemoved = new ArrayList<>();
                     mListeners.values().forEach(listener -> {
                         try {
-                            listener.onSendDatagramStateChanged(request.datagramTransferState,
-                                    request.pendingCount, request.errorCode);
+                            listener.onSendDatagramStateChanged(request.datagramType,
+                                    request.datagramTransferState, request.pendingCount,
+                                    request.errorCode);
                         } catch (RemoteException e) {
                             logd("EVENT_SEND_DATAGRAM_STATE_CHANGED RemoteException: " + e);
                             toBeRemoved.add(listener.asBinder());
@@ -356,7 +355,8 @@ public class PointingAppController {
      * Check if Pointing is needed and Launch Pointing UI
      * @param needFullScreenPointingUI if pointing UI has to be launchd with Full screen
      */
-    public void startPointingUI(boolean needFullScreenPointingUI) {
+    public void startPointingUI(boolean needFullScreenPointingUI, boolean isDemoMode,
+            boolean isEmergency) {
         String packageName = getPointingUiPackageName();
         if (TextUtils.isEmpty(packageName)) {
             logd("startPointingUI: config_pointing_ui_package is not set. Ignore the request");
@@ -376,8 +376,11 @@ public class PointingAppController {
             loge("startPointingUI: launchIntent is null");
             return;
         }
-        logd("startPointingUI: needFullScreenPointingUI: " + needFullScreenPointingUI);
+        logd("startPointingUI: needFullScreenPointingUI: " + needFullScreenPointingUI
+                + ", isDemoMode: " + isDemoMode + ", isEmergency: " + isEmergency);
         launchIntent.putExtra("needFullScreen", needFullScreenPointingUI);
+        launchIntent.putExtra("isDemoMode", isDemoMode);
+        launchIntent.putExtra("isEmergency", isEmergency);
 
         try {
             if (!mListenerForPointingUIRegistered) {
@@ -386,6 +389,8 @@ public class PointingAppController {
                 mListenerForPointingUIRegistered = true;
             }
             mLastNeedFullScreenPointingUI = needFullScreenPointingUI;
+            mLastIsDemoMode = isDemoMode;
+            mLastIsEmergency = isEmergency;
             mContext.startActivity(launchIntent);
         } catch (ActivityNotFoundException ex) {
             loge("startPointingUI: Pointing UI app activity is not found, ex=" + ex);
@@ -403,10 +408,11 @@ public class PointingAppController {
     }
 
     public void updateSendDatagramTransferState(int subId,
+            @SatelliteManager.DatagramType int datagramType,
             @SatelliteManager.SatelliteDatagramTransferState int datagramTransferState,
             int sendPendingCount, int errorCode) {
         DatagramTransferStateHandlerRequest request = new DatagramTransferStateHandlerRequest(
-                datagramTransferState, sendPendingCount, errorCode);
+                datagramType, datagramTransferState, sendPendingCount, errorCode);
         SatelliteTransmissionUpdateHandler handler =
                 mSatelliteTransmissionUpdateHandlers.get(subId);
 
@@ -424,7 +430,8 @@ public class PointingAppController {
             @SatelliteManager.SatelliteDatagramTransferState int datagramTransferState,
             int receivePendingCount, int errorCode) {
         DatagramTransferStateHandlerRequest request = new DatagramTransferStateHandlerRequest(
-                datagramTransferState, receivePendingCount, errorCode);
+                SatelliteManager.DATAGRAM_TYPE_UNKNOWN, datagramTransferState, receivePendingCount,
+                errorCode);
         SatelliteTransmissionUpdateHandler handler =
                 mSatelliteTransmissionUpdateHandlers.get(subId);
 

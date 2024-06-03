@@ -17,6 +17,7 @@
 package com.android.internal.telephony.data;
 
 import android.annotation.CallbackExecutor;
+import android.annotation.ElapsedRealtimeLong;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -38,6 +39,7 @@ import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.SystemClock;
 import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
@@ -90,6 +92,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.SlidingWindowEventCounter;
+import com.android.internal.telephony.TelephonyCapabilities;
 import com.android.internal.telephony.TelephonyComponentFactory;
 import com.android.internal.telephony.data.AccessNetworksManager.AccessNetworksManagerCallback;
 import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCallback;
@@ -244,32 +247,46 @@ public class DataNetworkController extends Handler {
             TimeUnit.SECONDS.toMillis(1);
 
     /**
-     * The delay in milliseconds to re-evaluate existing data networks for bootstrap sim data usage
-     * limit.
+     * The guard timer in milliseconds to limit querying the data usage api stats frequently
      */
-    private static final long REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS =
-            TimeUnit.SECONDS.toMillis(60);
+    private static final long GUARD_TIMER_INTERVAL_TO_QUERY_DATA_USAGE_API_STATS_MILLIS =
+            TimeUnit.SECONDS.toMillis(1);
 
     /**
      * bootstrap sim total data usage bytes
      */
     private long mBootStrapSimTotalDataUsageBytes = 0L;
 
+    /**
+     * bootstrap sim last data usage query time
+     */
+    @ElapsedRealtimeLong
+    private long mBootstrapSimLastDataUsageQueryTime = 0L;
+
     private final Phone mPhone;
     private final String mLogTag;
     private final LocalLog mLocalLog = new LocalLog(128);
 
-    private final @NonNull DataConfigManager mDataConfigManager;
-    private final @NonNull DataSettingsManager mDataSettingsManager;
-    private final @NonNull DataProfileManager mDataProfileManager;
-    private final @NonNull DataStallRecoveryManager mDataStallRecoveryManager;
-    private final @NonNull AccessNetworksManager mAccessNetworksManager;
-    private final @NonNull DataRetryManager mDataRetryManager;
-    private final @NonNull ImsManager mImsManager;
-    private final @NonNull TelecomManager mTelecomManager;
-    private final @NonNull NetworkPolicyManager mNetworkPolicyManager;
-    private final @NonNull SparseArray<DataServiceManager> mDataServiceManagers =
-            new SparseArray<>();
+    @NonNull
+    private final DataConfigManager mDataConfigManager;
+    @NonNull
+    private final DataSettingsManager mDataSettingsManager;
+    @NonNull
+    private final DataProfileManager mDataProfileManager;
+    @NonNull
+    private final DataStallRecoveryManager mDataStallRecoveryManager;
+    @NonNull
+    private final AccessNetworksManager mAccessNetworksManager;
+    @NonNull
+    private final DataRetryManager mDataRetryManager;
+    @NonNull
+    private final ImsManager mImsManager;
+    @NonNull
+    private final TelecomManager mTelecomManager;
+    @NonNull
+    private final NetworkPolicyManager mNetworkPolicyManager;
+    @NonNull
+    private final SparseArray<DataServiceManager> mDataServiceManagers = new SparseArray<>();
 
     /** The subscription index associated with this data network controller. */
     private int mSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
@@ -277,35 +294,41 @@ public class DataNetworkController extends Handler {
     /** The current service state of the device. */
     // Note that keeping a copy here instead of directly using ServiceStateTracker.getServiceState()
     // is intended for detecting the delta.
-    private @NonNull ServiceState mServiceState;
+    @NonNull
+    private ServiceState mServiceState;
 
     /** The list of SubscriptionPlans, updated when initialized and when plans are changed. */
-    private final @NonNull List<SubscriptionPlan> mSubscriptionPlans = new ArrayList<>();
+    @NonNull
+    private final List<SubscriptionPlan> mSubscriptionPlans = new ArrayList<>();
 
     /**
      * The set of network types an unmetered override applies to, set by onSubscriptionOverride
      * and cleared when the device is rebooted or the override expires.
      */
-    private final @NonNull @NetworkType Set<Integer> mUnmeteredOverrideNetworkTypes =
-            new ArraySet<>();
+    @NonNull
+    @NetworkType
+    private final Set<Integer> mUnmeteredOverrideNetworkTypes = new ArraySet<>();
 
     /**
      * The set of network types a congested override applies to, set by onSubscriptionOverride
      * and cleared when the device is rebooted or the override expires.
      */
-    private final @NonNull @NetworkType Set<Integer> mCongestedOverrideNetworkTypes =
-            new ArraySet<>();
+    @NonNull
+    @NetworkType
+    private final Set<Integer> mCongestedOverrideNetworkTypes = new ArraySet<>();
 
     /**
      * The list of all network requests.
      */
-    private final @NonNull NetworkRequestList mAllNetworkRequestList = new NetworkRequestList();
+    @NonNull
+    private final NetworkRequestList mAllNetworkRequestList = new NetworkRequestList();
 
     /**
      * The current data network list, including the ones that are connected, connecting, or
      * disconnecting.
      */
-    private final @NonNull List<DataNetwork> mDataNetworkList = new ArrayList<>();
+    @NonNull
+    private final List<DataNetwork> mDataNetworkList = new ArrayList<>();
 
     /** {@code true} indicating at least one data network exists. */
     private boolean mAnyDataNetworkExisting;
@@ -313,27 +336,33 @@ public class DataNetworkController extends Handler {
     /**
      * Contain the last 10 data networks that were connected. This is for debugging purposes only.
      */
-    private final @NonNull List<DataNetwork> mPreviousConnectedDataNetworkList = new ArrayList<>();
+    @NonNull
+    private final List<DataNetwork> mPreviousConnectedDataNetworkList = new ArrayList<>();
 
     /**
      * The internet data network state. Note that this is the best effort if more than one
      * data network supports internet.
      */
-    private @DataState int mInternetDataNetworkState = TelephonyManager.DATA_DISCONNECTED;
+    @DataState
+    private int mInternetDataNetworkState = TelephonyManager.DATA_DISCONNECTED;
 
     /** All the current connected/handover internet networks.  */
-    @NonNull private Set<DataNetwork> mConnectedInternetNetworks = new HashSet<>();
+    @NonNull
+    private Set<DataNetwork> mConnectedInternetNetworks = new HashSet<>();
 
     /**
      * The IMS data network state. For now this is just for debugging purposes.
      */
-    private @DataState int mImsDataNetworkState = TelephonyManager.DATA_DISCONNECTED;
+    @DataState
+    private int mImsDataNetworkState = TelephonyManager.DATA_DISCONNECTED;
 
     /** Overall aggregated link status from internet data networks. */
-    private @LinkStatus int mInternetLinkStatus = DataCallResponse.LINK_STATUS_UNKNOWN;
+    @LinkStatus
+    private int mInternetLinkStatus = DataCallResponse.LINK_STATUS_UNKNOWN;
 
     /** Data network controller callbacks. */
-    private final @NonNull Set<DataNetworkControllerCallback> mDataNetworkControllerCallbacks =
+    @NonNull
+    private final Set<DataNetworkControllerCallback> mDataNetworkControllerCallbacks =
             new ArraySet<>();
 
     /** Indicates if packet switch data is restricted by the cellular network. */
@@ -349,54 +378,59 @@ public class DataNetworkController extends Handler {
      * Indicates if the data services are bound. Key if the transport type, and value is the boolean
      * indicating service is bound or not.
      */
-    private final @NonNull SparseBooleanArray mDataServiceBound = new SparseBooleanArray();
+    @NonNull
+    private final SparseBooleanArray mDataServiceBound = new SparseBooleanArray();
 
     /** SIM state. */
-    private @SimState int mSimState = TelephonyManager.SIM_STATE_UNKNOWN;
+    @SimState
+    private int mSimState = TelephonyManager.SIM_STATE_UNKNOWN;
 
     /** Data activity. */
-    private @DataActivityType int mDataActivity = TelephonyManager.DATA_ACTIVITY_NONE;
+    @DataActivityType
+    private int mDataActivity = TelephonyManager.DATA_ACTIVITY_NONE;
 
     /**
      * IMS state callbacks. Key is the IMS feature, value is the callback.
      */
-    private final @NonNull SparseArray<ImsStateCallback> mImsStateCallbacks = new SparseArray<>();
+    @NonNull
+    private final SparseArray<ImsStateCallback> mImsStateCallbacks = new SparseArray<>();
 
     /** Registered IMS features. Unregistered IMS features are removed from the set. */
-    private final @NonNull Set<Integer> mRegisteredImsFeatures = new ArraySet<>();
+    @NonNull
+    private final Set<Integer> mRegisteredImsFeatures = new ArraySet<>();
 
     /** IMS feature package names. Key is the IMS feature, value is the package name. */
-    private final @NonNull SparseArray<String> mImsFeaturePackageName = new SparseArray<>();
+    @NonNull
+    private final SparseArray<String> mImsFeaturePackageName = new SparseArray<>();
 
     /**
      * Networks that are pending IMS de-registration. Key is the data network, value is the function
      * to tear down the network.
      */
-    private final @NonNull Map<DataNetwork, Runnable> mPendingImsDeregDataNetworks =
-            new ArrayMap<>();
+    @NonNull
+    private final Map<DataNetwork, Runnable> mPendingImsDeregDataNetworks = new ArrayMap<>();
 
     /**
      * IMS feature registration callback. The key is the IMS feature, the value is the registration
      * callback. When new SIM inserted, the old callbacks associated with the old subscription index
      * will be unregistered.
      */
-    private final @NonNull SparseArray<RegistrationManager.RegistrationCallback>
+    @NonNull
+    private final SparseArray<RegistrationManager.RegistrationCallback>
             mImsFeatureRegistrationCallbacks = new SparseArray<>();
 
     /** The counter to detect back to back release/request IMS network. */
-    private @NonNull SlidingWindowEventCounter mImsThrottleCounter;
+    @NonNull
+    private SlidingWindowEventCounter mImsThrottleCounter;
     /** Event counter for unwanted network within time window, is used to trigger anomaly report. */
-    private @NonNull SlidingWindowEventCounter mNetworkUnwantedCounter;
+    @NonNull
+    private SlidingWindowEventCounter mNetworkUnwantedCounter;
     /** Event counter for WLAN setup data failure within time window to trigger anomaly report. */
-    private @NonNull SlidingWindowEventCounter mSetupDataCallWlanFailureCounter;
+    @NonNull
+    private SlidingWindowEventCounter mSetupDataCallWlanFailureCounter;
     /** Event counter for WWAN setup data failure within time window to trigger anomaly report. */
-    private @NonNull SlidingWindowEventCounter mSetupDataCallWwanFailureCounter;
-
-    /**
-     * {@code true} if {@link #tearDownAllDataNetworks(int)} was invoked and waiting for all
-     * networks torn down.
-     */
-    private boolean mPendingTearDownAllNetworks = false;
+    @NonNull
+    private SlidingWindowEventCounter mSetupDataCallWwanFailureCounter;
 
     /**
      * The capabilities of the latest released IMS request. To detect back to back release/request
@@ -407,7 +441,8 @@ public class DataNetworkController extends Handler {
     /** True after try to release an IMS network; False after try to request an IMS network. */
     private boolean mLastImsOperationIsRelease;
 
-    private final @NonNull FeatureFlags mFeatureFlags;
+    @NonNull
+    private final FeatureFlags mFeatureFlags;
 
     /** The broadcast receiver. */
     private final BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
@@ -428,7 +463,7 @@ public class DataNetworkController extends Handler {
     };
 
     private boolean hasCalling() {
-        if (!mFeatureFlags.minimalTelephonyCdmCheck()) return true;
+        if (!TelephonyCapabilities.minimalTelephonyCdmCheck(mFeatureFlags)) return true;
         return mPhone.getContext().getPackageManager().hasSystemFeature(
             PackageManager.FEATURE_TELEPHONY_CALLING);
     }
@@ -436,7 +471,7 @@ public class DataNetworkController extends Handler {
     /**
      * The sorted network request list by priority. The highest priority network request stays at
      * the head of the list. The highest priority is 100, the lowest is 0.
-     *
+     * <p>
      * Note this list is not thread-safe. Do not access the list from different threads.
      */
     @VisibleForTesting
@@ -519,7 +554,8 @@ public class DataNetworkController extends Handler {
          * @return The first network request in the list that contains all the provided
          * capabilities.
          */
-        public @Nullable TelephonyNetworkRequest get(@NonNull @NetCapability int[] netCaps) {
+        @Nullable
+        public TelephonyNetworkRequest get(@NonNull @NetCapability int[] netCaps) {
             int index = 0;
             while (index < size()) {
                 TelephonyNetworkRequest networkRequest = get(index);
@@ -528,7 +564,7 @@ public class DataNetworkController extends Handler {
                         .boxed()
                         .collect(Collectors.toSet())
                         .containsAll(Arrays.stream(netCaps).boxed()
-                                .collect(Collectors.toList()))) {
+                                .toList())) {
                     return networkRequest;
                 }
                 index++;
@@ -556,6 +592,16 @@ public class DataNetworkController extends Handler {
         public String toString() {
             return "[NetworkRequestList: size=" + size() + (size() > 0 ? ", leading by "
                     + get(0) : "") + "]";
+        }
+
+        /**
+         * Print "capabilities - connectivity transport". e.g. INTERNET|NOT_RESTRICTED-SATELLITE
+         */
+        @NonNull
+        public String toStringSimplified() {
+            return size() > 0 ? DataUtils.networkCapabilitiesToString(get(0).getCapabilities())
+                    + "-" + DataUtils.connectivityTransportsToString(get(0).getTransportTypes())
+                    : "";
         }
 
         /**
@@ -696,19 +742,26 @@ public class DataNetworkController extends Handler {
         private static final String RULE_TAG_ROAMING = "roaming";
 
         /** Handover rule type. */
-        public final @HandoverRuleType int type;
+        @HandoverRuleType
+        public final int type;
 
         /** The applicable source access networks for handover. */
-        public final @NonNull @RadioAccessNetworkType Set<Integer> sourceAccessNetworks;
+        @NonNull
+        @RadioAccessNetworkType
+        public final Set<Integer> sourceAccessNetworks;
 
         /** The applicable target access networks for handover. */
-        public final @NonNull @RadioAccessNetworkType Set<Integer> targetAccessNetworks;
+        @NonNull
+        @RadioAccessNetworkType
+        public final Set<Integer> targetAccessNetworks;
 
         /**
          * The network capabilities to any of which this handover rule applies.
          * If is empty, then capability is ignored as a rule matcher.
          */
-        public final @NonNull @NetCapability Set<Integer> networkCapabilities;
+        @NonNull
+        @NetCapability
+        public final Set<Integer> networkCapabilities;
 
         /** {@code true} indicates this policy is only applicable when the device is roaming. */
         public final boolean isOnlyForRoaming;
@@ -1185,7 +1238,7 @@ public class DataNetworkController extends Handler {
                 mSubscriptionPlans.clear();
                 mSubscriptionPlans.addAll(Arrays.asList(plans));
                 mDataNetworkControllerCallbacks.forEach(cb -> cb.invokeFromExecutor(
-                        () -> cb.onSubscriptionPlanOverride()));
+                        cb::onSubscriptionPlanOverride));
                 break;
             case EVENT_SUBSCRIPTION_OVERRIDE:
                 int overrideMask = msg.arg1;
@@ -1205,7 +1258,7 @@ public class DataNetworkController extends Handler {
                         }
                     }
                     mDataNetworkControllerCallbacks.forEach(cb -> cb.invokeFromExecutor(
-                            () -> cb.onSubscriptionPlanOverride()));
+                            cb::onSubscriptionPlanOverride));
                 } else if (overrideMask == NetworkPolicyManager.SUBSCRIPTION_OVERRIDE_CONGESTED) {
                     log("Congested subscription override: override=" + override
                             + ", networkTypes=" + Arrays.stream(networkTypes)
@@ -1219,7 +1272,7 @@ public class DataNetworkController extends Handler {
                         }
                     }
                     mDataNetworkControllerCallbacks.forEach(cb -> cb.invokeFromExecutor(
-                            () -> cb.onSubscriptionPlanOverride()));
+                            cb::onSubscriptionPlanOverride));
                 } else {
                     loge("Unknown override mask: " + overrideMask);
                 }
@@ -1358,28 +1411,6 @@ public class DataNetworkController extends Handler {
             // When reaching here, it means this data network can satisfy all the network requests.
             logv("Found a compatible data network " + dataNetwork + ". Attaching "
                     + requestList);
-
-            // If WLAN preferred, see whether a more suitable data profile shall be used to satisfy
-            // a short-lived request that doesn't perform handover.
-            int capability = requestList.getFirst().getApnTypeNetworkCapability();
-            int preferredTransport = mAccessNetworksManager
-                    .getPreferredTransportByNetworkCapability(capability);
-            if (capability == NetworkCapabilities.NET_CAPABILITY_MMS
-                    && preferredTransport != dataNetwork.getTransport()
-                    && preferredTransport == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
-                DataProfile candidate = mDataProfileManager
-                        .getDataProfileForNetworkRequest(requestList.getFirst(),
-                                TelephonyManager.NETWORK_TYPE_IWLAN,
-                                mServiceState.isUsingNonTerrestrialNetwork(),
-                                isEsimBootStrapProvisioningActivated(),
-                                false/*ignorePermanentFailure*/);
-                if (candidate != null && !dataNetwork.getDataProfile().equals(candidate)) {
-                    logv("But skipped because found better data profile " + candidate
-                            + DataUtils.networkCapabilityToString(capability) + " preferred on "
-                            + AccessNetworkConstants.transportTypeToString(preferredTransport));
-                    continue;
-                }
-            }
             return dataNetwork.attachNetworkRequests(requestList);
         }
         return false;
@@ -1451,6 +1482,19 @@ public class DataNetworkController extends Handler {
      * still allowed in this case.
      */
     public boolean isInternetDataAllowed(boolean ignoreExistingNetworks) {
+        return !getInternetEvaluation(ignoreExistingNetworks).containsDisallowedReasons();
+    }
+
+    /**
+     * @param ignoreExistingNetworks {@code true} to skip the existing network check.
+     * @return The internet evaluation result.
+     * For example, if SIM is absent, or airplane mode is on, then data is NOT allowed.
+     * This API does not reflect the currently internet data network status. It's possible there is
+     * no internet data due to weak cellular signal or network side issue, but internet data is
+     * still allowed in this case.
+     */
+    @NonNull
+    public DataEvaluation getInternetEvaluation(boolean ignoreExistingNetworks) {
         TelephonyNetworkRequest internetRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -1462,7 +1506,7 @@ public class DataNetworkController extends Handler {
                 && mDataNetworkList.stream().anyMatch(
                         dataNetwork -> internetRequest.canBeSatisfiedBy(
                                 dataNetwork.getNetworkCapabilities()))) {
-            return true;
+            return new DataEvaluation(DataEvaluationReason.EXTERNAL_QUERY);
         }
 
         // If no existing network can satisfy the request, then check if we can possibly setup
@@ -1470,16 +1514,18 @@ public class DataNetworkController extends Handler {
 
         DataEvaluation evaluation = evaluateNetworkRequest(internetRequest,
                 DataEvaluationReason.EXTERNAL_QUERY);
-        if (evaluation.containsOnly(DataDisallowedReason.ONLY_ALLOWED_SINGLE_NETWORK)) {
+        if (evaluation.containsOnly(DataDisallowedReason.ONLY_ALLOWED_SINGLE_NETWORK)
+                && internetRequest.getPriority() > mDataNetworkList.stream()
+                .map(DataNetwork::getPriority)
+                .max(Comparator.comparing(Integer::valueOf))
+                .orElse(0)) {
             // If the only failed reason is only single network allowed, then check if the request
             // can trump the current network.
-            return internetRequest.getPriority() > mDataNetworkList.stream()
-                    .map(DataNetwork::getPriority)
-                    .max(Comparator.comparing(Integer::valueOf))
-                    .orElse(0);
+            evaluation.addDataAllowedReason(DataAllowedReason.NORMAL);
         }
-        return !evaluation.containsDisallowedReasons();
+        return evaluation;
     }
+
 
     /**
      * @return {@code true} if internet is unmetered.
@@ -1509,7 +1555,8 @@ public class DataNetworkController extends Handler {
      * @return List of the reasons why internet data is not allowed. An empty list if internet
      * is allowed.
      */
-    public @NonNull List<DataDisallowedReason> getInternetDataDisallowedReasons() {
+    @NonNull
+    public List<DataDisallowedReason> getInternetDataDisallowedReasons() {
         TelephonyNetworkRequest internetRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -1527,7 +1574,8 @@ public class DataNetworkController extends Handler {
      * @param reason The reason for evaluation.
      * @return The data evaluation result.
      */
-    private @NonNull DataEvaluation evaluateNetworkRequest(
+    @NonNull
+    private DataEvaluation evaluateNetworkRequest(
             @NonNull TelephonyNetworkRequest networkRequest, DataEvaluationReason reason) {
         DataEvaluation evaluation = new DataEvaluation(reason);
         int transport = mAccessNetworksManager.getPreferredTransportByNetworkCapability(
@@ -1545,7 +1593,7 @@ public class DataNetworkController extends Handler {
             DataProfile emergencyProfile = mDataProfileManager.getDataProfileForNetworkRequest(
                     networkRequest, getDataNetworkType(transport),
                     mServiceState.isUsingNonTerrestrialNetwork(),
-                    isEsimBootStrapProvisioningActivated(), true);
+                    false /*isEsimBootStrapProvisioning*/, true);
 
             // Check if the profile is being throttled.
             if (mDataConfigManager.shouldHonorRetryTimerForEmergencyNetworkRequest()
@@ -1621,7 +1669,7 @@ public class DataNetworkController extends Handler {
         }
 
         // Check if there are pending tear down all networks request.
-        if (mPendingTearDownAllNetworks) {
+        if (mPhone.getServiceStateTracker().isPendingRadioPowerOffAfterDataOff()) {
             evaluation.addDataDisallowedReason(DataDisallowedReason.PENDING_TEAR_DOWN_ALL);
         }
 
@@ -1745,7 +1793,7 @@ public class DataNetworkController extends Handler {
         networkRequest.setEvaluation(evaluation);
         // EXTERNAL_QUERY generates too many log spam.
         if (reason != DataEvaluationReason.EXTERNAL_QUERY) {
-            log(evaluation.toString() + ", network type="
+            log(evaluation + ", network type="
                     + TelephonyManager.getNetworkTypeName(getDataNetworkType(transport))
                     + ", reg state="
                     + NetworkRegistrationInfo.registrationStateToString(
@@ -1760,7 +1808,8 @@ public class DataNetworkController extends Handler {
      *  - At evaluation network request and evaluation data network determines, if
      *    bootstrap sim current data usage reached bootstrap sim max data limit allowed set
      *    at {@link DataConfigManager#getEsimBootStrapMaxDataLimitBytes()}
-     *  - Query the current data usage at {@link #getDataUsage()}
+     *  - Query the current data usage at {@link #getDataUsage()}, if last data usage query guarding
+     *    interval as expired.
      *
      * @return true, if bootstrap sim data limit is reached
      *         else false, if bootstrap sim max data limit allowed set is -1(Unlimited) or current
@@ -1775,13 +1824,15 @@ public class DataNetworkController extends Handler {
             return false;
         }
 
-        log("current bootstrap sim data Usage: " + mBootStrapSimTotalDataUsageBytes);
-        if (mBootStrapSimTotalDataUsageBytes >= esimBootStrapMaxDataLimitBytes) {
-            return true;
-        } else {
+        if (mBootStrapSimTotalDataUsageBytes < esimBootStrapMaxDataLimitBytes
+                && (mBootstrapSimLastDataUsageQueryTime == 0
+                || SystemClock.elapsedRealtime() - mBootstrapSimLastDataUsageQueryTime
+                > GUARD_TIMER_INTERVAL_TO_QUERY_DATA_USAGE_API_STATS_MILLIS)) {
             mBootStrapSimTotalDataUsageBytes = getDataUsage();
-            return mBootStrapSimTotalDataUsageBytes >= esimBootStrapMaxDataLimitBytes;
+            log("current bootstrap sim data usage: " + mBootStrapSimTotalDataUsageBytes);
+            mBootstrapSimLastDataUsageQueryTime =  SystemClock.elapsedRealtime();
         }
+        return mBootStrapSimTotalDataUsageBytes >= esimBootStrapMaxDataLimitBytes;
     }
 
     /**
@@ -1801,6 +1852,8 @@ public class DataNetworkController extends Handler {
 
             if (!TextUtils.isEmpty(subscriberId)) {
                 builder.setSubscriberIds(Set.of(subscriberId));
+                // Consider data usage calculation of only metered capabilities / data network
+                builder.setMeteredness(android.net.NetworkStats.METERED_YES);
                 NetworkTemplate template = builder.build();
                 final NetworkStats.Bucket ret = networkStatsManager
                         .querySummaryForDevice(template, 0L, System.currentTimeMillis());
@@ -1814,7 +1867,8 @@ public class DataNetworkController extends Handler {
      * @return The grouped unsatisfied network requests. The network requests that have the same
      * network capabilities is grouped into one {@link NetworkRequestList}.
      */
-    private @NonNull List<NetworkRequestList> getGroupedUnsatisfiedNetworkRequests() {
+    @NonNull
+    private List<NetworkRequestList> getGroupedUnsatisfiedNetworkRequests() {
         NetworkRequestList networkRequestList = new NetworkRequestList();
         for (TelephonyNetworkRequest networkRequest : mAllNetworkRequestList) {
             if (networkRequest.getState() == TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED) {
@@ -1835,8 +1889,7 @@ public class DataNetworkController extends Handler {
         log("Re-evaluating " + networkRequestLists.stream().mapToInt(List::size).sum()
                 + " unsatisfied network requests in " + networkRequestLists.size()
                 + " groups, " + networkRequestLists.stream().map(
-                        requestList -> DataUtils.networkCapabilitiesToString(
-                                requestList.get(0).getCapabilities()))
+                        NetworkRequestList::toStringSimplified)
                 .collect(Collectors.joining(", ")) + " due to " + reason);
 
         // Second, see if any existing network can satisfy those network requests.
@@ -1869,7 +1922,8 @@ public class DataNetworkController extends Handler {
      *
      * @return The data evaluation result.
      */
-    private @NonNull DataEvaluation evaluateDataNetwork(@NonNull DataNetwork dataNetwork,
+    @NonNull
+    private DataEvaluation evaluateDataNetwork(@NonNull DataNetwork dataNetwork,
             @NonNull DataEvaluationReason reason) {
         DataEvaluation evaluation = new DataEvaluation(reason);
         // Bypass all checks for emergency data network.
@@ -1923,7 +1977,7 @@ public class DataNetworkController extends Handler {
                 if (!hasMessages(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS)) {
                     sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
                             DataEvaluationReason.CHECK_DATA_USAGE),
-                            REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS);
+                            mDataConfigManager.getReevaluateBootstrapSimDataUsageMillis());
                 } else {
                     log("skip scheduling evaluating existing data networks since already"
                             + "scheduled");
@@ -2110,35 +2164,30 @@ public class DataNetworkController extends Handler {
      */
     private boolean canConnectivityTransportSatisfyNetworkRequest(
             @NonNull TelephonyNetworkRequest networkRequest, @TransportType int transport) {
+        // Check if this is a IWLAN network request.
+        if (transport == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
+            // If the request would result in bringing up network on IWLAN, then no
+            // need to check if the device is using satellite network.
+            return true;
+        }
+
         // When the device is on satellite, only restricted network request can request network.
         if (mServiceState.isUsingNonTerrestrialNetwork()
-                && networkRequest.getNativeNetworkRequest().hasCapability(
+                && networkRequest.hasCapability(
                         NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
             return false;
         }
 
         // If the network request does not specify cellular or satellite, then it can be
         // satisfied when the device is either on cellular ot satellite.
-        if (!networkRequest.getNativeNetworkRequest().hasTransport(
-                NetworkCapabilities.TRANSPORT_CELLULAR)
-                && !networkRequest.getNativeNetworkRequest().hasTransport(
-                        NetworkCapabilities.TRANSPORT_SATELLITE)) {
-            return true;
-        }
-
-        // Check if this is a IWLAN network request.
-        if (networkRequest.getNativeNetworkRequest().hasTransport(
-                NetworkCapabilities.TRANSPORT_CELLULAR)
-                && transport == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
-            // If the cellular request would result in bringing up network on IWLAN, then no
-            // need to check if the device is using satellite network.
+        if (!networkRequest.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                && !networkRequest.hasTransport(NetworkCapabilities.TRANSPORT_SATELLITE)) {
             return true;
         }
 
         // As a short term solution, allowing some networks to be always marked as cellular
         // transport if certain capabilities are in the network request.
-        if (networkRequest.getNativeNetworkRequest().hasTransport(
-                NetworkCapabilities.TRANSPORT_CELLULAR) && Arrays.stream(
+        if (networkRequest.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) && Arrays.stream(
                         networkRequest.getCapabilities())
                 .anyMatch(mDataConfigManager.getForcedCellularTransportCapabilities()::contains)) {
             return true;
@@ -2148,23 +2197,38 @@ public class DataNetworkController extends Handler {
         // the network is satellite, then the request must specify satellite transport and
         // restricted.
         return (mServiceState.isUsingNonTerrestrialNetwork()
-                && networkRequest.getNativeNetworkRequest().hasTransport(
-                        NetworkCapabilities.TRANSPORT_SATELLITE))
+                && networkRequest.hasTransport(NetworkCapabilities.TRANSPORT_SATELLITE))
                 || (!mServiceState.isUsingNonTerrestrialNetwork()
-                        && networkRequest.getNativeNetworkRequest().hasTransport(
-                        NetworkCapabilities.TRANSPORT_CELLULAR));
+                        && networkRequest.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
     }
 
     /**
-     * tethering and enterprise capabilities are not respected as restricted requests. For a request
-     * with these capabilities, any soft disallowed reasons are honored.
+     * Check if a network request should be treated as a valid restricted network request that
+     * can bypass soft disallowed reasons, for example, mobile data off.
+     *
      * @param networkRequest The network request to evaluate.
-     * @return {@code true} if the request doesn't contain any exceptional capabilities, its
-     * restricted capability, if any, is respected.
+     * @return {@code true} if the request can be considered as a valid restricted network request
+     * that can bypass any soft disallowed reasons, otherwise {@code false}.
      */
     private boolean isValidRestrictedRequest(@NonNull TelephonyNetworkRequest networkRequest) {
-        return !(networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
-                || networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE));
+
+        if (!mFeatureFlags.satelliteInternet()) {
+            return !(networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
+                    || networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE));
+        } else {
+            // tethering, enterprise and mms with restricted capabilities always honor soft
+            // disallowed reasons and not respected as restricted request
+            if (networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
+                    || networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
+                    || networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_MMS)) {
+                return false;
+            }
+            // When the device is on satellite, internet with restricted capabilities always honor
+            // soft disallowed reasons and not respected as restricted request
+            return !(mServiceState.isUsingNonTerrestrialNetwork()
+                    && networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+
+        }
     }
 
     /**
@@ -2198,7 +2262,8 @@ public class DataNetworkController extends Handler {
      *
      * @see CarrierConfigManager#KEY_IWLAN_HANDOVER_POLICY_STRING_ARRAY
      */
-    private @NonNull DataEvaluation evaluateDataNetworkHandover(@NonNull DataNetwork dataNetwork) {
+    @NonNull
+    private DataEvaluation evaluateDataNetworkHandover(@NonNull DataNetwork dataNetwork) {
         DataEvaluation dataEvaluation = new DataEvaluation(DataEvaluationReason.DATA_HANDOVER);
         if (!dataNetwork.isConnecting() && !dataNetwork.isConnected()) {
             dataEvaluation.addDataDisallowedReason(DataDisallowedReason.ILLEGAL_STATE);
@@ -2256,10 +2321,7 @@ public class DataNetworkController extends Handler {
                     sourceNetworkType);
             NetworkRegistrationInfo nri = mServiceState.getNetworkRegistrationInfo(
                     NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
-            boolean isWwanInService = false;
-            if (nri != null && nri.isInService()) {
-                isWwanInService = true;
-            }
+            boolean isWwanInService = nri != null && nri.isInService();
             // If WWAN is inService, use the real roaming state reported by modem instead of
             // using the overridden roaming state, otherwise get last known roaming state stored
             // in data network.
@@ -2321,7 +2383,8 @@ public class DataNetworkController extends Handler {
      * {@link #evaluateDataNetwork(DataNetwork, DataEvaluationReason)}.
      * @return The tear down reason.
      */
-    private static @TearDownReason int getTearDownReason(@NonNull DataEvaluation dataEvaluation) {
+    @TearDownReason
+    private static int getTearDownReason(@NonNull DataEvaluation dataEvaluation) {
         if (dataEvaluation.containsDisallowedReasons()) {
             switch (dataEvaluation.getDataDisallowedReasons().get(0)) {
                 case DATA_DISABLED:
@@ -2522,14 +2585,14 @@ public class DataNetworkController extends Handler {
         RegistrationManager.RegistrationCallback callback =
                 new RegistrationManager.RegistrationCallback() {
                     @Override
-                    public void onRegistered(ImsRegistrationAttributes attributes) {
+                    public void onRegistered(@NonNull ImsRegistrationAttributes attributes) {
                         log("IMS " + DataUtils.imsFeatureToString(imsFeature)
                                 + " registered. Attributes=" + attributes);
                         mRegisteredImsFeatures.add(imsFeature);
                     }
 
                     @Override
-                    public void onUnregistered(ImsReasonInfo info) {
+                    public void onUnregistered(@NonNull ImsReasonInfo info) {
                         log("IMS " + DataUtils.imsFeatureToString(imsFeature)
                                 + " deregistered. Info=" + info);
                         mRegisteredImsFeatures.remove(imsFeature);
@@ -2737,8 +2800,8 @@ public class DataNetworkController extends Handler {
      * @param dataProfile The data profile.
      * @return The network requests list.
      */
-    private @NonNull NetworkRequestList findSatisfiableNetworkRequests(
-            @NonNull DataProfile dataProfile) {
+    @NonNull
+    private NetworkRequestList findSatisfiableNetworkRequests(@NonNull DataProfile dataProfile) {
         return new NetworkRequestList(mAllNetworkRequestList.stream()
                 .filter(request -> request.getState()
                         == TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED)
@@ -2915,7 +2978,6 @@ public class DataNetworkController extends Handler {
         mDataNetworkList.remove(dataNetwork);
         trackSetupDataCallFailure(dataNetwork.getTransport(), cause);
         if (mAnyDataNetworkExisting && mDataNetworkList.isEmpty()) {
-            mPendingTearDownAllNetworks = false;
             mAnyDataNetworkExisting = false;
             mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                     () -> callback.onAnyDataNetworkExistingChanged(mAnyDataNetworkExisting)));
@@ -3016,7 +3078,7 @@ public class DataNetworkController extends Handler {
         if (isEsimBootStrapProvisioningActivated()) {
             sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
                     DataEvaluationReason.CHECK_DATA_USAGE),
-                    REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS);
+                    mDataConfigManager.getReevaluateBootstrapSimDataUsageMillis());
         }
     }
 
@@ -3038,8 +3100,18 @@ public class DataNetworkController extends Handler {
             List<NetworkRequestList> groupRequestLists = getGroupedUnsatisfiedNetworkRequests();
             dataSetupRetryEntry.networkRequestList.stream()
                     .filter(request -> groupRequestLists.stream()
-                            .anyMatch(groupRequestList -> groupRequestList
-                                    .get(request.getCapabilities()) != null))
+                            .anyMatch(groupRequestList -> {
+                                // The unsatisfied request has all the requested capabilities.
+                                if (groupRequestList.get(request.getCapabilities()) == null) {
+                                    return false;
+                                }
+                                TelephonyNetworkRequest leading = groupRequestList.getFirst();
+                                // The unsatisfied request covers all the requested transports.
+                                return leading.getTransportTypes().length == 0
+                                        || request.getTransportTypes().length == 0
+                                        || Arrays.stream(request.getTransportTypes())
+                                        .allMatch(leading::hasTransport);
+                            }))
                     .forEach(requestList::add);
         }
         if (requestList.isEmpty()) {
@@ -3183,7 +3255,13 @@ public class DataNetworkController extends Handler {
             return;
         }
 
-        if (dataNetwork.isInternetSupported()) {
+        // Only track the networks that require validation.
+        // The criteria is base on NetworkMonitorUtils.java.
+        NetworkCapabilities capabilities = dataNetwork.getNetworkCapabilities();
+        if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) {
             if (status == NetworkAgent.VALIDATION_STATUS_NOT_VALID
                     && (dataNetwork.getCurrentState() == null || dataNetwork.isDisconnected())) {
                 log("Ignoring invalid validation status for disconnected DataNetwork");
@@ -3240,7 +3318,6 @@ public class DataNetworkController extends Handler {
 
         if (mAnyDataNetworkExisting && mDataNetworkList.isEmpty()) {
             log("All data networks disconnected now.");
-            mPendingTearDownAllNetworks = false;
             mAnyDataNetworkExisting = false;
             mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                     () -> callback.onAnyDataNetworkExistingChanged(mAnyDataNetworkExisting)));
@@ -3674,17 +3751,13 @@ public class DataNetworkController extends Handler {
         DataSpecificRegistrationInfo newDsri = newNri.getDataSpecificInfo();
 
         if (newDsri == null) return false;
-        if ((oldDsri == null || oldDsri.getVopsSupportInfo() == null
+        // If previously VoPS was supported (or does not exist), and now the network reports
+        // VoPS not supported, we should evaluate existing data networks to see if they need
+        // to be torn down.
+        return (oldDsri == null || oldDsri.getVopsSupportInfo() == null
                 || oldDsri.getVopsSupportInfo().isVopsSupported())
                 && (newDsri.getVopsSupportInfo() != null && !newDsri.getVopsSupportInfo()
-                .isVopsSupported())) {
-            // If previously VoPS was supported (or does not exist), and now the network reports
-            // VoPS not supported, we should evaluate existing data networks to see if they need
-            // to be torn down.
-            return true;
-        }
-
-        return false;
+                .isVopsSupported());
     }
 
     /**
@@ -3731,17 +3804,13 @@ public class DataNetworkController extends Handler {
         DataSpecificRegistrationInfo newDsri = newPsNri.getDataSpecificInfo();
 
         if (oldDsri == null) return false;
-        if ((newDsri == null || newDsri.getVopsSupportInfo() == null
+        // If previously VoPS was not supported, and now the network reports
+        // VoPS supported (or does not report), we should evaluate the unsatisfied network
+        // request to see if the can be satisfied again.
+        return (newDsri == null || newDsri.getVopsSupportInfo() == null
                 || newDsri.getVopsSupportInfo().isVopsSupported())
                 && (oldDsri.getVopsSupportInfo() != null && !oldDsri.getVopsSupportInfo()
-                .isVopsSupported())) {
-            // If previously VoPS was not supported, and now the network reports
-            // VoPS supported (or does not report), we should evaluate the unsatisfied network
-            // request to see if the can be satisfied again.
-            return true;
-        }
-
-        return false;
+                .isVopsSupported());
     }
 
     /**
@@ -3852,28 +3921,32 @@ public class DataNetworkController extends Handler {
     /**
      * @return Data config manager instance.
      */
-    public @NonNull DataConfigManager getDataConfigManager() {
+    @NonNull
+    public DataConfigManager getDataConfigManager() {
         return mDataConfigManager;
     }
 
     /**
      * @return Data profile manager instance.
      */
-    public @NonNull DataProfileManager getDataProfileManager() {
+    @NonNull
+    public DataProfileManager getDataProfileManager() {
         return mDataProfileManager;
     }
 
     /**
      * @return Data settings manager instance.
      */
-    public @NonNull DataSettingsManager getDataSettingsManager() {
+    @NonNull
+    public DataSettingsManager getDataSettingsManager() {
         return mDataSettingsManager;
     }
 
     /**
      * @return Data retry manager instance.
      */
-    public @NonNull DataRetryManager getDataRetryManager() {
+    @NonNull
+    public DataRetryManager getDataRetryManager() {
         return mDataRetryManager;
     }
 
@@ -3881,7 +3954,8 @@ public class DataNetworkController extends Handler {
      * @return The list of SubscriptionPlans
      */
     @VisibleForTesting
-    public @NonNull List<SubscriptionPlan> getSubscriptionPlans() {
+    @NonNull
+    public List<SubscriptionPlan> getSubscriptionPlans() {
         return mSubscriptionPlans;
     }
 
@@ -3889,7 +3963,9 @@ public class DataNetworkController extends Handler {
      * @return The set of network types an unmetered override applies to
      */
     @VisibleForTesting
-    public @NonNull @NetworkType Set<Integer> getUnmeteredOverrideNetworkTypes() {
+    @NonNull
+    @NetworkType
+    public Set<Integer> getUnmeteredOverrideNetworkTypes() {
         return mUnmeteredOverrideNetworkTypes;
     }
 
@@ -3897,7 +3973,9 @@ public class DataNetworkController extends Handler {
      * @return The set of network types a congested override applies to
      */
     @VisibleForTesting
-    public @NonNull @NetworkType Set<Integer> getCongestedOverrideNetworkTypes() {
+    @NonNull
+    @NetworkType
+    public Set<Integer> getCongestedOverrideNetworkTypes() {
         return mCongestedOverrideNetworkTypes;
     }
 
@@ -3907,7 +3985,8 @@ public class DataNetworkController extends Handler {
      * @param transport The transport.
      * @return The current network type.
      */
-    private @NetworkType int getDataNetworkType(@TransportType int transport) {
+    @NetworkType
+    private int getDataNetworkType(@TransportType int transport) {
         NetworkRegistrationInfo nri = mServiceState.getNetworkRegistrationInfo(
                 NetworkRegistrationInfo.DOMAIN_PS, transport);
         if (nri != null) {
@@ -3923,8 +4002,8 @@ public class DataNetworkController extends Handler {
      * @param transport The transport.
      * @return The registration state.
      */
-    private @RegistrationState int getDataRegistrationState(@NonNull ServiceState ss,
-            @TransportType int transport) {
+    @RegistrationState
+    private int getDataRegistrationState(@NonNull ServiceState ss, @TransportType int transport) {
         NetworkRegistrationInfo nri = ss.getNetworkRegistrationInfo(
                 NetworkRegistrationInfo.DOMAIN_PS, transport);
         if (nri != null) {
@@ -3936,7 +4015,8 @@ public class DataNetworkController extends Handler {
     /**
      * @return The data activity. Note this is only updated when screen is on.
      */
-    public @DataActivityType int getDataActivity() {
+    @DataActivityType
+    public int getDataActivity() {
         return mDataActivity;
     }
 
@@ -3974,14 +4054,13 @@ public class DataNetworkController extends Handler {
      *
      * @param reason The reason to tear down.
      */
-    public void onTearDownAllDataNetworks(@TearDownReason int reason) {
+    private void onTearDownAllDataNetworks(@TearDownReason int reason) {
         log("onTearDownAllDataNetworks: reason=" + DataNetwork.tearDownReasonToString(reason));
         if (mDataNetworkList.isEmpty()) {
             log("tearDownAllDataNetworks: No pending networks. All disconnected now.");
             return;
         }
 
-        mPendingTearDownAllNetworks = true;
         for (DataNetwork dataNetwork : mDataNetworkList) {
             if (!dataNetwork.isDisconnecting()) {
                 tearDownGracefully(dataNetwork, reason);
@@ -4083,14 +4162,16 @@ public class DataNetworkController extends Handler {
      *
      * @return The data network state.
      */
-    public @DataState int getInternetDataNetworkState() {
+    @DataState
+    public int getInternetDataNetworkState() {
         return mInternetDataNetworkState;
     }
 
     /**
      * @return List of bound data service packages name on WWAN and WLAN.
      */
-    public @NonNull List<String> getDataServicePackages() {
+    @NonNull
+    public List<String> getDataServicePackages() {
         List<String> packages = new ArrayList<>();
         for (int i = 0; i < mDataServiceManagers.size(); i++) {
             packages.add(mDataServiceManagers.valueAt(i).getDataServicePackageName());
@@ -4100,8 +4181,8 @@ public class DataNetworkController extends Handler {
 
     /**
      * Request network validation.
-     *
-     * Nnetwork validation request is sent to the DataNetwork that matches the network capability
+     * <p>
+     * Network validation request is sent to the DataNetwork that matches the network capability
      * in the list of DataNetwork owned by the DNC.
      *
      * @param capability network capability {@link NetCapability}

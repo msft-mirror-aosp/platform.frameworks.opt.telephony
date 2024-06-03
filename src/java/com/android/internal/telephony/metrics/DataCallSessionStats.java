@@ -41,6 +41,7 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.ServiceStateTracker;
 import com.android.internal.telephony.data.DataNetwork;
 import com.android.internal.telephony.nano.PersistAtomsProto.DataCallSession;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.telephony.Rlog;
@@ -64,10 +65,12 @@ public class DataCallSessionStats {
     public static final int SIZE_LIMIT_HANDOVER_FAILURES = 15;
 
     private final DefaultNetworkMonitor mDefaultNetworkMonitor;
+    private final SatelliteController mSatelliteController;
 
     public DataCallSessionStats(Phone phone) {
         mPhone = phone;
         mDefaultNetworkMonitor = PhoneFactory.getMetricsCollector().getDefaultNetworkMonitor();
+        mSatelliteController = SatelliteController.getInstance();
     }
 
     private boolean isSystemDefaultNetworkMobile() {
@@ -76,8 +79,9 @@ public class DataCallSessionStats {
     }
 
     /** Creates a new ongoing atom when data call is set up. */
-    public synchronized void onSetupDataCall(@ApnType int apnTypeBitMask) {
-        mDataCallSession = getDefaultProto(apnTypeBitMask);
+    public synchronized void onSetupDataCall(@ApnType int apnTypeBitMask,
+            boolean isSatellite) {
+        mDataCallSession = getDefaultProto(apnTypeBitMask, isSatellite);
         mStartTime = getTimeMillis();
         PhoneFactory.getMetricsCollector().registerOngoingDataCallStat(this);
     }
@@ -303,11 +307,15 @@ public class DataCallSessionStats {
                 call.handoverFailureRat.length);
         copy.isNonDds = call.isNonDds;
         copy.isIwlanCrossSim = call.isIwlanCrossSim;
+        copy.isNtn = call.isNtn;
+        copy.isSatelliteTransport = call.isSatelliteTransport;
+        copy.isProvisioningProfile = call.isProvisioningProfile;
         return copy;
     }
 
     /** Creates a proto for a normal {@code DataCallSession} with default values. */
-    private DataCallSession getDefaultProto(@ApnType int apnTypeBitmask) {
+    private DataCallSession getDefaultProto(@ApnType int apnTypeBitmask,
+            boolean isSatellite) {
         DataCallSession proto = new DataCallSession();
         proto.dimension = RANDOM.nextInt();
         proto.isMultiSim = SimSlotState.isMultiSim();
@@ -329,6 +337,10 @@ public class DataCallSessionStats {
         proto.handoverFailureRat = new int[0];
         proto.isNonDds = false;
         proto.isIwlanCrossSim = false;
+        proto.isNtn = mSatelliteController != null
+                ? mSatelliteController.isInSatelliteModeForCarrierRoaming(mPhone) : false;
+        proto.isSatelliteTransport = isSatellite;
+        proto.isProvisioningProfile = getIsProvisioningProfile();
         return proto;
     }
 
@@ -343,6 +355,17 @@ public class DataCallSessionStats {
         SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
                 .getSubscriptionInfoInternal(mPhone.getSubId());
         return subInfo != null && subInfo.isOpportunistic();
+    }
+
+    private boolean getIsProvisioningProfile() {
+        SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
+                .getSubscriptionInfoInternal(mPhone.getSubId());
+        try {
+            return subInfo.getProfileClass() == SubscriptionManager.PROFILE_CLASS_PROVISIONING;
+        } catch (Exception ex) {
+            loge("getIsProvisioningProfile: " + ex.getMessage());
+            return false;
+        }
     }
 
     private boolean getIsOos() {
