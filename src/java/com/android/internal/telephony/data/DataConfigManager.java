@@ -31,7 +31,9 @@ import android.telephony.Annotation.ApnType;
 import android.telephony.Annotation.NetCapability;
 import android.telephony.Annotation.NetworkType;
 import android.telephony.CarrierConfigManager;
+import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
+import android.telephony.SignalStrength;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager;
@@ -45,6 +47,7 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.data.DataNetworkController.HandoverRule;
 import com.android.internal.telephony.data.DataRetryManager.DataHandoverRetryRule;
 import com.android.internal.telephony.data.DataRetryManager.DataSetupRetryRule;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
@@ -61,6 +64,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -160,6 +164,13 @@ public class DataConfigManager extends Handler {
     /** Network type NR_SA_MMWAVE. Should not be used outside of DataConfigManager. */
     private static final String DATA_CONFIG_NETWORK_TYPE_NR_SA_MMWAVE = "NR_SA_MMWAVE";
 
+    /**
+     * The delay in milliseconds to re-evaluate existing data networks for bootstrap sim data usage
+     * limit.
+     */
+    private static final long REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS =
+            TimeUnit.SECONDS.toMillis(60);
+
     @StringDef(prefix = {"DATA_CONFIG_NETWORK_TYPE_"}, value = {
             DATA_CONFIG_NETWORK_TYPE_GPRS,
             DATA_CONFIG_NETWORK_TYPE_EDGE,
@@ -189,8 +200,8 @@ public class DataConfigManager extends Handler {
     private @interface DataConfigNetworkType {}
 
     /** Data config update callbacks. */
-    private final @NonNull Set<DataConfigManagerCallback> mDataConfigManagerCallbacks =
-            new ArraySet<>();
+    @NonNull
+    private final Set<DataConfigManagerCallback> mDataConfigManagerCallbacks = new ArraySet<>();
 
     /** DeviceConfig key of anomaly report threshold for back to back ims release-request. */
     private static final String KEY_ANOMALY_IMS_RELEASE_REQUEST = "anomaly_ims_release_request";
@@ -199,8 +210,6 @@ public class DataConfigManager extends Handler {
             "anomaly_setup_data_call_failure";
     /** DeviceConfig key of anomaly report threshold for frequent network-unwanted call. */
     private static final String KEY_ANOMALY_NETWORK_UNWANTED = "anomaly_network_unwanted";
-    /** DeviceConfig key of anomaly report threshold for frequent change of preferred network. */
-    private static final String KEY_ANOMALY_QNS_CHANGE_NETWORK = "anomaly_qns_change_network";
     /** DeviceConfig key of anomaly report threshold for invalid QNS params. */
     private static final String KEY_ANOMALY_QNS_PARAM = "anomaly_qns_param";
     /** DeviceConfig key of anomaly report threshold for DataNetwork stuck in connecting state. */
@@ -214,13 +223,8 @@ public class DataConfigManager extends Handler {
             "anomaly_network_handover_timeout";
     /** DeviceConfig key of anomaly report: True for enabling APN config invalidity detection */
     private static final String KEY_ANOMALY_APN_CONFIG_ENABLED = "anomaly_apn_config_enabled";
-    /** DeviceConfig key of the time threshold in ms for defining a network status to be stable. **/
-    private static final String KEY_AUTO_DATA_SWITCH_AVAILABILITY_STABILITY_TIME_THRESHOLD =
-            "auto_data_switch_availability_stability_time_threshold";
-    /** DeviceConfig key of the maximum number of retries when a validation for switching failed.**/
-    private static final String KEY_AUTO_DATA_SWITCH_VALIDATION_MAX_RETRY =
-            "auto_data_switch_validation_max_retry";
-
+    /** Placeholder indicating missing Auto data switch score config, meaning out of service. */
+    private static final int OUT_OF_SERVICE_AUTO_DATA_SWITCH_SCORE = 0;
     /** Anomaly report thresholds for frequent setup data call failure. */
     private EventFrequency mSetupDataCallAnomalyReportThreshold;
 
@@ -262,45 +266,77 @@ public class DataConfigManager extends Handler {
      */
     private boolean mIsApnConfigAnomalyReportEnabled;
 
-    private @NonNull final Phone mPhone;
-    private @NonNull final String mLogTag;
-
-    private @NonNull final CarrierConfigManager mCarrierConfigManager;
-    private @NonNull PersistableBundle mCarrierConfig = null;
-    private @NonNull Resources mResources = null;
+    @NonNull
+    private final Phone mPhone;
+    @NonNull
+    private final String mLogTag;
+    @NonNull
+    private final FeatureFlags mFeatureFlags;
+    @NonNull
+    private final CarrierConfigManager mCarrierConfigManager;
+    @NonNull
+    private PersistableBundle mCarrierConfig = null;
+    @NonNull
+    private Resources mResources = null;
 
     /** The network capability priority map */
-    private @NonNull final Map<Integer, Integer> mNetworkCapabilityPriorityMap =
-            new ConcurrentHashMap<>();
+    @NonNull
+    private final Map<Integer, Integer> mNetworkCapabilityPriorityMap = new ConcurrentHashMap<>();
     /** The data setup retry rules */
-    private @NonNull final List<DataSetupRetryRule> mDataSetupRetryRules = new ArrayList<>();
+    @NonNull
+    private final List<DataSetupRetryRule> mDataSetupRetryRules = new ArrayList<>();
     /** The data handover retry rules */
-    private @NonNull final List<DataHandoverRetryRule> mDataHandoverRetryRules = new ArrayList<>();
+    @NonNull
+    private final List<DataHandoverRetryRule> mDataHandoverRetryRules = new ArrayList<>();
     /** The metered APN types for home network */
-    private @NonNull final @ApnType Set<Integer> mMeteredApnTypes = new HashSet<>();
+    @NonNull
+    @ApnType
+    private final Set<Integer> mMeteredApnTypes = new HashSet<>();
     /** The metered APN types for roaming network */
-    private @NonNull final @ApnType Set<Integer> mRoamingMeteredApnTypes = new HashSet<>();
+    @NonNull
+    @ApnType
+    private final Set<Integer> mRoamingMeteredApnTypes = new HashSet<>();
     /** The network types that only support single data networks */
-    private @NonNull final @NetworkType List<Integer> mSingleDataNetworkTypeList =
-            new ArrayList<>();
-    private @NonNull final @NetCapability Set<Integer> mCapabilitiesExemptFromSingleDataList =
-            new HashSet<>();
+    @NonNull
+    @NetworkType
+    private final List<Integer> mSingleDataNetworkTypeList = new ArrayList<>();
+    @NonNull
+    @NetCapability
+    private final Set<Integer> mCapabilitiesExemptFromSingleDataList = new HashSet<>();
     /** The network types that support temporarily not metered */
-    private @NonNull final @DataConfigNetworkType Set<String> mUnmeteredNetworkTypes =
-            new HashSet<>();
+    @NonNull
+    @DataConfigNetworkType
+    private final Set<String> mUnmeteredNetworkTypes = new HashSet<>();
     /** The network types that support temporarily not metered when roaming */
-    private @NonNull final @DataConfigNetworkType Set<String> mRoamingUnmeteredNetworkTypes =
-            new HashSet<>();
+    @NonNull
+    @DataConfigNetworkType
+    private final Set<String> mRoamingUnmeteredNetworkTypes = new HashSet<>();
     /** A map of network types to the downlink and uplink bandwidth values for that network type */
-    private @NonNull final @DataConfigNetworkType Map<String, DataNetwork.NetworkBandwidth>
-            mBandwidthMap = new ConcurrentHashMap<>();
-    /** A map of network types to the TCP buffer sizes for that network type */
-    private @NonNull final @DataConfigNetworkType Map<String, String> mTcpBufferSizeMap =
+    @NonNull
+    @DataConfigNetworkType
+    private final Map<String, DataNetwork.NetworkBandwidth> mBandwidthMap =
             new ConcurrentHashMap<>();
+    /** A map of network types to the TCP buffer sizes for that network type */
+    @NonNull
+    @DataConfigNetworkType
+    private final Map<String, String> mTcpBufferSizeMap = new ConcurrentHashMap<>();
     /** Rules for handover between IWLAN and cellular network. */
-    private @NonNull final List<HandoverRule> mHandoverRuleList = new ArrayList<>();
+    @NonNull
+    private final List<HandoverRule> mHandoverRuleList = new ArrayList<>();
     /** {@code True} keep IMS network in case of moving to non VOPS area; {@code false} otherwise.*/
     private boolean mShouldKeepNetworkUpInNonVops = false;
+    /** The set of network types that enable VOPS even in non VOPS area. */
+    @NonNull
+    @CarrierConfigManager.Ims.NetworkType
+    private final List<Integer> mEnabledVopsNetworkTypesInNonVops = new ArrayList<>();
+    /**
+     * A map of network types to the estimated downlink values by signal strength 0 - 4 for that
+     * network type
+     */
+    @NonNull
+    @DataConfigNetworkType
+    private final Map<String, int[]> mAutoDataSwitchNetworkTypeSignalMap =
+            new ConcurrentHashMap<>();
 
     /**
      * Constructor
@@ -309,9 +345,11 @@ public class DataConfigManager extends Handler {
      * @param looper The looper to be used by the handler. Currently the handler thread is the
      * phone process's main thread.
      */
-    public DataConfigManager(@NonNull Phone phone, @NonNull Looper looper) {
+    public DataConfigManager(@NonNull Phone phone, @NonNull Looper looper,
+            @NonNull FeatureFlags featureFlags) {
         super(looper);
         mPhone = phone;
+        mFeatureFlags = featureFlags;
         mLogTag = "DCM-" + mPhone.getPhoneId();
         log("DataConfigManager created.");
 
@@ -326,7 +364,7 @@ public class DataConfigManager extends Handler {
 
         // Register for device config update
         DeviceConfig.addOnPropertiesChangedListener(
-                DeviceConfig.NAMESPACE_TELEPHONY, this::post,
+                DeviceConfig.NAMESPACE_TELEPHONY, Runnable::run,
                 properties -> {
                     if (TextUtils.equals(DeviceConfig.NAMESPACE_TELEPHONY,
                             properties.getNamespace())) {
@@ -452,6 +490,7 @@ public class DataConfigManager extends Handler {
         updateBandwidths();
         updateTcpBuffers();
         updateHandoverRules();
+        updateAutoDataSwitchConfig();
 
         log("Carrier config updated. Config is " + (isConfigCarrierSpecific() ? "" : "not ")
                 + "carrier specific.");
@@ -537,14 +576,16 @@ public class DataConfigManager extends Handler {
     /**
      * @return The data setup retry rules from carrier config.
      */
-    public @NonNull List<DataSetupRetryRule> getDataSetupRetryRules() {
+    @NonNull
+    public List<DataSetupRetryRule> getDataSetupRetryRules() {
         return Collections.unmodifiableList(mDataSetupRetryRules);
     }
 
     /**
      * @return The data handover retry rules from carrier config.
      */
-    public @NonNull List<DataHandoverRetryRule> getDataHandoverRetryRules() {
+    @NonNull
+    public List<DataHandoverRetryRule> getDataHandoverRetryRules() {
         return Collections.unmodifiableList(mDataHandoverRetryRules);
     }
 
@@ -587,12 +628,24 @@ public class DataConfigManager extends Handler {
      *
      * @return The metered network capabilities when connected to a home network.
      */
-    public @NonNull @NetCapability Set<Integer> getMeteredNetworkCapabilities(boolean isRoaming) {
+    @NonNull
+    @NetCapability
+    public Set<Integer> getMeteredNetworkCapabilities(boolean isRoaming) {
         Set<Integer> meteredApnTypes = isRoaming ? mRoamingMeteredApnTypes : mMeteredApnTypes;
-        return meteredApnTypes.stream()
+        Set<Integer> meteredCapabilities = meteredApnTypes.stream()
                 .map(DataUtils::apnTypeToNetworkCapability)
                 .filter(cap -> cap >= 0)
-                .collect(Collectors.toUnmodifiableSet());
+                .collect(Collectors.toSet());
+
+        // Consumer slices are the slices that are allowed to be accessed by regular application to
+        // get better performance. They should be metered. This can be turned into configurations in
+        // the future.
+        if (mFeatureFlags.meteredEmbbUrlcc()) {
+            meteredCapabilities.add(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH);
+            meteredCapabilities.add(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY);
+        }
+
+        return Collections.unmodifiableSet(meteredCapabilities);
     }
 
     /**
@@ -665,13 +718,20 @@ public class DataConfigManager extends Handler {
         synchronized (this) {
             mShouldKeepNetworkUpInNonVops = mCarrierConfig.getBoolean(CarrierConfigManager
                     .Ims.KEY_KEEP_PDN_UP_IN_NO_VOPS_BOOL);
+            int[] allowedNetworkTypes = mCarrierConfig.getIntArray(
+                    CarrierConfigManager.Ims.KEY_IMS_PDN_ENABLED_IN_NO_VOPS_SUPPORT_INT_ARRAY);
+            if (allowedNetworkTypes != null) {
+                Arrays.stream(allowedNetworkTypes).forEach(mEnabledVopsNetworkTypesInNonVops::add);
+            }
         }
     }
 
     /**
      * @return The list of {@link NetworkType} that only supports single data networks
      */
-    public @NonNull @NetworkType List<Integer> getNetworkTypesOnlySupportSingleDataNetwork() {
+    @NonNull
+    @NetworkType
+    public List<Integer> getNetworkTypesOnlySupportSingleDataNetwork() {
         return Collections.unmodifiableList(mSingleDataNetworkTypeList);
     }
 
@@ -679,13 +739,35 @@ public class DataConfigManager extends Handler {
      * @return The list of {@link android.net.NetworkCapabilities.NetCapability} that every of which
      * is exempt from the single PDN check.
      */
-    public @NonNull @NetCapability Set<Integer> getCapabilitiesExemptFromSingleDataNetwork() {
+    @NonNull
+    @NetCapability
+    public Set<Integer> getCapabilitiesExemptFromSingleDataNetwork() {
         return Collections.unmodifiableSet(mCapabilitiesExemptFromSingleDataList);
     }
 
-    /** {@code True} keep IMS network in case of moving to non VOPS area; {@code false} otherwise.*/
-    public boolean shouldKeepNetworkUpInNonVops() {
-        return mShouldKeepNetworkUpInNonVops;
+    /**
+     * @param regState The modem reported data registration state.
+     * @return {@code true} if should keep IMS network in case of moving to non VOPS area.
+     */
+    public boolean shouldKeepNetworkUpInNonVops(@NetworkRegistrationInfo.RegistrationState
+            int regState) {
+        return mShouldKeepNetworkUpInNonVops || allowBringUpNetworkInNonVops(regState);
+    }
+
+    /**
+     * @param regState The modem reported data registration state.
+     * @return {@code true} if allow bring up IMS network in case of moving to non VOPS area.
+     */
+    public boolean allowBringUpNetworkInNonVops(@NetworkRegistrationInfo.RegistrationState
+            int regState) {
+        if (!mFeatureFlags.allowMmtelInNonVops()) return false;
+        int networkType = -1;
+        if (regState == NetworkRegistrationInfo.REGISTRATION_STATE_HOME) {
+            networkType = CarrierConfigManager.Ims.NETWORK_TYPE_HOME;
+        } else if (regState == NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING) {
+            networkType = CarrierConfigManager.Ims.NETWORK_TYPE_ROAMING;
+        }
+        return mEnabledVopsNetworkTypesInNonVops.contains(networkType);
     }
 
     /** {@code True} requires ping test to pass on the target slot before switching to it.*/
@@ -792,7 +874,8 @@ public class DataConfigManager extends Handler {
      * @param displayInfo The {@link TelephonyDisplayInfo} to get the bandwidth for.
      * @return The pre-configured bandwidth estimate from carrier config.
      */
-    public @NonNull DataNetwork.NetworkBandwidth getBandwidthForNetworkType(
+    @NonNull
+    public DataNetwork.NetworkBandwidth getBandwidthForNetworkType(
             @NonNull TelephonyDisplayInfo displayInfo) {
         DataNetwork.NetworkBandwidth bandwidth = mBandwidthMap.get(
                 getDataConfigNetworkType(displayInfo));
@@ -826,6 +909,29 @@ public class DataConfigManager extends Handler {
     }
 
     /**
+     * @return the data limit in bytes that can be used for esim bootstrap usage.
+     */
+    public long getEsimBootStrapMaxDataLimitBytes() {
+        return mResources.getInteger(
+                com.android.internal.R.integer.config_esim_bootstrap_data_limit_bytes);
+    }
+
+    /**
+     * @return the interval in millisecond used to re-evaluate bootstrap sim data usage during esim
+     * bootstrap activation
+     */
+    public long getReevaluateBootstrapSimDataUsageMillis() {
+        long bootStrapSimDataUsageReevaluateInterval = mResources.getInteger(
+                com.android.internal.R.integer.config_reevaluate_bootstrap_sim_data_usage_millis);
+
+        if (bootStrapSimDataUsageReevaluateInterval <= 0) {
+            bootStrapSimDataUsageReevaluateInterval = REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS;
+        }
+
+        return bootStrapSimDataUsageReevaluateInterval;
+    }
+
+    /**
      * Update the TCP buffer sizes from the resource overlays.
      */
     private void updateTcpBuffers() {
@@ -856,7 +962,8 @@ public class DataConfigManager extends Handler {
      * Anomaly report thresholds for frequent setup data call failure.
      * @return EventFrequency to trigger the anomaly report
      */
-    public @NonNull EventFrequency getAnomalySetupDataCallThreshold() {
+    @NonNull
+    public EventFrequency getAnomalySetupDataCallThreshold() {
         return mSetupDataCallAnomalyReportThreshold;
     }
 
@@ -865,7 +972,8 @@ public class DataConfigManager extends Handler {
      * at {@link TelephonyNetworkAgent#onNetworkUnwanted}
      * @return EventFrequency to trigger the anomaly report
      */
-    public @NonNull EventFrequency getAnomalyNetworkUnwantedThreshold() {
+    @NonNull
+    public EventFrequency getAnomalyNetworkUnwantedThreshold() {
         return mNetworkUnwantedAnomalyReportThreshold;
     }
 
@@ -873,7 +981,8 @@ public class DataConfigManager extends Handler {
      * Anomaly report thresholds for back to back release-request of IMS.
      * @return EventFrequency to trigger the anomaly report
      */
-    public @NonNull EventFrequency getAnomalyImsReleaseRequestThreshold() {
+    @NonNull
+    public EventFrequency getAnomalyImsReleaseRequestThreshold() {
         return mImsReleaseRequestAnomalyReportThreshold;
     }
 
@@ -918,6 +1027,96 @@ public class DataConfigManager extends Handler {
     }
 
     /**
+     * Update the network type and signal strength score table for auto data switch decisions.
+     */
+    private void updateAutoDataSwitchConfig() {
+        synchronized (this) {
+            mAutoDataSwitchNetworkTypeSignalMap.clear();
+            final PersistableBundle table = mCarrierConfig.getPersistableBundle(
+                    CarrierConfigManager.KEY_AUTO_DATA_SWITCH_RAT_SIGNAL_SCORE_BUNDLE);
+            String[] networkTypeKeys = {
+                    DATA_CONFIG_NETWORK_TYPE_GPRS,
+                    DATA_CONFIG_NETWORK_TYPE_EDGE,
+                    DATA_CONFIG_NETWORK_TYPE_UMTS,
+                    DATA_CONFIG_NETWORK_TYPE_CDMA,
+                    DATA_CONFIG_NETWORK_TYPE_1xRTT,
+                    DATA_CONFIG_NETWORK_TYPE_EVDO_0,
+                    DATA_CONFIG_NETWORK_TYPE_EVDO_A,
+                    DATA_CONFIG_NETWORK_TYPE_HSDPA,
+                    DATA_CONFIG_NETWORK_TYPE_HSUPA,
+                    DATA_CONFIG_NETWORK_TYPE_HSPA,
+                    DATA_CONFIG_NETWORK_TYPE_EVDO_B,
+                    DATA_CONFIG_NETWORK_TYPE_EHRPD,
+                    DATA_CONFIG_NETWORK_TYPE_IDEN,
+                    DATA_CONFIG_NETWORK_TYPE_LTE,
+                    DATA_CONFIG_NETWORK_TYPE_LTE_CA,
+                    DATA_CONFIG_NETWORK_TYPE_HSPAP,
+                    DATA_CONFIG_NETWORK_TYPE_GSM,
+                    DATA_CONFIG_NETWORK_TYPE_TD_SCDMA,
+                    DATA_CONFIG_NETWORK_TYPE_NR_NSA,
+                    DATA_CONFIG_NETWORK_TYPE_NR_NSA_MMWAVE,
+                    DATA_CONFIG_NETWORK_TYPE_NR_SA,
+                    DATA_CONFIG_NETWORK_TYPE_NR_SA_MMWAVE
+            };
+            if (table != null) {
+                for (String networkType : networkTypeKeys) {
+                    int[] scores = table.getIntArray(networkType);
+                    if (scores != null
+                            && scores.length == SignalStrength.NUM_SIGNAL_STRENGTH_BINS) {
+                        for (int i = 0; i < scores.length; i++) {
+                            if (scores[i] < 0) {
+                                loge("Auto switch score must not < 0 for network type "
+                                        + networkType);
+                                break;
+                            }
+                            if (i == scores.length - 1) {
+                                mAutoDataSwitchNetworkTypeSignalMap.put(networkType, scores);
+                            }
+                        }
+                    } else {
+                        loge("Auto switch score table should specify "
+                                + SignalStrength.NUM_SIGNAL_STRENGTH_BINS
+                                + " signal strength for network type " + networkType);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * @param displayInfo The displayed network info.
+     * @param signalStrength The signal strength.
+     * @return Score base on network type and signal strength to inform auto data switch decision.
+     * The min score is {@link #OUT_OF_SERVICE_AUTO_DATA_SWITCH_SCORE} indicating missing config.
+     */
+    public int getAutoDataSwitchScore(@NonNull TelephonyDisplayInfo displayInfo,
+            @NonNull SignalStrength signalStrength) {
+        int[] scores = mAutoDataSwitchNetworkTypeSignalMap.get(
+                getDataConfigNetworkType(displayInfo));
+        return scores != null ? scores[signalStrength.getLevel()]
+                : OUT_OF_SERVICE_AUTO_DATA_SWITCH_SCORE;
+    }
+
+    /**
+     * @return The tolerated gap of score for auto data switch decision, larger than which the
+     * device will switch to the SIM with higher score. If 0, the device always switch to the higher
+     * score SIM. If < 0, the network type and signal strength based auto switch is disabled.
+     */
+    public int getAutoDataSwitchScoreTolerance() {
+        return mResources.getInteger(com.android.internal.R.integer
+                .auto_data_switch_score_tolerance);
+    }
+
+    /**
+     * TODO: remove after V.
+     * @return To indicate whether allow using roaming nDDS if user enabled its roaming when the DDS
+     * is not usable(OOS or disabled roaming)
+     */
+    public boolean doesAutoDataSwitchAllowRoaming() {
+        return mResources.getBoolean(com.android.internal.R.bool.auto_data_switch_allow_roaming);
+    }
+
+    /**
      * @return The maximum number of retries when a validation for switching failed.
      */
     public int getAutoDataSwitchValidationMaxRetry() {
@@ -936,6 +1135,16 @@ public class DataConfigManager extends Handler {
     }
 
     /**
+     * @return Time threshold in ms to define a internet connection performance status to be stable
+     * (e.g. LTE + 4 signal strength, UMTS + 2 signal strength), while -1 indicates
+     * auto switch feature based on RAT/SS is disabled.
+     */
+    public long getAutoDataSwitchPerformanceStabilityTimeThreshold() {
+        return mResources.getInteger(com.android.internal.R.integer
+                .auto_data_switch_performance_stability_time_threshold_millis);
+    }
+
+    /**
      * Get the TCP config string, used by {@link LinkProperties#setTcpBufferSizes(String)}.
      * The config string will have the following form, with values in bytes:
      * "read_min,read_default,read_max,write_min,write_default,write_max"
@@ -944,7 +1153,8 @@ public class DataConfigManager extends Handler {
      * @return The TCP configuration string for the given display info or the default value from
      *         {@code config_tcp_buffers} if unavailable.
      */
-    public @NonNull String getTcpConfigString(@NonNull TelephonyDisplayInfo displayInfo) {
+    @NonNull
+    public String getTcpConfigString(@NonNull TelephonyDisplayInfo displayInfo) {
         String config = mTcpBufferSizeMap.get(getDataConfigNetworkType(displayInfo));
         if (TextUtils.isEmpty(config)) {
             config = getDefaultTcpConfigString();
@@ -955,7 +1165,8 @@ public class DataConfigManager extends Handler {
     /**
      * @return The fixed TCP buffer size configured based on the device's memory and performance.
      */
-    public @NonNull String getDefaultTcpConfigString() {
+    @NonNull
+    public String getDefaultTcpConfigString() {
         return mResources.getString(com.android.internal.R.string.config_tcp_buffers);
     }
 
@@ -998,20 +1209,21 @@ public class DataConfigManager extends Handler {
     /**
      * @return The bandwidth estimation source.
      */
-    public @DataNetwork.BandwidthEstimationSource int getBandwidthEstimateSource() {
+    @DataNetwork.BandwidthEstimationSource
+    public int getBandwidthEstimateSource() {
         String source = mResources.getString(
                 com.android.internal.R.string.config_bandwidthEstimateSource);
-        switch (source) {
-            case BANDWIDTH_SOURCE_MODEM_STRING_VALUE:
-                return DataNetwork.BANDWIDTH_SOURCE_MODEM;
-            case BANDWIDTH_SOURCE_CARRIER_CONFIG_STRING_VALUE:
-                return DataNetwork.BANDWIDTH_SOURCE_CARRIER_CONFIG;
-            case BANDWIDTH_SOURCE_BANDWIDTH_ESTIMATOR_STRING_VALUE:
-                return DataNetwork.BANDWIDTH_SOURCE_BANDWIDTH_ESTIMATOR;
-            default:
+        return switch (source) {
+            case BANDWIDTH_SOURCE_MODEM_STRING_VALUE -> DataNetwork.BANDWIDTH_SOURCE_MODEM;
+            case BANDWIDTH_SOURCE_CARRIER_CONFIG_STRING_VALUE ->
+                    DataNetwork.BANDWIDTH_SOURCE_CARRIER_CONFIG;
+            case BANDWIDTH_SOURCE_BANDWIDTH_ESTIMATOR_STRING_VALUE ->
+                    DataNetwork.BANDWIDTH_SOURCE_BANDWIDTH_ESTIMATOR;
+            default -> {
                 loge("Invalid bandwidth estimation source config: " + source);
-                return DataNetwork.BANDWIDTH_SOURCE_UNKNOWN;
-        }
+                yield DataNetwork.BANDWIDTH_SOURCE_UNKNOWN;
+            }
+        };
     }
 
     /**
@@ -1020,8 +1232,9 @@ public class DataConfigManager extends Handler {
      * @param displayInfo The {@link TelephonyDisplayInfo} used to determine the type.
      * @return The equivalent {@link DataConfigNetworkType}.
      */
-    private static @NonNull @DataConfigNetworkType String getDataConfigNetworkType(
-            @NonNull TelephonyDisplayInfo displayInfo) {
+    @NonNull
+    @DataConfigNetworkType
+    private static String getDataConfigNetworkType(@NonNull TelephonyDisplayInfo displayInfo) {
         int networkType = displayInfo.getNetworkType();
         switch (displayInfo.getOverrideNetworkType()) {
             case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED:
@@ -1130,7 +1343,8 @@ public class DataConfigManager extends Handler {
      *
      * @see CarrierConfigManager#KEY_IWLAN_HANDOVER_POLICY_STRING_ARRAY
      */
-    public @NonNull List<HandoverRule> getHandoverRules() {
+    @NonNull
+    public List<HandoverRule> getHandoverRules() {
         return Collections.unmodifiableList(mHandoverRuleList);
     }
 
@@ -1148,52 +1362,33 @@ public class DataConfigManager extends Handler {
      * @param networkType The network type
      * @return The equivalent data config network type
      */
-    private static @NonNull @DataConfigNetworkType String networkTypeToDataConfigNetworkType(
+    @NonNull
+    @DataConfigNetworkType
+    private static String networkTypeToDataConfigNetworkType(
             @NetworkType int networkType) {
-        switch (networkType) {
-            case TelephonyManager.NETWORK_TYPE_GPRS:
-                return DATA_CONFIG_NETWORK_TYPE_GPRS;
-            case TelephonyManager.NETWORK_TYPE_EDGE:
-                return DATA_CONFIG_NETWORK_TYPE_EDGE;
-            case TelephonyManager.NETWORK_TYPE_UMTS:
-                return DATA_CONFIG_NETWORK_TYPE_UMTS;
-            case TelephonyManager.NETWORK_TYPE_HSDPA:
-                return DATA_CONFIG_NETWORK_TYPE_HSDPA;
-            case TelephonyManager.NETWORK_TYPE_HSUPA:
-                return DATA_CONFIG_NETWORK_TYPE_HSUPA;
-            case TelephonyManager.NETWORK_TYPE_HSPA:
-                return DATA_CONFIG_NETWORK_TYPE_HSPA;
-            case TelephonyManager.NETWORK_TYPE_CDMA:
-                return DATA_CONFIG_NETWORK_TYPE_CDMA;
-            case TelephonyManager.NETWORK_TYPE_EVDO_0:
-                return DATA_CONFIG_NETWORK_TYPE_EVDO_0;
-            case TelephonyManager.NETWORK_TYPE_EVDO_A:
-                return DATA_CONFIG_NETWORK_TYPE_EVDO_A;
-            case TelephonyManager.NETWORK_TYPE_EVDO_B:
-                return DATA_CONFIG_NETWORK_TYPE_EVDO_B;
-            case TelephonyManager.NETWORK_TYPE_1xRTT:
-                return DATA_CONFIG_NETWORK_TYPE_1xRTT;
-            case TelephonyManager.NETWORK_TYPE_LTE:
-                return DATA_CONFIG_NETWORK_TYPE_LTE;
-            case TelephonyManager.NETWORK_TYPE_EHRPD:
-                return DATA_CONFIG_NETWORK_TYPE_EHRPD;
-            case TelephonyManager.NETWORK_TYPE_IDEN:
-                return DATA_CONFIG_NETWORK_TYPE_IDEN;
-            case TelephonyManager.NETWORK_TYPE_HSPAP:
-                return DATA_CONFIG_NETWORK_TYPE_HSPAP;
-            case TelephonyManager.NETWORK_TYPE_GSM:
-                return DATA_CONFIG_NETWORK_TYPE_GSM;
-            case TelephonyManager.NETWORK_TYPE_TD_SCDMA:
-                return DATA_CONFIG_NETWORK_TYPE_TD_SCDMA;
-            case TelephonyManager.NETWORK_TYPE_IWLAN:
-                return DATA_CONFIG_NETWORK_TYPE_IWLAN;
-            case TelephonyManager.NETWORK_TYPE_LTE_CA:
-                return DATA_CONFIG_NETWORK_TYPE_LTE_CA;
-            case TelephonyManager.NETWORK_TYPE_NR:
-                return DATA_CONFIG_NETWORK_TYPE_NR_SA;
-            default:
-                return "";
-        }
+        return switch (networkType) {
+            case TelephonyManager.NETWORK_TYPE_GPRS -> DATA_CONFIG_NETWORK_TYPE_GPRS;
+            case TelephonyManager.NETWORK_TYPE_EDGE -> DATA_CONFIG_NETWORK_TYPE_EDGE;
+            case TelephonyManager.NETWORK_TYPE_UMTS -> DATA_CONFIG_NETWORK_TYPE_UMTS;
+            case TelephonyManager.NETWORK_TYPE_HSDPA -> DATA_CONFIG_NETWORK_TYPE_HSDPA;
+            case TelephonyManager.NETWORK_TYPE_HSUPA -> DATA_CONFIG_NETWORK_TYPE_HSUPA;
+            case TelephonyManager.NETWORK_TYPE_HSPA -> DATA_CONFIG_NETWORK_TYPE_HSPA;
+            case TelephonyManager.NETWORK_TYPE_CDMA -> DATA_CONFIG_NETWORK_TYPE_CDMA;
+            case TelephonyManager.NETWORK_TYPE_EVDO_0 -> DATA_CONFIG_NETWORK_TYPE_EVDO_0;
+            case TelephonyManager.NETWORK_TYPE_EVDO_A -> DATA_CONFIG_NETWORK_TYPE_EVDO_A;
+            case TelephonyManager.NETWORK_TYPE_EVDO_B -> DATA_CONFIG_NETWORK_TYPE_EVDO_B;
+            case TelephonyManager.NETWORK_TYPE_1xRTT -> DATA_CONFIG_NETWORK_TYPE_1xRTT;
+            case TelephonyManager.NETWORK_TYPE_LTE -> DATA_CONFIG_NETWORK_TYPE_LTE;
+            case TelephonyManager.NETWORK_TYPE_EHRPD -> DATA_CONFIG_NETWORK_TYPE_EHRPD;
+            case TelephonyManager.NETWORK_TYPE_IDEN -> DATA_CONFIG_NETWORK_TYPE_IDEN;
+            case TelephonyManager.NETWORK_TYPE_HSPAP -> DATA_CONFIG_NETWORK_TYPE_HSPAP;
+            case TelephonyManager.NETWORK_TYPE_GSM -> DATA_CONFIG_NETWORK_TYPE_GSM;
+            case TelephonyManager.NETWORK_TYPE_TD_SCDMA -> DATA_CONFIG_NETWORK_TYPE_TD_SCDMA;
+            case TelephonyManager.NETWORK_TYPE_IWLAN -> DATA_CONFIG_NETWORK_TYPE_IWLAN;
+            case TelephonyManager.NETWORK_TYPE_LTE_CA -> DATA_CONFIG_NETWORK_TYPE_LTE_CA;
+            case TelephonyManager.NETWORK_TYPE_NR -> DATA_CONFIG_NETWORK_TYPE_NR_SA;
+            default -> "";
+        };
     }
 
     /**
@@ -1201,7 +1396,8 @@ public class DataConfigManager extends Handler {
      *
      * @see CarrierConfigManager#KEY_DATA_STALL_RECOVERY_TIMERS_LONG_ARRAY
      */
-    public @NonNull long[] getDataStallRecoveryDelayMillis() {
+    @NonNull
+    public long[] getDataStallRecoveryDelayMillis() {
         return mCarrierConfig.getLongArray(
             CarrierConfigManager.KEY_DATA_STALL_RECOVERY_TIMERS_LONG_ARRAY);
     }
@@ -1211,7 +1407,8 @@ public class DataConfigManager extends Handler {
      *
      * @see CarrierConfigManager#KEY_DATA_STALL_RECOVERY_SHOULD_SKIP_BOOL_ARRAY
      */
-    public @NonNull boolean[] getDataStallRecoveryShouldSkipArray() {
+    @NonNull
+    public boolean[] getDataStallRecoveryShouldSkipArray() {
         return mCarrierConfig.getBooleanArray(
             CarrierConfigManager.KEY_DATA_STALL_RECOVERY_SHOULD_SKIP_BOOL_ARRAY);
     }
@@ -1220,7 +1417,8 @@ public class DataConfigManager extends Handler {
      * @return The default preferred APN. An empty string if not configured. This is used for the
      * first time boot up where preferred APN is not set.
      */
-    public @NonNull String getDefaultPreferredApn() {
+    @NonNull
+    public String getDefaultPreferredApn() {
         return TextUtils.emptyIfNull(mCarrierConfig.getString(
                 CarrierConfigManager.KEY_DEFAULT_PREFERRED_APN_NAME_STRING));
     }
@@ -1239,7 +1437,9 @@ public class DataConfigManager extends Handler {
      * cases that we need to use "user-added" APN for initial attach. The regular way to configure
      * IA APN is by adding "IA" type to the APN in APN config.
      */
-    public @NonNull @ApnType List<Integer> getAllowedInitialAttachApnTypes() {
+    @NonNull
+    @ApnType
+    public List<Integer> getAllowedInitialAttachApnTypes() {
         String[] apnTypesArray = mCarrierConfig.getStringArray(
                 CarrierConfigManager.KEY_ALLOWED_INITIAL_ATTACH_APN_TYPES_STRING_ARRAY);
         if (apnTypesArray != null) {
@@ -1261,6 +1461,39 @@ public class DataConfigManager extends Handler {
     public boolean isEnhancedIwlanHandoverCheckEnabled() {
         return mResources.getBoolean(
                 com.android.internal.R.bool.config_enhanced_iwlan_handover_check);
+    }
+
+    /**
+     * @return {@code true} if allow sending null data profile to ask modem to clear the initial
+     * attach data profile.
+     */
+    public boolean allowClearInitialAttachDataProfile() {
+        return mResources.getBoolean(
+                com.android.internal.R.bool.allow_clear_initial_attach_data_profile);
+    }
+
+    /**
+     * @return Indicating whether the retry timer from setup data call response for data throttling
+     * should be honored for emergency network request. By default this is off, meaning emergency
+     * network requests will ignore the previous retry timer passed in from setup data call
+     * response.
+     */
+    public boolean shouldHonorRetryTimerForEmergencyNetworkRequest() {
+        return mResources.getBoolean(
+                com.android.internal.R.bool.config_honor_data_retry_timer_for_emergency_network);
+    }
+
+    /**
+     * @return The capabilities that network will be forced to mark as cellular transport.
+     */
+    @NetCapability
+    public Set<Integer> getForcedCellularTransportCapabilities() {
+        String[] forcedCellularTransportCapabilities = mResources.getStringArray(
+                com.android.internal.R.array.config_force_cellular_transport_capabilities);
+
+        return Arrays.stream(forcedCellularTransportCapabilities)
+                .map(DataUtils::getNetworkCapabilityFromString)
+                .collect(Collectors.toSet());
     }
 
     /**
@@ -1306,6 +1539,8 @@ public class DataConfigManager extends Handler {
         pw.increaseIndent();
         mDataHandoverRetryRules.forEach(pw::println);
         pw.decreaseIndent();
+        pw.println("shouldHonorRetryTimerForEmergencyNetworkRequest="
+                + shouldHonorRetryTimerForEmergencyNetworkRequest());
         pw.println("mSetupDataCallAnomalyReport=" + mSetupDataCallAnomalyReportThreshold);
         pw.println("mNetworkUnwantedAnomalyReport=" + mNetworkUnwantedAnomalyReportThreshold);
         pw.println("mImsReleaseRequestAnomalyReport=" + mImsReleaseRequestAnomalyReportThreshold);
@@ -1315,9 +1550,17 @@ public class DataConfigManager extends Handler {
         pw.println("mNetworkDisconnectingTimeout=" + mNetworkDisconnectingTimeout);
         pw.println("mNetworkHandoverTimeout=" + mNetworkHandoverTimeout);
         pw.println("mIsApnConfigAnomalyReportEnabled=" + mIsApnConfigAnomalyReportEnabled);
+        pw.println("Auto data switch:");
+        pw.increaseIndent();
+        pw.println("getAutoDataSwitchScoreTolerance=" + getAutoDataSwitchScoreTolerance());
+        mAutoDataSwitchNetworkTypeSignalMap.forEach((key, value) -> pw.println(key + ":"
+                + Arrays.toString(value)));
         pw.println("getAutoDataSwitchAvailabilityStabilityTimeThreshold="
                 + getAutoDataSwitchAvailabilityStabilityTimeThreshold());
+        pw.println("getAutoDataSwitchPerformanceStabilityTimeThreshold="
+                + getAutoDataSwitchPerformanceStabilityTimeThreshold());
         pw.println("getAutoDataSwitchValidationMaxRetry=" + getAutoDataSwitchValidationMaxRetry());
+        pw.decreaseIndent();
         pw.println("Metered APN types=" + mMeteredApnTypes.stream()
                 .map(ApnSetting::getApnTypeString).collect(Collectors.joining(",")));
         pw.println("Roaming metered APN types=" + mRoamingMeteredApnTypes.stream()
@@ -1327,7 +1570,8 @@ public class DataConfigManager extends Handler {
         pw.println("Capabilities exempt from single PDN=" + mCapabilitiesExemptFromSingleDataList
                 .stream().map(DataUtils::networkCapabilityToString)
                 .collect(Collectors.joining(",")));
-        pw.println("mShouldKeepNetworkUpInNoVops=" + mShouldKeepNetworkUpInNonVops);
+        pw.println("mShouldKeepNetworkUpInNonVops=" + mShouldKeepNetworkUpInNonVops);
+        pw.println("mEnabledVopsNetworkTypesInNonVops=" + mEnabledVopsNetworkTypesInNonVops);
         pw.println("isPingTestBeforeAutoDataSwitchRequired="
                 + isPingTestBeforeAutoDataSwitchRequired());
         pw.println("Unmetered network types=" + String.join(",", mUnmeteredNetworkTypes));
@@ -1359,6 +1603,10 @@ public class DataConfigManager extends Handler {
         pw.println("isEnhancedIwlanHandoverCheckEnabled=" + isEnhancedIwlanHandoverCheckEnabled());
         pw.println("isTetheringProfileDisabledForRoaming="
                 + isTetheringProfileDisabledForRoaming());
+        pw.println("allowClearInitialAttachDataProfile=" + allowClearInitialAttachDataProfile());
+        pw.println("forcedCellularTransportCapabilities=" + getForcedCellularTransportCapabilities()
+                .stream().map(DataUtils::networkCapabilityToString)
+                .collect(Collectors.joining(",")));
         pw.decreaseIndent();
     }
 }

@@ -25,23 +25,29 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.telephony.AccessNetworkConstants;
+import android.telephony.AccessNetworkConstants.AccessNetworkType;
 import android.telephony.DomainSelectionService;
-import android.telephony.DomainSelector;
 import android.telephony.NetworkRegistrationInfo;
-import android.test.suitebuilder.annotation.SmallTest;
+import android.telephony.data.ApnSetting;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
+import androidx.test.filters.SmallTest;
+
+import com.android.internal.telephony.IDomainSelector;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.data.AccessNetworksManager;
+import com.android.internal.telephony.data.AccessNetworksManager.QualifiedNetworks;
 import com.android.internal.telephony.emergency.EmergencyStateTracker;
 
 import org.junit.After;
@@ -51,6 +57,8 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -61,7 +69,7 @@ import java.util.concurrent.CompletableFuture;
 public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
     private DomainSelectionController mDsController;
     private DomainSelectionConnection.DomainSelectionConnectionCallback mDscCallback;
-    private DomainSelector mDomainSelector;
+    private IDomainSelector mDomainSelector;
     private EmergencyStateTracker mEmergencyStateTracker;
 
     private Handler mHandler;
@@ -79,9 +87,10 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
         mHandler = new Handler(Looper.myLooper());
         mDsController = Mockito.mock(DomainSelectionController.class);
+        doReturn(true).when(mDsController).selectDomain(any(), any());
         mDscCallback = Mockito.mock(
                 DomainSelectionConnection.DomainSelectionConnectionCallback.class);
-        mDomainSelector = Mockito.mock(DomainSelector.class);
+        mDomainSelector = Mockito.mock(IDomainSelector.class);
         mEmergencyStateTracker = Mockito.mock(EmergencyStateTracker.class);
         mAnm = Mockito.mock(AccessNetworksManager.class);
         when(mPhone.getAccessNetworksManager()).thenReturn(mAnm);
@@ -151,9 +160,13 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
         verify(mPhone).notifyEmergencyDomainSelected(
                 eq(AccessNetworkConstants.TRANSPORT_TYPE_WLAN));
 
+        List<QualifiedNetworks> networksList = new ArrayList<>();
+        networksList.add(new QualifiedNetworks(ApnSetting.TYPE_EMERGENCY,
+                new int[]{ AccessNetworkType.IWLAN }));
+        AsyncResult ar = new AsyncResult(null, networksList, null);
         Handler handler = handlerCaptor.getValue();
         Integer msg = msgCaptor.getValue();
-        handler.handleMessage(Message.obtain(handler, msg.intValue()));
+        handler.handleMessage(Message.obtain(handler, msg.intValue(), ar));
         processAllMessages();
 
         assertTrue(future.isDone());
@@ -214,9 +227,13 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
         verify(mPhone).notifyEmergencyDomainSelected(
                 eq(AccessNetworkConstants.TRANSPORT_TYPE_WLAN));
 
+        List<QualifiedNetworks> networksList = new ArrayList<>();
+        networksList.add(new QualifiedNetworks(ApnSetting.TYPE_EMERGENCY,
+                new int[]{ AccessNetworkType.IWLAN }));
+        AsyncResult ar = new AsyncResult(null, networksList, null);
         Handler handler = handlerCaptor.getValue();
         Integer msg = msgCaptor.getValue();
-        handler.handleMessage(Message.obtain(handler, msg.intValue()));
+        handler.handleMessage(Message.obtain(handler, msg.intValue(), ar));
         processAllMessages();
 
         assertTrue(future.isDone());
@@ -273,9 +290,13 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
         verify(mPhone).notifyEmergencyDomainSelected(
                 eq(AccessNetworkConstants.TRANSPORT_TYPE_WWAN));
 
+        List<QualifiedNetworks> networksList = new ArrayList<>();
+        networksList.add(new QualifiedNetworks(ApnSetting.TYPE_EMERGENCY,
+                new int[]{ AccessNetworkType.EUTRAN }));
+        AsyncResult ar = new AsyncResult(null, networksList, null);
         Handler handler = handlerCaptor.getValue();
         Integer msg = msgCaptor.getValue();
-        handler.handleMessage(Message.obtain(handler, msg.intValue()));
+        handler.handleMessage(Message.obtain(handler, msg.intValue(), ar));
         processAllMessages();
 
         assertTrue(future.isDone());
@@ -364,9 +385,13 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
         verify(mPhone).notifyEmergencyDomainSelected(
                 eq(AccessNetworkConstants.TRANSPORT_TYPE_WWAN));
 
+        List<QualifiedNetworks> networksList = new ArrayList<>();
+        networksList.add(new QualifiedNetworks(ApnSetting.TYPE_EMERGENCY,
+                new int[]{ AccessNetworkType.EUTRAN }));
+        AsyncResult ar = new AsyncResult(null, networksList, null);
         Handler handler = handlerCaptor.getValue();
         Integer msg = msgCaptor.getValue();
-        handler.handleMessage(Message.obtain(handler, msg.intValue()));
+        handler.handleMessage(Message.obtain(handler, msg.intValue(), ar));
         processAllMessages();
 
         assertTrue(future.isDone());
@@ -419,7 +444,7 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
 
         assertFalse(future.isDone());
         verify(mAnm).unregisterForQualifiedNetworksChanged(any(Handler.class));
-        verify(mDomainSelector).cancelSelection();
+        verify(mDomainSelector).finishSelection();
     }
 
     @Test
@@ -445,9 +470,13 @@ public class EmergencySmsDomainSelectionConnectionTest extends TelephonyTest {
         verify(mPhone).notifyEmergencyDomainSelected(
                 eq(AccessNetworkConstants.TRANSPORT_TYPE_WWAN));
 
+        List<QualifiedNetworks> networksList = new ArrayList<>();
+        networksList.add(new QualifiedNetworks(ApnSetting.TYPE_EMERGENCY,
+                new int[]{ AccessNetworkType.EUTRAN }));
+        AsyncResult ar = new AsyncResult(null, networksList, null);
         Handler handler = handlerCaptor.getValue();
         Integer msg = msgCaptor.getValue();
-        handler.handleMessage(Message.obtain(handler, msg.intValue()));
+        handler.handleMessage(Message.obtain(handler, msg.intValue(), ar));
         processAllMessages();
         mDsConnection.finishSelection();
 

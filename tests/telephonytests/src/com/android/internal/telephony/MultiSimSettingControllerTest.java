@@ -18,10 +18,8 @@ package com.android.internal.telephony;
 
 import static android.telephony.TelephonyManager.ACTION_PRIMARY_SUBSCRIPTION_LIST_CHANGED;
 import static android.telephony.TelephonyManager.EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE;
-import static android.telephony.TelephonyManager.EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE_ALL;
 import static android.telephony.TelephonyManager.EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE_DATA;
 import static android.telephony.TelephonyManager.EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE_DISMISS;
-import static android.telephony.TelephonyManager.EXTRA_SUBSCRIPTION_ID;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -43,6 +41,7 @@ import static org.mockito.Mockito.verify;
 
 import android.content.Intent;
 import android.content.res.Resources;
+import android.os.AsyncResult;
 import android.os.HandlerThread;
 import android.os.ParcelUuid;
 import android.os.PersistableBundle;
@@ -51,14 +50,15 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
-import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
 import androidx.test.InstrumentationRegistry;
+import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.data.DataSettingsManager;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
+import com.android.internal.telephony.test.SimulatedCommands;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -196,7 +196,7 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
             }
             return subscriptionInfoList;
         }).when(mSubscriptionManagerService).getActiveSubscriptionInfoList(
-                anyString(), nullable(String.class));
+                anyString(), nullable(String.class), anyBoolean());
 
         doAnswer(invocation -> {
             final boolean visibleOnly = (boolean) invocation.getArguments()[0];
@@ -245,11 +245,17 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
             return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
         }).when(mPhoneMock2).getSubId();
 
+        PersistableBundle bundle = new PersistableBundle();
+        bundle.putBoolean(CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
+        doReturn(bundle).when(mCarrierConfigManager).getConfigForSubId(anyInt());
+
+        doReturn(true).when(mFeatureFlags).resetPrimarySimDefaultValues();
+
         replaceInstance(PhoneFactory.class, "sPhones", null, mPhones);
         // Capture listener to emulate the carrier config change notification used later
         ArgumentCaptor<CarrierConfigManager.CarrierConfigChangeListener> listenerArgumentCaptor =
                 ArgumentCaptor.forClass(CarrierConfigManager.CarrierConfigChangeListener.class);
-        mMultiSimSettingControllerUT = new MultiSimSettingController(mContext);
+        mMultiSimSettingControllerUT = new MultiSimSettingController(mContext, mFeatureFlags);
         processAllMessages();
         verify(mCarrierConfigManager).registerCarrierConfigChangeListener(any(),
                 listenerArgumentCaptor.capture());
@@ -302,9 +308,18 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
 
     @Test
     public void testSubInfoChangeAfterRadioUnavailable() throws Exception {
+        int phone1SubId = 1;
+        int phone2SubId = 2;
+        // Mock DSDS, mock Phone 2
+        SimulatedCommands simulatedCommands2 = mock(SimulatedCommands.class);
+        mPhone2.mCi = simulatedCommands2;
+        doReturn(mDataSettingsManagerMock2).when(mPhone2).getDataSettingsManager();
+        mPhones = new Phone[]{mPhone, mPhone2};
+        replaceInstance(PhoneFactory.class, "sPhones", null, mPhones);
+        // Load carrier config for all subs
         mMultiSimSettingControllerUT.notifyAllSubscriptionLoaded();
-        sendCarrierConfigChanged(0, 1);
-        sendCarrierConfigChanged(1, 2);
+        sendCarrierConfigChanged(0, phone1SubId);
+        sendCarrierConfigChanged(1, phone2SubId);
         processAllMessages();
 
         // Ensure all subscription loaded only updates state once
@@ -315,7 +330,22 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
         verify(mSubscriptionManagerService, never()).setDefaultVoiceSubId(anyInt());
         verify(mSubscriptionManagerService, never()).setDefaultSmsSubId(anyInt());
 
-        // Notify radio unavailable.
+        // DSDS -> single active modem, radio available on phone 0 but unavailable on phone 1
+        doReturn(TelephonyManager.RADIO_POWER_UNAVAILABLE).when(simulatedCommands2).getRadioState();
+        markSubscriptionInactive(phone2SubId);
+        AsyncResult result = new AsyncResult(null, 1/*activeModemCount*/, null);
+        clearInvocations(mSubscriptionManagerService);
+        mMultiSimSettingControllerUT.obtainMessage(
+                MultiSimSettingController.EVENT_MULTI_SIM_CONFIG_CHANGED, result).sendToTarget();
+        mMultiSimSettingControllerUT.notifySubscriptionInfoChanged();
+        processAllMessages();
+
+        // Should still set defaults to the only remaining sub
+        verify(mSubscriptionManagerService).setDefaultDataSubId(phone1SubId);
+        verify(mSubscriptionManagerService).setDefaultVoiceSubId(phone1SubId);
+        verify(mSubscriptionManagerService).setDefaultSmsSubId(phone1SubId);
+
+        // Notify radio unavailable on all subs.
         replaceInstance(BaseCommands.class, "mState", mSimulatedCommands,
                 TelephonyManager.RADIO_POWER_UNAVAILABLE);
         mMultiSimSettingControllerUT.obtainMessage(
@@ -323,7 +353,6 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
 
         // Mark all subs as inactive.
         markSubscriptionInactive(1);
-        markSubscriptionInactive(2);
         clearInvocations(mSubscriptionManagerService);
 
         // The below sub info change should be ignored.
@@ -467,18 +496,9 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
         sendCarrierConfigChanged(1, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
         processAllMessages();
 
-        verify(mSubscriptionManagerService).setDefaultDataSubId(
-                SubscriptionManager.INVALID_SUBSCRIPTION_ID);
-        verify(mSubscriptionManagerService).setDefaultSmsSubId(
-                SubscriptionManager.INVALID_SUBSCRIPTION_ID);
-        verify(mSubscriptionManagerService, never()).setDefaultVoiceSubId(anyInt());
-
-        // Verify intent sent to select sub 2 as default for all types.
-        Intent intent = captureBroadcastIntent();
-        assertEquals(ACTION_PRIMARY_SUBSCRIPTION_LIST_CHANGED, intent.getAction());
-        assertEquals(EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE_ALL,
-                intent.getIntExtra(EXTRA_DEFAULT_SUBSCRIPTION_SELECT_TYPE, -1));
-        assertEquals(2, intent.getIntExtra(EXTRA_SUBSCRIPTION_ID, -1));
+        verify(mSubscriptionManagerService).setDefaultDataSubId(2);
+        verify(mSubscriptionManagerService).setDefaultSmsSubId(2);
+        verify(mSubscriptionManagerService).setDefaultVoiceSubId(2);
     }
 
     @Test
@@ -860,6 +880,13 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
         doReturn(true).when(mPhoneMock2).isUserDataEnabled();
         mMultiSimSettingControllerUT.notifyAllSubscriptionLoaded();
         processAllMessages();
+
+        PersistableBundle bundle = new PersistableBundle();
+        bundle.putBoolean(CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
+        doReturn(bundle).when(mCarrierConfigManager).getConfigForSubId(eq(1));
+        PersistableBundle bundle2 = new PersistableBundle();
+        doReturn(bundle).when(mCarrierConfigManager).getConfigForSubId(eq(2));
+
         sendCarrierConfigChanged(0, 1);
         // Notify carrier config change on phone1 without specifying subId.
         sendCarrierConfigChanged(1, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
@@ -868,17 +895,34 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
         verify(mDataSettingsManagerMock2, never()).setDataEnabled(
                 TelephonyManager.DATA_ENABLED_REASON_USER, false, PHONE_PACKAGE);
 
-        // Still notify carrier config without specifying subId2, but this time subController
-        // and CarrierConfigManager have subId 2 active and ready.
-        doReturn(2).when(mSubscriptionManagerService).getSubId(1);
-        CarrierConfigManager cm = (CarrierConfigManager) mContext.getSystemService(
-                mContext.CARRIER_CONFIG_SERVICE);
-        doReturn(new PersistableBundle()).when(cm).getConfigForSubId(2);
-        sendCarrierConfigChanged(1, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+        logd("Sending the correct phone id and sub id");
+        bundle2.putBoolean(CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
+        sendCarrierConfigChanged(1, 2);
         processAllMessages();
         // This time user data should be disabled on phone1.
         verify(mDataSettingsManagerMock2).setDataEnabled(
                 TelephonyManager.DATA_ENABLED_REASON_USER, false, PHONE_PACKAGE);
+
+        // Remove and insert back SIM before it's loaded.
+        clearInvocations(mSubscriptionManagerService);
+        markSubscriptionInactive(1/*subid*/);
+        sendCarrierConfigChanged(0/*phoneid*/, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+
+        verify(mSubscriptionManagerService).setDefaultDataSubId(2);
+
+        // insert it back, but carrier config not loaded yet
+        clearInvocations(mSubscriptionManagerService);
+        setSimSlotIndex(1/*subid*/, 0/*phoneid*/);
+        mMultiSimSettingControllerUT.notifySubscriptionInfoChanged();
+        sendCarrierConfigChanged(0/*phoneid*/, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+
+        verify(mSubscriptionManagerService, never()).setDefaultDataSubId(
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+
+        // carrier config loaded
+        clearInvocations(mContext);
+        sendCarrierConfigChanged(0/*phoneid*/, 1/*subid*/);
+        verify(mContext).sendBroadcast(any());
     }
 
     @Test
@@ -975,4 +1019,57 @@ public class MultiSimSettingControllerTest extends TelephonyTest {
         // Default data is set to sub1
         verify(mSubscriptionManagerService).syncGroupedSetting(1);
     }
+
+    @Test
+    public void testDailogsAndWarnings_WithBootstrapSim() {
+        doReturn(true).when(mFeatureFlags).esimBootstrapProvisioningFlag();
+
+        // Mark sub 2 as inactive.
+        markSubscriptionInactive(2);
+        mMultiSimSettingControllerUT.notifyAllSubscriptionLoaded();
+        sendCarrierConfigChanged(0, 1);
+        processAllMessages();
+
+        // Sub 1 should be default sub silently.
+        verify(mSubscriptionManagerService).setDefaultDataSubId(1);
+        verify(mSubscriptionManagerService).setDefaultVoiceSubId(1);
+        verify(mSubscriptionManagerService).setDefaultSmsSubId(1);
+        verifyDismissIntentSent();
+
+        // Mark sub 2 bootstrap sim as active in phone[1].
+        doReturn(true).when(mSubscriptionManagerService).isEsimBootStrapProvisioningActivated();
+        setSimSlotIndex(2, 1);
+        clearInvocations(mSubscriptionManagerService);
+        clearInvocations(mContext);
+        mSubInfo[2] = new SubscriptionInfoInternal.Builder().setId(2).setSimSlotIndex(1)
+                .setProfileClass(SubscriptionManager.PROFILE_CLASS_PROVISIONING).build();
+        mMultiSimSettingControllerUT.notifySubscriptionInfoChanged();
+        sendCarrierConfigChanged(1, 2);
+        processAllMessages();
+
+        // Taking out SIM 1.
+        clearInvocations(mSubscriptionManagerService);
+        markSubscriptionInactive(1/*subid*/);
+        mMultiSimSettingControllerUT.notifySubscriptionInfoChanged();
+        sendCarrierConfigChanged(0/*phoneid*/, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+        processAllMessages();
+
+        // No user selection needed, no intent should be sent for notification
+        verify(mContext, never()).sendBroadcast(any());
+
+        //Insert back sim1 and switch from sub 1 to sub 3 in phone[0].
+        clearInvocations(mSubscriptionManagerService);
+        markSubscriptionInactive(1);
+        setSimSlotIndex(3, 0);
+        mMultiSimSettingControllerUT.notifySubscriptionInfoChanged();
+        sendCarrierConfigChanged(0/*phoneid*/, 3/*subid*/);
+        processAllMessages();
+
+        // Sub 3 should be default sub.
+        verify(mSubscriptionManagerService).setDefaultDataSubId(3);
+        verify(mSubscriptionManagerService).setDefaultVoiceSubId(3);
+        verify(mSubscriptionManagerService).setDefaultSmsSubId(3);
+        verify(mContext, never()).sendBroadcast(any());
+    }
+
 }

@@ -34,6 +34,7 @@ import android.app.DownloadManager;
 import android.app.KeyguardManager;
 import android.app.NotificationManager;
 import android.app.UiModeManager;
+import android.app.admin.DevicePolicyManager;
 import android.app.usage.UsageStatsManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -108,7 +109,7 @@ import java.util.Set;
  * Controls a test {@link Context} as would be provided by the Android framework to an
  * {@code Activity}, {@code Service} or other system-instantiated component.
  *
- * Contains Fake<Component> classes like FakeContext for components that require complex and
+ * Contains {@code Fake<Component>} classes like FakeContext for components that require complex and
  * reusable stubbing. Others can be mocked using Mockito functions in tests or constructor/public
  * methods of this class.
  */
@@ -117,7 +118,6 @@ public class ContextFixture implements TestFixture<Context> {
     public static final String PERMISSION_ENABLE_ALL = "android.permission.STUB_PERMISSION";
 
     public static class FakeContentProvider extends MockContentProvider {
-        private String[] mColumns = {"name", "value"};
         private HashMap<String, String> mKeyValuePairs = new HashMap<String, String>();
         private int mNumKeyValuePairs = 0;
         private HashMap<String, String> mFlags = new HashMap<>();
@@ -311,6 +311,8 @@ public class ContextFixture implements TestFixture<Context> {
                     return mNetworkPolicyManager;
                 case Context.TELEPHONY_IMS_SERVICE:
                     return mImsManager;
+                case Context.DEVICE_POLICY_SERVICE:
+                    return mDevicePolicyManager;
                 default:
                     return null;
             }
@@ -358,6 +360,10 @@ public class ContextFixture implements TestFixture<Context> {
                 return Context.EUICC_SERVICE;
             } else if (serviceClass == AlarmManager.class) {
                 return Context.ALARM_SERVICE;
+            } else if (serviceClass == DevicePolicyManager.class) {
+                return Context.DEVICE_POLICY_SERVICE;
+            } else if (serviceClass == NotificationManager.class) {
+                return Context.NOTIFICATION_SERVICE;
             }
             return super.getSystemServiceName(serviceClass);
         }
@@ -732,6 +738,7 @@ public class ContextFixture implements TestFixture<Context> {
     private final VcnManager mVcnManager = mock(VcnManager.class);
     private final NetworkPolicyManager mNetworkPolicyManager = mock(NetworkPolicyManager.class);
     private final ImsManager mImsManager = mock(ImsManager.class);
+    private final DevicePolicyManager mDevicePolicyManager = mock(DevicePolicyManager.class);
     private final Configuration mConfiguration = new Configuration();
     private final DisplayMetrics mDisplayMetrics = new DisplayMetrics();
     private final SharedPreferences mSharedPreferences = PreferenceManager
@@ -747,18 +754,14 @@ public class ContextFixture implements TestFixture<Context> {
         doAnswer(new Answer<List<ResolveInfo>>() {
             @Override
             public List<ResolveInfo> answer(InvocationOnMock invocation) throws Throwable {
-                return doQueryIntentServices(
-                        (Intent) invocation.getArguments()[0],
-                        (Integer) invocation.getArguments()[1]);
+                return doQueryIntentServices((Intent) invocation.getArguments()[0]);
             }
         }).when(mPackageManager).queryIntentServices((Intent) any(), anyInt());
 
         doAnswer(new Answer<List<ResolveInfo>>() {
             @Override
             public List<ResolveInfo> answer(InvocationOnMock invocation) throws Throwable {
-                return doQueryIntentServices(
-                        (Intent) invocation.getArguments()[0],
-                        (Integer) invocation.getArguments()[1]);
+                return doQueryIntentServices((Intent) invocation.getArguments()[0]);
             }
         }).when(mPackageManager).queryIntentServicesAsUser((Intent) any(), anyInt(), any());
 
@@ -766,6 +769,7 @@ public class ContextFixture implements TestFixture<Context> {
             doReturn(mPackageInfo).when(mPackageManager).getPackageInfo(nullable(String.class),
                     anyInt());
         } catch (NameNotFoundException e) {
+            Log.d(TAG, "NameNotFoundException: e=" + e);
         }
 
         doAnswer((Answer<Boolean>)
@@ -775,7 +779,7 @@ public class ContextFixture implements TestFixture<Context> {
         try {
             doReturn(mResources).when(mPackageManager).getResourcesForApplication(anyString());
         } catch (NameNotFoundException ex) {
-            Log.d(TAG, "NameNotFoundException: " + ex);
+            Log.d(TAG, "NameNotFoundException: ex=" + ex);
         }
 
         doReturn(mBundle).when(mCarrierConfigManager).getConfigForSubId(anyInt());
@@ -851,7 +855,7 @@ public class ContextFixture implements TestFixture<Context> {
         mMockBindingFailureForPackage.add(packageName);
     }
 
-    private List<ResolveInfo> doQueryIntentServices(Intent intent, int flags) {
+    private List<ResolveInfo> doQueryIntentServices(Intent intent) {
         List<ResolveInfo> result = new ArrayList<ResolveInfo>();
         for (ComponentName componentName : mComponentNamesByAction.get(intent.getAction())) {
             ResolveInfo resolveInfo = new ResolveInfo();

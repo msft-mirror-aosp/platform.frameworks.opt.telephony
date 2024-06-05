@@ -21,17 +21,21 @@ import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertNull;
 import static junit.framework.Assert.assertTrue;
 
+import com.android.internal.telephony.flags.Flags;
+
 import android.net.Uri;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.telephony.PhoneNumberUtils;
-import android.test.suitebuilder.annotation.SmallTest;
 import android.text.SpannableStringBuilder;
 import android.text.style.TtsSpan;
 
 import androidx.test.filters.FlakyTest;
+import androidx.test.filters.SmallTest;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
 
 public class PhoneNumberUtilsTest {
@@ -39,6 +43,8 @@ public class PhoneNumberUtilsTest {
     private static final int MIN_MATCH = 7;
 
     private int mOldMinMatch;
+
+    @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     @Before
     public void setUp() throws Exception {
@@ -216,6 +222,12 @@ public class PhoneNumberUtilsTest {
         assertNull(PhoneNumberUtils.toCallerIDMinMatch(null));
         assertNull(PhoneNumberUtils.getStrippedReversed(null));
         assertNull(PhoneNumberUtils.stringFromStringAndTOA(null, 1));
+
+        // Test for known potential bad extraction of post dial portion.
+        assertEquals(";123456",
+                PhoneNumberUtils.extractPostDialPortion("6281769222;123456"));
+        assertEquals("6281769222", PhoneNumberUtils.extractNetworkPortion(
+                "6281769222;123456"));
     }
 
     @SmallTest
@@ -607,6 +619,60 @@ public class PhoneNumberUtilsTest {
         assertEquals("+1 650-555-1212", PhoneNumberUtils.formatNumber("+16505551212", "jp"));
     }
 
+    /**
+     * Test to ensure that when international calls to Singapore are being placed the country
+     * code is present with and without the feature flag enabled.
+     */
+    @SmallTest
+    @Test
+    public void testFormatSingaporeInternational() {
+        // Disable feature flag.
+        mSetFlagsRule.disableFlags(Flags.FLAG_REMOVE_COUNTRY_CODE_FROM_LOCAL_SINGAPORE_CALLS);
+
+        // International call from a US iso
+        assertEquals("+65 6521 8000", PhoneNumberUtils.formatNumber("+6565218000", "US"));
+
+        // Lowercase country iso
+        assertEquals("+65 6521 8000", PhoneNumberUtils.formatNumber("+6565218000", "us"));
+
+        // Enable feature flag
+        mSetFlagsRule.enableFlags(Flags.FLAG_REMOVE_COUNTRY_CODE_FROM_LOCAL_SINGAPORE_CALLS);
+
+        // Internal call from a US iso
+        assertEquals("+65 6521 8000", PhoneNumberUtils.formatNumber("+6565218000", "US"));
+
+        // Lowercase country iso
+        assertEquals("+65 6521 8000", PhoneNumberUtils.formatNumber("+6565218000", "us"));
+        mSetFlagsRule.disableFlags(Flags.FLAG_REMOVE_COUNTRY_CODE_FROM_LOCAL_SINGAPORE_CALLS);
+    }
+
+    /**
+     * Test to ensure that when local calls from Singaporean numbers are being placed to other
+     * Singaporean numbers the country code +65 is not being shown.
+     */
+    @SmallTest
+    @Test
+    public void testFormatSingaporeNational() {
+        // Disable feature flag.
+        mSetFlagsRule.disableFlags(Flags.FLAG_REMOVE_COUNTRY_CODE_FROM_LOCAL_SINGAPORE_CALLS);
+
+        // Local call from a Singaporean number to a Singaporean number
+        assertEquals("+65 6521 8000", PhoneNumberUtils.formatNumber("+6565218000", "SG"));
+
+        // Lowercase country iso.
+        assertEquals("+65 6521 8000", PhoneNumberUtils.formatNumber("+6565218000", "sg"));
+
+        // Enable feature flag.
+        mSetFlagsRule.enableFlags(Flags.FLAG_REMOVE_COUNTRY_CODE_FROM_LOCAL_SINGAPORE_CALLS);
+
+        // Local call from a Singaporean number to a Singaporean number.
+        assertEquals("6521 8000", PhoneNumberUtils.formatNumber("+6565218000", "SG"));
+
+        // Lowercase country iso.
+        assertEquals("6521 8000", PhoneNumberUtils.formatNumber("+6565218000", "sg"));
+        mSetFlagsRule.disableFlags(Flags.FLAG_REMOVE_COUNTRY_CODE_FROM_LOCAL_SINGAPORE_CALLS);
+    }
+
     @SmallTest
     @Test
     public void testFormatNumber_LeadingStarAndHash() {
@@ -855,5 +921,21 @@ public class PhoneNumberUtilsTest {
         TtsSpan ttsSpan = PhoneNumberUtils.createTtsSpan(sourceNumber);
         assertEquals(TtsSpan.TYPE_TELEPHONE, ttsSpan.getType());
         assertEquals(expected, ttsSpan.getArgs().getString(TtsSpan.ARG_NUMBER_PARTS));
+    }
+
+    @SmallTest
+    @Test
+    public void testWpsCallNumber() {
+        // Test number without special symbols.
+        assertFalse(PhoneNumberUtils.isWpsCallNumber("12345678"));
+
+        // TTS number should not be recognized as wps.
+        assertFalse(PhoneNumberUtils.isWpsCallNumber("*23212345678"));
+        assertFalse(PhoneNumberUtils.isWpsCallNumber("*232#12345678"));
+
+        // Check WPS valid numbers
+        assertTrue(PhoneNumberUtils.isWpsCallNumber("*27212345678"));
+        assertTrue(PhoneNumberUtils.isWpsCallNumber("*31#*27212345678"));
+        assertTrue(PhoneNumberUtils.isWpsCallNumber("#31#*27212345678"));
     }
 }

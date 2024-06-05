@@ -71,7 +71,10 @@ import android.util.Pair;
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.SmsConstants.MessageClass;
+import com.android.internal.telephony.analytics.TelephonyAnalytics;
+import com.android.internal.telephony.analytics.TelephonyAnalytics.SmsMmsAnalytics;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.satellite.metrics.CarrierRoamingSatelliteSessionStats;
 import com.android.internal.telephony.util.NotificationChannelController;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.internal.util.HexDump;
@@ -745,6 +748,16 @@ public abstract class InboundSmsHandler extends StateMachine {
         if (result != Intents.RESULT_SMS_HANDLED && result != Activity.RESULT_OK) {
             mMetrics.writeIncomingSmsError(mPhone.getPhoneId(), is3gpp2(), smsSource, result);
             mPhone.getSmsStats().onIncomingSmsError(is3gpp2(), smsSource, result);
+            if (mPhone != null) {
+                TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
+                if (telephonyAnalytics != null) {
+                    SmsMmsAnalytics smsMmsAnalytics = telephonyAnalytics.getSmsMmsAnalytics();
+                    if (smsMmsAnalytics != null) {
+                        smsMmsAnalytics.onIncomingSmsError(smsSource, result);
+                    }
+                }
+            }
+
         }
         return result;
     }
@@ -1008,6 +1021,16 @@ public abstract class InboundSmsHandler extends StateMachine {
             logeWithLocalLog(errorMsg, tracker.getMessageId());
             mPhone.getSmsStats().onIncomingSmsError(
                     is3gpp2(), tracker.getSource(), RESULT_SMS_NULL_PDU);
+            if (mPhone != null) {
+                TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
+                if (telephonyAnalytics != null) {
+                    SmsMmsAnalytics smsMmsAnalytics = telephonyAnalytics.getSmsMmsAnalytics();
+                    if (smsMmsAnalytics != null) {
+                        smsMmsAnalytics.onIncomingSmsError(
+                                tracker.getSource(), RESULT_SMS_NULL_PDU);
+                    }
+                }
+            }
             return false;
         }
 
@@ -1082,7 +1105,19 @@ public abstract class InboundSmsHandler extends StateMachine {
                 format, timestamps, block, tracker.getMessageId());
         mPhone.getSmsStats().onIncomingSmsSuccess(is3gpp2(), tracker.getSource(),
                 messageCount, block, tracker.getMessageId());
+        CarrierRoamingSatelliteSessionStats sessionStats =
+                CarrierRoamingSatelliteSessionStats.getInstance(mPhone.getSubId());
+        sessionStats.onIncomingSms(mPhone.getSubId());
+        if (mPhone != null) {
+            TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
+            if (telephonyAnalytics != null) {
+                SmsMmsAnalytics smsMmsAnalytics = telephonyAnalytics.getSmsMmsAnalytics();
+                if (smsMmsAnalytics != null) {
+                    smsMmsAnalytics.onIncomingSmsSuccess(tracker.getSource());
+                }
+            }
 
+        }
         // Always invoke SMS filters, even if the number ends up being blocked, to prevent
         // surprising bugs due to blocking numbers that happen to be used for visual voicemail SMS
         // or other carrier system messages.

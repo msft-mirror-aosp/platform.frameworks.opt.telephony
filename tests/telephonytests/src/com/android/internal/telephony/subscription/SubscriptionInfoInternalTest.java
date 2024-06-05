@@ -18,16 +18,21 @@ package com.android.internal.telephony.subscription;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.os.ParcelUuid;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.UiccAccessRule;
 import android.telephony.ims.ImsMmTelManager;
 
+import com.android.internal.telephony.flags.Flags;
+
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
 public class SubscriptionInfoInternalTest {
     private final SubscriptionInfoInternal mSubInfo =
@@ -101,7 +106,22 @@ public class SubscriptionInfoInternalTest {
                             .FAKE_TP_MESSAGE_REFERENCE1)
                     .setUserId(SubscriptionDatabaseManagerTest.FAKE_USER_ID1)
                     .setSatelliteEnabled(1)
+                    .setSatelliteAttachEnabledForCarrier(
+                            SubscriptionDatabaseManagerTest
+                                    .FAKE_SATELLITE_ATTACH_FOR_CARRIER_ENABLED)
+                    .setOnlyNonTerrestrialNetwork(
+                            SubscriptionDatabaseManagerTest.FAKE_SATELLITE_IS_NTN_ENABLED)
                     .setGroupDisabled(false)
+                    .setOnlyNonTerrestrialNetwork(1)
+                    .setServiceCapabilities(
+                            SubscriptionManager.SERVICE_CAPABILITY_DATA_BITMASK)
+                    .setTransferStatus(1)
+                    .setSatelliteEntitlementStatus(
+                            SubscriptionDatabaseManagerTest
+                                    .FAKE_SATELLITE_ENTITLEMENT_STATUS_ENABLED)
+                    .setSatelliteEntitlementPlmns(
+                            SubscriptionDatabaseManagerTest
+                                    .FAKE_SATELLITE_ENTITLEMENT_PLMNS1)
                     .build();
 
     private final SubscriptionInfoInternal mSubInfoNull =
@@ -128,10 +148,15 @@ public class SubscriptionInfoInternalTest {
                     .setRcsConfig(new byte[0])
                     .setAllowedNetworkTypesForReasons("")
                     .setDeviceToDeviceStatusSharingContacts("")
+                    .setTransferStatus(1)
                     .build();
+
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     @Test
     public void testSubscriptionInfoInternalSetAndGet() {
+        mSetFlagsRule.enableFlags(Flags.FLAG_DATA_ONLY_CELLULAR_SERVICE);
         assertThat(mSubInfo.getSubscriptionId()).isEqualTo(1);
         assertThat(mSubInfo.getIccId()).isEqualTo(SubscriptionDatabaseManagerTest.FAKE_ICCID1);
         assertThat(mSubInfo.getSimSlotIndex()).isEqualTo(0);
@@ -211,7 +236,22 @@ public class SubscriptionInfoInternalTest {
                 SubscriptionDatabaseManagerTest.FAKE_TP_MESSAGE_REFERENCE1);
         assertThat(mSubInfo.getUserId()).isEqualTo(SubscriptionDatabaseManagerTest.FAKE_USER_ID1);
         assertThat(mSubInfo.getSatelliteEnabled()).isEqualTo(1);
+        assertThat(mSubInfo.getSatelliteAttachEnabledForCarrier())
+                .isEqualTo(SubscriptionDatabaseManagerTest
+                        .FAKE_SATELLITE_ATTACH_FOR_CARRIER_ENABLED);
+        assertThat(mSubInfo.getOnlyNonTerrestrialNetwork()).isEqualTo(
+                SubscriptionDatabaseManagerTest.FAKE_SATELLITE_IS_NTN_ENABLED);
         assertThat(mSubInfo.isGroupDisabled()).isFalse();
+        assertThat(mSubInfo.getOnlyNonTerrestrialNetwork()).isEqualTo(1);
+        assertThat(mSubInfo.getServiceCapabilities()).isEqualTo(
+                SubscriptionManager.SERVICE_CAPABILITY_DATA_BITMASK);
+        assertThat(mSubInfo.getTransferStatus()).isEqualTo(1);
+        assertThat(mSubInfo.getSatelliteEntitlementStatus())
+                .isEqualTo(SubscriptionDatabaseManagerTest
+                        .FAKE_SATELLITE_ENTITLEMENT_STATUS_ENABLED);
+        assertThat(mSubInfo.getSatelliteEntitlementPlmns())
+                .isEqualTo(SubscriptionDatabaseManagerTest
+                        .FAKE_SATELLITE_ENTITLEMENT_PLMNS1);
     }
 
     @Test
@@ -223,6 +263,7 @@ public class SubscriptionInfoInternalTest {
 
     @Test
     public void testConvertToSubscriptionInfo() {
+        mSetFlagsRule.enableFlags(Flags.FLAG_DATA_ONLY_CELLULAR_SERVICE);
         SubscriptionInfo subInfo = mSubInfo.toSubscriptionInfo();
 
         assertThat(subInfo.getSubscriptionId()).isEqualTo(1);
@@ -274,6 +315,10 @@ public class SubscriptionInfoInternalTest {
         assertThat(subInfo.getPortIndex()).isEqualTo(
                 SubscriptionManager.USAGE_SETTING_DEFAULT);
         assertThat(subInfo.isGroupDisabled()).isFalse();
+        assertThat(subInfo.isOnlyNonTerrestrialNetwork()).isTrue();
+        assertThat(subInfo.getServiceCapabilities()).isEqualTo(
+                Set.of(SubscriptionManager.SERVICE_CAPABILITY_DATA));
+        assertThat(mSubInfo.getTransferStatus()).isEqualTo(1);
     }
 
     @Test
@@ -295,5 +340,70 @@ public class SubscriptionInfoInternalTest {
         assertThat(subInfoNull.getGroupUuid()).isNull();
         assertThat(subInfoNull.getCountryIso()).isEqualTo("");
         assertThat(subInfoNull.getGroupOwner()).isEqualTo("");
+    }
+
+    @Test
+    public void testIsVisible() {
+        // Regular profile
+        SubscriptionInfoInternal regularSub =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                    .setOnlyNonTerrestrialNetwork(0)
+                    .setOpportunistic(0)
+                    .setGroupUuid(SubscriptionDatabaseManagerTest.FAKE_UUID1)
+                    .build();
+        assertThat(regularSub.isVisible()).isTrue();
+
+        // Provisioning profile
+        SubscriptionInfoInternal provSub =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_PROVISIONING)
+                    .setOnlyNonTerrestrialNetwork(0)
+                    .setOpportunistic(0)
+                    .build();
+        assertThat(provSub.isVisible()).isFalse();
+
+        // NTN profile
+        SubscriptionInfoInternal ntnSub =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setOnlyNonTerrestrialNetwork(1)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                    .setOpportunistic(0)
+                    .build();
+        assertThat(ntnSub.isVisible()).isFalse();
+
+        // Opportunistic profile without group UUID
+        SubscriptionInfoInternal opportunisticSub =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setOnlyNonTerrestrialNetwork(0)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                    .setOpportunistic(1)
+                    .build();
+        assertThat(opportunisticSub.isVisible()).isTrue();
+
+        // Opportunistic profile with group UUID
+        SubscriptionInfoInternal opportunisticSubUuid =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setOnlyNonTerrestrialNetwork(0)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                    .setOpportunistic(1)
+                    .setGroupUuid(SubscriptionDatabaseManagerTest.FAKE_UUID1)
+                    .build();
+        assertThat(opportunisticSubUuid.isVisible()).isFalse();
     }
 }

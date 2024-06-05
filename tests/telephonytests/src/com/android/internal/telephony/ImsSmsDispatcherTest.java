@@ -38,9 +38,10 @@ import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
 import android.telephony.SmsMessage;
 import android.telephony.ims.stub.ImsSmsImplBase;
-import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
+
+import androidx.test.filters.SmallTest;
 
 import com.android.ims.FeatureConnector;
 import com.android.ims.ImsManager;
@@ -342,9 +343,6 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
     public void testFallbackGsmRetrywithMessageRef() throws Exception {
         int token = mImsSmsDispatcher.mNextToken.get();
         int messageRef = mImsSmsDispatcher.nextMessageRef();
-        if (mImsSmsDispatcher.isMessageRefIncrementViaTelephony()) {
-            messageRef += 1;
-        }
 
         when(mImsManager.getSmsFormat()).thenReturn(SmsMessage.FORMAT_3GPP);
         when(mPhone.getPhoneType()).thenReturn(PhoneConstants.PHONE_TYPE_GSM);
@@ -363,11 +361,7 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
         ArgumentCaptor<SMSDispatcher.SmsTracker> captor =
                 ArgumentCaptor.forClass(SMSDispatcher.SmsTracker.class);
         verify(mSmsDispatchersController).sendRetrySms(captor.capture());
-        if (mImsSmsDispatcher.isMessageRefIncrementViaTelephony()) {
-            assertTrue(messageRef + 1 == captor.getValue().mMessageRef);
-        } else {
-            assertTrue(messageRef == captor.getValue().mMessageRef);
-        }
+        assertTrue(messageRef == captor.getValue().mMessageRef);
     }
 
     @Test

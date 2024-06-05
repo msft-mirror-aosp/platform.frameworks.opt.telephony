@@ -18,6 +18,9 @@ package com.android.internal.telephony.data;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.when;
+
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
@@ -87,6 +90,24 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
             .setMaxConnsTime(789)
             .build();
 
+    private static final ApnSetting RCS_APN_SETTING = new ApnSetting.Builder()
+            .setId(2165)
+            .setOperatorNumeric("12345")
+            .setEntryName("rcs")
+            .setApnName("rcs")
+            .setUser("user")
+            .setPassword("passwd")
+            .setApnTypeBitmask(ApnSetting.TYPE_RCS)
+            .setProtocol(ApnSetting.PROTOCOL_IPV6)
+            .setRoamingProtocol(ApnSetting.PROTOCOL_IP)
+            .setCarrierEnabled(true)
+            .setNetworkTypeBitmask(0)
+            .setProfileId(1234)
+            .setMaxConns(321)
+            .setWaitTime(456)
+            .setMaxConnsTime(789)
+            .build();
+
     @Before
     public void setUp() throws Exception {
         logd("TelephonyNetworkRequestTest +Setup!");
@@ -105,7 +126,7 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build();
         TelephonyNetworkRequest internetRequest =
-                new TelephonyNetworkRequest(nativeRequest, mPhone);
+                new TelephonyNetworkRequest(nativeRequest, mPhone, mFeatureFlags);
         assertThat(internetRequest.getNativeNetworkRequest()).isEqualTo(nativeRequest);
     }
 
@@ -114,11 +135,11 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
         TelephonyNetworkRequest internetRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         TelephonyNetworkRequest imsRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
 
         assertThat(internetRequest.getPriority()).isEqualTo(20);
         assertThat(imsRequest.getPriority()).isEqualTo(40);
@@ -134,7 +155,7 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                         .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
                         .setNetworkSpecifier(telephonyNetworkSpecifier)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         assertThat(internetRequest.getNetworkSpecifier()).isEqualTo(telephonyNetworkSpecifier);
     }
 
@@ -146,7 +167,7 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         assertThat(internetRequest.getCapabilities()).isEqualTo(
                 new int[]{NetworkCapabilities.NET_CAPABILITY_INTERNET,
                         NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED,
@@ -173,7 +194,7 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_MMS)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_SUPL)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         assertThat(request.getApnTypeNetworkCapability())
                 .isEqualTo(NetworkCapabilities.NET_CAPABILITY_SUPL);
 
@@ -182,7 +203,7 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_FOTA)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         assertThat(request.getApnTypeNetworkCapability())
                 .isEqualTo(NetworkCapabilities.NET_CAPABILITY_FOTA);
 
@@ -191,7 +212,7 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         assertThat(request.getApnTypeNetworkCapability())
                 .isEqualTo(NetworkCapabilities.NET_CAPABILITY_EIMS);
     }
@@ -201,7 +222,7 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
         TelephonyNetworkRequest internetRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         NetworkCapabilities caps = new NetworkCapabilities.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_MMS)
@@ -211,6 +232,20 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
                 .build();
         assertThat(internetRequest.canBeSatisfiedBy(caps)).isTrue();
+
+        TelephonyNetworkRequest rcsRequest = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_RCS)
+                        .build(), mPhone, mFeatureFlags);
+        caps = new NetworkCapabilities.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_RCS)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_MMS)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
+                .build();
+        assertThat(rcsRequest.canBeSatisfiedBy(caps)).isTrue();
     }
 
     @Test
@@ -218,22 +253,30 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
         TelephonyNetworkRequest internetRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         TelephonyNetworkRequest mmsRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_MMS)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
+        TelephonyNetworkRequest rcsRequest = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_RCS)
+                        .build(), mPhone, mFeatureFlags);
         DataProfile internetDataProfile = new DataProfile.Builder()
                 .setApnSetting(INTERNET_APN_SETTING)
                 .build();
         DataProfile mmsDataProfile = new DataProfile.Builder()
                 .setApnSetting(MMS_APN_SETTING)
                 .build();
+        DataProfile rcsDataProfile = new DataProfile.Builder()
+                .setApnSetting(RCS_APN_SETTING)
+                .build();
 
         assertThat(internetRequest.canBeSatisfiedBy(internetDataProfile)).isTrue();
         assertThat(internetRequest.canBeSatisfiedBy(mmsDataProfile)).isFalse();
         assertThat(mmsRequest.canBeSatisfiedBy(internetDataProfile)).isFalse();
         assertThat(mmsRequest.canBeSatisfiedBy(mmsDataProfile)).isTrue();
+        assertThat(rcsRequest.canBeSatisfiedBy(rcsDataProfile)).isTrue();
     }
 
     @Test
@@ -241,12 +284,12 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
         TelephonyNetworkRequest enterpriseRequest1 = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         TelephonyNetworkRequest enterpriseRequest2 = new TelephonyNetworkRequest(
                 new NetworkRequest(new NetworkCapabilities()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
                         .addEnterpriseId(2), ConnectivityManager.TYPE_NONE,
-                        0, NetworkRequest.Type.REQUEST), mPhone);
+                        0, NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags);
 
         DataProfile enterpriseDataProfile1 = new DataProfile.Builder()
                 .setTrafficDescriptor(new TrafficDescriptor(null, new TrafficDescriptor.OsAppId(
@@ -269,18 +312,18 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         TelephonyNetworkRequest enterpriseRequest2 = new TelephonyNetworkRequest(
                 new NetworkRequest(new NetworkCapabilities()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                         .addEnterpriseId(2), ConnectivityManager.TYPE_NONE,
-                        0, NetworkRequest.Type.REQUEST), mPhone);
+                        0, NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags);
         TelephonyNetworkRequest internetRequest = new TelephonyNetworkRequest(
                 new NetworkRequest(new NetworkCapabilities()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
                         ConnectivityManager.TYPE_NONE,
-                        0, NetworkRequest.Type.REQUEST), mPhone);
+                        0, NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags);
 
         DataProfile enterpriseDataProfile = new DataProfile.Builder()
                 .setApnSetting(ENTERPRISE_APN_SETTING)
@@ -302,12 +345,12 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
         TelephonyNetworkRequest urllcRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
 
         TelephonyNetworkRequest embbRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
 
         DataProfile urllcDataProfile = new DataProfile.Builder()
                 .setTrafficDescriptor(new TrafficDescriptor(null, new TrafficDescriptor.OsAppId(
@@ -324,12 +367,12 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
         TelephonyNetworkRequest urllcRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
 
         TelephonyNetworkRequest embbRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
 
         DataProfile embbDataProfile = new DataProfile.Builder()
                 .setTrafficDescriptor(new TrafficDescriptor(null, new TrafficDescriptor.OsAppId(
@@ -346,12 +389,12 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
         TelephonyNetworkRequest cbsRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_CBS)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
 
         TelephonyNetworkRequest embbRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
 
         DataProfile cbsDataProfile = new DataProfile.Builder()
                 .setTrafficDescriptor(new TrafficDescriptor(null, new TrafficDescriptor.OsAppId(
@@ -361,5 +404,93 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
 
         assertThat(cbsRequest.canBeSatisfiedBy(cbsDataProfile)).isTrue();
         assertThat(embbRequest.canBeSatisfiedBy(cbsDataProfile)).isFalse();
+    }
+
+    @Test
+    public void testSatelliteNetworkRequest() {
+        when(mFeatureFlags.satelliteInternet()).thenReturn(true);
+        TelephonyNetworkRequest satelliteRequest = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE)
+                        .build(), mPhone, mFeatureFlags);
+
+        TelephonyNetworkRequest generalRequest = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(), mPhone, mFeatureFlags);
+
+        ApnSetting satelliteInternetApn = new ApnSetting.Builder()
+                .setEntryName("apn")
+                .setApnName("apn")
+                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
+                .setCarrierEnabled(true)
+                .setInfrastructureBitmask(ApnSetting.INFRASTRUCTURE_SATELLITE)
+                .build();
+
+        ApnSetting cellularInternetApn = new ApnSetting.Builder()
+                .setEntryName("apn")
+                .setApnName("apn")
+                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
+                .setCarrierEnabled(true)
+                .setInfrastructureBitmask(ApnSetting.INFRASTRUCTURE_CELLULAR)
+                .build();
+
+        DataProfile satelliteInternetDataProfile = new DataProfile.Builder()
+                .setApnSetting(satelliteInternetApn)
+                .build();
+
+        DataProfile cellularInternetDataProfile = new DataProfile.Builder()
+                .setApnSetting(cellularInternetApn)
+                .build();
+
+        assertThat(satelliteRequest.canBeSatisfiedBy(satelliteInternetDataProfile)).isTrue();
+        assertThat(generalRequest.canBeSatisfiedBy(satelliteInternetDataProfile)).isTrue();
+        assertThat(satelliteRequest.canBeSatisfiedBy(cellularInternetDataProfile)).isFalse();
+        assertThat(generalRequest.canBeSatisfiedBy(cellularInternetDataProfile)).isTrue();
+    }
+
+    @Test
+    public void testCellularNetworkRequest() {
+        doReturn(true).when(mFeatureFlags).satelliteInternet();
+        TelephonyNetworkRequest cellularRequest = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+                        .build(), mPhone, mFeatureFlags);
+
+        TelephonyNetworkRequest generalRequest = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(), mPhone, mFeatureFlags);
+
+        ApnSetting satelliteInternetApn = new ApnSetting.Builder()
+                .setEntryName("apn")
+                .setApnName("apn")
+                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
+                .setCarrierEnabled(true)
+                .setInfrastructureBitmask(ApnSetting.INFRASTRUCTURE_SATELLITE)
+                .build();
+
+        ApnSetting cellularInternetApn = new ApnSetting.Builder()
+                .setEntryName("apn")
+                .setApnName("apn")
+                .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT)
+                .setCarrierEnabled(true)
+                .setInfrastructureBitmask(ApnSetting.INFRASTRUCTURE_CELLULAR)
+                .build();
+
+        DataProfile satelliteInternetDataProfile = new DataProfile.Builder()
+                .setApnSetting(satelliteInternetApn)
+                .build();
+
+        DataProfile cellularInternetDataProfile = new DataProfile.Builder()
+                .setApnSetting(cellularInternetApn)
+                .build();
+
+        assertThat(cellularRequest.canBeSatisfiedBy(satelliteInternetDataProfile)).isFalse();
+        assertThat(generalRequest.canBeSatisfiedBy(satelliteInternetDataProfile)).isTrue();
+        assertThat(cellularRequest.canBeSatisfiedBy(cellularInternetDataProfile)).isTrue();
+        assertThat(generalRequest.canBeSatisfiedBy(cellularInternetDataProfile)).isTrue();
     }
 }

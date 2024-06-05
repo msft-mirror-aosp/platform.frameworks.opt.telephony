@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
 import android.content.ContentValues;
@@ -65,6 +66,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -80,8 +82,13 @@ public class DataProfileManagerTest extends TelephonyTest {
     private static final String IMS_APN = "IMS_APN";
     private static final String TETHERING_APN = "DUN_APN";
     private static final String APN_SET_ID_1_APN = "APN_SET_ID_1_APN";
+    private static final String RCS_APN = "RCS_APN";
+    private static final String RCS_APN1 = "RCS_APN1";
     private static final String APN_SET_ID_1_TETHERING_APN = "APN_SET_ID_1_TETHERING_APN";
     private static final String MATCH_ALL_APN_SET_ID_IMS_APN = "MATCH_ALL_APN_SET_ID_IMS_APN";
+    private static final String ESIM_BOOTSTRAP_PROVISIONING_APN = "ESIM_BOOTSTRAP_PROVISIONING_APN";
+    private static final String TEST_BOOTSTRAP_APN =
+            "TEST_BOOTSTRAP_APN";
     private static final String PLMN = "330123";
     private static final int DEFAULT_APN_SET_ID = Telephony.Carriers.NO_APN_SET_ID;
     private static final int APN_SET_ID_1 = 1;
@@ -131,6 +138,9 @@ public class DataProfileManagerTest extends TelephonyTest {
                 Telephony.Carriers.CARRIER_ID,
                 Telephony.Carriers.SKIP_464XLAT,
                 Telephony.Carriers.ALWAYS_ON,
+                Telephony.Carriers.INFRASTRUCTURE_BITMASK,
+                Telephony.Carriers.ESIM_BOOTSTRAP_PROVISIONING,
+                Telephony.Carriers.EDITED_STATUS
         };
 
         private int mPreferredApnSet = 0;
@@ -169,7 +179,10 @@ public class DataProfileManagerTest extends TelephonyTest {
                         DEFAULT_APN_SET_ID,     // apn_set_id
                         -1,                     // carrier_id
                         -1,                     // skip_464xlat
-                        0                       // always_on
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
                 },
                 // default internet data profile for RAT CDMA, to test update preferred data profile
                 new Object[]{
@@ -204,7 +217,10 @@ public class DataProfileManagerTest extends TelephonyTest {
                         DEFAULT_APN_SET_ID,     // apn_set_id
                         -1,                     // carrier_id
                         -1,                     // skip_464xlat
-                        0                       // always_on
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
                 },
                 new Object[]{
                         2,                      // id
@@ -238,7 +254,10 @@ public class DataProfileManagerTest extends TelephonyTest {
                         DEFAULT_APN_SET_ID,     // apn_set_id
                         -1,                     // carrier_id
                         -1,                     // skip_464xlat
-                        0                       // always_on
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
                 },
                 new Object[]{
                         3,                      // id
@@ -272,7 +291,10 @@ public class DataProfileManagerTest extends TelephonyTest {
                         DEFAULT_APN_SET_ID,     // apn_set_id
                         -1,                     // carrier_id
                         -1,                     // skip_464xlat
-                        0                       // alwys_on
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
                 },
                 new Object[]{
                         4,                      // id
@@ -307,7 +329,10 @@ public class DataProfileManagerTest extends TelephonyTest {
                         DEFAULT_APN_SET_ID,     // apn_set_id
                         -1,                     // carrier_id
                         -1,                     // skip_464xlat
-                        0                       // always_on
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
                 },
                 // This APN entry is created to test de-duping.
                 new Object[]{
@@ -343,7 +368,10 @@ public class DataProfileManagerTest extends TelephonyTest {
                         DEFAULT_APN_SET_ID,     // apn_set_id
                         -1,                     // carrier_id
                         -1,                     // skip_464xlat
-                        0                       // always_on
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
                 },
                 new Object[]{
                         6,                      // id
@@ -378,7 +406,10 @@ public class DataProfileManagerTest extends TelephonyTest {
                         APN_SET_ID_1,           // apn_set_id
                         -1,                     // carrier_id
                         -1,                     // skip_464xlat
-                        0                       // always_on
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
                 },
                 new Object[]{
                         7,                      // id
@@ -413,7 +444,10 @@ public class DataProfileManagerTest extends TelephonyTest {
                         APN_SET_ID_1,           // apn_set_id
                         -1,                     // carrier_id
                         -1,                     // skip_464xlat
-                        0                       // always_on
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
                 },
                 new Object[]{
                         8,                      // id
@@ -448,7 +482,200 @@ public class DataProfileManagerTest extends TelephonyTest {
                         MATCH_ALL_APN_SET_ID,   // apn_set_id
                         -1,                     // carrier_id
                         -1,                     // skip_464xlat
-                        0                       // always_on
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
+                },
+                new Object[]{
+                        9,                      // id
+                        PLMN,                   // numeric
+                        RCS_APN,                // name
+                        RCS_APN,                // apn
+                        "",                     // proxy
+                        "",                     // port
+                        "",                     // mmsc
+                        "",                     // mmsproxy
+                        "",                     // mmsport
+                        "",                     // user
+                        "",                     // password
+                        -1,                     // authtype
+                        "rcs",                  // types
+                        "IPV4V6",               // protocol
+                        "IPV4V6",               // roaming_protocol
+                        1,                      // carrier_enabled
+                        0,                      // profile_id
+                        1,                      // modem_cognitive
+                        0,                      // max_conns
+                        0,                      // wait_time
+                        0,                      // max_conns_time
+                        0,                      // mtu
+                        1280,                   // mtu_v4
+                        1280,                   // mtu_v6
+                        "",                     // mvno_type
+                        "",                     // mnvo_match_data
+                        TelephonyManager.NETWORK_TYPE_BITMASK_LTE
+                                | TelephonyManager.NETWORK_TYPE_BITMASK_NR, // network_type_bitmask
+                        0,                      // lingering_network_type_bitmask
+                        DEFAULT_APN_SET_ID,     // apn_set_id
+                        -1,                     // carrier_id
+                        -1,                     // skip_464xlat
+                        0,                      // always_on
+                        2,                      // INFRASTRUCTURE_SATELLITE
+                        0,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
+                },
+                new Object[]{
+                        10,                     // id
+                        PLMN,                   // numeric
+                        ESIM_BOOTSTRAP_PROVISIONING_APN, // name
+                        ESIM_BOOTSTRAP_PROVISIONING_APN, // apn
+                        "",                     // proxy
+                        "",                     // port
+                        "",                     // mmsc
+                        "",                     // mmsproxy
+                        "",                     // mmsport
+                        "",                     // user
+                        "",                     // password
+                        -1,                     // authtype
+                        "default,supl",         // types
+                        "IPV4V6",               // protocol
+                        "IPV4V6",               // roaming_protocol
+                        1,                      // carrier_enabled
+                        0,                      // profile_id
+                        1,                      // modem_cognitive
+                        0,                      // max_conns
+                        0,                      // wait_time
+                        0,                      // max_conns_time
+                        0,                      // mtu
+                        1280,                   // mtu_v4
+                        1280,                   // mtu_v6
+                        "",                     // mvno_type
+                        "",                     // mnvo_match_data
+                        TelephonyManager.NETWORK_TYPE_BITMASK_LTE
+                                | TelephonyManager.NETWORK_TYPE_BITMASK_NR, // network_type_bitmask
+                        0,                      // lingering_network_type_bitmask
+                        MATCH_ALL_APN_SET_ID,   // apn_set_id
+                        -1,                     // carrier_id
+                        -1,                     // skip_464xlat
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_CELLULAR
+                        1,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
+                },
+                new Object[]{
+                        11,                      // id
+                        PLMN,                   // numeric
+                        IMS_APN,                // name
+                        IMS_APN,                // apn
+                        "",                     // proxy
+                        "",                     // port
+                        "",                     // mmsc
+                        "",                     // mmsproxy
+                        "",                     // mmsport
+                        "",                     // user
+                        "",                     // password
+                        -1,                     // authtype
+                        "ims",                  // types
+                        "IPV4V6",               // protocol
+                        "IPV4V6",               // roaming_protocol
+                        1,                      // carrier_enabled
+                        0,                      // profile_id
+                        1,                      // modem_cognitive
+                        0,                      // max_conns
+                        0,                      // wait_time
+                        0,                      // max_conns_time
+                        0,                      // mtu
+                        1280,                   // mtu_v4
+                        1280,                   // mtu_v6
+                        "",                     // mvno_type
+                        "",                     // mnvo_match_data
+                        TelephonyManager.NETWORK_TYPE_BITMASK_LTE
+                                | TelephonyManager.NETWORK_TYPE_BITMASK_NR, // network_type_bitmask
+                        0,                      // lingering_network_type_bitmask
+                        MATCH_ALL_APN_SET_ID,   // apn_set_id
+                        -1,                     // carrier_id
+                        -1,                     // skip_464xlat
+                        0,                      // always_on
+                        1,                      // INFRASTRUCTURE_SATELLITE
+                        1,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
+                },
+                new Object[]{
+                        12,                     // id
+                        PLMN,                   // numeric
+                        TEST_BOOTSTRAP_APN,     // name
+                        TEST_BOOTSTRAP_APN,      // apn
+                        "",                     // proxy
+                        "",                     // port
+                        "",                     // mmsc
+                        "",                     // mmsproxy
+                        "",                     // mmsport
+                        "",                     // user
+                        "",                     // password
+                        -1,                     // authtype
+                        "default",              // types
+                        "IPV4V6",               // protocol
+                        "IPV4V6",               // roaming_protocol
+                        1,                      // carrier_enabled
+                        0,                      // profile_id
+                        1,                      // modem_cognitive
+                        0,                      // max_conns
+                        0,                      // wait_time
+                        0,                      // max_conns_time
+                        0,                      // mtu
+                        1280,                   // mtu_v4
+                        1280,                   // mtu_v6
+                        "",                     // mvno_type
+                        "",                     // mnvo_match_data
+                        TelephonyManager.NETWORK_TYPE_BITMASK_LTE
+                                | TelephonyManager.NETWORK_TYPE_BITMASK_NR, // network_type_bitmask
+                        0,                      // lingering_network_type_bitmask
+                        MATCH_ALL_APN_SET_ID,   // apn_set_id
+                        -1,                     // carrier_id
+                        -1,                     // skip_464xlat
+                        0,                      // always_on
+                        2,                      // INFRASTRUCTURE_SATELLITE
+                        1,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
+                },
+                new Object[]{
+                        13,                     // id
+                        PLMN,                   // numeric
+                        RCS_APN1,               // name
+                        RCS_APN1,               // apn
+                        "",                     // proxy
+                        "",                     // port
+                        "",                     // mmsc
+                        "",                     // mmsproxy
+                        "",                     // mmsport
+                        "",                     // user
+                        "",                     // password
+                        -1,                     // authtype
+                        "rcs",                  // types
+                        "IPV4V6",               // protocol
+                        "IPV4V6",               // roaming_protocol
+                        1,                      // carrier_enabled
+                        0,                      // profile_id
+                        1,                      // modem_cognitive
+                        0,                      // max_conns
+                        0,                      // wait_time
+                        0,                      // max_conns_time
+                        0,                      // mtu
+                        1280,                   // mtu_v4
+                        1280,                   // mtu_v6
+                        "",                     // mvno_type
+                        "",                     // mnvo_match_data
+                        TelephonyManager.NETWORK_TYPE_BITMASK_LTE
+                                | TelephonyManager.NETWORK_TYPE_BITMASK_NR, // network_type_bitmask
+                        0,                      // lingering_network_type_bitmask
+                        DEFAULT_APN_SET_ID,     // apn_set_id
+                        -1,                     // carrier_id
+                        -1,                     // skip_464xlat
+                        0,                      // always_on
+                        2,                      // INFRASTRUCTURE_SATELLITE
+                        1,                      // esim_bootstrap_provisioning
+                        0                       // UNEDITED
                 }
         );
 
@@ -631,7 +858,8 @@ public class DataProfileManagerTest extends TelephonyTest {
             return null;
         }).when(mDataProfileManagerCallback).invokeFromExecutor(any(Runnable.class));
         mDataProfileManagerUT = new DataProfileManager(mPhone, mDataNetworkController,
-                mMockedWwanDataServiceManager, Looper.myLooper(), mDataProfileManagerCallback);
+                mMockedWwanDataServiceManager, Looper.myLooper(), mFeatureFlags,
+                mDataProfileManagerCallback);
         ArgumentCaptor<DataNetworkControllerCallback> dataNetworkControllerCallbackCaptor =
                 ArgumentCaptor.forClass(DataNetworkControllerCallback.class);
         verify(mDataNetworkController).registerDataNetworkControllerCallback(
@@ -660,9 +888,9 @@ public class DataProfileManagerTest extends TelephonyTest {
         NetworkRequest request = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build();
-        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone);
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
         DataProfile dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_LTE, false);
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
 
         assertThat(dp.canSatisfy(tnr.getCapabilities())).isTrue();
         assertThat(dp.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
@@ -671,9 +899,9 @@ public class DataProfileManagerTest extends TelephonyTest {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_MMS)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_SUPL)
                 .build();
-        tnr = new TelephonyNetworkRequest(request, mPhone);
+        tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
         dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_LTE, false);
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
 
         assertThat(dp.canSatisfy(tnr.getCapabilities())).isTrue();
         assertThat(dp.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
@@ -681,18 +909,18 @@ public class DataProfileManagerTest extends TelephonyTest {
         request = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
                 .build();
-        tnr = new TelephonyNetworkRequest(request, mPhone);
+        tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
         dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_LTE, false);
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dp.canSatisfy(tnr.getCapabilities())).isTrue();
         assertThat(dp.getApnSetting().getApnName()).isEqualTo(IMS_APN);
 
         request = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
                 .build();
-        tnr = new TelephonyNetworkRequest(request, mPhone);
+        tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
         dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_LTE, false);
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dp).isNull();
 
         doReturn(new NetworkRegistrationInfo.Builder()
@@ -703,9 +931,9 @@ public class DataProfileManagerTest extends TelephonyTest {
         request = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
                 .build();
-        tnr = new TelephonyNetworkRequest(request, mPhone);
+        tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
         dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_NR, false);
+                TelephonyManager.NETWORK_TYPE_NR, false, false , false);
         assertThat(dp.canSatisfy(tnr.getCapabilities())).isTrue();
         assertThat(dp.getApnSetting().getApnName()).isEqualTo(TETHERING_APN);
     }
@@ -715,9 +943,9 @@ public class DataProfileManagerTest extends TelephonyTest {
         NetworkRequest request = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build();
-        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone);
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
         DataProfile dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_GSM, false);
+                TelephonyManager.NETWORK_TYPE_GSM, false, false, false);
         // Should not find data profile due to RAT incompatible.
         assertThat(dp).isNull();
     }
@@ -727,16 +955,16 @@ public class DataProfileManagerTest extends TelephonyTest {
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
         logd("Set setLastSetupTimestamp on " + dataProfile);
         dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
 
         // See if another one can be returned.
         dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN1);
     }
 
@@ -745,9 +973,9 @@ public class DataProfileManagerTest extends TelephonyTest {
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting()).isNull();
         OsAppId osAppId = new OsAppId(dataProfile.getTrafficDescriptor().getOsAppId());
 
@@ -758,9 +986,9 @@ public class DataProfileManagerTest extends TelephonyTest {
         tnr = new TelephonyNetworkRequest(new NetworkRequest(new NetworkCapabilities()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
                 .addEnterpriseId(2), ConnectivityManager.TYPE_NONE,
-                0, NetworkRequest.Type.REQUEST), mPhone);
+                0, NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags);
         dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting()).isNull();
         osAppId = new OsAppId(dataProfile.getTrafficDescriptor().getOsAppId());
 
@@ -774,9 +1002,9 @@ public class DataProfileManagerTest extends TelephonyTest {
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting()).isNull();
         OsAppId osAppId = new OsAppId(dataProfile.getTrafficDescriptor().getOsAppId());
 
@@ -790,9 +1018,9 @@ public class DataProfileManagerTest extends TelephonyTest {
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting()).isNull();
         OsAppId osAppId = new OsAppId(dataProfile.getTrafficDescriptor().getOsAppId());
 
@@ -801,15 +1029,30 @@ public class DataProfileManagerTest extends TelephonyTest {
         assertThat(osAppId.getDifferentiator()).isEqualTo(1);
     }
 
+    @Test
+    public void testGetDataProfileForSatellite() {
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+
+        NetworkRequest request = new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_RCS)
+                .build();
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
+        DataProfile dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
+                TelephonyManager.NETWORK_TYPE_LTE, true, false, false);
+
+        assertThat(dp.canSatisfy(tnr.getCapabilities())).isTrue();
+        assertThat(dp.getApnSetting().getApnName()).isEqualTo(RCS_APN);
+    }
 
     @Test
     public void testSetPreferredDataProfile() {
+        doReturn(true).when(mFeatureFlags).refinePreferredDataProfileSelection();
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
         dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
         dataProfile.setPreferred(true);
@@ -817,47 +1060,153 @@ public class DataProfileManagerTest extends TelephonyTest {
         doReturn(dataProfile).when(internetNetwork).getDataProfile();
         doReturn(new DataNetworkController.NetworkRequestList(List.of(tnr)))
                 .when(internetNetwork).getAttachedNetworkRequestList();
-        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(internetNetwork));
+        mDataNetworkControllerCallback.onConnectedInternetDataNetworksChanged(
+                Set.of(internetNetwork));
         processAllMessages();
 
         // Test See if the same one can be returned.
         dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
 
         // Test Another default internet network connected due to RAT changed. Verify the preferred
         // data profile is updated.
         DataProfile legacyRatDataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_CDMA, false);
+                tnr, TelephonyManager.NETWORK_TYPE_CDMA, false, false, false);
         DataNetwork legacyRatInternetNetwork = Mockito.mock(DataNetwork.class);
         doReturn(legacyRatDataProfile).when(legacyRatInternetNetwork).getDataProfile();
         doReturn(new DataNetworkController.NetworkRequestList(List.of(tnr)))
                 .when(legacyRatInternetNetwork).getAttachedNetworkRequestList();
-        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(
+        mDataNetworkControllerCallback.onConnectedInternetDataNetworksChanged(Set.of(
                 // Because internetNetwork is torn down due to network type mismatch
                 legacyRatInternetNetwork));
         processAllMessages();
 
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(legacyRatDataProfile)).isTrue();
 
-        // Test Another supl default internet network temporarily connected. Verify preferred
-        // doesn't change.
-        TelephonyNetworkRequest suplTnr = new TelephonyNetworkRequest(
+        // Test Another dun default internet network temporarily connected. Verify preferred
+        // doesn't change. Mock DUN | DEFAULT.
+        TelephonyNetworkRequest dunTnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
-                        .addCapability(NetworkCapabilities.NET_CAPABILITY_SUPL)
-                        .build(), mPhone);
-        DataProfile suplDataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                suplTnr, TelephonyManager.NETWORK_TYPE_LTE, false);
-        DataNetwork suplInternetNetwork = Mockito.mock(DataNetwork.class);
-        doReturn(suplDataProfile).when(suplInternetNetwork).getDataProfile();
-        doReturn(new DataNetworkController.NetworkRequestList(List.of(suplTnr)))
-                .when(suplInternetNetwork).getAttachedNetworkRequestList();
-        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(
-                legacyRatInternetNetwork, suplInternetNetwork));
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
+                        .build(), mPhone, mFeatureFlags);
+        DataProfile dunDataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                dunTnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
+        DataNetwork dunInternetNetwork = Mockito.mock(DataNetwork.class);
+        doReturn(dunDataProfile).when(dunInternetNetwork).getDataProfile();
+        doReturn(new DataNetworkController.NetworkRequestList(List.of(dunTnr)))
+                .when(dunInternetNetwork).getAttachedNetworkRequestList();
+        mDataNetworkControllerCallback.onConnectedInternetDataNetworksChanged(Set.of(
+                legacyRatInternetNetwork, dunInternetNetwork));
         processAllMessages();
 
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(legacyRatDataProfile)).isTrue();
+
+        // Test a single dun default internet network temporarily connected. Verify preferred
+        // doesn't change. Mock DUN | DEFAULT and enforced single connection.
+        mDataNetworkControllerCallback.onConnectedInternetDataNetworksChanged(
+                Set.of(dunInternetNetwork));
+        processAllMessages();
+
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(legacyRatDataProfile)).isTrue();
+
+        // Test all internet networks disconnected. Verify preferred doesn't change.
+        mDataNetworkControllerCallback.onConnectedInternetDataNetworksChanged(
+                Collections.emptySet());
+
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(legacyRatDataProfile)).isTrue();
+    }
+
+    @Test
+    public void testSetPreferredDataProfileBySubscriptionId() {
+        // NetworkRequest.
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(), mPhone, mFeatureFlags);
+        // DataNetwork for internet
+        DataNetwork internetNetwork = Mockito.mock(DataNetwork.class);
+
+        // Step 1. With sudId 1, connect to internet and set as prefer APN.
+        // Test for SubId 1.
+        doReturn(1).when(mPhone).getSubId();
+
+        // Sim Loaded and loads profiles.
+        changeSimStateTo(TelephonyManager.SIM_STATE_LOADED);
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // Find DataProfile based on network request
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
+        dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
+
+        // Connected to internet. At this time, This test expects that dataProfile is stored in
+        // mLastInternetDataProfiles for subid 1.
+        doReturn(dataProfile).when(internetNetwork).getDataProfile();
+        doReturn(new DataNetworkController.NetworkRequestList(List.of(tnr)))
+                .when(internetNetwork).getAttachedNetworkRequestList();
+        mDataNetworkControllerCallback.onConnectedInternetDataNetworksChanged(
+                Set.of(internetNetwork));
+        processAllMessages();
+
+        // After internet connected, preferred APN should be set
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
+
+
+        // Step 2. test prefer apn for subId 2.
+        // Test for SubId 2.
+        doReturn(2).when(mPhone).getSubId();
+        // Sim Loaded and loads profiles.
+        changeSimStateTo(TelephonyManager.SIM_STATE_ABSENT);
+        changeSimStateTo(TelephonyManager.SIM_STATE_LOADED);
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // Find DataProfile based on network request
+        dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_CDMA, false, false, false);
+        assertThat(dataProfile.getApnSetting().getApnName())
+                .isEqualTo(GENERAL_PURPOSE_APN_LEGACY_RAT);
+        dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
+        doReturn(dataProfile).when(internetNetwork).getDataProfile();
+
+        // APN reset
+        mPreferredApnId = -1;
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // Since a new subid has been loaded, preferred APN should be null regardless of the last
+        // internet connection of previous subid.
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isFalse();
+
+
+        // Step 3. try again back to subId 1.
+        // Test for SubId 1.
+        doReturn(1).when(mPhone).getSubId();
+        // Sim Loaded and loads profiles.
+        changeSimStateTo(TelephonyManager.SIM_STATE_ABSENT);
+        changeSimStateTo(TelephonyManager.SIM_STATE_LOADED);
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // Find DataProfile based on network request
+        dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
+        dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
+        doReturn(dataProfile).when(internetNetwork).getDataProfile();
+
+        // APN reset
+        mPreferredApnId = -1;
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        // Since the old subid has been loaded, Even if preferapn for subid 1 is not in the db, the
+        // preferapn can be loaded by mLastInternetDataProfiles
+        assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
     }
 
     @Test
@@ -873,8 +1222,10 @@ public class DataProfileManagerTest extends TelephonyTest {
 
     @Test
     public void testSetInitialAttachDataProfileMultipleRequests() throws Exception {
+        // This test case only applies to legacy modem, see b/227579876
+        doReturn(false).when(mDataConfigManager).allowClearInitialAttachDataProfile();
+
         // Test: Modem Cleared IA, should always send IA to modem
-        // TODO(b/237444788): this case should be removed from U
         mDataProfileManagerUT.obtainMessage(3 /* EVENT_SIM_REFRESH */).sendToTarget();
         processAllMessages();
 
@@ -911,6 +1262,62 @@ public class DataProfileManagerTest extends TelephonyTest {
 
     @Test
     public void testSimRemoval() {
+        // This test case applies to the latest modem, see b/227579876.
+        doReturn(true).when(mDataConfigManager).allowClearInitialAttachDataProfile();
+
+        // SIM inserted
+        mDataProfileManagerUT.obtainMessage(3 /* EVENT_SIM_REFRESH */).sendToTarget();
+        processAllMessages();
+
+        // SIM removed
+        Mockito.clearInvocations(mDataProfileManagerCallback);
+        changeSimStateTo(TelephonyManager.SIM_STATE_ABSENT);
+        mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
+        processAllMessages();
+
+        verify(mDataProfileManagerCallback).onDataProfilesChanged();
+
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(), mPhone, mFeatureFlags);
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
+        assertThat(dataProfile).isNull();
+
+        // expect default EIMS when SIM absent
+        tnr = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)
+                        .build(), mPhone, mFeatureFlags);
+        dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo("sos");
+
+        // expect no default IMS when SIM absent
+        tnr = new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
+                        .build(), mPhone, mFeatureFlags);
+        dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
+        assertThat(dataProfile).isEqualTo(null);
+
+        // Verify null as initial attached data profile is sent to modem
+        verify(mMockedWwanDataServiceManager).setInitialAttachApn(null, false, null);
+    }
+
+    @Test
+    public void testSimRemovalLegacy() {
+        // This test case only applies to legacy modem, see b/227579876, where null IA won't be
+        // updated to modem
+        doReturn(false).when(mDataConfigManager).allowClearInitialAttachDataProfile();
+
+        // SIM inserted
+        mDataProfileManagerUT.obtainMessage(3 /* EVENT_SIM_REFRESH */).sendToTarget();
+        processAllMessages();
+
+        // SIM removed
         Mockito.clearInvocations(mDataProfileManagerCallback);
         mSimInserted = false;
         mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
@@ -921,28 +1328,32 @@ public class DataProfileManagerTest extends TelephonyTest {
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile).isNull();
 
         // expect default EIMS when SIM absent
         tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo("sos");
 
         // expect no default IMS when SIM absent
         tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile).isEqualTo(null);
+
+        // Verify in legacy mode, null IA should NOT be sent to modem
+        verify(mMockedWwanDataServiceManager, Mockito.never())
+                .setInitialAttachApn(null, false, null);
     }
 
     @Test
@@ -954,7 +1365,7 @@ public class DataProfileManagerTest extends TelephonyTest {
         doReturn(List.of(ApnSetting.TYPE_IMS))
                 .when(mDataConfigManager).getAllowedInitialAttachApnTypes();
 
-        mSimInserted = true;
+        changeSimStateTo(TelephonyManager.SIM_STATE_LOADED);
         mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
         processAllMessages();
 
@@ -971,8 +1382,8 @@ public class DataProfileManagerTest extends TelephonyTest {
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
                 new TelephonyNetworkRequest(new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
-                        .build(), mPhone),
-                TelephonyManager.NETWORK_TYPE_LTE, false);
+                        .build(), mPhone, mFeatureFlags),
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(IMS_APN);
     }
 
@@ -981,10 +1392,10 @@ public class DataProfileManagerTest extends TelephonyTest {
         NetworkRequest request = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_FOTA)
                 .build();
-        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone);
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
         // This should get the merged data profile after deduping.
         DataProfile dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_LTE, false);
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dp.canSatisfy(NetworkCapabilities.NET_CAPABILITY_INTERNET)).isTrue();
     }
 
@@ -993,6 +1404,7 @@ public class DataProfileManagerTest extends TelephonyTest {
         DataProfile dataProfile1 = new DataProfile.Builder()
                 .setApnSetting(new ApnSetting.Builder()
                         .setEntryName("general")
+                        .setOperatorNumeric("123456")
                         .setApnName("apn")
                         .setApnTypeBitmask(ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS
                                 | ApnSetting.TYPE_SUPL | ApnSetting.TYPE_HIPRI)
@@ -1013,6 +1425,7 @@ public class DataProfileManagerTest extends TelephonyTest {
         DataProfile dataProfile2 = new DataProfile.Builder()
                 .setApnSetting(new ApnSetting.Builder()
                         .setEntryName("XCAP")
+                        .setOperatorNumeric("123456")
                         .setApnName("apn")
                         .setApnTypeBitmask(ApnSetting.TYPE_XCAP)
                         .setUser("user")
@@ -1117,9 +1530,9 @@ public class DataProfileManagerTest extends TelephonyTest {
     public void testDefaultEmergencyDataProfileValid() {
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)
-                .build(), mPhone);
+                .build(), mPhone, mFeatureFlags);
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
 
         assertThat(dataProfile.getApn()).isEqualTo("sos");
         assertThat(dataProfile.getTrafficDescriptor().getDataNetworkName()).isEqualTo("sos");
@@ -1127,21 +1540,25 @@ public class DataProfileManagerTest extends TelephonyTest {
 
     @Test
     public void testResetApn() {
-        mSimInserted = true;
+        changeSimStateTo(TelephonyManager.SIM_STATE_LOADED);
         mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
         processAllMessages();
 
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        .build(), mPhone);
+                        .build(), mPhone, mFeatureFlags);
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN);
         dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
         DataNetwork internetNetwork = Mockito.mock(DataNetwork.class);
         doReturn(dataProfile).when(internetNetwork).getDataProfile();
-        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(internetNetwork));
+
+        doReturn(new DataNetworkController.NetworkRequestList(List.of(tnr)))
+                .when(internetNetwork).getAttachedNetworkRequestList();
+        mDataNetworkControllerCallback.onConnectedInternetDataNetworksChanged(
+                Set.of(internetNetwork));
         processAllMessages();
 
         // After internet connected, preferred APN should be set
@@ -1173,7 +1590,8 @@ public class DataProfileManagerTest extends TelephonyTest {
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
 
         // Test removed data profile(user created after reset) shouldn't show up
-        mDataNetworkControllerCallback.onInternetDataNetworkConnected(List.of(internetNetwork));
+        mDataNetworkControllerCallback.onConnectedInternetDataNetworksChanged(
+                Set.of(internetNetwork));
         processAllMessages();
         //APN reset and removed GENERAL_PURPOSE_APN from APN DB
         mPreferredApnId = -1;
@@ -1195,14 +1613,14 @@ public class DataProfileManagerTest extends TelephonyTest {
         TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        .build(), mPhone);
-        mSimInserted = true;
+                        .build(), mPhone, mFeatureFlags);
+        changeSimStateTo(TelephonyManager.SIM_STATE_LOADED);
         mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
         processAllMessages();
 
         // The carrier configured data profile should be the preferred APN after APN reset
         DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
 
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN1);
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
@@ -1215,7 +1633,7 @@ public class DataProfileManagerTest extends TelephonyTest {
 
         // The carrier configured data profile should be the preferred APN after APN reset
         dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
-                tnr, TelephonyManager.NETWORK_TYPE_LTE, false);
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
         assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(GENERAL_PURPOSE_APN1);
         assertThat(mDataProfileManagerUT.isDataProfilePreferred(dataProfile)).isTrue();
     }
@@ -1280,6 +1698,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                 .setApnSetting(new ApnSetting.Builder()
                         .setEntryName(GENERAL_PURPOSE_APN)
                         .setId(1)
+                        .setOperatorNumeric(PLMN)
                         .setApnName(GENERAL_PURPOSE_APN)
                         .setProxyAddress("")
                         .setMmsProxyAddress("")
@@ -1298,6 +1717,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                                 | TelephonyManager.NETWORK_TYPE_BITMASK_NR))
                         .setMvnoMatchData("")
                         .setApnSetId(DEFAULT_APN_SET_ID)
+                        .setInfrastructureBitmask(1)
                         .build())
                 .build();
 
@@ -1307,7 +1727,7 @@ public class DataProfileManagerTest extends TelephonyTest {
     @Test
     public void testDataProfileCompatibility_FilteringWithPreferredApnSetIdAsDefault() {
         mApnSettingContentProvider.setPreferredApn(GENERAL_PURPOSE_APN);
-        mSimInserted = true;
+        changeSimStateTo(TelephonyManager.SIM_STATE_LOADED);
         mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
         processAllMessages();
 
@@ -1333,6 +1753,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                         .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_NR))
                         .setMvnoMatchData("")
                         .setApnSetId(DEFAULT_APN_SET_ID)
+                        .setInfrastructureBitmask(1)
                         .build())
                 .build();
 
@@ -1361,6 +1782,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                                 | TelephonyManager.NETWORK_TYPE_BITMASK_NR))
                         .setMvnoMatchData("")
                         .setApnSetId(APN_SET_ID_1)
+                        .setInfrastructureBitmask(1)
                         .build())
                 .build();
 
@@ -1389,6 +1811,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                                 | TelephonyManager.NETWORK_TYPE_BITMASK_NR))
                         .setMvnoMatchData("")
                         .setApnSetId(MATCH_ALL_APN_SET_ID)
+                        .setInfrastructureBitmask(1)
                         .build())
                 .build();
 
@@ -1398,7 +1821,7 @@ public class DataProfileManagerTest extends TelephonyTest {
     @Test
     public void testDataProfileCompatibility_FilteringWithPreferredApnSetIdAs1() {
         mApnSettingContentProvider.setPreferredApn(APN_SET_ID_1_APN);
-        mSimInserted = true;
+        changeSimStateTo(TelephonyManager.SIM_STATE_LOADED);
         mDataProfileManagerUT.obtainMessage(2 /*EVENT_APN_DATABASE_CHANGED*/).sendToTarget();
         processAllMessages();
 
@@ -1424,6 +1847,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                                 | TelephonyManager.NETWORK_TYPE_BITMASK_NR))
                         .setMvnoMatchData("")
                         .setApnSetId(APN_SET_ID_1)
+                        .setInfrastructureBitmask(1)
                         .build())
                 .build();
 
@@ -1452,6 +1876,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                         .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_NR))
                         .setMvnoMatchData("")
                         .setApnSetId(DEFAULT_APN_SET_ID)
+                        .setInfrastructureBitmask(1)
                         .build())
                 .build();
 
@@ -1480,6 +1905,7 @@ public class DataProfileManagerTest extends TelephonyTest {
                                 | TelephonyManager.NETWORK_TYPE_BITMASK_NR))
                         .setMvnoMatchData("")
                         .setApnSetId(MATCH_ALL_APN_SET_ID)
+                        .setInfrastructureBitmask(1)
                         .build())
                 .build();
 
@@ -1493,9 +1919,9 @@ public class DataProfileManagerTest extends TelephonyTest {
         NetworkRequest request = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build();
-        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone);
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
         DataProfile dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_LTE, false);
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
 
         // Mark the APN as permanent failed.
         dp.getApnSetting().setPermanentFailed(true);
@@ -1503,7 +1929,8 @@ public class DataProfileManagerTest extends TelephonyTest {
         // Data profile manager should return a different data profile for setup as the previous
         // data profile has been marked as permanent failed.
         assertThat(mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_LTE, false)).isNotEqualTo(dp);
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false))
+                .isNotEqualTo(dp);
     }
 
     @Test
@@ -1516,9 +1943,9 @@ public class DataProfileManagerTest extends TelephonyTest {
         NetworkRequest request = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build();
-        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone);
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
         DataProfile dp = mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_LTE, false);
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false);
 
         // Mark the APN as permanent failed.
         dp.getApnSetting().setPermanentFailed(true);
@@ -1526,6 +1953,120 @@ public class DataProfileManagerTest extends TelephonyTest {
         // Since preferred APN is already set, and that data profile was marked as permanent failed,
         // so this should result in getting nothing.
         assertThat(mDataProfileManagerUT.getDataProfileForNetworkRequest(tnr,
-                TelephonyManager.NETWORK_TYPE_LTE, false)).isNull();
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false))
+                .isNull();
     }
+
+    private void changeSimStateTo(@TelephonyManager.SimState int simState) {
+        mSimInserted = simState == TelephonyManager.SIM_STATE_LOADED;
+        mDataNetworkControllerCallback.onSimStateChanged(simState);
+    }
+
+    @Test
+    public void testClearAllDataProfilePermanentFailures() {
+        testPermanentFailureWithPreferredDataProfile();
+
+        // Reset all data profiles
+        mDataProfileManagerUT.clearAllDataProfilePermanentFailures();
+
+        NetworkRequest request = new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build();
+
+        // Verify the we can get the previously permanent failed data profile again.
+        assertThat(mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                new TelephonyNetworkRequest(request, mPhone, mFeatureFlags),
+                TelephonyManager.NETWORK_TYPE_LTE, false, false, false))
+                .isNotNull();
+    }
+
+    @Test
+    public void testDifferentNetworkRequestProfilesOnEsimBootStrapProvisioning() {
+        Mockito.clearInvocations(mDataProfileManagerCallback);
+        Mockito.clearInvocations(mMockedWwanDataServiceManager);
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+
+        // SIM inserted
+        mDataProfileManagerUT.obtainMessage(3 /* EVENT_SIM_REFRESH */).sendToTarget();
+        processAllMessages();
+
+        // expect default profile for internet network request, when esim bootstrap provisioning
+        // flag is enabled at data profile, during esim bootstrap provisioning
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build(), mPhone, mFeatureFlags);
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, true, false);
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(
+                "ESIM_BOOTSTRAP_PROVISIONING_APN");
+
+        // expect IMS profile for ims network request, when esim bootstrap provisioning flag
+        // is enabled at data profile, during esim bootstrap provisioning
+        tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                 .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
+                 .build(), mPhone, mFeatureFlags);
+        dataProfile  = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, true, false);
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo("IMS_APN");
+
+        // expect no mms profile for mms network request, when esim bootstrap provisioning flag
+        // is disabled at data profile, during esim bootstrap provisioning
+        tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_MMS)
+                .build(), mPhone, mFeatureFlags);
+        dataProfile  = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, true, false);
+        assertThat(dataProfile).isEqualTo(null);
+
+        // expect no rcs profile for rcs network request, when esim bootstrap provisioning flag
+        // is disabled at data profile, during esim bootstrap provisioning
+        tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_RCS)
+                .build(), mPhone, mFeatureFlags);
+        dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, true, false);
+        assertThat(dataProfile).isEqualTo(null);
+    }
+
+    @Test
+    public void testEsimBootstrapProvisioningEnabled_MultipleProfile() {
+        Mockito.clearInvocations(mDataProfileManagerCallback);
+        Mockito.clearInvocations(mMockedWwanDataServiceManager);
+
+        // SIM inserted
+        mDataProfileManagerUT.obtainMessage(3 /* EVENT_SIM_REFRESH */).sendToTarget();
+        processAllMessages();
+
+        // expect initial default profile entry selected for internet network request, when
+        // multiple esim bootstrap provisioning flag is enabled at data profile for same apn
+        // type
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build(), mPhone, mFeatureFlags);
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, false, true, false);
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(
+                ESIM_BOOTSTRAP_PROVISIONING_APN);
+    }
+
+    @Test
+    public void testInfrastructureProfileOnEsimBootStrapProvisioning() {
+        Mockito.clearInvocations(mDataProfileManagerCallback);
+        Mockito.clearInvocations(mMockedWwanDataServiceManager);
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+
+        // SIM inserted
+        mDataProfileManagerUT.obtainMessage(3 /* EVENT_SIM_REFRESH */).sendToTarget();
+        processAllMessages();
+
+        // expect initial default profile entry selected for internet network request, when
+        // multiple esim bootstrap provisioning flag is enabled at data profile for same apn
+        // type
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_RCS)
+                .build(), mPhone, mFeatureFlags);
+        DataProfile dataProfile = mDataProfileManagerUT.getDataProfileForNetworkRequest(
+                tnr, TelephonyManager.NETWORK_TYPE_LTE, true, true, false);
+        assertThat(dataProfile.getApnSetting().getApnName()).isEqualTo(RCS_APN1);
+    }
+
 }

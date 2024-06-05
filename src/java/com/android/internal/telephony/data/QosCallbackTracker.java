@@ -53,13 +53,18 @@ public class QosCallbackTracker extends Handler {
     private static final int DEDICATED_BEARER_EVENT_STATE_MODIFIED = 2;
     private static final int DEDICATED_BEARER_EVENT_STATE_DELETED = 3;
 
-    private final @NonNull String mLogTag;
-    private final @NonNull TelephonyNetworkAgent mNetworkAgent;
-    private final @NonNull Map<Integer, QosBearerSession> mQosBearerSessions;
-    private final @NonNull RcsStats mRcsStats;
+    @NonNull
+    private final String mLogTag;
+    @NonNull
+    private final TelephonyNetworkAgent mNetworkAgent;
+    @NonNull
+    private final Map<Integer, QosBearerSession> mQosBearerSessions;
+    @NonNull
+    private final RcsStats mRcsStats;
 
     // We perform an exact match on the address
-    private final @NonNull Map<Integer, IFilter> mCallbacksToFilter;
+    @NonNull
+    private final Map<Integer, IFilter> mCallbacksToFilter;
 
     private final int mPhoneId;
 
@@ -138,11 +143,6 @@ public class QosCallbackTracker extends Handler {
                                         return filter.matchesProtocol(protocol);
                                     }
                                 });
-                    }
-
-                    @Override
-                    public void onQosCallbackUnregistered(int qosCallbackId) {
-
                     }
                 });
     }
@@ -255,7 +255,6 @@ public class QosCallbackTracker extends Handler {
                         // The filter matches which means it was previously available, and now is
                         // lost
                         if (doFiltersMatch(existingSession, filter)) {
-                            bearerState = DEDICATED_BEARER_EVENT_STATE_DELETED;
                             sendSessionLost(callbackId, existingSession);
                             notifyMetricDedicatedBearerEvent(existingSession, bearerState, true);
                             sessionsReportedToMetric.add(sessionId);
@@ -281,13 +280,13 @@ public class QosCallbackTracker extends Handler {
         });
     }
 
-    private boolean doFiltersMatch(final @NonNull QosBearerSession qosBearerSession,
-            final @NonNull IFilter filter) {
+    private boolean doFiltersMatch(@NonNull final QosBearerSession qosBearerSession,
+                                   @NonNull final IFilter filter) {
         return getMatchingQosBearerFilter(qosBearerSession, filter) != null;
     }
 
-    private boolean matchesByLocalAddress(final @NonNull QosBearerFilter sessionFilter,
-            final @NonNull IFilter filter) {
+    private boolean matchesByLocalAddress(@NonNull final QosBearerFilter sessionFilter,
+                                          @NonNull final IFilter filter) {
         int portStart;
         int portEnd;
         if (sessionFilter.getLocalPortRange() == null) {
@@ -316,7 +315,7 @@ public class QosCallbackTracker extends Handler {
     }
 
     private boolean matchesByRemoteAddress(@NonNull QosBearerFilter sessionFilter,
-            final @NonNull IFilter filter) {
+                                           @NonNull final IFilter filter) {
         int portStart;
         int portEnd;
         boolean result = false;
@@ -346,8 +345,8 @@ public class QosCallbackTracker extends Handler {
     }
 
     private boolean matchesByProtocol(@NonNull QosBearerFilter sessionFilter,
-            final @NonNull IFilter filter, boolean hasMatchedFilter) {
-        boolean result = false;
+                                      @NonNull final IFilter filter, boolean hasMatchedFilter) {
+        boolean result;
         int protocol = sessionFilter.getProtocol();
         if (protocol == QosBearerFilter.QOS_PROTOCOL_TCP
                 || protocol == QosBearerFilter.QOS_PROTOCOL_UDP) {
@@ -367,8 +366,9 @@ public class QosCallbackTracker extends Handler {
                 ? sessionFilter : qosFilter;
     }
 
-    private @Nullable QosBearerFilter getMatchingQosBearerFilter(
-            @NonNull QosBearerSession qosBearerSession, final @NonNull IFilter filter) {
+    @Nullable
+    private QosBearerFilter getMatchingQosBearerFilter(
+            @NonNull QosBearerSession qosBearerSession, @NonNull final IFilter filter) {
         QosBearerFilter qosFilter = null;
 
         for (final QosBearerFilter sessionFilter : qosBearerSession.getQosBearerFilterList()) {
@@ -406,11 +406,11 @@ public class QosCallbackTracker extends Handler {
         return qosFilter;
     }
 
-    private void sendSessionAvailable(final int callbackId, final @NonNull QosBearerSession session,
-            @NonNull IFilter filter) {
+    private void sendSessionAvailable(final int callbackId, @NonNull final QosBearerSession session,
+                                      @NonNull IFilter filter) {
         QosBearerFilter qosBearerFilter = getMatchingQosBearerFilter(session, filter);
         List<InetSocketAddress> remoteAddresses = new ArrayList<>();
-        if (qosBearerFilter.getRemoteAddresses().size() > 0
+        if (qosBearerFilter != null && !qosBearerFilter.getRemoteAddresses().isEmpty()
                 && qosBearerFilter.getRemotePortRange() != null) {
             remoteAddresses.add(
                     new InetSocketAddress(qosBearerFilter.getRemoteAddresses().get(0).getAddress(),
@@ -455,17 +455,16 @@ public class QosCallbackTracker extends Handler {
     }
 
     private void notifyMetricDedicatedBearerListenerAdded(final int callbackId,
-            final @NonNull QosBearerSession session) {
+                                                          @NonNull final QosBearerSession session) {
 
-        final int slotId = mPhoneId;
         final int rat = getRatInfoFromSessionInfo(session);
         final int qci = getQCIFromSessionInfo(session);
 
-        mRcsStats.onImsDedicatedBearerListenerAdded(callbackId, slotId, rat, qci);
+        mRcsStats.onImsDedicatedBearerListenerAdded(callbackId, mPhoneId, rat, qci);
     }
 
     private void notifyMetricDedicatedBearerListenerBearerUpdateSession(
-            final int callbackId, final @NonNull QosBearerSession session) {
+            final int callbackId, @NonNull final QosBearerSession session) {
         mRcsStats.onImsDedicatedBearerListenerUpdateSession(callbackId, mPhoneId,
                 getRatInfoFromSessionInfo(session), getQCIFromSessionInfo(session), true);
     }
@@ -518,13 +517,12 @@ public class QosCallbackTracker extends Handler {
 
     private void notifyMetricDedicatedBearerEvent(final QosBearerSession session,
             final int bearerState, final boolean hasListener) {
-        final int slotId = mPhoneId;
         int ratAtEnd = getRatInfoFromSessionInfo(session);
         int qci = getQCIFromSessionInfo(session);
         boolean localConnectionInfoReceived = doesLocalConnectionInfoExist(session);
         boolean remoteConnectionInfoReceived = doesRemoteConnectionInfoExist(session);
 
-        mRcsStats.onImsDedicatedBearerEvent(slotId, ratAtEnd, qci, bearerState,
+        mRcsStats.onImsDedicatedBearerEvent(mPhoneId, ratAtEnd, qci, bearerState,
                 localConnectionInfoReceived, remoteConnectionInfoReceived, hasListener);
     }
 
