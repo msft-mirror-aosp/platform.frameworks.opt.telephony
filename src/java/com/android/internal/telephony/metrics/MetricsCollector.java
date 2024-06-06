@@ -1127,7 +1127,9 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 session.isIwlanCrossSimAtEnd,
                 session.isIwlanCrossSimAtConnected,
                 session.vonrEnabled,
-                session.isNtn);
+                session.isNtn,
+                session.supportsBusinessCallComposer,
+                session.callComposerStatus);
 
     }
 
@@ -1206,7 +1208,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 dataCallSession.isNonDds,
                 dataCallSession.isIwlanCrossSim,
                 dataCallSession.isNtn,
-                dataCallSession.isSatelliteTransport);
+                dataCallSession.isSatelliteTransport,
+                dataCallSession.isProvisioningProfile);
     }
 
     private static StatsEvent buildStatsEvent(ImsRegistrationStats stats) {
