@@ -82,6 +82,7 @@ import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.provider.Telephony;
+import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
 import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.NetworkRegistrationInfo;
@@ -133,7 +134,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -318,6 +318,8 @@ public class SatelliteController extends Handler {
     private final Object mIsSatelliteEnabledLock = new Object();
     @GuardedBy("mIsSatelliteEnabledLock")
     private Boolean mIsSatelliteEnabled = null;
+    private final Object mIsRadioOnLock = new Object();
+    @GuardedBy("mIsRadioOnLock")
     private boolean mIsRadioOn = false;
     private final Object mSatelliteViaOemProvisionLock = new Object();
     @GuardedBy("mSatelliteViaOemProvisionLock")
@@ -423,6 +425,11 @@ public class SatelliteController extends Handler {
     private long mWaitTimeForSatelliteEnablingResponse;
     private long mDemoPointingAlignedDurationMillis;
     private long mDemoPointingNotAlignedDurationMillis;
+    private final Object mLock = new Object();
+    @GuardedBy("mLock")
+    private long mLastEmergencyCallTime;
+    private long mSatelliteEmergencyModeDurationMillis;
+    private static final int DEFAULT_SATELLITE_EMERGENCY_MODE_DURATION_SECONDS = 300;
 
     /** Key used to read/write satellite system notification done in shared preferences. */
     private static final String SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY =
@@ -514,7 +521,10 @@ public class SatelliteController extends Handler {
                 mContext, looper, mFeatureFlags, mPointingAppController);
 
         mCi.registerForRadioStateChanged(this, EVENT_RADIO_STATE_CHANGED, null);
-        mIsRadioOn = phone.isRadioOn();
+        synchronized (mIsRadioOnLock) {
+            mIsRadioOn = phone.isRadioOn();
+        }
+
         registerForSatelliteProvisionStateChanged();
         registerForPendingDatagramCount();
         registerForSatelliteModemStateChanged();
@@ -565,6 +575,8 @@ public class SatelliteController extends Handler {
         mDemoPointingAlignedDurationMillis = getDemoPointingAlignedDurationMillisFromResources();
         mDemoPointingNotAlignedDurationMillis =
                 getDemoPointingNotAlignedDurationMillisFromResources();
+        mSatelliteEmergencyModeDurationMillis =
+                getSatelliteEmergencyModeDurationFromOverlayConfig(context);
     }
 
     /**
@@ -1218,11 +1230,13 @@ public class SatelliteController extends Handler {
             }
 
             case EVENT_RADIO_STATE_CHANGED: {
-                if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_ON) {
-                    mIsRadioOn = true;
-                } else if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_OFF) {
-                    mIsRadioOn = false;
-                    resetCarrierRoamingSatelliteModeParams();
+                synchronized (mIsRadioOnLock) {
+                    logd("EVENT_RADIO_STATE_CHANGED: radioState=" + mCi.getRadioState());
+                    if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_ON) {
+                        mIsRadioOn = true;
+                    } else if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_OFF) {
+                        resetCarrierRoamingSatelliteModeParams();
+                    }
                 }
 
                 if (mCi.getRadioState() != TelephonyManager.RADIO_POWER_UNAVAILABLE) {
@@ -1498,11 +1512,13 @@ public class SatelliteController extends Handler {
         }
 
         if (enableSatellite) {
-            if (!mIsRadioOn) {
-                ploge("Radio is not on, can not enable satellite");
-                sendErrorAndReportSessionMetrics(
-                        SatelliteManager.SATELLITE_RESULT_INVALID_MODEM_STATE, result);
-                return;
+            synchronized (mIsRadioOnLock) {
+                if (!mIsRadioOn) {
+                    ploge("Radio is not on, can not enable satellite");
+                    sendErrorAndReportSessionMetrics(
+                            SatelliteManager.SATELLITE_RESULT_INVALID_MODEM_STATE, result);
+                    return;
+                }
             }
         } else {
             /* if disable satellite, always assume demo is also disabled */
@@ -2644,12 +2660,15 @@ public class SatelliteController extends Handler {
      * modem. {@link SatelliteController} will then power off the satellite modem.
      */
     public void onCellularRadioPowerOffRequested() {
+        logd("onCellularRadioPowerOffRequested()");
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("onCellularRadioPowerOffRequested: oemEnabledSatelliteFlag is disabled");
             return;
         }
 
-        mIsRadioOn = false;
+        synchronized (mIsRadioOnLock) {
+            mIsRadioOn = false;
+        }
         requestSatelliteEnabled(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
                 false /* enableSatellite */, false /* enableDemoMode */, false /* isEmergency */,
                 new IIntegerConsumer.Stub() {
@@ -2882,7 +2901,7 @@ public class SatelliteController extends Handler {
             return true;
         }
 
-        if (serviceState.getState() == ServiceState.STATE_IN_SERVICE) {
+        if (getWwanIsInService(serviceState)) {
             // Device is connected to terrestrial network which has coverage
             resetCarrierRoamingSatelliteModeParams(subId);
             return false;
@@ -2978,6 +2997,29 @@ public class SatelliteController extends Handler {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected long getElapsedRealtime() {
         return SystemClock.elapsedRealtime();
+    }
+
+    /**
+     * Register the handler for SIM Refresh notifications.
+     * @param handler Handler for notification message.
+     * @param what User-defined message code.
+     */
+    public void registerIccRefresh(Handler handler, int what) {
+        for (Phone phone : PhoneFactory.getPhones()) {
+            CommandsInterface ci = phone.mCi;
+            ci.registerForIccRefresh(handler, what, null);
+        }
+    }
+
+    /**
+     * Unregister the handler for SIM Refresh notifications.
+     * @param handler Handler for notification message.
+     */
+    public void unRegisterIccRefresh(Handler handler) {
+        for (Phone phone : PhoneFactory.getPhones()) {
+            CommandsInterface ci = phone.mCi;
+            ci.unregisterForIccRefresh(handler);
+        }
     }
 
     /**
@@ -4333,7 +4375,7 @@ public class SatelliteController extends Handler {
                         sessionStats.onSignalStrength(phone);
                         if (!mWasSatelliteConnectedViaCarrier.get(subId)) {
                             // Log satellite connection start
-                            sessionStats.onConnectionStart();
+                            sessionStats.onConnectionStart(phone);
                         }
                     }
 
@@ -4349,7 +4391,7 @@ public class SatelliteController extends Handler {
                     }
                 } else {
                     Boolean connected = mWasSatelliteConnectedViaCarrier.get(subId);
-                    if (serviceState.getState() == ServiceState.STATE_IN_SERVICE) {
+                    if (getWwanIsInService(serviceState)) {
                         resetCarrierRoamingSatelliteModeParams(subId);
                     } else if (connected != null && connected) {
                         // The device just got disconnected from a satellite network
@@ -4404,7 +4446,7 @@ public class SatelliteController extends Handler {
                 // Log satellite session start
                 CarrierRoamingSatelliteSessionStats sessionStats =
                         CarrierRoamingSatelliteSessionStats.getInstance(subId);
-                sessionStats.onSessionStart(phone.getCarrierId());
+                sessionStats.onSessionStart(phone.getCarrierId(), phone);
                 mCarrierRoamingSatelliteSessionStatsMap.put(subId, sessionStats);
             } else if (lastNotifiedNtnMode && !currNtnMode) {
                 // Log satellite session end
@@ -4858,6 +4900,25 @@ public class SatelliteController extends Handler {
         return mDemoPointingNotAlignedDurationMillis;
     }
 
+    private boolean getWwanIsInService(ServiceState serviceState) {
+        List<NetworkRegistrationInfo> nriList = serviceState
+                .getNetworkRegistrationInfoListForTransportType(
+                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+        for (NetworkRegistrationInfo nri : nriList) {
+            if (nri.isInService()) {
+                logv("getWwanIsInService: return true");
+                return true;
+            }
+        }
+
+        logv("getWwanIsInService: return false");
+        return false;
+    }
+
+    private static void logv(@NonNull String log) {
+        Rlog.v(TAG, log);
+    }
+
     private static void logd(@NonNull String log) {
         Rlog.d(TAG, log);
     }
@@ -4925,5 +4986,42 @@ public class SatelliteController extends Handler {
         }
         // Also turn off persisted logging until new session is started
         loggerBackend.setLoggingEnabled(false);
+    }
+
+    /**
+     * Set last emergency call time to the current time.
+     */
+    public void setLastEmergencyCallTime() {
+        synchronized (mLock) {
+            mLastEmergencyCallTime = getElapsedRealtime();
+            plogd("mLastEmergencyCallTime=" + mLastEmergencyCallTime);
+        }
+    }
+
+    /**
+     * Check if satellite is in emergency mode.
+     */
+    public boolean isInEmergencyMode() {
+        synchronized (mLock) {
+            if (mLastEmergencyCallTime == 0) return false;
+
+            long currentTime = getElapsedRealtime();
+            if ((currentTime - mLastEmergencyCallTime) <= mSatelliteEmergencyModeDurationMillis) {
+                plogd("Satellite is in emergency mode");
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private long getSatelliteEmergencyModeDurationFromOverlayConfig(@NonNull Context context) {
+        Integer duration = DEFAULT_SATELLITE_EMERGENCY_MODE_DURATION_SECONDS;
+        try {
+            duration = context.getResources().getInteger(com.android.internal.R.integer
+                    .config_satellite_emergency_mode_duration);
+        } catch (Resources.NotFoundException ex) {
+            ploge("getSatelliteEmergencyModeDurationFromOverlayConfig: got ex=" + ex);
+        }
+        return TimeUnit.SECONDS.toMillis(duration);
     }
 }
