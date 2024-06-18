@@ -20,13 +20,18 @@ import android.annotation.NonNull;
 import android.telephony.CellInfo;
 import android.telephony.CellSignalStrength;
 import android.telephony.CellSignalStrengthLte;
+import android.telephony.NetworkRegistrationInfo;
+import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.util.SparseArray;
 
+import com.android.internal.telephony.MccTable;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.metrics.SatelliteStats;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,12 +41,14 @@ public class CarrierRoamingSatelliteSessionStats {
     private static final String TAG = CarrierRoamingSatelliteSessionStats.class.getSimpleName();
     private static final SparseArray<CarrierRoamingSatelliteSessionStats>
             sCarrierRoamingSatelliteSessionStats = new SparseArray<>();
+    @NonNull private final SubscriptionManagerService mSubscriptionManagerService;
     private int mCarrierId;
     private boolean mIsNtnRoamingInHomeCountry;
     private int mCountOfIncomingSms;
     private int mCountOfOutgoingSms;
     private int mCountOfIncomingMms;
     private int mCountOfOutgoingMms;
+    private long mIncomingMessageId;
 
     private int mSessionStartTimeSec;
     private List<Long> mConnectionStartTimeList;
@@ -49,9 +56,10 @@ public class CarrierRoamingSatelliteSessionStats {
     private List<Integer> mRsrpList;
     private List<Integer> mRssnrList;
 
-    public CarrierRoamingSatelliteSessionStats() {
-        logd("Create new CarrierRoamingSatelliteSessionStats.");
+    public CarrierRoamingSatelliteSessionStats(int subId) {
+        logd("Create new CarrierRoamingSatelliteSessionStats. subId=" + subId);
         initializeParams();
+        mSubscriptionManagerService = SubscriptionManagerService.getInstance();
     }
 
     /** Gets a CarrierRoamingSatelliteSessionStats instance. */
@@ -59,28 +67,31 @@ public class CarrierRoamingSatelliteSessionStats {
         synchronized (sCarrierRoamingSatelliteSessionStats) {
             if (sCarrierRoamingSatelliteSessionStats.get(subId) == null) {
                 sCarrierRoamingSatelliteSessionStats.put(subId,
-                        new CarrierRoamingSatelliteSessionStats());
+                        new CarrierRoamingSatelliteSessionStats(subId));
             }
             return sCarrierRoamingSatelliteSessionStats.get(subId);
         }
     }
 
     /** Log carrier roaming satellite session start */
-    public void onSessionStart(int carrierId) {
+    public void onSessionStart(int carrierId, Phone phone) {
         mCarrierId = carrierId;
         mSessionStartTimeSec = getCurrentTimeInSec();
-        onConnectionStart();
+        mIsNtnRoamingInHomeCountry = false;
+        onConnectionStart(phone);
     }
 
     /** Log carrier roaming satellite connection start */
-    public void onConnectionStart() {
+    public void onConnectionStart(Phone phone) {
         mConnectionStartTimeList.add(getCurrentTime());
+        updateNtnRoamingInHomeCountry(phone);
     }
 
     /** Log carrier roaming satellite session end */
     public void onSessionEnd() {
         onConnectionEnd();
         reportMetrics();
+        mIsNtnRoamingInHomeCountry = false;
     }
 
     /** Log carrier roaming satellite connection end */
@@ -107,15 +118,41 @@ public class CarrierRoamingSatelliteSessionStats {
     }
 
     /** Log incoming sms success case */
-    public void onIncomingSms() {
+    public void onIncomingSms(int subId) {
+        if (!isNtnConnected()) {
+            return;
+        }
         mCountOfIncomingSms += 1;
-        logd("onIncomingSms: mCountOfIncomingSms=" + mCountOfIncomingSms);
+        logd("onIncomingSms: subId=" + subId + ", count=" + mCountOfIncomingSms);
     }
 
     /** Log outgoing sms success case */
-    public void onOutgoingSms() {
+    public void onOutgoingSms(int subId) {
+        if (!isNtnConnected()) {
+            return;
+        }
         mCountOfOutgoingSms += 1;
-        logd("onOutgoingSms: mCountOfOutgoingSms=" + mCountOfOutgoingSms);
+        logd("onOutgoingSms: subId=" + subId + ", count=" + mCountOfOutgoingSms);
+    }
+
+    /** Log incoming or outgoing mms success case */
+    public void onMms(boolean isIncomingMms, long messageId) {
+        if (!isNtnConnected()) {
+            return;
+        }
+        if (isIncomingMms) {
+            mIncomingMessageId = messageId;
+            mCountOfIncomingMms += 1;
+            logd("onMms: messageId=" + messageId + ", countOfIncomingMms=" + mCountOfIncomingMms);
+        } else {
+            if (mIncomingMessageId == messageId) {
+                logd("onMms: NotifyResponse ignore it.");
+                mIncomingMessageId = 0;
+                return;
+            }
+            mCountOfOutgoingMms += 1;
+            logd("onMms: countOfOutgoingMms=" + mCountOfOutgoingMms);
+        }
     }
 
     private void reportMetrics() {
@@ -165,12 +202,14 @@ public class CarrierRoamingSatelliteSessionStats {
         mCountOfOutgoingSms = 0;
         mCountOfIncomingMms = 0;
         mCountOfOutgoingMms = 0;
+        mIncomingMessageId = 0;
 
         mSessionStartTimeSec = 0;
         mConnectionStartTimeList = new ArrayList<>();
         mConnectionEndTimeList = new ArrayList<>();
         mRsrpList = new ArrayList<>();
         mRssnrList = new ArrayList<>();
+        logd("initializeParams");
     }
 
     private CellSignalStrengthLte getCellSignalStrengthLte(Phone phone) {
@@ -257,6 +296,45 @@ public class CarrierRoamingSatelliteSessionStats {
 
     private long getCurrentTime() {
         return System.currentTimeMillis();
+    }
+
+    private boolean isNtnConnected() {
+        return mSessionStartTimeSec != 0;
+    }
+
+    private void updateNtnRoamingInHomeCountry(Phone phone) {
+        int subId = phone.getSubId();
+        ServiceState serviceState = phone.getServiceState();
+        if (serviceState == null) {
+            logd("ServiceState is null");
+            return;
+        }
+
+        String satelliteRegisteredPlmn = "";
+        for (NetworkRegistrationInfo nri
+                : serviceState.getNetworkRegistrationInfoList()) {
+            if (nri.isNonTerrestrialNetwork()) {
+                satelliteRegisteredPlmn = nri.getRegisteredPlmn();
+            }
+        }
+
+        SubscriptionInfoInternal subscriptionInfoInternal =
+                mSubscriptionManagerService.getSubscriptionInfoInternal(subId);
+        if (subscriptionInfoInternal == null) {
+            logd("SubscriptionInfoInternal is null");
+            return;
+        }
+        String simCountry = MccTable.countryCodeForMcc(subscriptionInfoInternal.getMcc());
+        String satelliteRegisteredCountry = MccTable.countryCodeForMcc(
+                satelliteRegisteredPlmn.substring(0, 3));
+        if (simCountry.equalsIgnoreCase(satelliteRegisteredCountry)) {
+            mIsNtnRoamingInHomeCountry = false;
+        } else {
+            // If device is connected to roaming non-terrestrial network, update to true.
+            mIsNtnRoamingInHomeCountry = true;
+        }
+        logd("updateNtnRoamingInHomeCountry: mIsNtnRoamingInHomeCountry="
+                + mIsNtnRoamingInHomeCountry);
     }
 
     private void logd(@NonNull String log) {
