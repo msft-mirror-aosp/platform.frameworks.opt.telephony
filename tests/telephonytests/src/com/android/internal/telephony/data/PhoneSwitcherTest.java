@@ -68,9 +68,10 @@ import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager;
-import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
+
+import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.Call;
 import com.android.internal.telephony.CommandException;
@@ -1935,6 +1936,17 @@ public class PhoneSwitcherTest extends TelephonyTest {
         }
 
         replaceInstance(PhoneFactory.class, "sPhones", null, mPhones);
+        for (Phone phone : mPhones) {
+            ServiceState ss = new ServiceState();
+
+            ss.addNetworkRegistrationInfo(new NetworkRegistrationInfo.Builder()
+                    .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
+                    .setRegistrationState(
+                            NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING)
+                    .setDomain(NetworkRegistrationInfo.DOMAIN_PS)
+                    .build());
+            doReturn(ss).when(phone).getServiceState();
+        }
     }
 
     private void initializeCommandInterfacesMock() {
