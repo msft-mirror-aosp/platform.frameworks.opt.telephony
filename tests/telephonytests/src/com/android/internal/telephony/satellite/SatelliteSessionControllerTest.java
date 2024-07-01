@@ -45,6 +45,7 @@ import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.flags.FeatureFlags;
 
 import org.junit.After;
 import org.junit.Before;
@@ -105,11 +106,12 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         Resources resources = mContext.getResources();
         when(resources.getInteger(anyInt())).thenReturn(TEST_SATELLITE_TIMEOUT_MILLIS);
 
+        when(mFeatureFlags.satellitePersistentLogging()).thenReturn(true);
         when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(false);
         mSatelliteModemInterface = new TestSatelliteModemInterface(
-                mContext, mMockSatelliteController, Looper.myLooper());
+                mContext, mMockSatelliteController, Looper.myLooper(), mFeatureFlags);
         mTestSatelliteSessionController = new TestSatelliteSessionController(mContext,
-                Looper.myLooper(), true, mSatelliteModemInterface);
+                Looper.myLooper(), mFeatureFlags, true, mSatelliteModemInterface);
         processAllMessages();
 
         mTestSatelliteModemStateCallback = new TestSatelliteModemStateCallback();
@@ -131,7 +133,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
          * state.
          */
         TestSatelliteSessionController sessionController1 = new TestSatelliteSessionController(
-                mContext, Looper.myLooper(), false, mSatelliteModemInterface);
+                mContext, Looper.myLooper(), mFeatureFlags, false, mSatelliteModemInterface);
         assertNotNull(sessionController1);
         processAllMessages();
         assertEquals(STATE_UNAVAILABLE, sessionController1.getCurrentStateName());
@@ -140,7 +142,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
          * Since satellite is supported, SatelliteSessionController should move to POWER_OFF state.
          */
         TestSatelliteSessionController sessionController2 = new TestSatelliteSessionController(
-                mContext, Looper.myLooper(), true, mSatelliteModemInterface);
+                mContext, Looper.myLooper(), mFeatureFlags, true, mSatelliteModemInterface);
         assertNotNull(sessionController2);
         processAllMessages();
         assertEquals(STATE_POWER_OFF, sessionController2.getCurrentStateName());
@@ -153,7 +155,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
          * state.
          */
         TestSatelliteSessionController sessionController = new TestSatelliteSessionController(
-                mContext, Looper.myLooper(), false, mSatelliteModemInterface);
+                mContext, Looper.myLooper(), mFeatureFlags, false, mSatelliteModemInterface);
         assertNotNull(sessionController);
         processAllMessages();
         assertEquals(STATE_UNAVAILABLE, sessionController.getCurrentStateName());
@@ -934,28 +936,41 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         assertNotNull(mTestSatelliteSessionController);
         assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
 
-        // IDLE -> DISABLING
+        // IDLE -> DISABLING request failed -> NOT_CONNECTED
         moveToIdleState();
-        moveSatelliteToDisablingState();
+        moveSatelliteToDisablingRequestFailed(SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED,
+                STATE_NOT_CONNECTED);
 
-        // DISABLING -> POWER_OFF
+        // NOT_CONNECTED -> DISABLING -> POWER_OFF
+        moveSatelliteToDisablingState();
         moveToPowerOffState();
 
-        // TRANSFERRING -> DISABLING
+        // IDLE -> DISABLING -> POWER_OFF
+        moveToIdleState();
+        moveSatelliteToDisablingState();
+        moveToPowerOffState();
+
+        // TRANSFERRING -> DISABLING request failed -> CONNECTED
+        moveToIdleState();
+        moveIdleToTransferringState();
+        moveSatelliteToDisablingRequestFailed(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED, STATE_CONNECTED);
+
+        // CONNECTED -> DISABLING -> POWER_OFF
+        moveSatelliteToDisablingState();
+        moveToPowerOffState();
+
+        // TRANSFERRING -> DISABLING -> POWER_OFF
         moveToIdleState();
         moveIdleToTransferringState();
         moveSatelliteToDisablingState();
-
-        // DISABLING -> POWER_OFF
         moveToPowerOffState();
 
-        // LISTENING -> DISABLING
+        // LISTENING -> DISABLING -> POWER_OFF
         moveToIdleState();
         moveIdleToTransferringState();
         moveTransferringToListeningState();
         moveSatelliteToDisablingState();
-
-        // DISABLING -> POWER_OFF
         moveToPowerOffState();
     }
 
@@ -1110,6 +1125,18 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
                 STATE_DISABLING_SATELLITE, mTestSatelliteSessionController.getCurrentStateName());
     }
 
+    private void moveSatelliteToDisablingRequestFailed(int state, String stateName) {
+        moveSatelliteToDisablingState();
+
+        // Satellite disabled request failed
+        mTestSatelliteSessionController.onSatelliteEnablementFailed();
+        processAllMessages();
+
+        // Satellite should stay in previous state as satellite disable request failed
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback, state);
+        assertEquals(stateName, mTestSatelliteSessionController.getCurrentStateName());
+    }
+
     private static class TestSatelliteModemInterface extends SatelliteModemInterface {
         private final AtomicInteger mListeningEnabledCount = new AtomicInteger(0);
         private final AtomicInteger mListeningDisabledCount = new AtomicInteger(0);
@@ -1117,8 +1144,9 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         private int mErrorCode = SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
         TestSatelliteModemInterface(@NonNull Context context,
-                SatelliteController satelliteController, @NonNull Looper looper) {
-            super(context, satelliteController, looper);
+                SatelliteController satelliteController, @NonNull Looper looper,
+                @NonNull FeatureFlags featureFlags) {
+            super(context, satelliteController, looper, featureFlags);
             mExponentialBackoff.stop();
         }
 
@@ -1161,9 +1189,10 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     }
 
     private static class TestSatelliteSessionController extends SatelliteSessionController {
-        TestSatelliteSessionController(Context context, Looper looper, boolean isSatelliteSupported,
+        TestSatelliteSessionController(Context context, Looper looper, FeatureFlags featureFlags,
+                boolean isSatelliteSupported,
                 SatelliteModemInterface satelliteModemInterface) {
-            super(context, looper, isSatelliteSupported, satelliteModemInterface);
+            super(context, looper, featureFlags, isSatelliteSupported, satelliteModemInterface);
         }
 
         String getCurrentStateName() {
