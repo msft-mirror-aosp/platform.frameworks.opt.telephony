@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony.satellite;
 
+import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_INNER_PRIMARY;
+import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_OUTER_PRIMARY;
 import static android.provider.Settings.ACTION_SATELLITE_SETTING;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_TYPE;
@@ -74,6 +76,8 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.database.ContentObserver;
+import android.hardware.devicestate.DeviceState;
+import android.hardware.devicestate.DeviceStateManager;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.nfc.NfcAdapter;
@@ -592,6 +596,10 @@ public class SatelliteController extends Handler {
                 }
             };
 
+    // List of device states returned from DeviceStateManager to determine if running on a foldable
+    // device.
+    private List<DeviceState> mDeviceStates = new ArrayList();
+
     /**
      * @return The singleton instance of SatelliteController.
      */
@@ -740,6 +748,9 @@ public class SatelliteController extends Handler {
         }
         registerDefaultSmsSubscriptionChangedBroadcastReceiver();
         updateSatelliteProvisionedStatePerSubscriberId();
+        if (android.hardware.devicestate.feature.flags.Flags.deviceStatePropertyMigration()) {
+            mDeviceStates = getSupportedDeviceStates();
+        }
     }
 
     class SatelliteSubscriptionsChangedListener
@@ -4323,7 +4334,8 @@ public class SatelliteController extends Handler {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected void setSettingsKeyToAllowDeviceRotation(int val) {
         // Only allows on a foldable device type.
-        if (!isFoldable(mContext)) {
+        if (!isFoldable(mContext, mDeviceStates)) {
+            logd("setSettingsKeyToAllowDeviceRotation(" + val + "), device was not a foldable");
             return;
         }
 
@@ -4364,10 +4376,19 @@ public class SatelliteController extends Handler {
      * If the device type is foldable.
      *
      * @param context context
+     * @param deviceStates list of {@link DeviceState}s provided from {@link DeviceStateManager}
      * @return {@code true} if device type is foldable. {@code false} for otherwise.
      */
-    private boolean isFoldable(Context context) {
-        return context.getResources().getIntArray(R.array.config_foldedDeviceStates).length > 0;
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public boolean isFoldable(Context context, List<DeviceState> deviceStates) {
+        if (android.hardware.devicestate.feature.flags.Flags.deviceStatePropertyMigration()) {
+            return deviceStates.stream().anyMatch(deviceState -> deviceState.hasProperty(
+                    PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_INNER_PRIMARY)
+                    || deviceState.hasProperty(
+                    PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_OUTER_PRIMARY));
+        } else {
+            return context.getResources().getIntArray(R.array.config_foldedDeviceStates).length > 0;
+        }
     }
 
     /**
@@ -6853,6 +6874,11 @@ public class SatelliteController extends Handler {
         IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(SubscriptionManager.ACTION_DEFAULT_SMS_SUBSCRIPTION_CHANGED);
         mContext.registerReceiver(mDefaultSmsSubscriptionChangedBroadcastReceiver, intentFilter);
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected List<DeviceState> getSupportedDeviceStates() {
+        return mContext.getSystemService(DeviceStateManager.class).getSupportedDeviceStates();
     }
 
     FeatureFlags getFeatureFlags() {
