@@ -18,6 +18,7 @@ package com.android.internal.telephony.data;
 
 import android.annotation.CallbackExecutor;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.StringDef;
 import android.content.res.Resources;
 import android.net.LinkProperties;
@@ -272,7 +273,7 @@ public class DataConfigManager extends Handler {
     private final String mLogTag;
     @NonNull
     private final FeatureFlags mFeatureFlags;
-    @NonNull
+    @Nullable
     private final CarrierConfigManager mCarrierConfigManager;
     @NonNull
     private PersistableBundle mCarrierConfig = null;
@@ -355,12 +356,14 @@ public class DataConfigManager extends Handler {
 
         mCarrierConfigManager = mPhone.getContext().getSystemService(CarrierConfigManager.class);
         // Callback send msg to handler thread, so callback itself can be executed in binder thread.
-        mCarrierConfigManager.registerCarrierConfigChangeListener(Runnable::run,
-                (slotIndex, subId, carrierId, specificCarrierId) -> {
-                    if (slotIndex == mPhone.getPhoneId()) {
-                        sendEmptyMessage(EVENT_CARRIER_CONFIG_CHANGED);
-                    }
-                });
+        if (mCarrierConfigManager != null) {
+            mCarrierConfigManager.registerCarrierConfigChangeListener(Runnable::run,
+                    (slotIndex, subId, carrierId, specificCarrierId) -> {
+                        if (slotIndex == mPhone.getPhoneId()) {
+                            sendEmptyMessage(EVENT_CARRIER_CONFIG_CHANGED);
+                        }
+                    });
+        }
 
         // Register for device config update
         DeviceConfig.addOnPropertiesChangedListener(
@@ -1500,14 +1503,6 @@ public class DataConfigManager extends Handler {
         return Arrays.stream(forcedCellularTransportCapabilities)
                 .map(DataUtils::getNetworkCapabilityFromString)
                 .collect(Collectors.toSet());
-    }
-
-    /**
-     * {@code True} enables mms to be attempted on iwlan if possible, even if existing cellular
-     *  networks already supports iwlan.
-     */
-    public boolean isForceIwlanMmsFeatureEnabled() {
-        return mResources.getBoolean(com.android.internal.R.bool.force_iwlan_mms_feature_enabled);
     }
 
     /**
