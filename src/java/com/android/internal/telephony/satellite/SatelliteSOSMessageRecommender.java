@@ -43,7 +43,10 @@ import android.os.OutcomeReceiver;
 import android.os.SystemProperties;
 import android.provider.DeviceConfig;
 import android.telecom.Connection;
+import android.telephony.AccessNetworkConstants;
+import android.telephony.CellIdentity;
 import android.telephony.DropBoxManagerLoggerBackend;
+import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
@@ -68,6 +71,7 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.SmsApplication;
 import com.android.internal.telephony.metrics.SatelliteStats;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -195,8 +199,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
      *                   call.
      */
     public void onEmergencyCallStarted(@NonNull Connection connection) {
-        if (!mSatelliteController.isSatelliteSupportedViaOem()
-                && !mSatelliteController.isSatelliteEmergencyMessagingSupportedViaCarrier()) {
+        if (!isSatelliteSupported()) {
             plogd("onEmergencyCallStarted: satellite is not supported");
             return;
         }
@@ -227,8 +230,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
     public void onEmergencyCallConnectionStateChanged(
             String callId, @Connection.ConnectionState int state) {
         plogd("callId=" + callId + ", state=" + state);
-        if (!mSatelliteController.isSatelliteSupportedViaOem()
-                && !mSatelliteController.isSatelliteEmergencyMessagingSupportedViaCarrier()) {
+        if (!isSatelliteSupported()) {
             plogd("onEmergencyCallConnectionStateChanged: satellite is not supported");
             return;
         }
@@ -242,16 +244,19 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private void handleEmergencyCallStartedEvent(@NonNull Connection connection) {
+        mSatelliteController.setLastEmergencyCallTime();
+
         if (sendEventDisplayEmergencyMessageForcefully(connection)) {
             return;
         }
 
         selectEmergencyCallWaitForConnectionTimeoutDuration();
         if (mEmergencyConnection == null) {
-            handleStateChangedEventForHysteresisTimer();
             registerForInterestedStateChangedEvents();
         }
         mEmergencyConnection = connection;
+        handleStateChangedEventForHysteresisTimer();
+
         synchronized (mLock) {
             mCheckingAccessRestrictionInProgress = false;
             mIsSatelliteAllowedForCurrentLocation = false;
@@ -343,6 +348,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private void handleEmergencyCallConnectionStateChangedEvent(
             @NonNull Pair<String, Integer> arg) {
+        mSatelliteController.setLastEmergencyCallTime();
         if (mEmergencyConnection == null) {
             // Either the call was not created or the timer already timed out.
             return;
@@ -409,7 +415,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
         for (Phone phone : PhoneFactory.getPhones()) {
             phone.registerForServiceStateChanged(
                     this, EVENT_SERVICE_STATE_CHANGED, null);
-            registerForImsRegistrationStateChanged(phone);
         }
     }
 
@@ -429,7 +434,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, mISatelliteProvisionStateCallback);
         for (Phone phone : PhoneFactory.getPhones()) {
             phone.unregisterForServiceStateChanged(this);
-            unregisterForImsRegistrationStateChanged(phone);
         }
     }
 
@@ -452,13 +456,47 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 int state = serviceState.getState();
                 if ((state == STATE_IN_SERVICE || state == STATE_EMERGENCY_ONLY
                         || serviceState.isEmergencyOnly())
-                        && !serviceState.isUsingNonTerrestrialNetwork()) {
+                        && !isSatellitePlmn(phone.getSubId(), serviceState)) {
                     logv("isCellularAvailable true");
                     return true;
                 }
             }
         }
         logv("isCellularAvailable false");
+        return false;
+    }
+
+    /** Check whether device is connected to satellite PLMN */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public boolean isSatellitePlmn(int subId, @NonNull ServiceState serviceState) {
+        List<String> satellitePlmnList =
+                mSatelliteController.getSatellitePlmnsForCarrier(subId);
+        if (satellitePlmnList.isEmpty()) {
+            plogd("isSatellitePlmn: satellitePlmnList is empty");
+            return false;
+        }
+
+        for (NetworkRegistrationInfo nri :
+                serviceState.getNetworkRegistrationInfoListForTransportType(
+                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN)) {
+            String registeredPlmn = nri.getRegisteredPlmn();
+            if (TextUtils.isEmpty(registeredPlmn)) {
+                plogd("isSatellitePlmn: registeredPlmn is empty");
+                continue;
+            }
+
+            String mccmnc = getMccMnc(nri);
+            for (String satellitePlmn : satellitePlmnList) {
+                if (TextUtils.equals(satellitePlmn, registeredPlmn)
+                        || TextUtils.equals(satellitePlmn, mccmnc)) {
+                    plogd("isSatellitePlmn: return true, satellitePlmn:" + satellitePlmn
+                            + " registeredPlmn:" + registeredPlmn + " mccmnc:" + mccmnc);
+                    return true;
+                }
+            }
+        }
+
+        plogd("isSatellitePlmn: return false");
         return false;
     }
 
@@ -493,7 +531,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private synchronized void handleStateChangedEventForHysteresisTimer() {
-        if (!isCellularAvailable()) {
+        if (!isCellularAvailable() && mEmergencyConnection != null) {
             startTimer();
         } else {
             logv("handleStateChangedEventForHysteresisTimer stopTimer");
@@ -760,6 +798,19 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 || SystemProperties.getBoolean(BOOT_ALLOW_MOCK_MODEM_PROPERTY, false));
     }
 
+    private boolean isSatelliteSupported() {
+        if (mSatelliteController.isSatelliteEmergencyMessagingSupportedViaCarrier()) return true;
+        if (mSatelliteController.isSatelliteSupportedViaOem() && isSatelliteViaOemProvisioned()) {
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isSatelliteViaOemProvisioned() {
+        Boolean provisioned = mSatelliteController.isSatelliteViaOemProvisioned();
+        return (provisioned != null) && provisioned;
+    }
+
     private static void logv(@NonNull String log) {
         Rlog.v(TAG, log);
     }
@@ -783,6 +834,24 @@ public class SatelliteSOSMessageRecommender extends Handler {
         } catch (RuntimeException e) {
             return false;
         }
+    }
+
+    @Nullable
+    private String getMccMnc(@NonNull NetworkRegistrationInfo nri) {
+        CellIdentity cellIdentity = nri.getCellIdentity();
+        if (cellIdentity == null) {
+            plogd("getMccMnc: cellIdentity is null");
+            return null;
+        }
+
+        String mcc = cellIdentity.getMccString();
+        String mnc = cellIdentity.getMncString();
+        if (mcc == null || mnc == null) {
+            plogd("getMccMnc: mcc or mnc is null. mcc=" + mcc + " mnc=" + mnc);
+            return null;
+        }
+
+        return mcc + mnc;
     }
 
     private void plogd(@NonNull String log) {
