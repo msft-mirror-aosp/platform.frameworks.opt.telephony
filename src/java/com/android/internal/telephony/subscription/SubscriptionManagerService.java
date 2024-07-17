@@ -193,9 +193,10 @@ public class SubscriptionManagerService extends ISub.Stub {
             SimInfo.COLUMN_NR_ADVANCED_CALLING_ENABLED,
             SimInfo.COLUMN_SATELLITE_ENABLED,
             SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER,
-            SimInfo.COLUMN_IS_NTN,
+            SimInfo.COLUMN_IS_ONLY_NTN,
             SimInfo.COLUMN_SATELLITE_ENTITLEMENT_STATUS,
-            SimInfo.COLUMN_SATELLITE_ENTITLEMENT_PLMNS
+            SimInfo.COLUMN_SATELLITE_ENTITLEMENT_PLMNS,
+            SimInfo.COLUMN_SATELLITE_ESOS_SUPPORTED
     );
 
     /**
@@ -1540,6 +1541,9 @@ public class SubscriptionManagerService extends ISub.Stub {
                             MccTable.updateMccMncConfiguration(mContext, mccMnc);
                         }
                         setMccMnc(subId, mccMnc);
+                        if (isSatelliteSpn(subInfo.getDisplayName()) || isSatellitePlmn(mccMnc)) {
+                            setNtn(subId, true);
+                        }
                     } else {
                         loge("updateSubscription: mcc/mnc is empty");
                     }
@@ -1933,7 +1937,10 @@ public class SubscriptionManagerService extends ISub.Stub {
                     + "carrier privilege");
         }
 
-        enforceTelephonyFeatureWithException(callingPackage, "getActiveSubscriptionInfo");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage, "getActiveSubscriptionInfo");
+        }
 
         SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
                 .getSubscriptionInfoInternal(subId);
@@ -2062,7 +2069,10 @@ public class SubscriptionManagerService extends ISub.Stub {
             return Collections.emptyList();
         }
 
-        enforceTelephonyFeatureWithException(callingPackage, "getActiveSubscriptionInfoList");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage, "getActiveSubscriptionInfoList");
+        }
 
         if (isForAllProfiles) {
             enforcePermissionAccessAllUserProfiles();
@@ -2154,7 +2164,11 @@ public class SubscriptionManagerService extends ISub.Stub {
         enforcePermissions("getAvailableSubscriptionInfoList",
                 Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
 
-        enforceTelephonyFeatureWithException(callingPackage, "getAvailableSubscriptionInfoList");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage,
+                    "getAvailableSubscriptionInfoList");
+        }
 
         return getAvailableSubscriptionsInternalStream()
                 .sorted(Comparator.comparing(SubscriptionInfoInternal::getSimSlotIndex)
@@ -2738,7 +2752,10 @@ public class SubscriptionManagerService extends ISub.Stub {
             return Collections.emptyList();
         }
 
-        enforceTelephonyFeatureWithException(callingPackage, "getOpportunisticSubscriptions");
+        if (!mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage, "getOpportunisticSubscriptions");
+        }
 
         return mSubscriptionDatabaseManager.getAllSubscriptions().stream()
                 // callers have READ_PHONE_STATE or READ_PRIVILEGED_PHONE_STATE can get a full
@@ -3311,7 +3328,10 @@ public class SubscriptionManagerService extends ISub.Stub {
     public int[] getActiveSubIdList(boolean visibleOnly) {
         enforcePermissions("getActiveSubIdList", Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
 
-        enforceTelephonyFeatureWithException(getCurrentPackageName(), "getActiveSubIdList");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(getCurrentPackageName(), "getActiveSubIdList");
+        }
 
         // UserHandle.ALL because this API is exposed as system API.
         return getActiveSubIdListAsUser(visibleOnly, UserHandle.ALL);
@@ -4494,9 +4514,16 @@ public class SubscriptionManagerService extends ISub.Stub {
      */
     @NonNull
     private String getCallingPackage() {
-        if (Binder.getCallingUid() == Process.PHONE_UID) {
-            // Too many packages running with phone uid. Just return one here.
-            return "com.android.phone";
+        if (Flags.supportPhoneUidCheckForMultiuser()) {
+            if (UserHandle.isSameApp(Binder.getCallingUid(), Process.PHONE_UID)) {
+                // Too many packages running with phone uid. Just return one here.
+                return "com.android.phone";
+            }
+        } else {
+            if (Binder.getCallingUid() == Process.PHONE_UID) {
+                // Too many packages running with phone uid. Just return one here.
+                return "com.android.phone";
+            }
         }
         return Arrays.toString(mContext.getPackageManager().getPackagesForUid(
                 Binder.getCallingUid()));
@@ -4588,6 +4615,43 @@ public class SubscriptionManagerService extends ISub.Stub {
                 .filter(s -> !s.isEmpty())
                 .map(s -> Arrays.stream(s.split(",")).collect(Collectors.toList()))
                 .orElse(new ArrayList<>());
+    }
+
+    /**
+     * Set the satellite ESOS supported value in the subscription database.
+     *
+     * @param subId subscription id.
+     * @param isSatelliteESOSSupported {@code true} satellite ESOS supported true.
+     */
+    public void setSatelliteESOSSupported(int subId, @NonNull boolean isSatelliteESOSSupported) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            return;
+        }
+        try {
+            mSubscriptionDatabaseManager.setSatelliteESOSSupported(subId,
+                    isSatelliteESOSSupported ? 1 : 0);
+        } catch (IllegalArgumentException e) {
+            loge("setSatelliteESOSSupported: invalid subId=" + subId);
+        }
+    }
+
+    /**
+     * Get the satellite ESOS supported value in the subscription database.
+     *
+     * @param subId subscription id.
+     * @return the satellite ESOS supported true or false.
+     */
+    public boolean getSatelliteESOSSupported(int subId) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            return false;
+        }
+        SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager.getSubscriptionInfoInternal(
+                subId);
+        if (subInfo == null) {
+            return false;
+        }
+
+        return subInfo.getSatelliteESOSSupported() == 1;
     }
 
     /**
