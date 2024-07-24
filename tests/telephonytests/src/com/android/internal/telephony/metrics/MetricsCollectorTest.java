@@ -23,6 +23,7 @@ import static com.android.internal.telephony.TelephonyStatsLog.SIM_SLOT_STATE;
 import static com.android.internal.telephony.TelephonyStatsLog.SUPPORTED_RADIO_ACCESS_FAMILY;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_RAT_USAGE;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION;
+import static com.android.internal.telephony.util.TelephonyUtils.IS_DEBUGGABLE;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -36,12 +37,14 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import android.app.StatsManager;
 import android.telephony.TelephonyManager;
-import android.test.suitebuilder.annotation.SmallTest;
 import android.util.StatsEvent;
+
+import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularDataServiceSwitch;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularServiceState;
 import com.android.internal.telephony.nano.PersistAtomsProto.OutgoingShortCodeSms;
@@ -51,6 +54,7 @@ import com.android.internal.telephony.uicc.IccCardStatus.CardState;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.uicc.UiccPort;
+import com.android.internal.telephony.uicc.UiccProfile;
 import com.android.internal.telephony.uicc.UiccSlot;
 
 import org.junit.After;
@@ -66,6 +70,8 @@ public class MetricsCollectorTest extends TelephonyTest {
                     .setCoolDownMillis(24L * 3600L * 1000L)
                     .build();
     private static final long MIN_COOLDOWN_MILLIS = 23L * 3600L * 1000L;
+    private static final long CELL_SERVICE_MIN_COOLDOWN_MILLIS =
+            IS_DEBUGGABLE ? 4L *  60L * 1000L : MIN_COOLDOWN_MILLIS;
     private static final long MIN_CALLS_PER_BUCKET = 5L;
 
     // NOTE: these fields are currently 32-bit internally and padded to 64-bit by TelephonyManager
@@ -91,6 +97,8 @@ public class MetricsCollectorTest extends TelephonyTest {
     private UiccCard mActiveCard;
     private UiccPort mActivePort;
     private ServiceStateStats mServiceStateStats;
+    private VonrHelper mVonrHelper;
+    private FeatureFlags mFeatureFlags;
 
     private MetricsCollector mMetricsCollector;
 
@@ -103,8 +111,11 @@ public class MetricsCollectorTest extends TelephonyTest {
         mActiveCard = mock(UiccCard.class);
         mActivePort = mock(UiccPort.class);
         mServiceStateStats = mock(ServiceStateStats.class);
+        mVonrHelper = mock(VonrHelper.class);
+        mFeatureFlags = mock(FeatureFlags.class);
         mMetricsCollector =
-                new MetricsCollector(mContext, mPersistAtomsStorage, mDeviceStateHelper);
+                new MetricsCollector(mContext, mPersistAtomsStorage,
+                        mDeviceStateHelper, mVonrHelper, mFeatureFlags);
         doReturn(mSST).when(mSecondPhone).getServiceStateTracker();
         doReturn(mServiceStateStats).when(mSST).getServiceStateStats();
     }
@@ -119,6 +130,9 @@ public class MetricsCollectorTest extends TelephonyTest {
     @SmallTest
     public void onPullAtom_simSlotState_bothSimPresent() {
         // these have been tested extensively in SimSlotStateTest, here we verify atom generation
+        UiccProfile activeProfile = mock(UiccProfile.class);
+        doReturn(4).when(activeProfile).getNumApplications();
+        doReturn(activeProfile).when(mActivePort).getUiccProfile();
         doReturn(true).when(mPhysicalSlot).isActive();
         doReturn(CardState.CARDSTATE_PRESENT).when(mPhysicalSlot).getCardState();
         doReturn(false).when(mPhysicalSlot).isEuicc();
@@ -126,7 +140,6 @@ public class MetricsCollectorTest extends TelephonyTest {
         doReturn(CardState.CARDSTATE_PRESENT).when(mEsimSlot).getCardState();
         doReturn(true).when(mEsimSlot).isEuicc();
         doReturn(mActiveCard).when(mEsimSlot).getUiccCard();
-        doReturn(4).when(mActivePort).getNumApplications();
         doReturn(new UiccPort[] {mActivePort}).when(mActiveCard).getUiccPortList();
         doReturn(new UiccSlot[] {mPhysicalSlot, mEsimSlot}).when(mUiccController).getUiccSlots();
         doReturn(mPhysicalSlot).when(mUiccController).getUiccSlot(eq(0));
@@ -395,7 +408,8 @@ public class MetricsCollectorTest extends TelephonyTest {
 
         assertThat(actualAtoms).hasSize(0);
         assertThat(result).isEqualTo(StatsManager.PULL_SKIP);
-        verify(mPersistAtomsStorage, times(1)).getCellularServiceStates(eq(MIN_COOLDOWN_MILLIS));
+        verify(mPersistAtomsStorage, times(1)).getCellularServiceStates(
+                eq(CELL_SERVICE_MIN_COOLDOWN_MILLIS));
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 

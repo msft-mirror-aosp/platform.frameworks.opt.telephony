@@ -31,8 +31,8 @@ import android.telephony.ims.feature.CapabilityChangeRequest;
 import android.telephony.ims.feature.ImsFeature;
 import android.telephony.ims.feature.MmTelFeature;
 import android.telephony.ims.stub.ImsRegistrationImplBase;
-import android.test.suitebuilder.annotation.SmallTest;
 
+import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.ims.internal.IImsFeatureStatusCallback;
@@ -48,7 +48,7 @@ import org.mockito.MockitoAnnotations;
 @RunWith(AndroidJUnit4.class)
 public class ImsFeatureTest {
     // Public for Mockito testing
-    public class CapabilityCallback extends IImsCapabilityCallback.Stub {
+    public static class CapabilityCallback extends IImsCapabilityCallback.Stub {
 
         @Override
         public void onQueryCapabilityConfiguration(int capability, int radioTech, boolean enabled)

@@ -17,18 +17,29 @@ package com.android.internal.telephony;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.junit.Assert.assertThrows;
+
 import android.os.Parcel;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 
+import com.android.internal.telephony.flags.Flags;
+
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+
+import java.util.Set;
 
 public class SubscriptionInfoTest {
     private SubscriptionInfo mSubscriptionInfoUT;
-    private static final String[] EHPLMNS = new String[] {"310999", "310998"};
-    private static final String[] HPLMNS = new String[] {"310001"};
+    private static final String[] EHPLMNS = new String[]{"310999", "310998"};
+    private static final String[] HPLMNS = new String[]{"310001"};
+
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     @After
     public void tearDown() throws Exception {
@@ -37,6 +48,8 @@ public class SubscriptionInfoTest {
 
     @Before
     public void setUp() throws Exception {
+        mSetFlagsRule.enableFlags(Flags.FLAG_DATA_ONLY_CELLULAR_SERVICE);
+        mSetFlagsRule.enableFlags(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG);
         mSubscriptionInfoUT = new SubscriptionInfo.Builder()
                 .setId(1)
                 .setIccId("890126042XXXXXXXXXXX")
@@ -52,6 +65,10 @@ public class SubscriptionInfoTest {
                 .setEhplmns(EHPLMNS)
                 .setHplmns(HPLMNS)
                 .setCountryIso("us")
+                .setOnlyNonTerrestrialNetwork(true)
+                .setServiceCapabilities(SubscriptionManager.getServiceCapabilitiesSet(
+                    SubscriptionManager.SERVICE_CAPABILITY_DATA_BITMASK))
+                .setTransferStatus(1)
                 .build();
     }
 
@@ -71,6 +88,14 @@ public class SubscriptionInfoTest {
         assertThat(mSubscriptionInfoUT.getSubscriptionId()).isEqualTo(1);
         assertThat(mSubscriptionInfoUT.getSimSlotIndex()).isEqualTo(0);
         assertThat(mSubscriptionInfoUT.getIccId()).isEqualTo("890126042XXXXXXXXXXX");
+        if (Flags.oemEnabledSatelliteFlag()) {
+            assertThat(mSubscriptionInfoUT.isOnlyNonTerrestrialNetwork()).isTrue();
+        }
+        assertThat(mSubscriptionInfoUT.getServiceCapabilities()).isEqualTo(
+                Set.of(SubscriptionManager.SERVICE_CAPABILITY_DATA));
+        if (Flags.supportPsimToEsimConversion()) {
+            assertThat(mSubscriptionInfoUT.getTransferStatus()).isEqualTo(1);
+        }
     }
 
     @Test
@@ -95,5 +120,32 @@ public class SubscriptionInfoTest {
         assertThat(mSubscriptionInfoUT).isEqualTo(copiedInfo);
         assertThat(mSubscriptionInfoUT).isNotEqualTo(differentDisplayName);
         assertThat(mSubscriptionInfoUT).isNotEqualTo(differentSubId);
+
+        SubscriptionInfo differentServiceCapabilities =
+                new SubscriptionInfo.Builder(mSubscriptionInfoUT)
+                        .setServiceCapabilities(SubscriptionManager.getServiceCapabilitiesSet(
+                                SubscriptionManager.SERVICE_CAPABILITY_SMS_BITMASK))
+                        .build();
+        assertThat(mSubscriptionInfoUT).isNotEqualTo(differentServiceCapabilities);
+    }
+
+    @Test
+    public void testInvalidServiceCapability_tooLarge() {
+        assertThrows("IllegalArgumentException should throw when set invalid service capability.",
+                IllegalArgumentException.class,
+                () -> new SubscriptionInfo.Builder()
+                        .setServiceCapabilities(
+                                Set.of(SubscriptionManager.SERVICE_CAPABILITY_MAX + 1))
+                        .build());
+    }
+
+    @Test
+    public void testInvalidServiceCapability_tooSmall() {
+        assertThrows("IllegalArgumentException should throw when set invalid service capability.",
+                IllegalArgumentException.class,
+                () -> new SubscriptionInfo.Builder()
+                        .setServiceCapabilities(
+                                Set.of(SubscriptionManager.SERVICE_CAPABILITY_VOICE - 1))
+                        .build());
     }
 }

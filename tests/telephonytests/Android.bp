@@ -1,4 +1,5 @@
 package {
+    default_team: "trendy_team_fwk_telephony",
     // See: http://go/android-license-faq
     default_applicable_licenses: [
         "frameworks_opt_telephony_tests_telephonytests_license",
@@ -41,6 +42,8 @@ android_test {
         "truth",
         "testables",
         "platform-compat-test-rules",
+        "flag-junit",
+        "telephony_flags_core_java_lib",
     ],
 
     jarjar_rules: ":jarjar-rules-telephony-tests",

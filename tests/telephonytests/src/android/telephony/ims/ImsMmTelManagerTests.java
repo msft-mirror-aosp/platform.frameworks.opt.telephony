@@ -26,7 +26,8 @@ import android.telephony.AccessNetworkConstants;
 import android.telephony.BinderCacheManager;
 import android.telephony.ims.aidl.IImsRegistrationCallback;
 import android.telephony.ims.stub.ImsRegistrationImplBase;
-import android.test.suitebuilder.annotation.SmallTest;
+
+import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.ITelephony;
 import com.android.internal.telephony.TelephonyTest;
@@ -41,7 +42,7 @@ public class ImsMmTelManagerTests extends TelephonyTest {
     ITelephony mMockTelephonyInterface;
     BinderCacheManager<ITelephony> mBinderCache;
 
-    public class LocalCallback extends ImsMmTelManager.RegistrationCallback {
+    public static class LocalCallback extends ImsMmTelManager.RegistrationCallback {
         int mRegResult = -1;
 
         @Override
