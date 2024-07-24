@@ -42,6 +42,7 @@ import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
 import com.android.internal.telephony.cdma.CdmaSmsBroadcastConfigInfo;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
 
 import org.junit.After;
@@ -49,6 +50,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.Mockito;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -60,13 +63,16 @@ public final class CellBroadcastConfigTrackerTest extends TelephonyTest {
 
     private CommandsInterface mSpyCi;
     private CellBroadcastConfigTracker mTracker;
+    @Mock private FeatureFlags mFeatureFlags;
 
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mFeatureFlags = Mockito.mock(FeatureFlags.class);
         mSpyCi = spy(mSimulatedCommands);
         mPhone = new GsmCdmaPhone(mContext, mSpyCi, mNotifier, true, 0,
-            PhoneConstants.PHONE_TYPE_GSM, mTelephonyComponentFactory, (c, p) -> mImsManager);
+            PhoneConstants.PHONE_TYPE_GSM, mTelephonyComponentFactory, (c, p) -> mImsManager,
+                mFeatureFlags);
         mTracker = CellBroadcastConfigTracker.make(mPhone, mPhone, true);
         mPhone.mCellBroadcastConfigTracker = mTracker;
         processAllMessages();
@@ -403,6 +409,26 @@ public final class CellBroadcastConfigTrackerTest extends TelephonyTest {
         assertEquals(mPhone.getCellBroadcastIdRanges(), ranges);
 
         mPhone.sendEmptyMessage(Phone.EVENT_RADIO_OFF_OR_NOT_AVAILABLE);
+        processAllMessages();
+
+        // Verify the config is reset
+        assertTrue(mPhone.getCellBroadcastIdRanges().isEmpty());
+    }
+
+    @Test
+    public void testClearCellBroadcastConfigOnModemReset() {
+        List<CellBroadcastIdRange> ranges = new ArrayList<>();
+        ranges.add(new CellBroadcastIdRange(0, 999, SmsCbMessage.MESSAGE_FORMAT_3GPP, true));
+
+        mPhone.setCellBroadcastIdRanges(ranges, r -> assertTrue(
+                TelephonyManager.CELL_BROADCAST_RESULT_SUCCESS == r));
+        processAllMessages();
+
+        assertEquals(mPhone.getCellBroadcastIdRanges(), ranges);
+
+        Message m = mTracker.obtainMessage(CellBroadcastConfigTracker.EVENT_RADIO_RESET);
+        AsyncResult.forMessage(m);
+        m.sendToTarget();
         processAllMessages();
 
         // Verify the config is reset

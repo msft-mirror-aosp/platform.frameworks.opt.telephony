@@ -16,6 +16,9 @@
 
 package com.android.internal.telephony.data;
 
+import static android.telephony.data.ApnSetting.INFRASTRUCTURE_CELLULAR;
+import static android.telephony.data.ApnSetting.INFRASTRUCTURE_SATELLITE;
+
 import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertTrue;
 import static junit.framework.Assert.fail;
@@ -25,6 +28,7 @@ import static org.junit.Assert.assertEquals;
 import android.net.Uri;
 import android.os.Parcel;
 import android.os.PersistableBundle;
+import android.provider.Telephony;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
@@ -39,6 +43,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.net.InetAddress;
 import java.util.List;
+import java.util.Set;
 
 public class ApnSettingTest extends TelephonyTest {
 
@@ -154,6 +159,9 @@ public class ApnSettingTest extends TelephonyTest {
         assertTrue(createApnSetting(
                 ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_MMS | ApnSetting.TYPE_EMERGENCY)
                 .canHandleType(ApnSetting.TYPE_EMERGENCY));
+        assertTrue(createApnSetting(
+                ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_RCS | ApnSetting.TYPE_EMERGENCY)
+                .canHandleType(ApnSetting.TYPE_RCS));
         assertFalse(createApnSetting(ApnSetting.TYPE_ALL)
                 .canHandleType(ApnSetting.TYPE_MCX));
         assertTrue(createApnSetting(
@@ -200,12 +208,16 @@ public class ApnSettingTest extends TelephonyTest {
         final String[] dummyStringArr = new String[] {"dummy"};
         final InetAddress dummyProxyAddress = InetAddress.getByAddress(new byte[]{0, 0, 0, 0});
         final Uri dummyUri = Uri.parse("www.google.com");
+
+        final Set<String> excludedFields = Set.of("mEditedStatus");
+
         // base apn
         ApnSetting baseApn = createApnSetting(ApnSetting.TYPE_MMS | ApnSetting.TYPE_DEFAULT);
         Field[] fields = ApnSetting.class.getDeclaredFields();
         for (Field f : fields) {
             int modifiers = f.getModifiers();
-            if (Modifier.isStatic(modifiers) || !Modifier.isFinal(modifiers)) {
+            if (Modifier.isStatic(modifiers) || !Modifier.isFinal(modifiers)
+                    || excludedFields.contains(f.getName())) {
                 continue;
             }
             f.setAccessible(true);
@@ -377,5 +389,64 @@ public class ApnSettingTest extends TelephonyTest {
                 .setMmsProxyAddress("proxy.mobile.att.net")
                 .build();
         assertEquals("proxy.mobile.att.net", apn3.getMmsProxyAddressAsString());
+    }
+
+    @Test
+    public void testBuild_InfrastructureBitmask() {
+        int infrastructureBitmask = INFRASTRUCTURE_CELLULAR | INFRASTRUCTURE_SATELLITE;
+        ApnSetting apn1 = new ApnSetting.Builder()
+                .setId(1234)
+                .setOperatorNumeric("310260")
+                .setEntryName("mms")
+                .setApnName("mms")
+                .setApnTypeBitmask(ApnSetting.TYPE_MMS | ApnSetting.TYPE_DEFAULT)
+                .setProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_LTE))
+                .build();
+        // InfrastructureBitmask default value set to '3(cellular|satellite)'
+        assertEquals(infrastructureBitmask, apn1.getInfrastructureBitmask());
+
+        infrastructureBitmask = INFRASTRUCTURE_CELLULAR;
+        ApnSetting apn2 = new ApnSetting.Builder()
+                .setId(1235)
+                .setOperatorNumeric("310260")
+                .setEntryName("mms")
+                .setApnName("mms")
+                .setApnTypeBitmask(ApnSetting.TYPE_MMS | ApnSetting.TYPE_DEFAULT)
+                .setProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_LTE))
+                .setInfrastructureBitmask(infrastructureBitmask)
+                .build();
+        // InfrastructureBitmask value set to '1(cellular)'
+        assertEquals(infrastructureBitmask, apn2.getInfrastructureBitmask());
+    }
+
+    @Test
+    public void testEditedStatus() {
+        ApnSetting apn = new ApnSetting.Builder()
+                .setId(1234)
+                .setOperatorNumeric("310260")
+                .setEntryName("mms")
+                .setApnName("mms")
+                .setApnTypeBitmask(ApnSetting.TYPE_MMS | ApnSetting.TYPE_DEFAULT)
+                .setProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_LTE))
+                .setEditedStatus(Telephony.Carriers.USER_EDITED)
+                .build();
+        assertEquals(Telephony.Carriers.USER_EDITED, apn.getEditedStatus());
+
+        ApnSetting apn2 = new ApnSetting.Builder()
+                .setId(1234)
+                .setOperatorNumeric("310260")
+                .setEntryName("mms")
+                .setApnName("mms")
+                .setApnTypeBitmask(ApnSetting.TYPE_MMS | ApnSetting.TYPE_DEFAULT)
+                .setProtocol(ApnSetting.PROTOCOL_IPV4V6)
+                .setNetworkTypeBitmask((int) (TelephonyManager.NETWORK_TYPE_BITMASK_LTE))
+                .setEditedStatus(Telephony.Carriers.CARRIER_EDITED)
+                .build();
+
+        // The edited status should not affect equals
+        assertEquals(apn, apn2);
     }
 }

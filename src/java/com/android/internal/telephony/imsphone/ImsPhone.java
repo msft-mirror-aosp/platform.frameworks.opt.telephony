@@ -16,13 +16,16 @@
 
 package com.android.internal.telephony.imsphone;
 
+import static android.telephony.AccessNetworkConstants.TRANSPORT_TYPE_INVALID;
 import static android.telephony.ims.ImsManager.EXTRA_WFC_REGISTRATION_FAILURE_MESSAGE;
 import static android.telephony.ims.ImsManager.EXTRA_WFC_REGISTRATION_FAILURE_TITLE;
 import static android.telephony.ims.RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED;
 import static android.telephony.ims.RegistrationManager.REGISTRATION_STATE_REGISTERED;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_NONE;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_RAT_BLOCK;
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_NONE;
 
 import static com.android.internal.telephony.CommandsInterface.CB_FACILITY_BAIC;
@@ -120,6 +123,7 @@ import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.emergency.EmergencyStateTracker;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.metrics.ImsStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
@@ -285,6 +289,8 @@ public class ImsPhone extends ImsPhoneBase {
 
     private final RegistrantList mSilentRedialRegistrants = new RegistrantList();
 
+    private final RegistrantList mImsRegistrationUpdateRegistrants = new RegistrantList();
+
     private final LocalLog mRegLocalLog = new LocalLog(64);
     private TelephonyMetrics mMetrics;
 
@@ -308,6 +314,7 @@ public class ImsPhone extends ImsPhoneBase {
     private @RegistrationManager.SuggestedAction int mImsRegistrationSuggestedAction;
     private @ImsRegistrationImplBase.ImsRegistrationTech int mImsDeregistrationTech =
             REGISTRATION_TECH_NONE;
+    private @AccessNetworkConstants.TransportType int mTransportType = TRANSPORT_TYPE_INVALID;
     private int mImsRegistrationCapabilities;
     private boolean mNotifiedRegisteredState;
 
@@ -454,14 +461,15 @@ public class ImsPhone extends ImsPhoneBase {
     }
 
     // Constructors
-    public ImsPhone(Context context, PhoneNotifier notifier, Phone defaultPhone) {
-        this(context, notifier, defaultPhone, ImsManager::getInstance, false);
+    public ImsPhone(Context context, PhoneNotifier notifier,
+            Phone defaultPhone, FeatureFlags featureFlags) {
+        this(context, notifier, defaultPhone, ImsManager::getInstance, false, featureFlags);
     }
 
     @VisibleForTesting
     public ImsPhone(Context context, PhoneNotifier notifier, Phone defaultPhone,
-            ImsManagerFactory imsManagerFactory, boolean unitTestMode) {
-        super("ImsPhone", context, notifier, unitTestMode);
+            ImsManagerFactory imsManagerFactory, boolean unitTestMode, FeatureFlags featureFlags) {
+        super("ImsPhone", context, notifier, unitTestMode, featureFlags);
 
         mDefaultPhone = defaultPhone;
         mImsManagerFactory = imsManagerFactory;
@@ -480,7 +488,7 @@ public class ImsPhone extends ImsPhoneBase {
                         .inject(ImsNrSaModeHandler.class.getName())
                         .makeImsNrSaModeHandler(this);
         mCT = TelephonyComponentFactory.getInstance().inject(ImsPhoneCallTracker.class.getName())
-                .makeImsPhoneCallTracker(this);
+                .makeImsPhoneCallTracker(this, featureFlags);
         mCT.registerPhoneStateListener(mExternalCallTracker);
         mExternalCallTracker.setCallPuller(mCT);
 
@@ -1658,6 +1666,14 @@ public class ImsPhone extends ImsPhoneBase {
         }
     }
 
+    public void registerForImsRegistrationChanges(Handler h, int what, Object obj) {
+        mImsRegistrationUpdateRegistrants.addUnique(h, what, obj);
+    }
+
+    public void unregisterForImsRegistrationChanges(Handler h) {
+        mImsRegistrationUpdateRegistrants.remove(h);
+    }
+
     @Override
     public void registerForSilentRedial(Handler h, int what, Object obj) {
         mSilentRedialRegistrants.addUnique(h, what, obj);
@@ -2430,7 +2446,9 @@ public class ImsPhone extends ImsPhoneBase {
 
         if (mCT.getState() == PhoneConstants.State.IDLE) {
             if (DBG) logd("updateRoamingState now: " + newRoamingState);
-            mLastKnownRoamingState = newRoamingState;
+            if (!mFeatureFlags.updateRoamingStateToSetWfcMode()) {
+                mLastKnownRoamingState = newRoamingState;
+            }
             CarrierConfigManager configManager = (CarrierConfigManager)
                     getContext().getSystemService(Context.CARRIER_CONFIG_SERVICE);
             // Don't set wfc mode if carrierconfig has not loaded. It will be set by GsmCdmaPhone
@@ -2439,6 +2457,9 @@ public class ImsPhone extends ImsPhoneBase {
                     configManager.getConfigForSubId(getSubId()))) {
                 ImsManager imsManager = mImsManagerFactory.create(mContext, mPhoneId);
                 imsManager.setWfcMode(imsManager.getWfcMode(newRoamingState), newRoamingState);
+                if (mFeatureFlags.updateRoamingStateToSetWfcMode()) {
+                    mLastKnownRoamingState = newRoamingState;
+                }
             }
         } else {
             if (DBG) logd("updateRoamingState postponed: " + newRoamingState);
@@ -2459,7 +2480,7 @@ public class ImsPhone extends ImsPhoneBase {
         int subId = getSubId();
         if (SubscriptionManager.isValidSubscriptionId(subId)) {
             updateImsRegistrationInfo(REGISTRATION_STATE_NOT_REGISTERED,
-                    REGISTRATION_TECH_NONE, SUGGESTED_ACTION_NONE);
+                    REGISTRATION_TECH_NONE, SUGGESTED_ACTION_NONE, TRANSPORT_TYPE_INVALID);
         }
     }
 
@@ -2467,21 +2488,24 @@ public class ImsPhone extends ImsPhoneBase {
             ImsRegistrationCallbackHelper.ImsRegistrationUpdate() {
         @Override
         public void handleImsRegistered(@NonNull ImsRegistrationAttributes attributes) {
-            int imsRadioTech = attributes.getTransportType();
+            int imsTransportType = attributes.getTransportType();
             if (DBG) {
-                logd("handleImsRegistered: onImsMmTelConnected imsRadioTech="
-                        + AccessNetworkConstants.transportTypeToString(imsRadioTech));
+                logd("handleImsRegistered: onImsMmTelConnected imsTransportType="
+                        + AccessNetworkConstants.transportTypeToString(imsTransportType));
             }
-            mRegLocalLog.log("handleImsRegistered: onImsMmTelConnected imsRadioTech="
-                    + AccessNetworkConstants.transportTypeToString(imsRadioTech));
+            mRegLocalLog.log("handleImsRegistered: onImsMmTelConnected imsTransportType="
+                    + AccessNetworkConstants.transportTypeToString(imsTransportType));
             setServiceState(ServiceState.STATE_IN_SERVICE);
             getDefaultPhone().setImsRegistrationState(true);
             mMetrics.writeOnImsConnectionState(mPhoneId, ImsConnectionState.State.CONNECTED, null);
-            mImsStats.onImsRegistered(imsRadioTech);
+            mImsStats.onImsRegistered(attributes);
             mImsNrSaModeHandler.onImsRegistered(
                     attributes.getRegistrationTechnology(), attributes.getFeatureTags());
             updateImsRegistrationInfo(REGISTRATION_STATE_REGISTERED,
-                    attributes.getRegistrationTechnology(), SUGGESTED_ACTION_NONE);
+                    attributes.getRegistrationTechnology(), SUGGESTED_ACTION_NONE,
+                    imsTransportType);
+            AsyncResult ar = new AsyncResult(null, null, null);
+            mImsRegistrationUpdateRegistrants.notifyRegistrants(ar);
         }
 
         @Override
@@ -2497,6 +2521,8 @@ public class ImsPhone extends ImsPhoneBase {
             mMetrics.writeOnImsConnectionState(mPhoneId, ImsConnectionState.State.PROGRESSING,
                     null);
             mImsStats.onImsRegistering(imsRadioTech);
+            AsyncResult ar = new AsyncResult(null, null, null);
+            mImsRegistrationUpdateRegistrants.notifyRegistrants(ar);
         }
 
         @Override
@@ -2523,10 +2549,23 @@ public class ImsPhone extends ImsPhoneBase {
                 if ((suggestedAction == SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK)
                         || (suggestedAction == SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT)) {
                     suggestedModemAction = suggestedAction;
+                } else if (mFeatureFlags.addRatRelatedSuggestedActionToImsRegistration()) {
+                    if ((suggestedAction == SUGGESTED_ACTION_TRIGGER_RAT_BLOCK)
+                            || (suggestedAction == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS)) {
+                        suggestedModemAction = suggestedAction;
+                    }
                 }
             }
             updateImsRegistrationInfo(REGISTRATION_STATE_NOT_REGISTERED,
-                    imsRadioTech, suggestedModemAction);
+                    imsRadioTech, suggestedModemAction, TRANSPORT_TYPE_INVALID);
+
+            if (mFeatureFlags.clearCachedImsPhoneNumberWhenDeviceLostImsRegistration()) {
+                // Clear the phone number from P-Associated-Uri
+                setCurrentSubscriberUris(null);
+                clearPhoneNumberForSourceIms();
+            }
+            AsyncResult ar = new AsyncResult(null, null, null);
+            mImsRegistrationUpdateRegistrants.notifyRegistrants(ar);
         }
 
         @Override
@@ -2536,6 +2575,18 @@ public class ImsPhone extends ImsPhoneBase {
             setPhoneNumberForSourceIms(uris);
         }
     };
+
+    /** Clear the IMS phone number from IMS associated Uris when IMS registration is lost. */
+    @VisibleForTesting
+    public void clearPhoneNumberForSourceIms() {
+        int subId = getSubId();
+        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
+            return;
+        }
+
+        if (DBG) logd("clearPhoneNumberForSourceIms");
+        mSubscriptionManagerService.setNumberFromIms(subId, new String(""));
+    }
 
     /** Sets the IMS phone number from IMS associated URIs, if any found. */
     @VisibleForTesting
@@ -2653,6 +2704,11 @@ public class ImsPhone extends ImsPhoneBase {
         return mImsStats;
     }
 
+    /** Returns the {@link AccessNetworkConstants.TransportType} used to register this IMS phone. */
+    public @AccessNetworkConstants.TransportType int getTransportType() {
+        return mTransportType;
+    }
+
     /** Sets the {@link ImsStats} mock for this IMS phone during unit testing. */
     @VisibleForTesting
     public void setImsStats(ImsStats imsStats) {
@@ -2703,12 +2759,17 @@ public class ImsPhone extends ImsPhoneBase {
     private void updateImsRegistrationInfo(
             @RegistrationManager.ImsRegistrationState int regState,
             @ImsRegistrationImplBase.ImsRegistrationTech int imsRadioTech,
-            @RegistrationManager.SuggestedAction int suggestedAction) {
+            @RegistrationManager.SuggestedAction int suggestedAction,
+            @AccessNetworkConstants.TransportType int transportType) {
 
         if (regState == mImsRegistrationState) {
+            // In NOT_REGISTERED state, the current PLMN can be blocked with a suggested action.
+            // But in this case, the same behavior is able to occur in different PLMNs with
+            // same radio tech and suggested action.
             if ((regState == REGISTRATION_STATE_REGISTERED && imsRadioTech == mImsRegistrationTech)
                     || (regState == REGISTRATION_STATE_NOT_REGISTERED
-                            && suggestedAction == mImsRegistrationSuggestedAction
+                            && suggestedAction == SUGGESTED_ACTION_NONE
+                            && mImsRegistrationSuggestedAction == SUGGESTED_ACTION_NONE
                             && imsRadioTech == mImsDeregistrationTech)) {
                 // Filter duplicate notification.
                 return;
@@ -2725,6 +2786,7 @@ public class ImsPhone extends ImsPhoneBase {
                 mDefaultPhone.mCi.updateImsRegistrationInfo(regState, imsRadioTech, 0,
                         mImsRegistrationCapabilities, null);
                 mImsRegistrationTech = imsRadioTech;
+                mTransportType = transportType;
                 mNotifiedRegisteredState = true;
                 return;
             }
@@ -2732,6 +2794,7 @@ public class ImsPhone extends ImsPhoneBase {
 
         mImsRegistrationState = regState;
         mImsRegistrationTech = imsRadioTech;
+        mTransportType = transportType;
         mImsRegistrationSuggestedAction = suggestedAction;
         if (regState == REGISTRATION_STATE_NOT_REGISTERED) {
             mImsDeregistrationTech = imsRadioTech;
@@ -2791,6 +2854,15 @@ public class ImsPhone extends ImsPhoneBase {
     @Override
     public void triggerNotifyAnbr(int mediaType, int direction, int bitsPerSecond) {
         mCT.triggerNotifyAnbr(mediaType, direction, bitsPerSecond);
+    }
+
+    /**
+     * Check whether making a call using Wi-Fi is possible or not.
+     * @return {code true} if IMS is registered over IWLAN else return {code false}.
+     */
+    public boolean canMakeWifiCall() {
+        return isImsRegistered() && (getImsRegistrationTech()
+                == ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN);
     }
 
     @Override

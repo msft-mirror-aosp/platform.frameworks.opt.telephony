@@ -33,7 +33,8 @@ import android.content.res.Resources;
 import android.os.Looper;
 import android.os.Message;
 import android.telephony.TelephonyManager;
-import android.test.suitebuilder.annotation.SmallTest;
+
+import androidx.test.filters.SmallTest;
 
 import com.android.internal.R;
 import com.android.internal.telephony.TelephonyIntents;
@@ -50,7 +51,6 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
     private static final String PROVISIONING_PACKAGE_NAME = "test.provisioning.package";
 
     // Mocked classes
-    private Context mContext;
     private Resources mResources;
 
     private IccCardStatus makeCardStatus(CardState state) {
