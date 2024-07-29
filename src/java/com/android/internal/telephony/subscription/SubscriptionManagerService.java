@@ -2157,7 +2157,7 @@ public class SubscriptionManagerService extends ISub.Stub {
     @Override
     public List<SubscriptionInfo> getAccessibleSubscriptionInfoList(
             @NonNull String callingPackage) {
-        if (!mEuiccManager.isEnabled()) {
+        if (mEuiccManager == null || !mEuiccManager.isEnabled()) {
             return null;
         }
 
