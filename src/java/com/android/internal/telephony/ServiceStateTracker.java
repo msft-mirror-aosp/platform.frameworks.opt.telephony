@@ -666,7 +666,9 @@ public class ServiceStateTracker extends Handler {
         mCarrierConfig = getCarrierConfig();
         CarrierConfigManager ccm = mPhone.getContext().getSystemService(CarrierConfigManager.class);
         // Callback which directly handle config change should be executed in handler thread
-        ccm.registerCarrierConfigChangeListener(this::post, mCarrierConfigChangeListener);
+        if (ccm != null) {
+            ccm.registerCarrierConfigChangeListener(this::post, mCarrierConfigChangeListener);
+        }
 
         mAccessNetworksManager = mPhone.getAccessNetworksManager();
         mOutOfServiceSS = new ServiceState();
@@ -2895,10 +2897,8 @@ public class ServiceStateTracker extends Handler {
         }
 
         String crossSimSpnFormat = null;
-        if (mPhone.getImsPhone() != null
-                && (mPhone.getImsPhone() != null)
-                && (mPhone.getImsPhone().getImsRegistrationTech()
-                == ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM)) {
+        if ((getImsRegistrationTech() == ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM)
+                && mPhone.isImsRegistered()) {
             // In Cross SIM Calling mode show SPN or PLMN + Cross SIM Calling
             //
             // 1) Show SPN + Cross SIM Calling If SIM has SPN and SPN display condition

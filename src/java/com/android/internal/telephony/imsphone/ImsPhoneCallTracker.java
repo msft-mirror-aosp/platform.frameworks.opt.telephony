@@ -2878,6 +2878,14 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         ImsPhoneConnection conn = findConnection(imsCall);
         boolean rejectCall = false;
 
+        if (mFeatureFlags.preventHangupDuringCallMerge()) {
+            if (imsCall.isCallSessionMergePending()) {
+                if (DBG) log("hangup call failed during call merge");
+
+                throw new CallStateException("can not hangup during call merge");
+            }
+        }
+
         String logResult = "(undefined)";
         if (call == mRingingCall) {
             logResult = "(ringing) hangup incoming";
@@ -3553,8 +3561,10 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             if (DBG) log("onCallStartFailed reasonCode=" + reasonInfo.getCode());
 
             int eccCategory = EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_UNSPECIFIED;
+            List<String> emergencyUrns = new ArrayList<>();
             if (imsCall != null && imsCall.getCallProfile() != null) {
                 eccCategory = imsCall.getCallProfile().getEmergencyServiceCategories();
+                emergencyUrns = imsCall.getCallProfile().getEmergencyUrns();
             }
 
             if (mHoldSwitchingState == HoldSwapState.HOLDING_TO_ANSWER_INCOMING) {
@@ -3581,13 +3591,14 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 // Since onCallInitiating and onCallProgressing reset mPendingMO,
                 // we can't depend on mPendingMO.
                 if (conn != null) {
-                    logi("onCallStartFailed eccCategory=" + eccCategory);
+                    logi("onCallStartFailed eccCategory=" + eccCategory + ", emergencyUrns="
+                            + emergencyUrns);
                     int reason = reasonInfo.getCode();
                     int extraCode = reasonInfo.getExtraCode();
                     if ((reason == ImsReasonInfo.CODE_LOCAL_CALL_CS_RETRY_REQUIRED
                             && extraCode == ImsReasonInfo.EXTRA_CODE_CALL_RETRY_EMERGENCY)
                             || (reason == ImsReasonInfo.CODE_SIP_ALTERNATE_EMERGENCY_CALL)) {
-                        conn.setNonDetectableEmergencyCallInfo(eccCategory);
+                        conn.setNonDetectableEmergencyCallInfo(eccCategory, emergencyUrns);
                     }
                     conn.setImsReasonInfo(reasonInfo);
                     sendCallStartFailedDisconnect(imsCall, reasonInfo);
@@ -3765,11 +3776,13 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     && DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
                 if (conn != null) {
                     int eccCategory = EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_UNSPECIFIED;
+                    List<String> emergencyUrns = new ArrayList<>();
                     if (imsCall != null && imsCall.getCallProfile() != null) {
                         eccCategory = imsCall.getCallProfile().getEmergencyServiceCategories();
+                        emergencyUrns = imsCall.getCallProfile().getEmergencyUrns();
                         logi("onCallTerminated eccCategory=" + eccCategory);
                     }
-                    conn.setNonDetectableEmergencyCallInfo(eccCategory);
+                    conn.setNonDetectableEmergencyCallInfo(eccCategory, emergencyUrns);
                 }
                 processCallStateChange(imsCall, ImsPhoneCall.State.DISCONNECTED, cause);
                 return;
@@ -4946,7 +4959,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             }
             case EVENT_SUPP_SERVICE_INDICATION: {
                 ar = (AsyncResult) msg.obj;
-                ImsPhoneMmiCode mmiCode = new ImsPhoneMmiCode(mPhone);
+                ImsPhoneMmiCode mmiCode = new ImsPhoneMmiCode(mPhone, mFeatureFlags);
                 try {
                     mmiCode.setIsSsInfo(true);
                     mmiCode.processImsSsData(ar);
