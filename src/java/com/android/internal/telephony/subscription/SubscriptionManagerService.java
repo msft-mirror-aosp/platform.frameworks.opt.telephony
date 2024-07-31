@@ -1937,7 +1937,10 @@ public class SubscriptionManagerService extends ISub.Stub {
                     + "carrier privilege");
         }
 
-        enforceTelephonyFeatureWithException(callingPackage, "getActiveSubscriptionInfo");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage, "getActiveSubscriptionInfo");
+        }
 
         SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
                 .getSubscriptionInfoInternal(subId);
@@ -2066,7 +2069,10 @@ public class SubscriptionManagerService extends ISub.Stub {
             return Collections.emptyList();
         }
 
-        enforceTelephonyFeatureWithException(callingPackage, "getActiveSubscriptionInfoList");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage, "getActiveSubscriptionInfoList");
+        }
 
         if (isForAllProfiles) {
             enforcePermissionAccessAllUserProfiles();
@@ -2158,7 +2164,11 @@ public class SubscriptionManagerService extends ISub.Stub {
         enforcePermissions("getAvailableSubscriptionInfoList",
                 Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
 
-        enforceTelephonyFeatureWithException(callingPackage, "getAvailableSubscriptionInfoList");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage,
+                    "getAvailableSubscriptionInfoList");
+        }
 
         return getAvailableSubscriptionsInternalStream()
                 .sorted(Comparator.comparing(SubscriptionInfoInternal::getSimSlotIndex)
@@ -2224,7 +2234,7 @@ public class SubscriptionManagerService extends ISub.Stub {
     @Override
     public List<SubscriptionInfo> getAccessibleSubscriptionInfoList(
             @NonNull String callingPackage) {
-        if (!mEuiccManager.isEnabled()) {
+        if (mEuiccManager == null || !mEuiccManager.isEnabled()) {
             return null;
         }
 
@@ -2742,7 +2752,10 @@ public class SubscriptionManagerService extends ISub.Stub {
             return Collections.emptyList();
         }
 
-        enforceTelephonyFeatureWithException(callingPackage, "getOpportunisticSubscriptions");
+        if (!mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage, "getOpportunisticSubscriptions");
+        }
 
         return mSubscriptionDatabaseManager.getAllSubscriptions().stream()
                 // callers have READ_PHONE_STATE or READ_PRIVILEGED_PHONE_STATE can get a full
@@ -3315,7 +3328,10 @@ public class SubscriptionManagerService extends ISub.Stub {
     public int[] getActiveSubIdList(boolean visibleOnly) {
         enforcePermissions("getActiveSubIdList", Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
 
-        enforceTelephonyFeatureWithException(getCurrentPackageName(), "getActiveSubIdList");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(getCurrentPackageName(), "getActiveSubIdList");
+        }
 
         // UserHandle.ALL because this API is exposed as system API.
         return getActiveSubIdListAsUser(visibleOnly, UserHandle.ALL);
@@ -4498,9 +4514,16 @@ public class SubscriptionManagerService extends ISub.Stub {
      */
     @NonNull
     private String getCallingPackage() {
-        if (Binder.getCallingUid() == Process.PHONE_UID) {
-            // Too many packages running with phone uid. Just return one here.
-            return "com.android.phone";
+        if (Flags.supportPhoneUidCheckForMultiuser()) {
+            if (UserHandle.isSameApp(Binder.getCallingUid(), Process.PHONE_UID)) {
+                // Too many packages running with phone uid. Just return one here.
+                return "com.android.phone";
+            }
+        } else {
+            if (Binder.getCallingUid() == Process.PHONE_UID) {
+                // Too many packages running with phone uid. Just return one here.
+                return "com.android.phone";
+            }
         }
         return Arrays.toString(mContext.getPackageManager().getPackagesForUid(
                 Binder.getCallingUid()));
