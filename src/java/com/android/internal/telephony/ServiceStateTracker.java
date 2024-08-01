@@ -2803,8 +2803,10 @@ public class ServiceStateTracker extends Handler {
         if (showPlmn) {
             carrierName = plmn;
             if (showSpn) {
-                // Need to show both plmn and spn if both are not same.
-                if (!Objects.equals(spn, plmn)) {
+                if (TextUtils.isEmpty(carrierName)) {
+                    carrierName = spn;
+                } else if (!TextUtils.isEmpty(spn) && !Objects.equals(spn, carrierName)) {
+                    // Need to show both plmn and spn if both are not same.
                     String separator = mPhone.getContext().getString(
                             com.android.internal.R.string.kg_text_message_separator).toString();
                     carrierName = new StringBuilder().append(carrierName).append(separator)
@@ -2897,10 +2899,8 @@ public class ServiceStateTracker extends Handler {
         }
 
         String crossSimSpnFormat = null;
-        if (mPhone.getImsPhone() != null
-                && (mPhone.getImsPhone() != null)
-                && (mPhone.getImsPhone().getImsRegistrationTech()
-                == ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM)) {
+        if ((getImsRegistrationTech() == ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM)
+                && mPhone.isImsRegistered()) {
             // In Cross SIM Calling mode show SPN or PLMN + Cross SIM Calling
             //
             // 1) Show SPN + Cross SIM Calling If SIM has SPN and SPN display condition
