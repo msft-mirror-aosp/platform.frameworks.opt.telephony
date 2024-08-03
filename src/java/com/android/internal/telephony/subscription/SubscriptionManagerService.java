@@ -1900,7 +1900,10 @@ public class SubscriptionManagerService extends ISub.Stub {
                     + "carrier privilege");
         }
 
-        enforceTelephonyFeatureWithException(callingPackage, "getAllSubInfoList");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage, "getAllSubInfoList");
+        }
 
         return getSubscriptionInfoStreamAsUser(BINDER_WRAPPER.getCallingUserHandle())
                 // callers have READ_PHONE_STATE or READ_PRIVILEGED_PHONE_STATE can get a full
