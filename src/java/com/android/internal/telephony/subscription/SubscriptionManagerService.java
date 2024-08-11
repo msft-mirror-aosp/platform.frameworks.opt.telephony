@@ -196,7 +196,8 @@ public class SubscriptionManagerService extends ISub.Stub {
             SimInfo.COLUMN_IS_ONLY_NTN,
             SimInfo.COLUMN_SATELLITE_ENTITLEMENT_STATUS,
             SimInfo.COLUMN_SATELLITE_ENTITLEMENT_PLMNS,
-            SimInfo.COLUMN_SATELLITE_ESOS_SUPPORTED
+            SimInfo.COLUMN_SATELLITE_ESOS_SUPPORTED,
+            SimInfo.COLUMN_IS_SATELLITE_PROVISIONED_FOR_NON_IP_DATAGRAM
     );
 
     /**
@@ -457,6 +458,13 @@ public class SubscriptionManagerService extends ISub.Stub {
          * @param subId The subscription id.
          */
         public void onUiccApplicationsEnabledChanged(int subId) {}
+
+        /**
+         * Called when {@link #getDefaultDataSubId()} changed.
+         *
+         * @param subId The subscription id.
+         */
+        public void onDefaultDataSubscriptionChanged(int subId) {}
     }
 
     /**
@@ -592,6 +600,13 @@ public class SubscriptionManagerService extends ISub.Stub {
         // Broadcast sub Id on service initialized.
         broadcastSubId(TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED,
                 getDefaultDataSubId());
+        if (mFeatureFlags.ddsCallback()) {
+            mSubscriptionManagerServiceCallbacks.forEach(
+                    callback -> callback.invokeFromExecutor(
+                            () -> callback.onDefaultDataSubscriptionChanged(
+                                    getDefaultDataSubId())));
+        }
+
         broadcastSubId(TelephonyIntents.ACTION_DEFAULT_VOICE_SUBSCRIPTION_CHANGED,
                 getDefaultVoiceSubId());
         broadcastSubId(SubscriptionManager.ACTION_DEFAULT_SMS_SUBSCRIPTION_CHANGED,
@@ -3176,6 +3191,11 @@ public class SubscriptionManagerService extends ISub.Stub {
 
                 broadcastSubId(TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED,
                         subId);
+                if (mFeatureFlags.ddsCallback()) {
+                    mSubscriptionManagerServiceCallbacks.forEach(
+                            callback -> callback.invokeFromExecutor(
+                                    () -> callback.onDefaultDataSubscriptionChanged(subId)));
+                }
 
                 updateDefaultSubId();
             }
@@ -4659,6 +4679,24 @@ public class SubscriptionManagerService extends ISub.Stub {
     }
 
     /**
+     * Set whether the subscription is provisioned for OEM-enabled or carrier roaming NB-IOT
+     * satellite service or not.
+     *
+     * @param subId subscription id.
+     * @param isSatelliteProvisionedForNonIpDatagram {@code true} if subId is provisioned.
+     * {@code false} otherwise.
+     */
+    public void setIsSatelliteProvisionedForNonIpDatagram(int subId,
+            boolean isSatelliteProvisionedForNonIpDatagram) {
+        try {
+            mSubscriptionDatabaseManager.setIsSatelliteProvisionedForNonIpDatagram(
+                    subId, (isSatelliteProvisionedForNonIpDatagram ? 1 : 0));
+        } catch (IllegalArgumentException e) {
+            loge("setIsSatelliteProvisionedForNonIpDatagram: invalid subId=" + subId);
+        }
+    }
+
+    /**
      * Get the satellite ESOS supported value in the subscription database.
      *
      * @param subId subscription id.
@@ -4675,6 +4713,20 @@ public class SubscriptionManagerService extends ISub.Stub {
         }
 
         return subInfo.getSatelliteESOSSupported() == 1;
+    }
+
+    /**
+     * Get whether the subscription is provisioned for OEM-enabled or carrier roaming NB-IOT
+     * satellite service or not.
+     *
+     * @param subId subscription id.
+     * @return {@code true} if it is provisioned for oem satellite service. {@code false} otherwise.
+     */
+    public boolean isSatelliteProvisionedForNonIpDatagram(int subId) {
+        SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager.getSubscriptionInfoInternal(
+                subId);
+
+        return subInfo.getIsSatelliteProvisionedForNonIpDatagram() == 1;
     }
 
     /**
