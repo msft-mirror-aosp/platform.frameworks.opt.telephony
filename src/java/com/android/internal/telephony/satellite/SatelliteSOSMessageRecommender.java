@@ -56,6 +56,7 @@ import android.telephony.ims.ImsRegistrationAttributes;
 import android.telephony.ims.RegistrationManager;
 import android.telephony.satellite.ISatelliteProvisionStateCallback;
 import android.telephony.satellite.SatelliteManager;
+import android.telephony.satellite.SatelliteSubscriberProvisionStatus;
 import android.text.TextUtils;
 import android.util.Pair;
 import android.util.SparseArray;
@@ -68,8 +69,10 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.SmsApplication;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.metrics.SatelliteStats;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -156,6 +159,13 @@ public class SatelliteSOSMessageRecommender extends Handler {
             public void onSatelliteProvisionStateChanged(boolean provisioned) {
                 plogd("onSatelliteProvisionStateChanged: provisioned=" + provisioned);
                 sendMessage(obtainMessage(EVENT_SATELLITE_PROVISIONED_STATE_CHANGED, provisioned));
+            }
+
+            @Override
+            public void onSatelliteSubscriptionProvisionStateChanged(
+                    List<SatelliteSubscriberProvisionStatus> satelliteSubscriberProvisionStatus) {
+                plogd("onSatelliteSubscriptionProvisionStateChanged: "
+                        + satelliteSubscriberProvisionStatus);
             }
         };
     }
@@ -658,7 +668,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             intent.addFlags(FLAG_ACTIVITY_CLEAR_TOP);
         }
         Bundle activityOptions = ActivityOptions.makeBasic()
-                .setPendingIntentBackgroundActivityStartMode(
+                .setPendingIntentCreatorBackgroundActivityStartMode(
                         ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
                 .toBundle();
         intent.setComponent(new ComponentName(packageName, className));
@@ -702,8 +712,19 @@ public class SatelliteSOSMessageRecommender extends Handler {
         return telephonyManager.isMultiSimEnabled();
     }
 
-    private int getEmergencyCallToSatelliteHandoverType() {
-        if (isSatelliteViaCarrierAvailable()) {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public int getEmergencyCallToSatelliteHandoverType() {
+        if (Flags.carrierRoamingNbIotNtn() && isSatelliteViaOemAvailable()
+                && isSatelliteViaCarrierAvailable()) {
+            Phone satellitePhone = mSatelliteController.getSatellitePhone();
+            if (satellitePhone == null) {
+                ploge("getEmergencyCallToSatelliteHandoverType: satellitePhone is null");
+                return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
+            }
+            int satelliteSubId = satellitePhone.getSubId();
+            return mSatelliteController.getCarrierRoamingNtnEmergencyCallToSatelliteHandoverType(
+                    satelliteSubId);
+        } else if (isSatelliteViaCarrierAvailable()) {
             return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
         } else {
             return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;

@@ -1164,6 +1164,9 @@ public class ServiceStateTracker extends Handler {
 
         mDesiredPowerState = power;
         setPowerStateToDesired(forEmergencyCall, isSelectedPhoneForEmergencyCall, forceApply);
+        if (mDesiredPowerState) {
+            SatelliteController.getInstance().onSetCellularRadioPowerStateRequested(true);
+        }
     }
 
     /**
@@ -1324,6 +1327,12 @@ public class ServiceStateTracker extends Handler {
                     // as a result of radio power request
                     // Hence, issuing shut down regardless of radio power response
                     mCi.requestShutdown(null);
+                }
+
+                ar = (AsyncResult) msg.obj;
+                if (ar.exception != null) {
+                    loge("EVENT_RADIO_POWER_OFF_DONE: exception=" + ar.exception);
+                    SatelliteController.getInstance().onPowerOffCellularRadioFailed();
                 }
                 break;
 
@@ -2803,8 +2812,10 @@ public class ServiceStateTracker extends Handler {
         if (showPlmn) {
             carrierName = plmn;
             if (showSpn) {
-                // Need to show both plmn and spn if both are not same.
-                if (!Objects.equals(spn, plmn)) {
+                if (TextUtils.isEmpty(carrierName)) {
+                    carrierName = spn;
+                } else if (!TextUtils.isEmpty(spn) && !Objects.equals(spn, carrierName)) {
+                    // Need to show both plmn and spn if both are not same.
                     String separator = mPhone.getContext().getString(
                             com.android.internal.R.string.kg_text_message_separator).toString();
                     carrierName = new StringBuilder().append(carrierName).append(separator)
@@ -4977,7 +4988,7 @@ public class ServiceStateTracker extends Handler {
      */
     public void powerOffRadioSafely() {
         synchronized (this) {
-            SatelliteController.getInstance().onCellularRadioPowerOffRequested();
+            SatelliteController.getInstance().onSetCellularRadioPowerStateRequested(false);
             if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
                 EmergencyStateTracker.getInstance().onCellularRadioPowerOffRequested();
             }
