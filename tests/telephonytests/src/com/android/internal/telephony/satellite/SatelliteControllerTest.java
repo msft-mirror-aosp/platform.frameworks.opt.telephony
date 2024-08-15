@@ -125,6 +125,7 @@ import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteManager;
 import android.telephony.satellite.SatelliteManager.SatelliteException;
+import android.telephony.satellite.SatelliteSubscriberProvisionStatus;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.util.Pair;
@@ -1446,6 +1447,12 @@ public class SatelliteControllerTest extends TelephonyTest {
                             loge("onSatelliteProvisionStateChanged: Got exception in releasing "
                                     + "semaphore, ex=" + ex);
                         }
+                    }
+
+                    @Override
+                    public void onSatelliteSubscriptionProvisionStateChanged(
+                            List<SatelliteSubscriberProvisionStatus> status) {
+                        logd("onSatelliteSubscriptionProvisionStateChanged: " + status);
                     }
                 };
         int errorCode = mSatelliteControllerUT.registerForSatelliteProvisionStateChanged(
