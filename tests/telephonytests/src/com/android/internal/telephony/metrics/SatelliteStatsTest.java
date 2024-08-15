@@ -17,6 +17,10 @@
 package com.android.internal.telephony.metrics;
 
 import static android.telephony.satellite.NtnSignalStrength.NTN_SIGNAL_STRENGTH_GOOD;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
+
+import static com.android.internal.telephony.satellite.SatelliteConstants.CONFIG_DATA_SOURCE_DEVICE_CONFIG;
+import static com.android.internal.telephony.satellite.SatelliteConstants.ACCESS_CONTROL_TYPE_CACHED_COUNTRY_CODE;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.verify;
@@ -28,6 +32,7 @@ import android.telephony.TelephonyProtoEnums;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.nano.PersistAtomsProto.CarrierRoamingSatelliteControllerStats;
 import com.android.internal.telephony.nano.PersistAtomsProto.CarrierRoamingSatelliteSession;
+import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteAccessController;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteConfigUpdater;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteController;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteEntitlement;
@@ -41,6 +46,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+
+import java.util.concurrent.TimeUnit;
 
 public class SatelliteStatsTest extends TelephonyTest {
     private static final String TAG = SatelliteStatsTest.class.getSimpleName();
@@ -162,9 +169,9 @@ public class SatelliteStatsTest extends TelephonyTest {
         SatelliteStats.SatelliteSessionParams param =
                 new SatelliteStats.SatelliteSessionParams.Builder()
                         .setSatelliteServiceInitializationResult(
-                                SatelliteProtoEnums.SATELLITE_ERROR_NONE)
+                                SatelliteProtoEnums.SATELLITE_RESULT_SUCCESS)
                         .setSatelliteTechnology(SatelliteProtoEnums.NT_RADIO_TECHNOLOGY_PROPRIETARY)
-                        .setTerminationResult(SatelliteProtoEnums.SATELLITE_ERROR_NONE)
+                        .setTerminationResult(SatelliteProtoEnums.SATELLITE_RESULT_SUCCESS)
                         .setInitializationProcessingTime(100)
                         .setTerminationProcessingTime(200)
                         .setSessionDuration(3)
@@ -205,7 +212,7 @@ public class SatelliteStatsTest extends TelephonyTest {
     public void onSatelliteIncomingDatagramMetrics_withAtoms() throws Exception {
         SatelliteStats.SatelliteIncomingDatagramParams param =
                 new SatelliteStats.SatelliteIncomingDatagramParams.Builder()
-                        .setResultCode(SatelliteProtoEnums.SATELLITE_ERROR_NONE)
+                        .setResultCode(SatelliteProtoEnums.SATELLITE_RESULT_SUCCESS)
                         .setDatagramSizeBytes(1 * 1024)
                         .setDatagramTransferTimeMillis(3 * 1000)
                         .setIsDemoMode(true)
@@ -229,7 +236,7 @@ public class SatelliteStatsTest extends TelephonyTest {
         SatelliteStats.SatelliteOutgoingDatagramParams param =
                 new SatelliteStats.SatelliteOutgoingDatagramParams.Builder()
                         .setDatagramType(SatelliteProtoEnums.DATAGRAM_TYPE_LOCATION_SHARING)
-                        .setResultCode(SatelliteProtoEnums.SATELLITE_ERROR_NONE)
+                        .setResultCode(SatelliteProtoEnums.SATELLITE_RESULT_SUCCESS)
                         .setDatagramSizeBytes(1 * 1024)
                         .setDatagramTransferTimeMillis(3 * 1000)
                         .setIsDemoMode(true)
@@ -254,7 +261,7 @@ public class SatelliteStatsTest extends TelephonyTest {
         SatelliteStats.SatelliteProvisionParams param =
                 new SatelliteStats.SatelliteProvisionParams.Builder()
                         .setResultCode(
-                                SatelliteProtoEnums.SATELLITE_SERVICE_PROVISION_IN_PROGRESS)
+                                SatelliteProtoEnums.SATELLITE_RESULT_SERVICE_PROVISION_IN_PROGRESS)
                         .setProvisioningTimeSec(5 * 1000)
                         .setIsProvisionRequest(true)
                         .setIsCanceled(false)
@@ -434,6 +441,40 @@ public class SatelliteStatsTest extends TelephonyTest {
         assertEquals(param.getCarrierConfigResult(), stats.carrierConfigResult);
         assertEquals(param.getCount(), stats.count);
 
+        verifyNoMoreInteractions(mPersistAtomsStorage);
+    }
+
+
+    @Test
+    public void onSatelliteAccessControllerMetrics_withAtoms() {
+        SatelliteStats.SatelliteAccessControllerParams param =
+                new SatelliteStats.SatelliteAccessControllerParams.Builder()
+                        .setAccessControlType(ACCESS_CONTROL_TYPE_CACHED_COUNTRY_CODE)
+                        .setLocationQueryTime(TimeUnit.SECONDS.toMillis(1))
+                        .setOnDeviceLookupTime(TimeUnit.SECONDS.toMillis(2))
+                        .setTotalCheckingTime(TimeUnit.SECONDS.toMillis(3))
+                        .setIsAllowed(true)
+                        .setIsEmergency(false)
+                        .setResult(SATELLITE_RESULT_SUCCESS)
+                        .setCountryCodes(new String[]{"AB", "CD"})
+                        .setConfigDatasource(CONFIG_DATA_SOURCE_DEVICE_CONFIG)
+                        .build();
+
+        mSatelliteStats.onSatelliteAccessControllerMetrics(param);
+
+        ArgumentCaptor<SatelliteAccessController> captor = ArgumentCaptor.forClass(
+                SatelliteAccessController.class);
+        verify(mPersistAtomsStorage).addSatelliteAccessControllerStats(captor.capture());
+        SatelliteAccessController stats = captor.getValue();
+        assertEquals(param.getAccessControlType(), stats.accessControlType);
+        assertEquals(param.getLocationQueryTime(), stats.locationQueryTimeMillis);
+        assertEquals(param.getOnDeviceLookupTime(), stats.onDeviceLookupTimeMillis);
+        assertEquals(param.getTotalCheckingTime(), stats.totalCheckingTimeMillis);
+        assertEquals(param.getIsAllowed(), stats.isAllowed);
+        assertEquals(param.getIsEmergency(), stats.isEmergency);
+        assertEquals(param.getResultCode(), stats.resultCode);
+        assertEquals(param.getCountryCodes(), stats.countryCodes);
+        assertEquals(param.getConfigDataSource(), stats.configDataSource);
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }
 }

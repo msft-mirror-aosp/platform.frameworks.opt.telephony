@@ -20,6 +20,7 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_MODE
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
 import static com.android.internal.telephony.satellite.DatagramController.SATELLITE_ALIGN_TIMEOUT;
+import static com.android.internal.telephony.SmsDispatchersController.PendingRequest;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -59,7 +60,9 @@ import android.testing.TestableLooper;
 import com.android.internal.R;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
+import com.android.internal.telephony.SmsDispatchersController;
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.satellite.metrics.ControllerMetricsStats;
 import com.android.internal.telephony.satellite.metrics.SessionMetricsStats;
 
@@ -90,6 +93,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
             SatelliteManager.DATAGRAM_TYPE_LAST_SOS_MESSAGE_STILL_NEED_HELP;
     private static final int DATAGRAM_TYPE5 =
             SatelliteManager.DATAGRAM_TYPE_LAST_SOS_MESSAGE_NO_HELP_NEEDED;
+    private static final int DATAGRAM_TYPE6 = SatelliteManager.DATAGRAM_TYPE_SMS;
 
     private static final String TEST_MESSAGE = "This is a test datagram message";
     private static final long TEST_EXPIRE_TIMER_SATELLITE_ALIGN = TimeUnit.SECONDS.toMillis(1);
@@ -107,17 +111,20 @@ public class DatagramDispatcherTest extends TelephonyTest {
 
     private TestDatagramDispatcher mDatagramDispatcherUT;
 
+    @Mock private SatelliteController mMockSatelliteController;
     @Mock private DatagramController mMockDatagramController;
     @Mock private DatagramReceiver mMockDatagramReceiver;
     @Mock private SatelliteModemInterface mMockSatelliteModemInterface;
     @Mock private ControllerMetricsStats mMockControllerMetricsStats;
     @Mock private SatelliteSessionController mMockSatelliteSessionController;
     @Mock private SessionMetricsStats mMockSessionMetricsStats;
+    @Mock private SmsDispatchersController mMockSmsDispatchersController;
 
     /** Variables required to send datagram in the unit tests. */
     LinkedBlockingQueue<Integer> mResultListener;
     SatelliteDatagram mDatagram;
     InOrder mInOrder;
+    private PendingRequest mPendingSms;
 
     private static final long TIMEOUT = 500;
     private List<Integer> mIntegerConsumerResult = new ArrayList<>();
@@ -141,6 +148,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
         MockitoAnnotations.initMocks(this);
         logd(TAG + " Setup!");
 
+        replaceInstance(SatelliteController.class, "sInstance", null,
+                mMockSatelliteController);
         replaceInstance(DatagramController.class, "sInstance", null,
                 mMockDatagramController);
         replaceInstance(DatagramReceiver.class, "sInstance", null,
@@ -155,13 +164,19 @@ public class DatagramDispatcherTest extends TelephonyTest {
                 mMockSessionMetricsStats);
 
         when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
+        when(mFeatureFlags.satellitePersistentLogging()).thenReturn(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         mDatagramDispatcherUT = new TestDatagramDispatcher(mContext, Looper.myLooper(),
+                mFeatureFlags,
                 mMockDatagramController);
 
         mResultListener = new LinkedBlockingQueue<>(1);
         mDatagram = new SatelliteDatagram(TEST_MESSAGE.getBytes());
         mInOrder = inOrder(mMockDatagramController);
         when(mMockDatagramController.isPollingInIdleState()).thenReturn(true);
+        when(mMockSatelliteController.getSatellitePhone()).thenReturn(mPhone);
+        when(mPhone.getSmsDispatchersController()).thenReturn(mMockSmsDispatchersController);
+        mPendingSms = createPendingRequest();
     }
 
     @After
@@ -172,6 +187,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
         mResultListener = null;
         mDatagram = null;
         mInOrder = null;
+        mPendingSms = null;
         super.tearDown();
     }
 
@@ -238,7 +254,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
                             eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                             eq(SATELLITE_RESULT_SUCCESS));
             verifyNoMoreInteractions(mMockDatagramController);
-            verify(mMockSessionMetricsStats, times(1)).addCountOfSuccessfulOutgoingDatagram();
+            verify(mMockSessionMetricsStats, times(1))
+                    .addCountOfSuccessfulOutgoingDatagram(eq(datagramType));
             verify(mMockSatelliteModemInterface, times(1)).sendSatelliteDatagram(
                     any(SatelliteDatagram.class), anyBoolean(), anyBoolean(), any(Message.class));
             assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
@@ -279,7 +296,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
             assertThat(mResultListener.peek()).isEqualTo(
                     SatelliteManager.SATELLITE_RESULT_NOT_REACHABLE);
             assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
-            verify(mMockSessionMetricsStats, times(1)).addCountOfFailedOutgoingDatagram();
+            verify(mMockSessionMetricsStats, times(1))
+                    .addCountOfFailedOutgoingDatagram(anyInt(), anyInt());
 
             mResultListener.clear();
             mDatagramDispatcherUT.onSatelliteModemStateChanged(
@@ -311,7 +329,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
             assertThat(mResultListener.peek()).isEqualTo(
                     SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED);
             assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
-            verify(mMockSessionMetricsStats, times(1)).addCountOfFailedOutgoingDatagram();
+            verify(mMockSessionMetricsStats, times(1))
+                    .addCountOfFailedOutgoingDatagram(anyInt(), anyInt());
         }
     }
 
@@ -372,7 +391,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
             verify(mMockSatelliteModemInterface, times(1)).sendSatelliteDatagram(
                     any(SatelliteDatagram.class), anyBoolean(), anyBoolean(), any(Message.class));
             assertThat(mResultListener.peek()).isEqualTo(SATELLITE_RESULT_SUCCESS);
-            verify(mMockSessionMetricsStats, times(1)).addCountOfSuccessfulOutgoingDatagram();
+            verify(mMockSessionMetricsStats, times(1))
+                    .addCountOfSuccessfulOutgoingDatagram(anyInt());
             clearInvocations(mMockSatelliteModemInterface);
             clearInvocations(mMockDatagramController);
             clearInvocations(mMockSessionMetricsStats);
@@ -406,7 +426,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
                     any(SatelliteDatagram.class), anyBoolean(), anyBoolean(), any(Message.class));
             verify(mMockSatelliteModemInterface).abortSendingSatelliteDatagrams(any(Message.class));
             assertThat(mResultListener.peek()).isEqualTo(SATELLITE_RESULT_MODEM_TIMEOUT);
-            verify(mMockSessionMetricsStats, times(1)).addCountOfFailedOutgoingDatagram();
+            verify(mMockSessionMetricsStats, times(1))
+                    .addCountOfFailedOutgoingDatagram(anyInt(), anyInt());
 
             clearInvocations(mMockSatelliteModemInterface);
             clearInvocations(mMockDatagramController);
@@ -453,7 +474,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
 
         assertThat(mResultListener.peek()).isEqualTo(
                 SatelliteManager.SATELLITE_RESULT_SERVICE_ERROR);
-        verify(mMockSessionMetricsStats, times(1)).addCountOfFailedOutgoingDatagram();
+        verify(mMockSessionMetricsStats, times(1))
+                .addCountOfFailedOutgoingDatagram(anyInt(), anyInt());
     }
 
     @Test
@@ -494,7 +516,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
                             eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                             eq(SATELLITE_RESULT_SUCCESS));
             assertThat(mResultListener.peek()).isEqualTo(SATELLITE_RESULT_SUCCESS);
-            verify(mMockSessionMetricsStats, times(1)).addCountOfSuccessfulOutgoingDatagram();
+            verify(mMockSessionMetricsStats, times(1))
+                    .addCountOfSuccessfulOutgoingDatagram(eq(datagramType));
             mDatagramDispatcherUT.setDemoMode(false);
             mDatagramDispatcherUT.setDeviceAlignedWithSatellite(false);
         }
@@ -542,7 +565,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
             verify(mMockDatagramController, never()).pollPendingSatelliteDatagrams(anyInt(), any());
             verify(mMockDatagramController, never()).pushDemoModeDatagram(
                     anyInt(), any(SatelliteDatagram.class));
-            verify(mMockSessionMetricsStats, times(1)).addCountOfFailedOutgoingDatagram();
+            verify(mMockSessionMetricsStats, times(1))
+                    .addCountOfFailedOutgoingDatagram(anyInt(), anyInt());
         }
 
         mDatagramDispatcherUT.setDemoMode(false);
@@ -587,7 +611,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
                 .updateSendStatus(eq(SUB_ID), eq(DATAGRAM_TYPE2),
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                         eq(SATELLITE_RESULT_SUCCESS));
-        verify(mMockSessionMetricsStats, times(1)).addCountOfSuccessfulOutgoingDatagram();
+        verify(mMockSessionMetricsStats, times(1))
+                .addCountOfSuccessfulOutgoingDatagram(eq(DATAGRAM_TYPE2));
 
         mDatagramDispatcherUT.setDemoMode(false);
         mDatagramDispatcherUT.setDeviceAlignedWithSatellite(false);
@@ -699,7 +724,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
             verify(mMockDatagramController).pushDemoModeDatagram(
                     anyInt(), any(SatelliteDatagram.class));
             verify(mMockDatagramController).pollPendingSatelliteDatagrams(anyInt(), any());
-            verify(mMockSessionMetricsStats, times(1)).addCountOfSuccessfulOutgoingDatagram();
+            verify(mMockSessionMetricsStats, times(1))
+                    .addCountOfSuccessfulOutgoingDatagram(anyInt());
 
             // Test when overlay config config_send_satellite_datagram_to_modem_in_demo_mode is
             // false
@@ -753,6 +779,360 @@ public class DatagramDispatcherTest extends TelephonyTest {
         mDatagramDispatcherUT.setShouldSendDatagramToModemInDemoMode(null);
     }
 
+    @Test
+    public void testSendSms_success() {
+        int datagramType = DATAGRAM_TYPE6;
+        clearInvocations(mMockSmsDispatchersController);
+        clearInvocations(mMockDatagramController);
+        doReturn(true).when(mMockDatagramController).needsWaitingForSatelliteConnected(
+                eq(datagramType));
+        when(mMockDatagramController.getDatagramWaitTimeForConnectedState(eq(false)))
+                .thenReturn(TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_TIMEOUT_MILLIS);
+        when(mMockDatagramController.getDatagramWaitTimeForConnectedState(eq(true)))
+                .thenReturn(TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_FOR_LAST_MESSAGE_TIMEOUT_MILLIS);
+
+        mDatagramDispatcherUT.sendSms(mPendingSms);
+        processAllMessages();
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramType));
+        mInOrder.verify(mMockDatagramController).updateSendStatus(eq(SUB_ID), eq(datagramType),
+                eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT),
+                eq(1),
+                eq(SATELLITE_RESULT_SUCCESS));
+        mInOrder.verify(mMockDatagramController).getDatagramWaitTimeForConnectedState(
+                eq(SatelliteServiceUtils.isLastSosMessage(datagramType)));
+        verifyZeroInteractions(mMockSmsDispatchersController);
+        assertTrue(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+
+        doReturn(false).when(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramType));
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        processAllMessages();
+        mInOrder.verify(mMockDatagramController).isPollingInIdleState();
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramType));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING), eq(1),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
+
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        processAllMessages();
+
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS),
+                        eq(0),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verifyNoMoreInteractions(mMockDatagramController);
+    }
+
+    @Test
+    public void testSendSms_failure() {
+        int datagramType = DATAGRAM_TYPE6;
+        clearInvocations(mMockSmsDispatchersController);
+        clearInvocations(mMockDatagramController);
+        doReturn(false).when(mMockDatagramController).needsWaitingForSatelliteConnected(
+                eq(datagramType));
+        mDatagramDispatcherUT.sendSms(mPendingSms);
+        processAllMessages();
+
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramType));
+        mInOrder.verify(mMockDatagramController).isPollingInIdleState();
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(mPhone.getSubId()), eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING), eq(1),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
+
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, false);
+        processAllMessages();
+
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(mPhone.getSubId()),
+                        eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED),
+                        eq(0),
+                        eq(SatelliteManager.SATELLITE_RESULT_NETWORK_ERROR));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(mPhone.getSubId()),
+                        eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
+                        eq(SATELLITE_RESULT_SUCCESS));
+    }
+
+    @Test
+    public void testSendSms_handleEventDatagramWaitForConnectedStateTimedOut() {
+        int datagramType = DATAGRAM_TYPE6;
+        clearInvocations(mMockSmsDispatchersController);
+        clearInvocations(mMockDatagramController);
+        doReturn(true).when(mMockDatagramController).needsWaitingForSatelliteConnected(
+                eq(datagramType));
+        when(mMockDatagramController.getDatagramWaitTimeForConnectedState(eq(false)))
+                .thenReturn(TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_TIMEOUT_MILLIS);
+        when(mMockDatagramController.getDatagramWaitTimeForConnectedState(eq(true)))
+                .thenReturn(TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_FOR_LAST_MESSAGE_TIMEOUT_MILLIS);
+
+        mDatagramDispatcherUT.sendSms(mPendingSms);
+        processAllMessages();
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramType));
+        mInOrder.verify(mMockDatagramController).updateSendStatus(eq(SUB_ID), eq(datagramType),
+                eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT),
+                eq(1),
+                eq(SATELLITE_RESULT_SUCCESS));
+        mInOrder.verify(mMockDatagramController).getDatagramWaitTimeForConnectedState(
+                eq(SatelliteServiceUtils.isLastSosMessage(datagramType)));
+        verifyZeroInteractions(mMockSmsDispatchersController);
+        assertTrue(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+
+        moveTimeForward(TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_TIMEOUT_MILLIS);
+        processAllMessages();
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                        eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED),
+                        eq(1),
+                        eq(SatelliteManager.SATELLITE_RESULT_NOT_REACHABLE));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                        eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSmsDispatchersController).onSendCarrierRoamingNbIotNtnTextError(
+                eq(mPendingSms), eq(SatelliteManager.SATELLITE_RESULT_NOT_REACHABLE));
+        assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        processAllMessages();
+        verifyZeroInteractions(mMockSmsDispatchersController);
+    }
+
+    @Test
+    public void testSendSms_handleModemStateOff() {
+        int datagramType = DATAGRAM_TYPE6;
+        clearInvocations(mMockSmsDispatchersController);
+        clearInvocations(mMockDatagramController);
+        doReturn(true).when(mMockDatagramController).needsWaitingForSatelliteConnected(
+                eq(datagramType));
+        when(mMockDatagramController.getDatagramWaitTimeForConnectedState(eq(false)))
+                .thenReturn(TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_TIMEOUT_MILLIS);
+        when(mMockDatagramController.getDatagramWaitTimeForConnectedState(eq(true)))
+                .thenReturn(TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_FOR_LAST_MESSAGE_TIMEOUT_MILLIS);
+
+        mDatagramDispatcherUT.sendSms(mPendingSms);
+        processAllMessages();
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramType));
+        mInOrder.verify(mMockDatagramController).updateSendStatus(eq(SUB_ID), eq(datagramType),
+                eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT),
+                eq(1),
+                eq(SATELLITE_RESULT_SUCCESS));
+        mInOrder.verify(mMockDatagramController).getDatagramWaitTimeForConnectedState(
+                eq(SatelliteServiceUtils.isLastSosMessage(datagramType)));
+        verifyZeroInteractions(mMockSmsDispatchersController);
+        assertTrue(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_OFF);
+        processAllMessages();
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                        eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED),
+                        eq(1),
+                        eq(SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                        eq(datagramType),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSmsDispatchersController).onSendCarrierRoamingNbIotNtnTextError(
+                eq(mPendingSms), eq(SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED));
+        assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+    }
+
+    @Test
+    public void testSendSmsAndDatagram_prioritizeDatagram() {
+        int datagramTypeSms = DATAGRAM_TYPE6;
+        int datagramTypeSos = DATAGRAM_TYPE1;
+        doAnswer(invocation -> {
+            Message message = (Message) invocation.getArguments()[3];
+
+            mDatagramDispatcherUT.obtainMessage(2 /*EVENT_SEND_SATELLITE_DATAGRAM_DONE*/,
+                            new AsyncResult(message.obj, null, null))
+                    .sendToTarget();
+            return null;
+        }).when(mMockSatelliteModemInterface).sendSatelliteDatagram(any(SatelliteDatagram.class),
+                anyBoolean(), anyBoolean(), any(Message.class));
+
+        clearInvocations(mMockSmsDispatchersController);
+        clearInvocations(mMockDatagramController);
+        clearInvocations(mMockSessionMetricsStats);
+        clearInvocations(mMockSatelliteModemInterface);
+        doReturn(true).when(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSms));
+        doReturn(true).when(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSos));
+        when(mMockDatagramController.getDatagramWaitTimeForConnectedState(eq(false)))
+                .thenReturn(TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_TIMEOUT_MILLIS);
+        when(mMockDatagramController.getDatagramWaitTimeForConnectedState(eq(true)))
+                .thenReturn(
+                        TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_FOR_LAST_MESSAGE_TIMEOUT_MILLIS);
+        mResultListener.clear();
+
+        mDatagramDispatcherUT.sendSms(mPendingSms);
+        processAllMessages();
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSms));
+        mInOrder.verify(mMockDatagramController).updateSendStatus(eq(SUB_ID), eq(datagramTypeSms),
+                eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT),
+                eq(1),
+                eq(SATELLITE_RESULT_SUCCESS));
+        mInOrder.verify(mMockDatagramController).getDatagramWaitTimeForConnectedState(
+                eq(SatelliteServiceUtils.isLastSosMessage(datagramTypeSms)));
+        verifyZeroInteractions(mMockSmsDispatchersController);
+        assertTrue(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+
+        mDatagramDispatcherUT.sendSatelliteDatagram(SUB_ID, datagramTypeSos, mDatagram,
+                true, mResultListener::offer);
+        processAllMessages();
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSos));
+        mInOrder.verify(mMockDatagramController).updateSendStatus(eq(SUB_ID), eq(datagramTypeSos),
+                eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT),
+                eq(2),
+                eq(SATELLITE_RESULT_SUCCESS));
+        verifyZeroInteractions(mMockSatelliteModemInterface);
+        assertTrue(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+
+        doReturn(false).when(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSms));
+        doReturn(false).when(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSos));
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        processAllMessages();
+        // First SOS message is sent, then SMS is sent
+        mInOrder.verify(mMockDatagramController).isPollingInIdleState();
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSos));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramTypeSos),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING), eq(2),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramTypeSos),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS),
+                        eq(1),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSessionMetricsStats, times(1))
+                .addCountOfSuccessfulOutgoingDatagram(eq(datagramTypeSos));
+        verify(mMockSatelliteModemInterface, times(1)).sendSatelliteDatagram(
+                any(SatelliteDatagram.class), anyBoolean(), anyBoolean(), any(Message.class));
+        assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+
+        // Send pending SMS
+        mInOrder.verify(mMockDatagramController).isPollingInIdleState();
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSms));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramTypeSms),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING), eq(1),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
+
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        processAllMessages();
+
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramTypeSms),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS),
+                        eq(0),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramTypeSms),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verifyNoMoreInteractions(mMockDatagramController);
+    }
+
+    @Test
+    public void testSendSmsAndDatagram_sendingSmsAlreadyInProgress() {
+        int datagramTypeSms = DATAGRAM_TYPE6;
+        int datagramTypeSos = DATAGRAM_TYPE1;
+        doAnswer(invocation -> {
+            Message message = (Message) invocation.getArguments()[3];
+
+            mDatagramDispatcherUT.obtainMessage(2 /*EVENT_SEND_SATELLITE_DATAGRAM_DONE*/,
+                            new AsyncResult(message.obj, null, null))
+                    .sendToTarget();
+            return null;
+        }).when(mMockSatelliteModemInterface).sendSatelliteDatagram(any(SatelliteDatagram.class),
+                anyBoolean(), anyBoolean(), any(Message.class));
+
+        clearInvocations(mMockSmsDispatchersController);
+        clearInvocations(mMockDatagramController);
+        doReturn(false).when(mMockDatagramController).needsWaitingForSatelliteConnected(
+                eq(datagramTypeSms));
+        mDatagramDispatcherUT.sendSms(mPendingSms);
+        processAllMessages();
+
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSms));
+        mInOrder.verify(mMockDatagramController).isPollingInIdleState();
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(mPhone.getSubId()), eq(datagramTypeSms),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING), eq(1),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
+
+        // Sending SMS is already in progress, so datagram should not be sent
+        mDatagramDispatcherUT.sendSatelliteDatagram(SUB_ID, datagramTypeSos, mDatagram,
+                true, mResultListener::offer);
+        processAllMessages();
+        verifyZeroInteractions(mMockSatelliteModemInterface);
+
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        processAllMessages();
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramTypeSms),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS),
+                        eq(1),
+                        eq(SATELLITE_RESULT_SUCCESS));
+
+        // Send pending datagram
+        mInOrder.verify(mMockDatagramController).isPollingInIdleState();
+        mInOrder.verify(mMockDatagramController)
+                .needsWaitingForSatelliteConnected(eq(datagramTypeSos));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramTypeSos),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING), eq(1),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramTypeSos),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS),
+                        eq(0),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        mInOrder.verify(mMockDatagramController)
+                .updateSendStatus(eq(SUB_ID), eq(datagramTypeSos),
+                        eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
+                        eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSessionMetricsStats, times(1))
+                .addCountOfSuccessfulOutgoingDatagram(eq(datagramTypeSos));
+        verify(mMockSatelliteModemInterface, times(1)).sendSatelliteDatagram(
+                any(SatelliteDatagram.class), anyBoolean(), anyBoolean(), any(Message.class));
+        assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+    }
+
     private boolean waitForIntegerConsumerResult(int expectedNumberOfEvents) {
         for (int i = 0; i < expectedNumberOfEvents; i++) {
             try {
@@ -772,8 +1152,9 @@ public class DatagramDispatcherTest extends TelephonyTest {
         private long mLong = SATELLITE_ALIGN_TIMEOUT;
 
         TestDatagramDispatcher(@NonNull Context context, @NonNull Looper looper,
+                @NonNull FeatureFlags featureFlags,
                 @NonNull DatagramController datagramController) {
-            super(context, looper, datagramController);
+            super(context, looper, featureFlags, datagramController);
         }
 
         @Override
@@ -804,5 +1185,19 @@ public class DatagramDispatcherTest extends TelephonyTest {
 
     private static void loge(String message) {
         Rlog.e(TAG, message);
+    }
+
+    private static <T> ArrayList<T> asArrayList(T object) {
+        ArrayList<T> list = new ArrayList<>();
+        list.add(object);
+        return list;
+    }
+
+    private PendingRequest createPendingRequest() {
+        return new PendingRequest(
+                SmsDispatchersController.PendingRequest.TYPE_TEXT, null, "test-app",
+                "1111", "2222", asArrayList(null), asArrayList(null),
+                false, null, 0, asArrayList("text"), null,
+                false, 0, false, 10, 100L, false);
     }
 }

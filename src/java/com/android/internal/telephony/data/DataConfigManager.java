@@ -18,6 +18,7 @@ package com.android.internal.telephony.data;
 
 import android.annotation.CallbackExecutor;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.StringDef;
 import android.content.res.Resources;
 import android.net.LinkProperties;
@@ -272,7 +273,7 @@ public class DataConfigManager extends Handler {
     private final String mLogTag;
     @NonNull
     private final FeatureFlags mFeatureFlags;
-    @NonNull
+    @Nullable
     private final CarrierConfigManager mCarrierConfigManager;
     @NonNull
     private PersistableBundle mCarrierConfig = null;
@@ -355,12 +356,14 @@ public class DataConfigManager extends Handler {
 
         mCarrierConfigManager = mPhone.getContext().getSystemService(CarrierConfigManager.class);
         // Callback send msg to handler thread, so callback itself can be executed in binder thread.
-        mCarrierConfigManager.registerCarrierConfigChangeListener(Runnable::run,
-                (slotIndex, subId, carrierId, specificCarrierId) -> {
-                    if (slotIndex == mPhone.getPhoneId()) {
-                        sendEmptyMessage(EVENT_CARRIER_CONFIG_CHANGED);
-                    }
-                });
+        if (mCarrierConfigManager != null) {
+            mCarrierConfigManager.registerCarrierConfigChangeListener(Runnable::run,
+                    (slotIndex, subId, carrierId, specificCarrierId) -> {
+                        if (slotIndex == mPhone.getPhoneId()) {
+                            sendEmptyMessage(EVENT_CARRIER_CONFIG_CHANGED);
+                        }
+                    });
+        }
 
         // Register for device config update
         DeviceConfig.addOnPropertiesChangedListener(
@@ -714,8 +717,7 @@ public class DataConfigManager extends Handler {
     /**
      * Update the voice over PS related config from the carrier config.
      */
-    private void updateVopsConfig() {
-        synchronized (this) {
+    private synchronized void updateVopsConfig() {
             mShouldKeepNetworkUpInNonVops = mCarrierConfig.getBoolean(CarrierConfigManager
                     .Ims.KEY_KEEP_PDN_UP_IN_NO_VOPS_BOOL);
             int[] allowedNetworkTypes = mCarrierConfig.getIntArray(
@@ -723,7 +725,6 @@ public class DataConfigManager extends Handler {
             if (allowedNetworkTypes != null) {
                 Arrays.stream(allowedNetworkTypes).forEach(mEnabledVopsNetworkTypesInNonVops::add);
             }
-        }
     }
 
     /**
@@ -883,6 +884,14 @@ public class DataConfigManager extends Handler {
             return bandwidth;
         }
         return new DataNetwork.NetworkBandwidth(DEFAULT_BANDWIDTH, DEFAULT_BANDWIDTH);
+    }
+
+    /**
+     * @return What kind of traffic is supported on an unrestricted satellite network.
+     */
+    @CarrierConfigManager.SATELLITE_DATA_SUPPORT_MODE
+    public int getSatelliteDataSupportMode() {
+        return mCarrierConfig.getInt(CarrierConfigManager.KEY_SATELLITE_DATA_SUPPORT_MODE_INT);
     }
 
     /**

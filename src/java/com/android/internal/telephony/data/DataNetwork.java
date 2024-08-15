@@ -460,7 +460,10 @@ public class DataNetwork extends StateMachine {
             // Dynamically add and remove MMTEL capability when network transition between VoPS
             // and non-VoPS network if the request is not MMTEL. For MMTEL, we retain the capability
             // to prevent immediate tear down.
-            NetworkCapabilities.NET_CAPABILITY_MMTEL
+            NetworkCapabilities.NET_CAPABILITY_MMTEL,
+            // Dynamically add and remove MMS capability depending on QNS's preference if there is
+            // a transport specific APN alternative.
+            NetworkCapabilities.NET_CAPABILITY_MMS
     );
 
     /** The parent state. Any messages not handled by the child state fallback to this. */
@@ -2445,6 +2448,7 @@ public class DataNetwork extends StateMachine {
         }
 
         // Always start with not-restricted, and then remove if needed.
+        // By default, NET_CAPABILITY_NOT_RESTRICTED and NET_CAPABILITY_NOT_CONSTRAINED are included
         builder.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
 
         // When data is disabled, or data roaming is disabled and the device is roaming, we need
@@ -2480,11 +2484,6 @@ public class DataNetwork extends StateMachine {
         }
 
         if (mDataNetworkController.isEsimBootStrapProvisioningActivated()) {
-            builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
-        }
-
-        // mark the network as restricted when service state is non-terrestrial(satellite network)
-        if (mFlags.satelliteInternet() && mIsSatellite) {
             builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
         }
 
@@ -2528,6 +2527,23 @@ public class DataNetwork extends StateMachine {
         // Set the bandwidth information.
         builder.setLinkDownstreamBandwidthKbps(mNetworkBandwidth.downlinkBandwidthKbps);
         builder.setLinkUpstreamBandwidthKbps(mNetworkBandwidth.uplinkBandwidthKbps);
+
+        // Configure the network as restricted/constrained for unrestricted satellite network.
+        if (mFlags.satelliteInternet() && mIsSatellite && builder.build()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
+            switch (mDataConfigManager.getSatelliteDataSupportMode()) {
+                case CarrierConfigManager.SATELLITE_DATA_SUPPORT_ONLY_RESTRICTED
+                        -> builder.removeCapability(
+                                NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+                case CarrierConfigManager.SATELLITE_DATA_SUPPORT_BANDWIDTH_CONSTRAINED -> {
+                    try {
+                        builder.removeCapability(DataUtils
+                                .NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED);
+                    } catch (Exception ignored) { }
+                }
+                // default case CarrierConfigManager.SATELLITE_DATA_SUPPORT_ALL
+            }
+        }
 
         NetworkCapabilities nc = builder.build();
         if (mNetworkCapabilities == null || mNetworkAgent == null) {
@@ -3344,7 +3360,7 @@ public class DataNetwork extends StateMachine {
     public int getApnTypeNetworkCapability() {
         if (!mAttachedNetworkRequestList.isEmpty()) {
             // The highest priority network request is always at the top of list.
-            return mAttachedNetworkRequestList.get(0).getApnTypeNetworkCapability();
+            return mAttachedNetworkRequestList.get(0).getHighestPriorityApnTypeNetworkCapability();
         } else {
             return Arrays.stream(getNetworkCapabilities().getCapabilities()).boxed()
                     .filter(cap -> DataUtils.networkCapabilityToApnType(cap)

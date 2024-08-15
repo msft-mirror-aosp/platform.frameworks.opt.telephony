@@ -47,6 +47,7 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.SettingsObserver;
+import com.android.internal.telephony.TelephonyCapabilities;
 import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCallback;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.metrics.DeviceTelephonyPropertiesStats;
@@ -273,7 +274,7 @@ public class DataSettingsManager extends Handler {
     }
 
     private boolean hasCalling() {
-        if (!mFeatureFlags.minimalTelephonyCdmCheck()) return true;
+        if (!TelephonyCapabilities.minimalTelephonyCdmCheck(mFeatureFlags)) return true;
         return mPhone.getContext().getPackageManager().hasSystemFeature(
             PackageManager.FEATURE_TELEPHONY_CALLING);
     }
@@ -325,7 +326,7 @@ public class DataSettingsManager extends Handler {
                     @Override
                     public void onUserDataEnabledChanged(boolean enabled,
                             @NonNull String callingPackage) {
-                        log("phone" + phone.getPhoneId() + " onUserDataEnabledChanged "
+                        log("phone " + phone.getPhoneId() + " onUserDataEnabledChanged "
                                 + enabled + " by " + callingPackage
                                 + ", reevaluating mobile data policies");
                         DataSettingsManager.this.updateDataEnabledAndNotify(
@@ -334,6 +335,16 @@ public class DataSettingsManager extends Handler {
                 });
             }
         }
+        SubscriptionManagerService.getInstance().registerCallback(
+                new SubscriptionManagerService.SubscriptionManagerServiceCallback(this::post) {
+                    @Override
+                    public void onDefaultDataSubscriptionChanged(int subId) {
+                        log((subId == mSubId ? "Became" : "Not")
+                                + " default data sub, reevaluating mobile data policies");
+                        DataSettingsManager.this.updateDataEnabledAndNotify(
+                                TelephonyManager.DATA_ENABLED_REASON_OVERRIDE);
+                    }
+                });
         updateDataEnabledAndNotify(TelephonyManager.DATA_ENABLED_REASON_UNKNOWN);
     }
 

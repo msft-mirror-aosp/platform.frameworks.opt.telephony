@@ -92,6 +92,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.SlidingWindowEventCounter;
+import com.android.internal.telephony.TelephonyCapabilities;
 import com.android.internal.telephony.TelephonyComponentFactory;
 import com.android.internal.telephony.data.AccessNetworksManager.AccessNetworksManagerCallback;
 import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCallback;
@@ -462,7 +463,7 @@ public class DataNetworkController extends Handler {
     };
 
     private boolean hasCalling() {
-        if (!mFeatureFlags.minimalTelephonyCdmCheck()) return true;
+        if (!TelephonyCapabilities.minimalTelephonyCdmCheck(mFeatureFlags)) return true;
         return mPhone.getContext().getPackageManager().hasSystemFeature(
             PackageManager.FEATURE_TELEPHONY_CALLING);
     }
@@ -1298,6 +1299,13 @@ public class DataNetworkController extends Handler {
      * @param networkRequest The network request.
      */
     private void onAddNetworkRequest(@NonNull TelephonyNetworkRequest networkRequest) {
+        // TelephonyNetworkRequest at TelephonyNetworkProvider layer does not have config assigned
+        // (Because TelephonyNetworkProvider is a singleton across all SIMs. We are not able to
+        // retrieve the right carrier config for it.). So as soon as the request arrives
+        // DataNetworkController, we need to update the config in the request so it can update
+        // some of its config-dependent properties like request priority.
+        networkRequest.updateDataConfig(mDataConfigManager);
+
         // To detect IMS back-to-back release-request anomaly event
         if (mLastImsOperationIsRelease) {
             mLastImsOperationIsRelease = false;
@@ -1481,6 +1489,19 @@ public class DataNetworkController extends Handler {
      * still allowed in this case.
      */
     public boolean isInternetDataAllowed(boolean ignoreExistingNetworks) {
+        return !getInternetEvaluation(ignoreExistingNetworks).containsDisallowedReasons();
+    }
+
+    /**
+     * @param ignoreExistingNetworks {@code true} to skip the existing network check.
+     * @return The internet evaluation result.
+     * For example, if SIM is absent, or airplane mode is on, then data is NOT allowed.
+     * This API does not reflect the currently internet data network status. It's possible there is
+     * no internet data due to weak cellular signal or network side issue, but internet data is
+     * still allowed in this case.
+     */
+    @NonNull
+    public DataEvaluation getInternetEvaluation(boolean ignoreExistingNetworks) {
         TelephonyNetworkRequest internetRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -1492,7 +1513,7 @@ public class DataNetworkController extends Handler {
                 && mDataNetworkList.stream().anyMatch(
                         dataNetwork -> internetRequest.canBeSatisfiedBy(
                                 dataNetwork.getNetworkCapabilities()))) {
-            return true;
+            return new DataEvaluation(DataEvaluationReason.EXTERNAL_QUERY);
         }
 
         // If no existing network can satisfy the request, then check if we can possibly setup
@@ -1500,16 +1521,18 @@ public class DataNetworkController extends Handler {
 
         DataEvaluation evaluation = evaluateNetworkRequest(internetRequest,
                 DataEvaluationReason.EXTERNAL_QUERY);
-        if (evaluation.containsOnly(DataDisallowedReason.ONLY_ALLOWED_SINGLE_NETWORK)) {
+        if (evaluation.containsOnly(DataDisallowedReason.ONLY_ALLOWED_SINGLE_NETWORK)
+                && internetRequest.getPriority() > mDataNetworkList.stream()
+                .map(DataNetwork::getPriority)
+                .max(Comparator.comparing(Integer::valueOf))
+                .orElse(0)) {
             // If the only failed reason is only single network allowed, then check if the request
             // can trump the current network.
-            return internetRequest.getPriority() > mDataNetworkList.stream()
-                    .map(DataNetwork::getPriority)
-                    .max(Comparator.comparing(Integer::valueOf))
-                    .orElse(0);
+            evaluation.addDataAllowedReason(DataAllowedReason.NORMAL);
         }
-        return !evaluation.containsDisallowedReasons();
+        return evaluation;
     }
+
 
     /**
      * @return {@code true} if internet is unmetered.
@@ -1563,7 +1586,7 @@ public class DataNetworkController extends Handler {
             @NonNull TelephonyNetworkRequest networkRequest, DataEvaluationReason reason) {
         DataEvaluation evaluation = new DataEvaluation(reason);
         int transport = mAccessNetworksManager.getPreferredTransportByNetworkCapability(
-                networkRequest.getApnTypeNetworkCapability());
+                networkRequest.getHighestPriorityApnTypeNetworkCapability());
 
         // Check if the request can be satisfied by cellular network or satellite network.
         if (mFeatureFlags.satelliteInternet()
@@ -1695,7 +1718,7 @@ public class DataNetworkController extends Handler {
 
         if (mDataSettingsManager.isDataInitialized()) {
             if (!mDataSettingsManager.isDataEnabled(DataUtils.networkCapabilityToApnType(
-                    networkRequest.getApnTypeNetworkCapability()))) {
+                    networkRequest.getHighestPriorityApnTypeNetworkCapability()))) {
                 evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_DISABLED);
             }
         } else {
@@ -1730,7 +1753,9 @@ public class DataNetworkController extends Handler {
                 // Check if request is unmetered (WiFi or unmetered APN).
                 evaluation.addDataAllowedReason(DataAllowedReason.UNMETERED_USAGE);
             } else if (transport == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
-                if (!networkRequest.isMeteredRequest()) {
+                boolean isMeteredRequest = mDataConfigManager.isAnyMeteredCapability(
+                        networkRequest.getCapabilities(), mServiceState.getDataRoaming());
+                if (!isMeteredRequest) {
                     evaluation.addDataAllowedReason(DataAllowedReason.UNMETERED_USAGE);
                 }
             }
@@ -1931,22 +1956,12 @@ public class DataNetworkController extends Handler {
         // If the network is satellite, then the network must be restricted.
         if (mFeatureFlags.satelliteInternet()) {
             // The IWLAN data network should remain intact even when satellite is connected.
-            if (dataNetwork.getTransport() != AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
-                // On satellite, every data network needs to be restricted.
-                if (mServiceState.isUsingNonTerrestrialNetwork()
-                        && dataNetwork.getNetworkCapabilities()
-                        .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
-                    evaluation.addDataDisallowedReason(
-                            DataDisallowedReason.DATA_NETWORK_TRANSPORT_NOT_ALLOWED);
-                }
-
-                // Check if the transport is compatible with the network
-                if (mServiceState.isUsingNonTerrestrialNetwork() != dataNetwork.isSatellite()) {
-                    // Since we don't support satellite/cellular network handover, we should always
-                    // tear down the network when transport changes.
-                    evaluation.addDataDisallowedReason(
-                            DataDisallowedReason.DATA_NETWORK_TRANSPORT_NOT_ALLOWED);
-                }
+            if (dataNetwork.getTransport() != AccessNetworkConstants.TRANSPORT_TYPE_WLAN
+                    && mServiceState.isUsingNonTerrestrialNetwork() != dataNetwork.isSatellite()) {
+                // Since we don't support satellite/cellular network handover, we should always
+                // tear down the network when transport changes.
+                evaluation.addDataDisallowedReason(
+                        DataDisallowedReason.DATA_NETWORK_TRANSPORT_NOT_ALLOWED);
             }
         }
 
@@ -1979,7 +1994,7 @@ public class DataNetworkController extends Handler {
             if (mAllNetworkRequestList.stream()
                     .filter(request -> dataNetwork.getTransport()
                             == mAccessNetworksManager.getPreferredTransportByNetworkCapability(
-                                    request.getApnTypeNetworkCapability()))
+                                    request.getHighestPriorityApnTypeNetworkCapability()))
                     .filter(request
                             -> !hasCapabilityExemptsFromSinglePdnRule(request.getCapabilities()))
                     .anyMatch(request -> request.getPriority() > dataNetwork.getPriority())) {
@@ -2155,11 +2170,24 @@ public class DataNetworkController extends Handler {
             return true;
         }
 
-        // When the device is on satellite, only restricted network request can request network.
-        if (mServiceState.isUsingNonTerrestrialNetwork()
-                && networkRequest.hasCapability(
-                        NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
-            return false;
+        // When the device is on satellite, only restricted/constrained network request can request
+        // network.
+        if (mServiceState.isUsingNonTerrestrialNetwork() && networkRequest.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
+            switch (mDataConfigManager.getSatelliteDataSupportMode()) {
+                case CarrierConfigManager.SATELLITE_DATA_SUPPORT_ONLY_RESTRICTED -> {
+                    return false;
+                }
+                case CarrierConfigManager.SATELLITE_DATA_SUPPORT_BANDWIDTH_CONSTRAINED -> {
+                    try {
+                        if (networkRequest.hasCapability(DataUtils
+                                .NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED)) {
+                            return false;
+                        }
+                    } catch (Exception ignored) { }
+                }
+                // default case CarrierConfigManager.SATELLITE_DATA_SUPPORT_ALL
+            }
         }
 
         // If the network request does not specify cellular or satellite, then it can be
@@ -2628,7 +2656,7 @@ public class DataNetworkController extends Handler {
                         .unregisterImsRegistrationCallback(oldCallback);
             }
             log("Successfully unregistered " + DataUtils.imsFeatureToString(imsFeature)
-                    + " registration state. sudId=" + subId);
+                    + " registration state. subId=" + subId);
             mImsFeatureRegistrationCallbacks.remove(imsFeature);
         }
     }
@@ -2639,42 +2667,46 @@ public class DataNetworkController extends Handler {
      * @param subId Subscription index.
      */
     private void registerImsStateCallback(int subId) {
-        Function<Integer, ImsStateCallback> imsFeatureStateCallbackFactory =
-                imsFeature -> new ImsStateCallback() {
-                    @Override
-                    public void onUnavailable(int reason) {
-                        // Unregister registration state update when IMS service is unbound.
-                        unregisterImsFeatureRegistrationState(subId, imsFeature);
-                    }
+        if (isImsSupportedOnDevice()) {
+            Function<Integer, ImsStateCallback> imsFeatureStateCallbackFactory =
+                    imsFeature -> new ImsStateCallback() {
+                        @Override
+                        public void onUnavailable(int reason) {
+                            // Unregister registration state update when IMS service is unbound.
+                            unregisterImsFeatureRegistrationState(subId, imsFeature);
+                        }
 
-                    @Override
-                    public void onAvailable() {
-                        mImsFeaturePackageName.put(imsFeature, ImsResolver.getInstance()
-                                .getConfiguredImsServicePackageName(mPhone.getPhoneId(),
-                                        imsFeature));
-                        // Once IMS service is bound, register for registration state update.
-                        registerImsFeatureRegistrationState(subId, imsFeature);
-                    }
+                        @Override
+                        public void onAvailable() {
+                            mImsFeaturePackageName.put(imsFeature, ImsResolver.getInstance()
+                                    .getConfiguredImsServicePackageName(mPhone.getPhoneId(),
+                                            imsFeature));
+                            // Once IMS service is bound, register for registration state update.
+                            registerImsFeatureRegistrationState(subId, imsFeature);
+                        }
 
-                    @Override
-                    public void onError() {
-                    }
-                };
+                        @Override
+                        public void onError() {
+                        }
+                    };
 
-        try {
-            ImsStateCallback callback = imsFeatureStateCallbackFactory
-                    .apply(ImsFeature.FEATURE_MMTEL);
-            mImsManager.getImsMmTelManager(subId).registerImsStateCallback(this::post,
-                    callback);
-            mImsStateCallbacks.put(ImsFeature.FEATURE_MMTEL, callback);
-            log("Successfully register MMTEL state on sub " + subId);
+            try {
+                ImsStateCallback callback = imsFeatureStateCallbackFactory
+                        .apply(ImsFeature.FEATURE_MMTEL);
+                mImsManager.getImsMmTelManager(subId).registerImsStateCallback(this::post,
+                        callback);
+                mImsStateCallbacks.put(ImsFeature.FEATURE_MMTEL, callback);
+                log("Successfully register MMTEL state on sub " + subId);
 
-            callback = imsFeatureStateCallbackFactory.apply(ImsFeature.FEATURE_RCS);
-            mImsManager.getImsRcsManager(subId).registerImsStateCallback(this::post, callback);
-            mImsStateCallbacks.put(ImsFeature.FEATURE_RCS, callback);
-            log("Successfully register RCS state on sub " + subId);
-        } catch (ImsException e) {
-            loge("Exception when registering IMS state callback. " + e);
+                callback = imsFeatureStateCallbackFactory.apply(ImsFeature.FEATURE_RCS);
+                mImsManager.getImsRcsManager(subId).registerImsStateCallback(this::post, callback);
+                mImsStateCallbacks.put(ImsFeature.FEATURE_RCS, callback);
+                log("Successfully register RCS state on sub " + subId);
+            } catch (ImsException e) {
+                loge("Exception when registering IMS state callback. " + e);
+            }
+        } else {
+            log("IMS is not supported on this device, skipping registerImsStateCallback");
         }
     }
 
@@ -2684,19 +2716,31 @@ public class DataNetworkController extends Handler {
      * @param subId Subscription index.
      */
     private void unregisterImsStateCallbacks(int subId) {
-        ImsStateCallback callback = mImsStateCallbacks.get(ImsFeature.FEATURE_MMTEL);
-        if (callback != null) {
-            mImsManager.getImsMmTelManager(subId).unregisterImsStateCallback(callback);
-            mImsStateCallbacks.remove(ImsFeature.FEATURE_MMTEL);
-            log("Unregister MMTEL state on sub " + subId);
-        }
+        if (isImsSupportedOnDevice()) {
+            ImsStateCallback callback = mImsStateCallbacks.get(ImsFeature.FEATURE_MMTEL);
+            if (callback != null) {
+                mImsManager.getImsMmTelManager(subId).unregisterImsStateCallback(callback);
+                mImsStateCallbacks.remove(ImsFeature.FEATURE_MMTEL);
+                log("Unregister MMTEL state on sub " + subId);
+            }
 
-        callback = mImsStateCallbacks.get(ImsFeature.FEATURE_RCS);
-        if (callback != null) {
-            mImsManager.getImsRcsManager(subId).unregisterImsStateCallback(callback);
-            mImsStateCallbacks.remove(ImsFeature.FEATURE_RCS);
-            log("Unregister RCS state on sub " + subId);
+            callback = mImsStateCallbacks.get(ImsFeature.FEATURE_RCS);
+            if (callback != null) {
+                mImsManager.getImsRcsManager(subId).unregisterImsStateCallback(callback);
+                mImsStateCallbacks.remove(ImsFeature.FEATURE_RCS);
+                log("Unregister RCS state on sub " + subId);
+            }
+        } else {
+            log("IMS is not supported on this device, skipping unregisterImsStateCallbacks");
         }
+    }
+
+    /**
+     * called to check if FEATURE_TELEPHONY_IMS feature is available
+     */
+    private boolean isImsSupportedOnDevice() {
+        return mPhone.getContext().getPackageManager()
+                .hasSystemFeature(PackageManager.FEATURE_TELEPHONY_IMS);
     }
 
     /** Called when subscription info changed. */
@@ -2834,7 +2878,7 @@ public class DataNetworkController extends Handler {
         }
 
         int transport = mAccessNetworksManager.getPreferredTransportByNetworkCapability(
-                networkRequestList.get(0).getApnTypeNetworkCapability());
+                networkRequestList.get(0).getHighestPriorityApnTypeNetworkCapability());
         logl("Creating data network on "
                 + AccessNetworkConstants.transportTypeToString(transport) + " with " + dataProfile
                 + ", and attaching " + networkRequestList.size() + " network requests to it.");
@@ -3106,7 +3150,8 @@ public class DataNetworkController extends Handler {
         log("onDataNetworkSetupRetry: Request list:" + requestList);
         TelephonyNetworkRequest telephonyNetworkRequest = requestList.get(0);
 
-        int networkCapability = telephonyNetworkRequest.getApnTypeNetworkCapability();
+        int networkCapability = telephonyNetworkRequest
+                .getHighestPriorityApnTypeNetworkCapability();
         int preferredTransport = mAccessNetworksManager.getPreferredTransportByNetworkCapability(
                 networkCapability);
         if (preferredTransport != dataSetupRetryEntry.transport) {
