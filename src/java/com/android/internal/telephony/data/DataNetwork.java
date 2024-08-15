@@ -460,7 +460,10 @@ public class DataNetwork extends StateMachine {
             // Dynamically add and remove MMTEL capability when network transition between VoPS
             // and non-VoPS network if the request is not MMTEL. For MMTEL, we retain the capability
             // to prevent immediate tear down.
-            NetworkCapabilities.NET_CAPABILITY_MMTEL
+            NetworkCapabilities.NET_CAPABILITY_MMTEL,
+            // Dynamically add and remove MMS capability depending on QNS's preference if there is
+            // a transport specific APN alternative.
+            NetworkCapabilities.NET_CAPABILITY_MMS
     );
 
     /** The parent state. Any messages not handled by the child state fallback to this. */
@@ -3357,7 +3360,7 @@ public class DataNetwork extends StateMachine {
     public int getApnTypeNetworkCapability() {
         if (!mAttachedNetworkRequestList.isEmpty()) {
             // The highest priority network request is always at the top of list.
-            return mAttachedNetworkRequestList.get(0).getApnTypeNetworkCapability();
+            return mAttachedNetworkRequestList.get(0).getHighestPriorityApnTypeNetworkCapability();
         } else {
             return Arrays.stream(getNetworkCapabilities().getCapabilities()).boxed()
                     .filter(cap -> DataUtils.networkCapabilityToApnType(cap)
