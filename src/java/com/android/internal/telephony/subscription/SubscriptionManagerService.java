@@ -196,7 +196,8 @@ public class SubscriptionManagerService extends ISub.Stub {
             SimInfo.COLUMN_IS_ONLY_NTN,
             SimInfo.COLUMN_SATELLITE_ENTITLEMENT_STATUS,
             SimInfo.COLUMN_SATELLITE_ENTITLEMENT_PLMNS,
-            SimInfo.COLUMN_SATELLITE_ESOS_SUPPORTED
+            SimInfo.COLUMN_SATELLITE_ESOS_SUPPORTED,
+            SimInfo.COLUMN_IS_SATELLITE_PROVISIONED_FOR_NON_IP_DATAGRAM
     );
 
     /**
@@ -457,6 +458,13 @@ public class SubscriptionManagerService extends ISub.Stub {
          * @param subId The subscription id.
          */
         public void onUiccApplicationsEnabledChanged(int subId) {}
+
+        /**
+         * Called when {@link #getDefaultDataSubId()} changed.
+         *
+         * @param subId The subscription id.
+         */
+        public void onDefaultDataSubscriptionChanged(int subId) {}
     }
 
     /**
@@ -592,6 +600,13 @@ public class SubscriptionManagerService extends ISub.Stub {
         // Broadcast sub Id on service initialized.
         broadcastSubId(TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED,
                 getDefaultDataSubId());
+        if (mFeatureFlags.ddsCallback()) {
+            mSubscriptionManagerServiceCallbacks.forEach(
+                    callback -> callback.invokeFromExecutor(
+                            () -> callback.onDefaultDataSubscriptionChanged(
+                                    getDefaultDataSubId())));
+        }
+
         broadcastSubId(TelephonyIntents.ACTION_DEFAULT_VOICE_SUBSCRIPTION_CHANGED,
                 getDefaultVoiceSubId());
         broadcastSubId(SubscriptionManager.ACTION_DEFAULT_SMS_SUBSCRIPTION_CHANGED,
@@ -912,6 +927,8 @@ public class SubscriptionManagerService extends ISub.Stub {
      * @param subId The subscription id.
      */
     public void setCountryIso(int subId, @NonNull String iso) {
+        logl("setCountryIso: subId=" + subId + ", iso=" + iso);
+
         // This can throw IllegalArgumentException if the subscription does not exist.
         try {
             mSubscriptionDatabaseManager.setCountryIso(subId, iso);
@@ -928,6 +945,8 @@ public class SubscriptionManagerService extends ISub.Stub {
      * @param carrierName The carrier name.
      */
     public void setCarrierName(int subId, @NonNull String carrierName) {
+        logl("setCarrierName: subId=" + subId + ", carrierName=" + carrierName);
+
         // This can throw IllegalArgumentException if the subscription does not exist.
         try {
             mSubscriptionDatabaseManager.setCarrierName(subId, carrierName);
@@ -999,6 +1018,9 @@ public class SubscriptionManagerService extends ISub.Stub {
      * @param numberFromIms The phone number retrieved from IMS.
      */
     public void setNumberFromIms(int subId, @NonNull String numberFromIms) {
+        logl("setNumberFromIms: subId=" + subId + ", number="
+                + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, numberFromIms));
+
         // This can throw IllegalArgumentException if the subscription does not exist.
         try {
             mSubscriptionDatabaseManager.setNumberFromIms(subId, numberFromIms);
@@ -1893,7 +1915,10 @@ public class SubscriptionManagerService extends ISub.Stub {
                     + "carrier privilege");
         }
 
-        enforceTelephonyFeatureWithException(callingPackage, "getAllSubInfoList");
+        if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage, "getAllSubInfoList");
+        }
 
         return getSubscriptionInfoStreamAsUser(BINDER_WRAPPER.getCallingUserHandle())
                 // callers have READ_PHONE_STATE or READ_PRIVILEGED_PHONE_STATE can get a full
@@ -2234,7 +2259,7 @@ public class SubscriptionManagerService extends ISub.Stub {
     @Override
     public List<SubscriptionInfo> getAccessibleSubscriptionInfoList(
             @NonNull String callingPackage) {
-        if (!mEuiccManager.isEnabled()) {
+        if (mEuiccManager == null || !mEuiccManager.isEnabled()) {
             return null;
         }
 
@@ -3166,6 +3191,11 @@ public class SubscriptionManagerService extends ISub.Stub {
 
                 broadcastSubId(TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED,
                         subId);
+                if (mFeatureFlags.ddsCallback()) {
+                    mSubscriptionManagerServiceCallbacks.forEach(
+                            callback -> callback.invokeFromExecutor(
+                                    () -> callback.onDefaultDataSubscriptionChanged(subId)));
+                }
 
                 updateDefaultSubId();
             }
@@ -3895,10 +3925,20 @@ public class SubscriptionManagerService extends ISub.Stub {
         switch(source) {
             case SubscriptionManager.PHONE_NUMBER_SOURCE_UICC:
                 final Phone phone = PhoneFactory.getPhone(getSlotIndex(subId));
-                if (phone != null) {
-                    return TextUtils.emptyIfNull(phone.getLine1Number());
-                } else {
+                if (mFeatureFlags.uiccPhoneNumberFix()) {
+                    if (phone != null) {
+                        String number = phone.getLine1Number();
+                        if (!TextUtils.isEmpty(number)) {
+                            return number;
+                        }
+                    }
                     return subInfo.getNumber();
+                } else {
+                    if (phone != null) {
+                        return TextUtils.emptyIfNull(phone.getLine1Number());
+                    } else {
+                        return subInfo.getNumber();
+                    }
                 }
             case SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER:
                 return subInfo.getNumberFromCarrier();
@@ -4006,6 +4046,9 @@ public class SubscriptionManagerService extends ISub.Stub {
     @RequiresPermission("carrier privileges")
     public void setPhoneNumber(int subId, @PhoneNumberSource int source, @NonNull String number,
             @NonNull String callingPackage, @Nullable String callingFeatureId) {
+        logl("setPhoneNumber: subId=" + subId + ", number="
+                + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, number)
+                + ", calling package=" + callingPackage);
         if (!TelephonyPermissions.checkCarrierPrivilegeForSubId(mContext, subId)) {
             throw new SecurityException("setPhoneNumber for CARRIER needs carrier privilege.");
         }
@@ -4636,6 +4679,24 @@ public class SubscriptionManagerService extends ISub.Stub {
     }
 
     /**
+     * Set whether the subscription is provisioned for OEM-enabled or carrier roaming NB-IOT
+     * satellite service or not.
+     *
+     * @param subId subscription id.
+     * @param isSatelliteProvisionedForNonIpDatagram {@code true} if subId is provisioned.
+     * {@code false} otherwise.
+     */
+    public void setIsSatelliteProvisionedForNonIpDatagram(int subId,
+            boolean isSatelliteProvisionedForNonIpDatagram) {
+        try {
+            mSubscriptionDatabaseManager.setIsSatelliteProvisionedForNonIpDatagram(
+                    subId, (isSatelliteProvisionedForNonIpDatagram ? 1 : 0));
+        } catch (IllegalArgumentException e) {
+            loge("setIsSatelliteProvisionedForNonIpDatagram: invalid subId=" + subId);
+        }
+    }
+
+    /**
      * Get the satellite ESOS supported value in the subscription database.
      *
      * @param subId subscription id.
@@ -4652,6 +4713,20 @@ public class SubscriptionManagerService extends ISub.Stub {
         }
 
         return subInfo.getSatelliteESOSSupported() == 1;
+    }
+
+    /**
+     * Get whether the subscription is provisioned for OEM-enabled or carrier roaming NB-IOT
+     * satellite service or not.
+     *
+     * @param subId subscription id.
+     * @return {@code true} if it is provisioned for oem satellite service. {@code false} otherwise.
+     */
+    public boolean isSatelliteProvisionedForNonIpDatagram(int subId) {
+        SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager.getSubscriptionInfoInternal(
+                subId);
+
+        return subInfo.getIsSatelliteProvisionedForNonIpDatagram() == 1;
     }
 
     /**
