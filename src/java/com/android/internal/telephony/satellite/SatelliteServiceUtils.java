@@ -28,10 +28,12 @@ import android.os.AsyncResult;
 import android.os.Binder;
 import android.os.PersistableBundle;
 import android.telephony.AccessNetworkConstants;
+import android.telephony.CarrierConfigManager;
 import android.telephony.CellIdentity;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
+import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.satellite.AntennaPosition;
 import android.telephony.satellite.NtnSignalStrength;
@@ -62,6 +64,21 @@ import java.util.stream.Collectors;
  */
 public class SatelliteServiceUtils {
     private static final String TAG = "SatelliteServiceUtils";
+
+    /**
+     * Converts a carrier roaming NTN (Non-Terrestrial Network) connect type constant
+     * from {@link CarrierConfigManager} to string.
+     * @param type The carrier roaming NTN connect type constant.
+     * @return A string representation of the connect type, or "Unknown(type)" if not recognized.
+     */
+    public static String carrierRoamingNtnConnectTypeToString(
+            @CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_TYPE int type) {
+        return switch (type) {
+            case CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC -> "AUTOMATIC";
+            case CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL -> "MANUAL";
+            default -> "Unknown(" + type + ")";
+        };
+    }
 
     /**
      * Convert radio technology from service definition to framework definition.
@@ -286,6 +303,26 @@ public class SatelliteServiceUtils {
         }
         logd("getValidSatelliteSubId: use DEFAULT_SUBSCRIPTION_ID for subId=" + subId);
         return SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
+    }
+
+    /**
+     * Get the subscription ID which supports OEM based NTN satellite service.
+     *
+     * @return ID of the subscription that supports OEM-based satellite if any,
+     * return {@link SubscriptionManager#INVALID_SUBSCRIPTION_ID} otherwise.
+     */
+    public static int getOemBasedNonTerrestrialSubscriptionId(@NonNull Context context) {
+        List<SubscriptionInfo> infoList =
+                SubscriptionManagerService.getInstance().getAllSubInfoList(
+                        context.getOpPackageName(), null);
+
+        int subId = infoList.stream()
+                .filter(info -> info.isOnlyNonTerrestrialNetwork())
+                .mapToInt(SubscriptionInfo::getSubscriptionId)
+                .findFirst()
+                .orElse(SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+        logd("getOemBasedNonTerrestrialSubscriptionId: subId=" + subId);
+        return subId;
     }
 
     /**

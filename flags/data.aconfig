@@ -172,3 +172,23 @@ flag {
   description: "Write DataRatStateChanged atom"
   bug:"318519337"
 }
+
+# OWNER=jackyu TARGET=24Q4
+flag {
+  name: "dds_callback"
+  namespace: "telephony"
+  description: "Adding new callback when DDS changed"
+  bug:"353723350"
+}
+
+# OWNER=jackyu TARGET=25Q1
+flag {
+  name: "support_network_provider"
+  namespace: "telephony"
+  description: "Deprecate network factory and adapt the new network provider model from connectivity service"
+  bug: "343370895"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
