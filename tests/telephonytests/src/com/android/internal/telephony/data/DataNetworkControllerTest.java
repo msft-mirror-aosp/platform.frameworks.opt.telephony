@@ -44,6 +44,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
+import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.InetAddresses;
 import android.net.LinkAddress;
@@ -158,7 +159,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
     private static final int EVENT_SUBSCRIPTION_OVERRIDE = 23;
 
     // Mocked classes
-    private PhoneSwitcher mMockedPhoneSwitcher;
     protected ISub mMockedIsub;
     private DataNetworkControllerCallback mMockedDataNetworkControllerCallback;
     private DataRetryManagerCallback mMockedDataRetryManagerCallback;
@@ -172,6 +172,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
     private RegistrationCallback mMmtelRegCallback;
     private RegistrationCallback mRcsRegCallback;
     private SubscriptionInfo mMockSubInfo;
+    private PackageManager mMockPackageManager;
 
     private int mNetworkRequestId = 0;
 
@@ -853,7 +854,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
     public void setUp() throws Exception {
         logd("DataNetworkControllerTest +Setup!");
         super.setUp(getClass().getSimpleName());
-        mMockedPhoneSwitcher = Mockito.mock(PhoneSwitcher.class);
         mMockedIsub = Mockito.mock(ISub.class);
         mMockedImsManager = mContext.getSystemService(ImsManager.class);
         mMockedImsMmTelManager = Mockito.mock(ImsMmTelManager.class);
@@ -863,6 +863,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         mMockedDataNetworkControllerCallback = Mockito.mock(DataNetworkControllerCallback.class);
         mMockedDataRetryManagerCallback = Mockito.mock(DataRetryManagerCallback.class);
         mMockSubInfo = Mockito.mock(SubscriptionInfo.class);
+        mMockPackageManager = Mockito.mock(PackageManager.class);
         when(mTelephonyComponentFactory.makeDataSettingsManager(any(Phone.class),
                 any(DataNetworkController.class), any(FeatureFlags.class), any(Looper.class),
                 any(DataSettingsManager.DataSettingsManagerCallback.class))).thenCallRealMethod();
@@ -875,7 +876,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
         mMockedDataServiceManagers.put(AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
                 mMockedWlanDataServiceManager);
 
-        replaceInstance(PhoneSwitcher.class, "sPhoneSwitcher", null, mMockedPhoneSwitcher);
         doReturn(1).when(mMockedIsub).getDefaultDataSubId();
         doReturn(mMockedIsub).when(mIBinder).queryLocalInterface(anyString());
         doReturn(mPhone).when(mPhone).getImsPhone();
@@ -892,6 +892,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         doReturn(true).when(mFeatureFlags).satelliteInternet();
         doReturn(true).when(mFeatureFlags)
                 .ignoreExistingNetworksForInternetAllowedChecking();
+        when(mContext.getPackageManager()).thenReturn(mMockPackageManager);
+        doReturn(true).when(mMockPackageManager).hasSystemFeature(anyString());
 
         List<SubscriptionInfo> infoList = new ArrayList<>();
         infoList.add(mMockSubInfo);
@@ -4903,14 +4905,10 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
         NetworkRequest nativeNetworkRequest = new NetworkRequest(netCaps,
                 ConnectivityManager.TYPE_MOBILE, 0, NetworkRequest.Type.REQUEST);
-
-        mDataNetworkControllerUT.addNetworkRequest(new TelephonyNetworkRequest(
-                nativeNetworkRequest, mPhone, mFeatureFlags));
-        processAllMessages();
-
-        // Intentionally create a new telephony request with the original native network request.
         TelephonyNetworkRequest request = new TelephonyNetworkRequest(
                 nativeNetworkRequest, mPhone, mFeatureFlags);
+        mDataNetworkControllerUT.addNetworkRequest(request);
+        processAllMessages();
 
         mDataNetworkControllerUT.removeNetworkRequest(request);
         processAllFutureMessages();
@@ -4931,7 +4929,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         processAllMessages();
 
         // this slot is 0, modem preferred on slot 1
-        doReturn(1).when(mMockedPhoneSwitcher).getPreferredDataPhoneId();
+        doReturn(1).when(mPhoneSwitcher).getPreferredDataPhoneId();
 
         // Simulate telephony network factory remove request due to switch.
         mDataNetworkControllerUT.removeNetworkRequest(request);
@@ -4944,7 +4942,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
     @Test
     public void testSetupDataOnNonDds() throws Exception {
         // this slot is 0, modem preferred on slot 1
-        doReturn(1).when(mMockedPhoneSwitcher).getPreferredDataPhoneId();
+        doReturn(1).when(mPhoneSwitcher).getPreferredDataPhoneId();
         TelephonyNetworkRequest request = createNetworkRequest(
                 NetworkCapabilities.NET_CAPABILITY_MMS);
 
@@ -5469,5 +5467,19 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 .containsDisallowedReasons()).isFalse();
         assertThat(mDataNetworkControllerUT.getInternetEvaluation(true/*ignoreExistingNetworks*/)
                 .containsDisallowedReasons()).isTrue();
+    }
+
+    @Test
+    public void testRemoveNetworkRequestClearState() throws Exception {
+        TelephonyNetworkRequest request = createNetworkRequest(
+                NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        mDataNetworkControllerUT.addNetworkRequest(request);
+        processAllMessages();
+        verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        assertThat(request.getState()).isEqualTo(TelephonyNetworkRequest.REQUEST_STATE_SATISFIED);
+
+        mDataNetworkControllerUT.removeNetworkRequest(request);
+        processAllMessages();
+        assertThat(request.getState()).isEqualTo(TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED);
     }
 }
