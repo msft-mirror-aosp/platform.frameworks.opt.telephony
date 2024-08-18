@@ -1299,6 +1299,13 @@ public class DataNetworkController extends Handler {
      * @param networkRequest The network request.
      */
     private void onAddNetworkRequest(@NonNull TelephonyNetworkRequest networkRequest) {
+        // TelephonyNetworkRequest at TelephonyNetworkProvider layer does not have config assigned
+        // (Because TelephonyNetworkProvider is a singleton across all SIMs. We are not able to
+        // retrieve the right carrier config for it.). So as soon as the request arrives
+        // DataNetworkController, we need to update the config in the request so it can update
+        // some of its config-dependent properties like request priority.
+        networkRequest.updateDataConfig(mDataConfigManager);
+
         // To detect IMS back-to-back release-request anomaly event
         if (mLastImsOperationIsRelease) {
             mLastImsOperationIsRelease = false;
@@ -1501,11 +1508,9 @@ public class DataNetworkController extends Handler {
                         .build(), mPhone, mFeatureFlags);
         // If we don't skip checking existing network, then we should check If one of the
         // existing networks can satisfy the internet request, then internet is allowed.
-        if ((!mFeatureFlags.ignoreExistingNetworksForInternetAllowedChecking()
-                || !ignoreExistingNetworks)
-                && mDataNetworkList.stream().anyMatch(
-                        dataNetwork -> internetRequest.canBeSatisfiedBy(
-                                dataNetwork.getNetworkCapabilities()))) {
+        if (!ignoreExistingNetworks && mDataNetworkList.stream().anyMatch(
+                dataNetwork -> internetRequest.canBeSatisfiedBy(
+                        dataNetwork.getNetworkCapabilities()))) {
             return new DataEvaluation(DataEvaluationReason.EXTERNAL_QUERY);
         }
 
@@ -1746,7 +1751,9 @@ public class DataNetworkController extends Handler {
                 // Check if request is unmetered (WiFi or unmetered APN).
                 evaluation.addDataAllowedReason(DataAllowedReason.UNMETERED_USAGE);
             } else if (transport == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
-                if (!networkRequest.isMeteredRequest()) {
+                boolean isMeteredRequest = mDataConfigManager.isAnyMeteredCapability(
+                        networkRequest.getCapabilities(), mServiceState.getDataRoaming());
+                if (!isMeteredRequest) {
                     evaluation.addDataAllowedReason(DataAllowedReason.UNMETERED_USAGE);
                 }
             }
@@ -2507,6 +2514,30 @@ public class DataNetworkController extends Handler {
     }
 
     private void onRemoveNetworkRequest(@NonNull TelephonyNetworkRequest request) {
+        if (mFeatureFlags.supportNetworkProvider()) {
+            if (!mAllNetworkRequestList.remove(request)) {
+                loge("onRemoveNetworkRequest: Network request does not exist. " + request);
+                return;
+            }
+
+            if (request.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS)) {
+                mImsThrottleCounter.addOccurrence();
+                mLastReleasedImsRequestCapabilities = request.getCapabilities();
+                mLastImsOperationIsRelease = true;
+            }
+
+            if (request.getAttachedNetwork() != null) {
+                request.getAttachedNetwork().detachNetworkRequest(
+                        request, false /* shouldRetry */);
+            }
+
+            request.setState(TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED);
+            request.setEvaluation(null);
+
+            log("onRemoveNetworkRequest: Removed " + request);
+            return;
+        }
+
         // The request generated from telephony network factory does not contain the information
         // the original request has, for example, attached data network. We need to find the
         // original one.
@@ -2527,7 +2558,7 @@ public class DataNetworkController extends Handler {
 
         if (networkRequest.getAttachedNetwork() != null) {
             networkRequest.getAttachedNetwork().detachNetworkRequest(
-                        networkRequest, false /* shouldRetry */);
+                    networkRequest, false /* shouldRetry */);
         }
         log("onRemoveNetworkRequest: Removed " + networkRequest);
     }
@@ -3610,8 +3641,7 @@ public class DataNetworkController extends Handler {
             dataNetwork.startHandover(targetTransport, dataHandoverRetryEntry);
         } else if (dataNetwork.shouldDelayImsTearDownDueToInCall()
                 && (dataEvaluation.containsOnly(DataDisallowedReason.NOT_IN_SERVICE)
-                || mFeatureFlags.relaxHoTeardown() && dataEvaluation.isSubsetOf(
-                        DataDisallowedReason.NOT_IN_SERVICE,
+                || dataEvaluation.isSubsetOf(DataDisallowedReason.NOT_IN_SERVICE,
                         DataDisallowedReason.NOT_ALLOWED_BY_POLICY))) {
             // We try our best to preserve the voice call by retrying later
             if (dataHandoverRetryEntry != null) {
