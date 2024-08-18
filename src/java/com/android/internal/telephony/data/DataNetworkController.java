@@ -1508,11 +1508,9 @@ public class DataNetworkController extends Handler {
                         .build(), mPhone, mFeatureFlags);
         // If we don't skip checking existing network, then we should check If one of the
         // existing networks can satisfy the internet request, then internet is allowed.
-        if ((!mFeatureFlags.ignoreExistingNetworksForInternetAllowedChecking()
-                || !ignoreExistingNetworks)
-                && mDataNetworkList.stream().anyMatch(
-                        dataNetwork -> internetRequest.canBeSatisfiedBy(
-                                dataNetwork.getNetworkCapabilities()))) {
+        if (!ignoreExistingNetworks && mDataNetworkList.stream().anyMatch(
+                dataNetwork -> internetRequest.canBeSatisfiedBy(
+                        dataNetwork.getNetworkCapabilities()))) {
             return new DataEvaluation(DataEvaluationReason.EXTERNAL_QUERY);
         }
 

@@ -890,8 +890,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
         doReturn(true).when(mFeatureFlags).carrierEnabledSatelliteFlag();
         doReturn(true).when(mFeatureFlags).satelliteInternet();
-        doReturn(true).when(mFeatureFlags)
-                .ignoreExistingNetworksForInternetAllowedChecking();
         when(mContext.getPackageManager()).thenReturn(mMockPackageManager);
         doReturn(true).when(mMockPackageManager).hasSystemFeature(anyString());
 
@@ -3897,7 +3895,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     @Test
     public void testNonVoPStoVoPSImsSetup() throws Exception {
-        doReturn(true).when(mFeatureFlags).allowMmtelInNonVops();
         mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
         // Config that allows non-vops bring up when Roaming
         mCarrierConfig.putIntArray(CarrierConfigManager.Ims
