@@ -29,8 +29,11 @@ import static android.telephony.CarrierConfigManager.KEY_EMERGENCY_MESSAGING_SUP
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.SubscriptionManager.SATELLITE_ATTACH_ENABLED_FOR_CARRIER;
 import static android.telephony.SubscriptionManager.SATELLITE_ENTITLEMENT_STATUS;
@@ -2390,6 +2393,12 @@ public class SatelliteController extends Handler {
 
         DemoSimulator.getInstance().setDeviceAlignedWithSatellite(isAligned);
         mDatagramController.setDeviceAlignedWithSatellite(isAligned);
+        if (mSatelliteSessionController != null) {
+            mSatelliteSessionController.setDeviceAlignedWithSatellite(isAligned);
+        } else {
+            ploge("setDeviceAlignedWithSatellite: mSatelliteSessionController"
+                    + " is not initialized yet");
+        }
     }
 
     /**
@@ -4339,11 +4348,14 @@ public class SatelliteController extends Handler {
                     KEY_EMERGENCY_MESSAGING_SUPPORTED_BOOL,
                     KEY_EMERGENCY_CALL_TO_SATELLITE_T911_HANDOVER_TIMEOUT_MILLIS_INT,
                     KEY_SATELLITE_ESOS_SUPPORTED_BOOL,
+                    KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL,
                     KEY_SATELLITE_NIDD_APN_NAME_STRING,
                     KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT,
                     KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT,
                     KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT,
-                    KEY_SATELLITE_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT
+                    KEY_SATELLITE_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
+                    KEY_SATELLITE_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
+                    KEY_SATELLITE_ESOS_INACTIVITY_TIMEOUT_SEC_INT
             );
         }
         if (config == null || config.isEmpty()) {
@@ -4474,7 +4486,23 @@ public class SatelliteController extends Handler {
                 .getBoolean(KEY_SATELLITE_ATTACH_SUPPORTED_BOOL);
     }
 
-    private boolean isSatelliteEsosSupported(int subId) {
+    /**
+     * Return whether the device support P2P SMS mode from carrier config.
+     *
+     * @param subId Associated subscription ID
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public boolean isSatelliteRoamingP2pSmSSupported(int subId) {
+        return getConfigForSubId(subId).getBoolean(KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL);
+    }
+
+    /**
+     * Return whether the device support ESOS mode from carrier config.
+     *
+     * @param subId Associated subscription ID
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public boolean isSatelliteEsosSupported(int subId) {
         return getConfigForSubId(subId).getBoolean(KEY_SATELLITE_ESOS_SUPPORTED_BOOL);
     }
 
@@ -4995,7 +5023,7 @@ public class SatelliteController extends Handler {
         synchronized (mSatelliteViaOemProvisionLock) {
             plogd("persistOemEnabledSatelliteProvisionStatus: isProvisioned=" + isProvisioned);
             if (mFeatureFlags.carrierRoamingNbIotNtn()) {
-                int subId = SatelliteServiceUtils.getOemBasedNonTerrestrialSubscriptionId(mContext);
+                int subId = SatelliteServiceUtils.getNtnOnlySubscriptionId(mContext);
                 if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
                     try {
                         mSubscriptionManagerService.setIsSatelliteProvisionedForNonIpDatagram(subId,
@@ -5026,7 +5054,7 @@ public class SatelliteController extends Handler {
         plogd("getPersistedOemEnabledSatelliteProvisionStatus:");
         synchronized (mSatelliteViaOemProvisionLock) {
             if (mFeatureFlags.carrierRoamingNbIotNtn()) {
-                int subId = SatelliteServiceUtils.getOemBasedNonTerrestrialSubscriptionId(mContext);
+                int subId = SatelliteServiceUtils.getNtnOnlySubscriptionId(mContext);
                 if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
                     return mSubscriptionManagerService.isSatelliteProvisionedForNonIpDatagram(
                             subId);
