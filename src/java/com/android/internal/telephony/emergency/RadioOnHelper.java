@@ -104,7 +104,10 @@ public class RadioOnHelper implements RadioOnStateListener.Callback {
         }
         powerOnRadio(forEmergencyCall, phoneForEmergencyCall, isTestEmergencyNumber,
                 forNormalRoutingEmergencyCall);
-        if (SatelliteController.getInstance().isSatelliteEnabled()) {
+        if (SatelliteController.getInstance().isSatelliteEnabled()
+                || SatelliteController.getInstance().isSatelliteBeingEnabled()) {
+            // TODO: phoneForEmergencyCall is actually ignored, SatelliteController#mSatelliePhone
+            //  is being used instead.
             powerOffSatellite(phoneForEmergencyCall);
         }
     }
@@ -161,7 +164,7 @@ public class RadioOnHelper implements RadioOnStateListener.Callback {
      */
     private void powerOffSatellite(Phone phoneForEmergencyCall) {
         SatelliteController satelliteController = SatelliteController.getInstance();
-        satelliteController.requestSatelliteEnabled(phoneForEmergencyCall.getSubId(),
+        satelliteController.requestSatelliteEnabled(
                 false /* enableSatellite */, false /* enableDemoMode */, false /* isEmergency */,
                 new IIntegerConsumer.Stub() {
                     @Override
