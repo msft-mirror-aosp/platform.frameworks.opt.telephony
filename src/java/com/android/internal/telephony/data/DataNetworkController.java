@@ -1508,11 +1508,9 @@ public class DataNetworkController extends Handler {
                         .build(), mPhone, mFeatureFlags);
         // If we don't skip checking existing network, then we should check If one of the
         // existing networks can satisfy the internet request, then internet is allowed.
-        if ((!mFeatureFlags.ignoreExistingNetworksForInternetAllowedChecking()
-                || !ignoreExistingNetworks)
-                && mDataNetworkList.stream().anyMatch(
-                        dataNetwork -> internetRequest.canBeSatisfiedBy(
-                                dataNetwork.getNetworkCapabilities()))) {
+        if (!ignoreExistingNetworks && mDataNetworkList.stream().anyMatch(
+                dataNetwork -> internetRequest.canBeSatisfiedBy(
+                        dataNetwork.getNetworkCapabilities()))) {
             return new DataEvaluation(DataEvaluationReason.EXTERNAL_QUERY);
         }
 
@@ -3545,15 +3543,6 @@ public class DataNetworkController extends Handler {
     }
 
     /**
-     * Called when SIM is absent.
-     */
-    private void onSimAbsent() {
-        log("onSimAbsent");
-        sendMessage(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
-                DataEvaluationReason.SIM_REMOVAL));
-    }
-
-    /**
      * Called when SIM state changes.
      *
      * @param simState SIM state. (Note this is mixed with card state and application state.)
@@ -3561,13 +3550,22 @@ public class DataNetworkController extends Handler {
     private void onSimStateChanged(@SimState int simState) {
         log("onSimStateChanged: state=" + TelephonyManager.simStateToString(simState));
         if (mSimState != simState) {
-            mSimState = simState;
             if (simState == TelephonyManager.SIM_STATE_ABSENT) {
-                onSimAbsent();
+                log("onSimStateChanged: SIM absent.");
+                sendMessage(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
+                        DataEvaluationReason.SIM_REMOVAL));
+            } else if (simState == TelephonyManager.SIM_STATE_NOT_READY
+                    && mSimState == TelephonyManager.SIM_STATE_LOADED) {
+                if (mFeatureFlags.simDisabledGracefulTearDown()) {
+                    log("onSimStateChanged: SIM disabled.");
+                    sendMessage(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
+                            DataEvaluationReason.SIM_DISABLED));
+                }
             } else if (simState == TelephonyManager.SIM_STATE_LOADED) {
                 sendMessage(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
                         DataEvaluationReason.SIM_LOADED));
             }
+            mSimState = simState;
             mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                     () -> callback.onSimStateChanged(mSimState)));
         }
@@ -3643,8 +3641,7 @@ public class DataNetworkController extends Handler {
             dataNetwork.startHandover(targetTransport, dataHandoverRetryEntry);
         } else if (dataNetwork.shouldDelayImsTearDownDueToInCall()
                 && (dataEvaluation.containsOnly(DataDisallowedReason.NOT_IN_SERVICE)
-                || mFeatureFlags.relaxHoTeardown() && dataEvaluation.isSubsetOf(
-                        DataDisallowedReason.NOT_IN_SERVICE,
+                || dataEvaluation.isSubsetOf(DataDisallowedReason.NOT_IN_SERVICE,
                         DataDisallowedReason.NOT_ALLOWED_BY_POLICY))) {
             // We try our best to preserve the voice call by retrying later
             if (dataHandoverRetryEntry != null) {
