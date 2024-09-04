@@ -3126,7 +3126,7 @@ public class SatelliteController extends Handler {
      * @return {@code Pair<true, subscription ID>} if any subscription on the device is connected to
      * satellite, {@code Pair<false, null>} otherwise.
      */
-    private Pair<Boolean, Integer> isUsingNonTerrestrialNetworkViaCarrier() {
+    Pair<Boolean, Integer> isUsingNonTerrestrialNetworkViaCarrier() {
         if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
             logd("isUsingNonTerrestrialNetwork: carrierEnabledSatelliteFlag is disabled");
             return new Pair<>(false, null);
@@ -3592,14 +3592,9 @@ public class SatelliteController extends Handler {
                 return mOverriddenIsSatelliteViaOemProvisioned;
             }
 
-            if (mIsSatelliteViaOemProvisioned != null) {
-                return mIsSatelliteViaOemProvisioned;
-            }
-
             if (mIsSatelliteViaOemProvisioned == null) {
                 mIsSatelliteViaOemProvisioned = getPersistedOemEnabledSatelliteProvisionStatus();
             }
-
             return mIsSatelliteViaOemProvisioned;
         }
     }
@@ -3824,6 +3819,12 @@ public class SatelliteController extends Handler {
                 getPrioritizedSatelliteSubscriberProvisionStatusList();
         plogd("handleEventSatelliteSubscriptionProvisionStateChanged: " + informList);
         notifySatelliteSubscriptionProvisionStateChanged(informList);
+        // Report updated provisioned status
+        synchronized (mSatelliteTokenProvisionedLock) {
+            boolean isProvisioned = !mProvisionedSubscriberId.isEmpty()
+                    && mProvisionedSubscriberId.containsValue(Boolean.TRUE);
+            mControllerMetricsStats.setIsProvisioned(isProvisioned);
+        }
     }
 
     private void notifySatelliteSubscriptionProvisionStateChanged(
@@ -6099,5 +6100,9 @@ public class SatelliteController extends Handler {
         IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(SubscriptionManager.ACTION_DEFAULT_SMS_SUBSCRIPTION_CHANGED);
         mContext.registerReceiver(mDefaultSmsSubscriptionChangedBroadcastReceiver, intentFilter);
+    }
+
+    FeatureFlags getFeatureFlags() {
+        return mFeatureFlags;
     }
 }
