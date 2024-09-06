@@ -888,10 +888,11 @@ public class DataNetworkControllerTest extends TelephonyTest {
         doReturn(PhoneConstants.State.IDLE).when(mCT).getState();
         doReturn(new SubscriptionInfoInternal.Builder().setId(1).build())
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
+
         doReturn(true).when(mFeatureFlags).carrierEnabledSatelliteFlag();
         doReturn(true).when(mFeatureFlags).satelliteInternet();
-        doReturn(true).when(mFeatureFlags)
-                .ignoreExistingNetworksForInternetAllowedChecking();
+        doReturn(true).when(mFeatureFlags).simDisabledGracefulTearDown();
+
         when(mContext.getPackageManager()).thenReturn(mMockPackageManager);
         doReturn(true).when(mMockPackageManager).hasSystemFeature(anyString());
 
@@ -2841,7 +2842,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     @Test
     public void testHandoverDataNetworkNotAllowedByPolicyDelayDueToVoiceCall() throws Exception {
-        doReturn(true).when(mFeatureFlags).relaxHoTeardown();
         // Config delay IMS tear down enabled
         mCarrierConfig.putBoolean(CarrierConfigManager.KEY_DELAY_IMS_TEAR_DOWN_UNTIL_CALL_END_BOOL,
                 true);
@@ -3898,7 +3898,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     @Test
     public void testNonVoPStoVoPSImsSetup() throws Exception {
-        doReturn(true).when(mFeatureFlags).allowMmtelInNonVops();
         mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
         // Config that allows non-vops bring up when Roaming
         mCarrierConfig.putIntArray(CarrierConfigManager.Ims
@@ -4200,7 +4199,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testImsGracefulTearDown() throws Exception {
+    public void testImsGracefulTearDownSimRemoval() throws Exception {
         setImsRegistered(true);
         setRcsRegistered(true);
 
@@ -4222,6 +4221,52 @@ public class DataNetworkControllerTest extends TelephonyTest {
         // SIM removal
         mDataNetworkControllerUT.obtainMessage(9/*EVENT_SIM_STATE_CHANGED*/,
                 TelephonyManager.SIM_STATE_ABSENT, 0).sendToTarget();
+        processAllMessages();
+
+        // Make sure data network enters disconnecting state
+        ArgumentCaptor<PreciseDataConnectionState> pdcsCaptor =
+                ArgumentCaptor.forClass(PreciseDataConnectionState.class);
+        verify(mPhone).notifyDataConnection(pdcsCaptor.capture());
+        PreciseDataConnectionState pdcs = pdcsCaptor.getValue();
+        assertThat(pdcs.getState()).isEqualTo(TelephonyManager.DATA_DISCONNECTING);
+
+        // IMS de-registered. Now data network is safe to be torn down.
+        Mockito.clearInvocations(mPhone);
+        setImsRegistered(false);
+        setRcsRegistered(false);
+        processAllMessages();
+
+        // All data should be disconnected.
+        verifyAllDataDisconnected();
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_IMS);
+        verify(mPhone).notifyDataConnection(pdcsCaptor.capture());
+        pdcs = pdcsCaptor.getValue();
+        assertThat(pdcs.getState()).isEqualTo(TelephonyManager.DATA_DISCONNECTED);
+    }
+
+    @Test
+    public void testImsGracefulTearDownSimDisabled() throws Exception {
+        setImsRegistered(true);
+        setRcsRegistered(true);
+
+        NetworkCapabilities netCaps = new NetworkCapabilities();
+        netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_IMS);
+        netCaps.maybeMarkCapabilitiesRestricted();
+        netCaps.setRequestorPackageName(FAKE_MMTEL_PACKAGE);
+
+        NetworkRequest nativeNetworkRequest = new NetworkRequest(netCaps,
+                ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
+        TelephonyNetworkRequest networkRequest = new TelephonyNetworkRequest(
+                nativeNetworkRequest, mPhone, mFeatureFlags);
+
+        mDataNetworkControllerUT.addNetworkRequest(networkRequest);
+
+        processAllMessages();
+        Mockito.clearInvocations(mPhone);
+
+        // SIM disabled
+        mDataNetworkControllerUT.obtainMessage(9/*EVENT_SIM_STATE_CHANGED*/,
+                TelephonyManager.SIM_STATE_NOT_READY, 0).sendToTarget();
         processAllMessages();
 
         // Make sure data network enters disconnecting state
