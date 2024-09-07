@@ -305,9 +305,9 @@ public abstract class InboundSmsHandler extends StateMachine {
         mResolver = context.getContentResolver();
         mWapPush = new WapPushOverSms(context, mFeatureFlags);
 
-        TelephonyManager telephonyManager = TelephonyManager.from(mContext);
-        boolean smsCapable = telephonyManager.isDeviceSmsCapable();
-        mSmsReceiveDisabled = !telephonyManager.getSmsReceiveCapableForPhone(
+        boolean smsCapable = mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_sms_capable);
+        mSmsReceiveDisabled = !TelephonyManager.from(mContext).getSmsReceiveCapableForPhone(
                 mPhone.getPhoneId(), smsCapable);
 
         PowerManager pm = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);

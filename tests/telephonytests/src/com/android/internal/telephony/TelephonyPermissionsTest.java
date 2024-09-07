@@ -41,6 +41,7 @@ import android.os.Process;
 import android.os.ServiceManager;
 import android.os.UserHandle;
 import android.permission.LegacyPermissionManager;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.provider.DeviceConfig;
 import android.provider.Settings;
 import android.telephony.SubscriptionManager;
@@ -51,11 +52,13 @@ import android.test.mock.MockContentResolver;
 import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.util.test.FakeSettingsProvider;
 import com.android.server.pm.permission.LegacyPermissionManagerService;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
@@ -71,6 +74,9 @@ public class TelephonyPermissionsTest {
     private static final String PACKAGE = "com.example";
     private static final String FEATURE = "com.example.feature";
     private static final String MSG = "message";
+
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     // Mocked classes
     private Context mMockContext;
@@ -91,6 +97,7 @@ public class TelephonyPermissionsTest {
 
     @Before
     public void setUp() throws Exception {
+        mSetFlagsRule.enableFlags(Flags.FLAG_SUPPORT_PHONE_UID_CHECK_FOR_MULTIUSER);
         mMockContext = mock(Context.class);
         mMockAppOps = mock(AppOpsManager.class);
         mMockSubscriptionManager = mock(SubscriptionManager.class);

@@ -1047,16 +1047,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
                     }
                 } else {
                     mDisabledRadioServices.get(service).add(mPhoneId);
-                    if (isRadioServiceSupported(service)) {
-                        mHalVersion.put(service, RADIO_HAL_VERSION_UNKNOWN);
-                        riljLoge("getRadioServiceProxy: set " + serviceToString(service) + " for "
-                                + HIDL_SERVICE_NAME[mPhoneId] + " as disabled\n"
-                                + android.util.Log.getStackTraceString(new RuntimeException()));
-                    } else {
-                        mHalVersion.put(service, RADIO_HAL_VERSION_UNSUPPORTED);
-                        riljLog("getRadioServiceProxy: set " + serviceToString(service) + " for "
-                                + HIDL_SERVICE_NAME[mPhoneId] + " as disabled (unsupported)");
-                    }
+                    mHalVersion.put(service, RADIO_HAL_VERSION_UNKNOWN);
+                    riljLoge("getRadioServiceProxy: set " + serviceToString(service) + " for "
+                            + HIDL_SERVICE_NAME[mPhoneId] + " as disabled\n"
+                            + android.util.Log.getStackTraceString(new RuntimeException()));
                 }
             }
         } catch (RemoteException e) {

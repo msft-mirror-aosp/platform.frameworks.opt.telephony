@@ -31,6 +31,7 @@ import com.android.internal.telephony.IccLogicalChannelRequest;
 import com.android.internal.telephony.TelephonyComponentFactory;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.flags.FeatureFlagsImpl;
+import com.android.internal.telephony.flags.Flags;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
@@ -441,13 +442,15 @@ public class UiccPort {
      * channel that may have been assigned to other client.
      */
     private void cleanupOpenLogicalChannelRecordsIfNeeded() {
-        synchronized (mOpenChannelRecords) {
-            for (OpenLogicalChannelRecord record : mOpenChannelRecords) {
-                if (DBG) log("Clean up " + record);
-                record.mRequest.binder.unlinkToDeath(record, /*flags=*/ 0);
-                record.mRequest.binder = null;
+        if (Flags.cleanupOpenLogicalChannelRecordOnDispose()) {
+            synchronized (mOpenChannelRecords) {
+                for (OpenLogicalChannelRecord record : mOpenChannelRecords) {
+                    if (DBG) log("Clean up " + record);
+                    record.mRequest.binder.unlinkToDeath(record, /*flags=*/ 0);
+                    record.mRequest.binder = null;
+                }
+                mOpenChannelRecords.clear();
             }
-            mOpenChannelRecords.clear();
         }
     }
 

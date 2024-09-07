@@ -29,6 +29,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import android.os.Binder;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.telephony.TelephonyManager;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
@@ -37,9 +38,11 @@ import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.IccLogicalChannelRequest;
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.flags.Flags;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -58,9 +61,13 @@ public class UiccPortTest extends TelephonyTest {
 
     private int mPhoneId = 0;
 
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+        mSetFlagsRule.enableFlags(Flags.FLAG_CLEANUP_OPEN_LOGICAL_CHANNEL_RECORD_ON_DISPOSE);
         mUiccCard = mock(UiccCard.class);
         mIccCardStatus = mock(IccCardStatus.class);
         /* initially there are no application available */
