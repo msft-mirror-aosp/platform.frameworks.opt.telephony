@@ -46,6 +46,7 @@ import android.content.pm.UserInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
@@ -177,6 +178,8 @@ public class CarrierPrivilegesTracker extends Handler {
     private static final int ACTION_SET_TEST_OVERRIDE_CARRIER_SERVICE_PACKAGE = 11;
 
     private final Context mContext;
+    @NonNull
+    private final FeatureFlags mFeatureFlags;
     private final Phone mPhone;
     private final PackageManager mPackageManager;
     private final UserManager mUserManager;
@@ -224,8 +227,7 @@ public class CarrierPrivilegesTracker extends Handler {
             "mPrivilegedPackageInfoLock.writeLock()"})
     private boolean mSimIsReadyButNotLoaded = false;
 
-    @NonNull
-    private final FeatureFlags mFeatureFlags;
+    private volatile Handler mCurrentHandler;
 
     /** Small snapshot to hold package names and UIDs of privileged packages. */
     private static final class PrivilegedPackageInfo {
@@ -301,7 +303,9 @@ public class CarrierPrivilegesTracker extends Handler {
                                 return;
                             }
 
-                            sendMessage(obtainMessage(ACTION_SIM_STATE_UPDATED, slotId, simState));
+                            mCurrentHandler.sendMessage(
+                                    mCurrentHandler.obtainMessage(
+                                            ACTION_SIM_STATE_UPDATED, slotId, simState));
                             break;
                         }
                         case Intent.ACTION_PACKAGE_ADDED: // fall through
@@ -333,19 +337,21 @@ public class CarrierPrivilegesTracker extends Handler {
                                     ? ACTION_PACKAGE_REMOVED_OR_DISABLED_BY_USER
                                     : ACTION_PACKAGE_ADDED_REPLACED_OR_CHANGED;
 
-                            sendMessage(obtainMessage(what, pkgName));
+                            mCurrentHandler.sendMessage(
+                                    mCurrentHandler.obtainMessage(what, pkgName));
                             break;
                         }
                     }
                 }
             };
 
-    public CarrierPrivilegesTracker(@NonNull Looper looper, @NonNull Phone phone,
-            @NonNull Context context, @NonNull FeatureFlags flags) {
+    public CarrierPrivilegesTracker(
+            @NonNull Looper looper, @NonNull Phone phone,
+            @NonNull Context context, @NonNull FeatureFlags featureFlags) {
         super(looper);
-        mContext = context;
-        mFeatureFlags = flags;
         mPhone = phone;
+        mContext = context;
+        mFeatureFlags = featureFlags;
         mPackageManager = mContext.getPackageManager();
         mUserManager = (UserManager) mContext.getSystemService(Context.USER_SERVICE);
         mCarrierConfigManager =
@@ -360,6 +366,56 @@ public class CarrierPrivilegesTracker extends Handler {
         mTelephonyRegistryManager =
                 (TelephonyRegistryManager)
                         mContext.getSystemService(Context.TELEPHONY_REGISTRY_SERVICE);
+
+        if (mFeatureFlags.asyncInitCarrierPrivilegesTracker()) {
+            final Object localLock = new Object();
+            HandlerThread initializerThread =
+                    new HandlerThread("CarrierPrivilegesTracker Initializer") {
+                        @Override
+                        protected void onLooperPrepared() {
+                            synchronized (localLock) {
+                                localLock.notifyAll();
+                            }
+                        }
+                    };
+            synchronized (localLock) {
+                initializerThread.start();
+                while (true) {
+                    try {
+                        localLock.wait();
+                        break;
+                    } catch (InterruptedException ie) {
+                    }
+                }
+            }
+            mCurrentHandler = new Handler(initializerThread.getLooper()) {
+                @Override
+                public void handleMessage(Message msg) {
+                    switch(msg.what) {
+                        case ACTION_INITIALIZE_TRACKER:
+                            handleInitializeTracker();
+                            if (!hasMessagesOrCallbacks()) {
+                                mCurrentHandler = CarrierPrivilegesTracker.this;
+                                initializerThread.quitSafely();
+                            }
+                            break;
+                        default:
+                            Message m = CarrierPrivilegesTracker.this.obtainMessage();
+                            m.copyFrom(msg);
+                            m.sendToTarget();
+                            if (!hasMessagesOrCallbacks()) {
+                                mCurrentHandler = CarrierPrivilegesTracker.this;
+                                initializerThread.quitSafely();
+                            }
+                            break;
+                    }
+                }
+            };
+        } else {
+            mCurrentHandler = this;
+        }
+
+        mCurrentHandler.sendMessage(obtainMessage(ACTION_INITIALIZE_TRACKER));
 
         IntentFilter certFilter = new IntentFilter();
         certFilter.addAction(TelephonyManager.ACTION_SIM_CARD_STATE_CHANGED);
@@ -389,7 +445,6 @@ public class CarrierPrivilegesTracker extends Handler {
             mContext.registerReceiver(mIntentReceiver, packageFilter);
         }
 
-        sendMessage(obtainMessage(ACTION_INITIALIZE_TRACKER));
     }
 
     @Override
@@ -497,7 +552,7 @@ public class CarrierPrivilegesTracker extends Handler {
                     && mClearUiccRulesUptimeMillis == CLEAR_UICC_RULE_NOT_SCHEDULED) {
                 mClearUiccRulesUptimeMillis =
                         SystemClock.uptimeMillis() + CLEAR_UICC_RULES_DELAY_MILLIS;
-                sendMessageAtTime(obtainMessage(ACTION_CLEAR_UICC_RULES),
+                mCurrentHandler.sendMessageAtTime(obtainMessage(ACTION_CLEAR_UICC_RULES),
                         mClearUiccRulesUptimeMillis);
                 mLocalLog.log("SIM is gone, simState=" + TelephonyManager.simStateToString(simState)
                         + ". Delay " + TimeUnit.MILLISECONDS.toSeconds(
@@ -920,7 +975,8 @@ public class CarrierPrivilegesTracker extends Handler {
      * @see TelephonyManager#setCarrierTestOverride
      */
     public void setTestOverrideCarrierPrivilegeRules(@Nullable String carrierPrivilegeRules) {
-        sendMessage(obtainMessage(ACTION_SET_TEST_OVERRIDE_RULE, carrierPrivilegeRules));
+        mCurrentHandler.sendMessage(
+                obtainMessage(ACTION_SET_TEST_OVERRIDE_RULE, carrierPrivilegeRules));
     }
 
     /**
@@ -936,7 +992,7 @@ public class CarrierPrivilegesTracker extends Handler {
      * @see TelephonyManager#setCarrierServicePackageOverride
      */
     public void setTestOverrideCarrierServicePackage(@Nullable String carrierServicePackage) {
-        sendMessage(obtainMessage(
+        mCurrentHandler.sendMessage(obtainMessage(
                 ACTION_SET_TEST_OVERRIDE_CARRIER_SERVICE_PACKAGE, carrierServicePackage));
     }
 
