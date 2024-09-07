@@ -174,9 +174,9 @@ public class SatelliteServiceUtils {
                 return SatelliteManager.SATELLITE_MODEM_STATE_OFF;
             case SatelliteModemState.SATELLITE_MODEM_STATE_UNAVAILABLE:
                 return SatelliteManager.SATELLITE_MODEM_STATE_UNAVAILABLE;
-            case SatelliteModemState.SATELLITE_MODEM_STATE_NOT_CONNECTED:
+            case SatelliteModemState.SATELLITE_MODEM_STATE_OUT_OF_SERVICE:
                 return SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED;
-            case SatelliteModemState.SATELLITE_MODEM_STATE_CONNECTED:
+            case SatelliteModemState.SATELLITE_MODEM_STATE_IN_SERVICE:
                 return SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED;
             default:
                 loge("Received invalid modem state: " + modemState);
@@ -348,7 +348,7 @@ public class SatelliteServiceUtils {
      * @return ID of the subscription that supports OEM-based satellite if any,
      * return {@link SubscriptionManager#INVALID_SUBSCRIPTION_ID} otherwise.
      */
-    public static int getOemBasedNonTerrestrialSubscriptionId(@NonNull Context context) {
+    public static int getNtnOnlySubscriptionId(@NonNull Context context) {
         List<SubscriptionInfo> infoList =
                 SubscriptionManagerService.getInstance().getAllSubInfoList(
                         context.getOpPackageName(), null);
@@ -358,7 +358,7 @@ public class SatelliteServiceUtils {
                 .mapToInt(SubscriptionInfo::getSubscriptionId)
                 .findFirst()
                 .orElse(SubscriptionManager.INVALID_SUBSCRIPTION_ID);
-        logd("getOemBasedNonTerrestrialSubscriptionId: subId=" + subId);
+        logd("getNtnOnlySubscriptionId: subId=" + subId);
         return subId;
     }
 

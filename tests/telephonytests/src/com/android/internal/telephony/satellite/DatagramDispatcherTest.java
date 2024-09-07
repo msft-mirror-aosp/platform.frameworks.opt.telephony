@@ -16,11 +16,12 @@
 
 package com.android.internal.telephony.satellite;
 
+import static android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_MODEM_TIMEOUT;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
-import static com.android.internal.telephony.satellite.DatagramController.SATELLITE_ALIGN_TIMEOUT;
 import static com.android.internal.telephony.SmsDispatchersController.PendingRequest;
+import static com.android.internal.telephony.satellite.DatagramController.SATELLITE_ALIGN_TIMEOUT;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -52,7 +53,6 @@ import android.os.Binder;
 import android.os.Looper;
 import android.os.Message;
 import android.telephony.Rlog;
-import android.telephony.SubscriptionManager;
 import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteManager;
 import android.testing.AndroidTestingRunner;
@@ -177,6 +177,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
         when(mMockDatagramController.isPollingInIdleState()).thenReturn(true);
         when(mMockSatelliteController.getSatellitePhone()).thenReturn(mPhone);
         when(mPhone.getSmsDispatchersController()).thenReturn(mMockSmsDispatchersController);
+        when(mMockSatelliteController.getSatelliteCarrierId()).thenReturn(UNKNOWN_CARRIER_ID);
         mPendingSms = createPendingRequest();
     }
 
@@ -283,13 +284,13 @@ public class DatagramDispatcherTest extends TelephonyTest {
             processAllMessages();
             verifyZeroInteractions(mMockSatelliteModemInterface);
             mInOrder.verify(mMockDatagramController)
-                    .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                    .updateSendStatus(eq(mPhone.getSubId()),
                             eq(datagramType),
                             eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED),
                             eq(1),
                             eq(SatelliteManager.SATELLITE_RESULT_NOT_REACHABLE));
             mInOrder.verify(mMockDatagramController)
-                    .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                    .updateSendStatus(eq(mPhone.getSubId()),
                             eq(datagramType),
                             eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                             eq(SATELLITE_RESULT_SUCCESS));
@@ -321,6 +322,9 @@ public class DatagramDispatcherTest extends TelephonyTest {
                     eq(SatelliteServiceUtils.isLastSosMessage(datagramType)));
             assertTrue(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
             assertEquals(0, mResultListener.size());
+            if (datagramType == SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE) {
+                assertTrue(mDatagramDispatcherUT.isEmergencyCommunicationEstablished());
+            }
 
             mDatagramDispatcherUT.onSatelliteModemStateChanged(
                     SatelliteManager.SATELLITE_MODEM_STATE_OFF);
@@ -332,6 +336,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
             assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
             verify(mMockSessionMetricsStats, times(1))
                     .addCountOfFailedOutgoingDatagram(anyInt(), anyInt());
+            assertFalse(mDatagramDispatcherUT.isEmergencyCommunicationEstablished());
         }
     }
 
@@ -897,13 +902,13 @@ public class DatagramDispatcherTest extends TelephonyTest {
         moveTimeForward(TEST_DATAGRAM_WAIT_FOR_CONNECTED_STATE_TIMEOUT_MILLIS);
         processAllMessages();
         mInOrder.verify(mMockDatagramController)
-                .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                .updateSendStatus(eq(mPhone.getSubId()),
                         eq(datagramType),
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED),
                         eq(1),
                         eq(SatelliteManager.SATELLITE_RESULT_NOT_REACHABLE));
         mInOrder.verify(mMockDatagramController)
-                .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                .updateSendStatus(eq(mPhone.getSubId()),
                         eq(datagramType),
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                         eq(SATELLITE_RESULT_SUCCESS));
@@ -946,13 +951,13 @@ public class DatagramDispatcherTest extends TelephonyTest {
                 SatelliteManager.SATELLITE_MODEM_STATE_OFF);
         processAllMessages();
         mInOrder.verify(mMockDatagramController)
-                .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                .updateSendStatus(eq(mPhone.getSubId()),
                         eq(datagramType),
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED),
                         eq(1),
                         eq(SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED));
         mInOrder.verify(mMockDatagramController)
-                .updateSendStatus(eq(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID),
+                .updateSendStatus(eq(mPhone.getSubId()),
                         eq(datagramType),
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                         eq(SATELLITE_RESULT_SUCCESS));
