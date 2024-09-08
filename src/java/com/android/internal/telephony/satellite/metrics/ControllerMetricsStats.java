@@ -371,6 +371,24 @@ public class ControllerMetricsStats {
         }
     }
 
+    /** Capture the latest provisioned state for satellite service */
+    @VisibleForTesting
+    public void setIsProvisioned(boolean isProvisioned) {
+        mSatelliteStats.onSatelliteControllerMetrics(
+                new SatelliteStats.SatelliteControllerParams.Builder()
+                        .setIsProvisioned(isProvisioned)
+                        .build());
+    }
+
+    /** Capture the NB-IoT NTN carrier ID */
+    @VisibleForTesting
+    public void setCarrierId(int carrierId) {
+        mSatelliteStats.onSatelliteControllerMetrics(
+                new SatelliteStats.SatelliteControllerParams.Builder()
+                        .setCarrierId(carrierId)
+                        .build());
+    }
+
     /** Receives the battery status whether it is in charging or not, update interval is 60 sec. */
     private final BroadcastReceiver mBatteryStatusReceiver = new BroadcastReceiver() {
         private long mLastUpdatedTime = 0;
