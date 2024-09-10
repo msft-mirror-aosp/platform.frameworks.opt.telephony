@@ -1,16 +1,31 @@
 package: "com.android.internal.telephony.flags"
 container: "system"
 
+# OWNER=breadley TARGET=24Q3
 flag {
   name: "simultaneous_calling_indications"
+  is_exported: true
   namespace: "telephony"
   description: "APIs that are used to notify simultaneous calling changes to other applications."
   bug: "297446980"
+  is_exported: true
 }
 
+# OWNER=yomna TARGET=24Q3
 flag {
   name: "show_call_fail_notification_for_2g_toggle"
   namespace: "telephony"
   description: "Used in DisconnectCause and TelephonyConnection if a non-emergency call fails on a device with no 2G, to guard whether a user can see an updated error message reminding the 2G is disabled and potentially disrupting their call connectivity"
   bug: "300142897"
+}
+
+# OWNER=stevestatia TARGET=24Q4
+flag {
+    name: "remove_country_code_from_local_singapore_calls"
+    namespace: "telephony"
+    description: "Fix bug where the country code is being shown when merging in local Singapore numbers to conference calls."
+    bug:"284416645"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }

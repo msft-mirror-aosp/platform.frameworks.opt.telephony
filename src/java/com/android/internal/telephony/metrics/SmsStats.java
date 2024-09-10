@@ -57,9 +57,11 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.ServiceStateTracker;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.nano.PersistAtomsProto.IncomingSms;
 import com.android.internal.telephony.nano.PersistAtomsProto.OutgoingShortCodeSms;
 import com.android.internal.telephony.nano.PersistAtomsProto.OutgoingSms;
+import com.android.internal.telephony.satellite.metrics.CarrierRoamingSatelliteSessionStats;
 import com.android.telephony.Rlog;
 
 import java.util.Objects;
@@ -87,8 +89,9 @@ public class SmsStats {
     }
 
     /** Create a new atom when multi-part incoming SMS is dropped due to missing parts. */
-    public void onDroppedIncomingMultipartSms(boolean is3gpp2, int receivedCount, int totalCount) {
-        IncomingSms proto = getIncomingDefaultProto(is3gpp2, SOURCE_NOT_INJECTED);
+    public void onDroppedIncomingMultipartSms(boolean is3gpp2, int receivedCount, int totalCount,
+            boolean isEmergency) {
+        IncomingSms proto = getIncomingDefaultProto(is3gpp2, SOURCE_NOT_INJECTED, isEmergency);
         // Keep SMS tech as unknown because it's possible that it changed overtime and is not
         // necessarily the current one. Similarly mark the RAT as unknown.
         proto.smsTech = INCOMING_SMS__SMS_TECH__SMS_TECH_UNKNOWN;
@@ -102,21 +105,21 @@ public class SmsStats {
     /** Create a new atom when an SMS for the voicemail indicator is received. */
     public void onIncomingSmsVoicemail(boolean is3gpp2,
             @InboundSmsHandler.SmsSource int smsSource) {
-        IncomingSms proto = getIncomingDefaultProto(is3gpp2, smsSource);
+        IncomingSms proto = getIncomingDefaultProto(is3gpp2, smsSource, false);
         proto.smsType = INCOMING_SMS__SMS_TYPE__SMS_TYPE_VOICEMAIL_INDICATION;
         mAtomsStorage.addIncomingSms(proto);
     }
 
     /** Create a new atom when an SMS of type zero is received. */
     public void onIncomingSmsTypeZero(@InboundSmsHandler.SmsSource int smsSource) {
-        IncomingSms proto = getIncomingDefaultProto(false /* is3gpp2 */, smsSource);
+        IncomingSms proto = getIncomingDefaultProto(false /* is3gpp2 */, smsSource, false);
         proto.smsType = INCOMING_SMS__SMS_TYPE__SMS_TYPE_ZERO;
         mAtomsStorage.addIncomingSms(proto);
     }
 
     /** Create a new atom when an SMS-PP for the SIM card is received. */
     public void onIncomingSmsPP(@InboundSmsHandler.SmsSource int smsSource, boolean success) {
-        IncomingSms proto = getIncomingDefaultProto(false /* is3gpp2 */, smsSource);
+        IncomingSms proto = getIncomingDefaultProto(false /* is3gpp2 */, smsSource, false);
         proto.smsType = INCOMING_SMS__SMS_TYPE__SMS_TYPE_SMS_PP;
         proto.error = getIncomingSmsError(success);
         mAtomsStorage.addIncomingSms(proto);
@@ -125,8 +128,8 @@ public class SmsStats {
     /** Create a new atom when an SMS is received successfully. */
     public void onIncomingSmsSuccess(boolean is3gpp2,
             @InboundSmsHandler.SmsSource int smsSource, int messageCount,
-            boolean blocked, long messageId) {
-        IncomingSms proto = getIncomingDefaultProto(is3gpp2, smsSource);
+            boolean blocked, long messageId, boolean isEmergency) {
+        IncomingSms proto = getIncomingDefaultProto(is3gpp2, smsSource, isEmergency);
         proto.totalParts = messageCount;
         proto.receivedParts = messageCount;
         proto.blocked = blocked;
@@ -136,16 +139,16 @@ public class SmsStats {
 
     /** Create a new atom when an incoming SMS has an error. */
     public void onIncomingSmsError(boolean is3gpp2,
-            @InboundSmsHandler.SmsSource int smsSource, int result) {
-        IncomingSms proto = getIncomingDefaultProto(is3gpp2, smsSource);
+            @InboundSmsHandler.SmsSource int smsSource, int result, boolean isEmergency) {
+        IncomingSms proto = getIncomingDefaultProto(is3gpp2, smsSource, isEmergency);
         proto.error = getIncomingSmsError(result);
         mAtomsStorage.addIncomingSms(proto);
     }
 
     /** Create a new atom when an incoming WAP_PUSH SMS is received. */
     public void onIncomingSmsWapPush(@InboundSmsHandler.SmsSource int smsSource,
-            int messageCount, int result, long messageId) {
-        IncomingSms proto = getIncomingDefaultProto(false, smsSource);
+            int messageCount, int result, long messageId, boolean isEmergency) {
+        IncomingSms proto = getIncomingDefaultProto(false, smsSource, isEmergency);
         proto.smsType = INCOMING_SMS__SMS_TYPE__SMS_TYPE_WAP_PUSH;
         proto.totalParts = messageCount;
         proto.receivedParts = messageCount;
@@ -157,18 +160,18 @@ public class SmsStats {
     /** Create a new atom when an outgoing SMS is sent. */
     public void onOutgoingSms(boolean isOverIms, boolean is3gpp2, boolean fallbackToCs,
             @SmsManager.Result int sendErrorCode, long messageId, boolean isFromDefaultApp,
-            long intervalMillis) {
+            long intervalMillis, boolean isEmergency) {
         onOutgoingSms(isOverIms, is3gpp2, fallbackToCs, sendErrorCode, NO_ERROR_CODE,
-                messageId, isFromDefaultApp, intervalMillis);
+                messageId, isFromDefaultApp, intervalMillis, isEmergency);
     }
 
     /** Create a new atom when an outgoing SMS is sent. */
     public void onOutgoingSms(boolean isOverIms, boolean is3gpp2, boolean fallbackToCs,
             @SmsManager.Result int sendErrorCode, int networkErrorCode, long messageId,
-            boolean isFromDefaultApp, long intervalMillis) {
+            boolean isFromDefaultApp, long intervalMillis, boolean isEmergency) {
         OutgoingSms proto =
                 getOutgoingDefaultProto(is3gpp2, isOverIms, messageId, isFromDefaultApp,
-                        intervalMillis);
+                        intervalMillis, isEmergency);
 
         // The field errorCode is used for up-to-Android-13 devices. From Android 14, sendErrorCode
         // and networkErrorCode will be used. The field errorCode will be deprecated when most
@@ -201,6 +204,9 @@ public class SmsStats {
         proto.networkErrorCode = networkErrorCode;
 
         mAtomsStorage.addOutgoingSms(proto);
+        CarrierRoamingSatelliteSessionStats sessionStats =
+                CarrierRoamingSatelliteSessionStats.getInstance(mPhone.getSubId());
+        sessionStats.onOutgoingSms(mPhone.getSubId());
     }
 
     /** Create a new atom when user attempted to send an outgoing short code sms. */
@@ -214,7 +220,7 @@ public class SmsStats {
 
     /** Creates a proto for a normal single-part {@code IncomingSms} with default values. */
     private IncomingSms getIncomingDefaultProto(boolean is3gpp2,
-            @InboundSmsHandler.SmsSource int smsSource) {
+            @InboundSmsHandler.SmsSource int smsSource, boolean isEmergency) {
         IncomingSms proto = new IncomingSms();
         proto.smsFormat = getSmsFormat(is3gpp2);
         proto.smsTech = getSmsTech(smsSource, is3gpp2);
@@ -234,12 +240,14 @@ public class SmsStats {
         proto.messageId = RANDOM.nextLong();
         proto.count = 1;
         proto.isManagedProfile = mPhone.isManagedProfile();
+        proto.isNtn = isNonTerrestrialNetwork();
+        proto.isEmergency = isEmergency;
         return proto;
     }
 
     /** Create a proto for a normal {@code OutgoingSms} with default values. */
     private OutgoingSms getOutgoingDefaultProto(boolean is3gpp2, boolean isOverIms,
-            long messageId, boolean isFromDefaultApp, long intervalMillis) {
+            long messageId, boolean isFromDefaultApp, long intervalMillis, boolean isEmergency) {
         OutgoingSms proto = new OutgoingSms();
         proto.smsFormat = getSmsFormat(is3gpp2);
         proto.smsTech = getSmsTech(isOverIms, is3gpp2);
@@ -260,6 +268,8 @@ public class SmsStats {
         proto.intervalMillis = intervalMillis;
         proto.count = 1;
         proto.isManagedProfile = mPhone.isManagedProfile();
+        proto.isEmergency = isEmergency;
+        proto.isNtn = isNonTerrestrialNetwork();
         return proto;
     }
 
@@ -395,6 +405,20 @@ public class SmsStats {
             phone = mPhone.getDefaultPhone();
         }
         return phone.getCarrierId();
+    }
+
+    private boolean isNonTerrestrialNetwork() {
+        if (!Flags.carrierEnabledSatelliteFlag()) {
+            return false;
+        }
+
+        ServiceState ss = getServiceState();
+        if (ss != null) {
+            return ss.isUsingNonTerrestrialNetwork();
+        } else {
+            Rlog.e(TAG, "isNonTerrestrialNetwork(), ServiceState is null");
+            return false;
+        }
     }
 
     private void loge(String format, Object... args) {

@@ -411,7 +411,7 @@ public class GsmCdmaPhone extends Phone {
 
         mLinkBandwidthEstimator = mTelephonyComponentFactory
                 .inject(LinkBandwidthEstimator.class.getName())
-                .makeLinkBandwidthEstimator(this);
+                .makeLinkBandwidthEstimator(this, getLooper());
 
         mCallWaitingController = new CallWaitingController(this);
 
@@ -470,7 +470,7 @@ public class GsmCdmaPhone extends Phone {
     };
 
     private boolean hasCalling() {
-        if (!mFeatureFlags.minimalTelephonyCdmCheck()) return true;
+        if (!TelephonyCapabilities.minimalTelephonyCdmCheck(mFeatureFlags)) return true;
         return mContext.getPackageManager().hasSystemFeature(
             PackageManager.FEATURE_TELEPHONY_CALLING);
     }
@@ -539,7 +539,7 @@ public class GsmCdmaPhone extends Phone {
         mContext.registerReceiver(mBroadcastReceiver, filter,
                 android.Manifest.permission.MODIFY_PHONE_STATE, null, Context.RECEIVER_EXPORTED);
 
-        mCDM = new CarrierKeyDownloadManager(this, mFeatureFlags);
+        mCDM = new CarrierKeyDownloadManager(this);
         mCIM = new CarrierInfoManager();
 
         mCi.registerForImeiMappingChanged(this, EVENT_IMEI_MAPPING_CHANGED, null);
@@ -2124,8 +2124,13 @@ public class GsmCdmaPhone extends Phone {
 
     @Override
     public void deleteCarrierInfoForImsiEncryption(int carrierId) {
+        CarrierInfoManager.deleteCarrierInfoForImsiEncryption(mContext, getSubId(), carrierId);
+    }
+
+    @Override
+    public void deleteCarrierInfoForImsiEncryption(int carrierId, String simOperator) {
         CarrierInfoManager.deleteCarrierInfoForImsiEncryption(mContext, getSubId(),
-                carrierId);
+                carrierId, simOperator);
     }
 
     @Override
@@ -2295,6 +2300,11 @@ public class GsmCdmaPhone extends Phone {
     @Override
     public String getManualNetworkSelectionPlmn() {
         return (mManualNetworkSelectionPlmn == null) ? "" : mManualNetworkSelectionPlmn;
+    }
+
+    @Override
+    protected void onSetNetworkSelectionModeCompleted() {
+        mSST.pollState();
     }
 
     @Override
@@ -3029,12 +3039,12 @@ public class GsmCdmaPhone extends Phone {
 
     @Override
     public void registerForCallWaiting(Handler h, int what, Object obj) {
-        mCT.registerForCallWaiting(h, what, obj);
+        if (mCT != null) mCT.registerForCallWaiting(h, what, obj);
     }
 
     @Override
     public void unregisterForCallWaiting(Handler h) {
-        mCT.unregisterForCallWaiting(h);
+        if (mCT != null) mCT.unregisterForCallWaiting(h);
     }
 
     /**
@@ -3669,6 +3679,7 @@ public class GsmCdmaPhone extends Phone {
             case EVENT_SUBSCRIPTIONS_CHANGED:
                 logd("EVENT_SUBSCRIPTIONS_CHANGED");
                 updateUsageSetting();
+                updateNullCipherNotifier();
                 break;
             case EVENT_SET_NULL_CIPHER_AND_INTEGRITY_DONE:
                 logd("EVENT_SET_NULL_CIPHER_AND_INTEGRITY_DONE");
@@ -3769,7 +3780,8 @@ public class GsmCdmaPhone extends Phone {
                         && mNullCipherNotifier != null) {
                     ar = (AsyncResult) msg.obj;
                     SecurityAlgorithmUpdate update = (SecurityAlgorithmUpdate) ar.result;
-                    mNullCipherNotifier.onSecurityAlgorithmUpdate(mContext, getSubId(), update);
+                    mNullCipherNotifier.onSecurityAlgorithmUpdate(mContext, getPhoneId(),
+                            getSubId(), update);
                 }
                 break;
 
@@ -4174,6 +4186,10 @@ public class GsmCdmaPhone extends Phone {
         if (DBG) {
             Rlog.d(LOG_TAG, "exitEmergencyCallbackMode: mImsPhone=" + mImsPhone
                     + " isPhoneTypeGsm=" + isPhoneTypeGsm());
+        }
+        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+            EmergencyStateTracker.getInstance().exitEmergencyCallbackMode();
+            return;
         }
         if (mImsPhone != null && mImsPhone.isInImsEcm()) {
             mImsPhone.exitEmergencyCallbackMode();
@@ -5438,6 +5454,25 @@ public class GsmCdmaPhone extends Phone {
 
         mCi.setSecurityAlgorithmsUpdatedEnabled(prefEnabled,
                 obtainMessage(EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE));
+    }
+
+    /**
+     * Update the phoneId -> subId mapping of the null cipher notifier.
+     */
+    @VisibleForTesting
+    public void updateNullCipherNotifier() {
+        if (!mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
+            return;
+        }
+
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                .getSubscriptionInfoInternal(getSubId());
+        boolean active = false;
+        if (subInfo != null) {
+            active = subInfo.isActive();
+        }
+        mNullCipherNotifier.setSubscriptionMapping(mContext, getPhoneId(),
+                active ? subInfo.getSubscriptionId() : -1);
     }
 
     @Override

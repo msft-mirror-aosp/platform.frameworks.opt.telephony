@@ -1,6 +1,7 @@
 package: "com.android.internal.telephony.flags"
 container: "system"
 
+# OWNER=forestchoi TARGET=24Q3
 flag {
     name: "ap_domain_selection_enabled"
     namespace: "telephony"
@@ -8,6 +9,7 @@ flag {
     bug:"258112541"
 }
 
+# OWNER=forestchoi TARGET=24Q3
 flag {
     name: "use_aosp_domain_selection_service"
     namespace: "telephony"
@@ -15,13 +17,16 @@ flag {
     bug:"258112541"
 }
 
+# OWNER=forestchoi TARGET=24Q3
 flag {
     name: "use_oem_domain_selection_service"
+    is_exported: true
     namespace: "telephony"
     description: "This flag controls OEMs' domain selection service supported."
     bug:"258112541"
 }
 
+# OWNER=forestchoi TARGET=24Q3
 flag {
     name: "domain_selection_metrics_enabled"
     namespace: "telephony"

@@ -16,9 +16,12 @@
 
 package com.android.internal.telephony.metrics;
 
+import static com.android.internal.telephony.flags.Flags.dataRatMetricEnabled;
+
 import android.os.Handler;
 import android.os.HandlerExecutor;
 import android.os.HandlerThread;
+import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseDataConnectionState;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyCallback;
@@ -27,6 +30,7 @@ import android.util.SparseArray;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.TelephonyStatsLog;
 
 import java.util.HashMap;
 import java.util.List;
@@ -47,7 +51,10 @@ public class DataConnectionStateTracker {
     private int mSubId;
     private HashMap<Integer, PreciseDataConnectionState> mLastPreciseDataConnectionState =
             new HashMap<>();
-    private PreciseDataConnectionStateListenerImpl mDataConnectionStateListener;
+    private TelephonyListenerImpl mTelephonyListener;
+    private int mActiveDataSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+    private int mChannelCountEnum = TelephonyStatsLog
+            .CONNECTED_CHANNEL_CHANGED__CONNECTED_CHANNEL_COUNT__CHANNEL_COUNT_UNSPECIFIED;
 
     private final SubscriptionManager.OnSubscriptionsChangedListener mSubscriptionsChangedListener =
             new SubscriptionManager.OnSubscriptionsChangedListener() {
@@ -132,15 +139,15 @@ public class DataConnectionStateTracker {
         TelephonyManager telephonyManager =
                 mPhone.getContext().getSystemService(TelephonyManager.class);
         if (telephonyManager != null) {
-            mDataConnectionStateListener = new PreciseDataConnectionStateListenerImpl(mExecutor);
-            mDataConnectionStateListener.register(telephonyManager.createForSubscriptionId(subId));
+            mTelephonyListener = new TelephonyListenerImpl(mExecutor);
+            mTelephonyListener.register(telephonyManager.createForSubscriptionId(subId));
         }
     }
 
     private void unregisterTelephonyListener() {
-        if (mDataConnectionStateListener != null) {
-            mDataConnectionStateListener.unregister();
-            mDataConnectionStateListener = null;
+        if (mTelephonyListener != null) {
+            mTelephonyListener.unregister();
+            mTelephonyListener = null;
         }
     }
 
@@ -156,12 +163,46 @@ public class DataConnectionStateTracker {
         mPhone.getVoiceCallSessionStats().onPreciseDataConnectionStateChanged(connectionState);
     }
 
-    private class PreciseDataConnectionStateListenerImpl extends TelephonyCallback
-            implements TelephonyCallback.PreciseDataConnectionStateListener {
+    static int getActiveDataSubId() {
+        if (sDataConnectionStateTracker.size() == 0) {
+            return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+        }
+        return sDataConnectionStateTracker.valueAt(0).mActiveDataSubId;
+    }
+
+    /**
+     * Log RAT if the active data subId changes to another subId with a different RAT.
+     *
+     * @param subId the current active data subId
+     */
+    private void logRATChanges(int subId) {
+        if (mSubId == subId && mActiveDataSubId != subId) {
+            int newDataRat = mPhone.getServiceStateTracker()
+                    .getServiceStateStats().getCurrentDataRat();
+            for (int i = 0; i < sDataConnectionStateTracker.size(); i++) {
+                DataConnectionStateTracker dataConnectionStateTracker =
+                        sDataConnectionStateTracker.valueAt(0);
+                if (dataConnectionStateTracker.mSubId == mActiveDataSubId) {
+                    int previousDataRat = dataConnectionStateTracker.mPhone
+                            .getServiceStateTracker().getServiceStateStats()
+                            .getCurrentDataRat();
+                    if (newDataRat != previousDataRat) {
+                        TelephonyStatsLog.write(TelephonyStatsLog.DATA_RAT_STATE_CHANGED,
+                                newDataRat);
+                    }
+                }
+            }
+        }
+    }
+
+    private class TelephonyListenerImpl extends TelephonyCallback
+            implements TelephonyCallback.PreciseDataConnectionStateListener,
+            TelephonyCallback.ActiveDataSubscriptionIdListener,
+            TelephonyCallback.PhysicalChannelConfigListener {
         private final Executor mExecutor;
         private TelephonyManager mTelephonyManager = null;
 
-        PreciseDataConnectionStateListenerImpl(Executor executor) {
+        TelephonyListenerImpl(Executor executor) {
             mExecutor = executor;
         }
 
@@ -184,6 +225,59 @@ public class DataConnectionStateTracker {
         public void onPreciseDataConnectionStateChanged(
                 PreciseDataConnectionState connectionState) {
             notifyDataConnectionStateChanged(connectionState);
+        }
+
+        @Override
+        public void onActiveDataSubscriptionIdChanged(int subId) {
+            if (dataRatMetricEnabled()) {
+                logRATChanges(subId);
+            }
+            mActiveDataSubId = subId;
+        }
+
+        @Override
+        public void onPhysicalChannelConfigChanged(List<PhysicalChannelConfig> configs) {
+            logChannelChange(configs);
+        }
+
+        /** Log channel number if it changes for active data subscription*/
+        private void logChannelChange(List<PhysicalChannelConfig> configs) {
+            int connectedChannelCount = configs.size();
+            int channelCountEnum = TelephonyStatsLog
+                    .CONNECTED_CHANNEL_CHANGED__CONNECTED_CHANNEL_COUNT__CHANNEL_COUNT_UNSPECIFIED;
+            switch(connectedChannelCount) {
+                case 0:
+                    channelCountEnum = TelephonyStatsLog
+                            .CONNECTED_CHANNEL_CHANGED__CONNECTED_CHANNEL_COUNT__CHANNEL_COUNT_ONE;
+                    break;
+                case 1:
+                    channelCountEnum = TelephonyStatsLog
+                            .CONNECTED_CHANNEL_CHANGED__CONNECTED_CHANNEL_COUNT__CHANNEL_COUNT_ONE;
+                    break;
+                case 2:
+                    channelCountEnum = TelephonyStatsLog
+                            .CONNECTED_CHANNEL_CHANGED__CONNECTED_CHANNEL_COUNT__CHANNEL_COUNT_TWO;
+                    break;
+                case 3:
+                    channelCountEnum = TelephonyStatsLog
+                            .CONNECTED_CHANNEL_CHANGED__CONNECTED_CHANNEL_COUNT__CHANNEL_COUNT_THREE;
+                    break;
+                case 4:
+                    channelCountEnum = TelephonyStatsLog
+                            .CONNECTED_CHANNEL_CHANGED__CONNECTED_CHANNEL_COUNT__CHANNEL_COUNT_FOUR;
+                    break;
+                // Greater than 4
+                default:
+                    channelCountEnum = TelephonyStatsLog
+                            .CONNECTED_CHANNEL_CHANGED__CONNECTED_CHANNEL_COUNT__CHANNEL_COUNT_FIVE;
+            }
+            if (mChannelCountEnum != channelCountEnum) {
+                if (mSubId != mActiveDataSubId) {
+                    TelephonyStatsLog.write(TelephonyStatsLog.CONNECTED_CHANNEL_CHANGED,
+                            channelCountEnum);
+                }
+                mChannelCountEnum = channelCountEnum;
+            }
         }
     }
 }
