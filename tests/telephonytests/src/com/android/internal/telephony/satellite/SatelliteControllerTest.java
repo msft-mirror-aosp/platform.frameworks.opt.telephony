@@ -606,12 +606,16 @@ public class SatelliteControllerTest extends TelephonyTest {
                 .when(mMockSessionMetricsStats).setSessionDurationSec(anyInt());
         doReturn(mMockSessionMetricsStats)
                 .when(mMockSessionMetricsStats).setIsDemoMode(anyBoolean());
+        doReturn(mMockSessionMetricsStats)
+                .when(mMockSessionMetricsStats).setCarrierId(anyInt());
         doNothing().when(mMockSessionMetricsStats).reportSessionMetrics();
 
         doReturn(mMockProvisionMetricsStats).when(mMockProvisionMetricsStats)
                 .setResultCode(anyInt());
         doReturn(mMockProvisionMetricsStats).when(mMockProvisionMetricsStats)
                 .setIsProvisionRequest(anyBoolean());
+        doReturn(mMockProvisionMetricsStats).when(mMockProvisionMetricsStats)
+                .setCarrierId(anyInt());
         doNothing().when(mMockProvisionMetricsStats).reportProvisionMetrics();
         doNothing().when(mMockControllerMetricsStats).reportDeprovisionCount(anyInt());
         when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
@@ -917,6 +921,7 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testRequestSatelliteEnabled() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         mIsSatelliteEnabledSemaphore.drainPermits();
 
         // Fail to enable satellite when SatelliteController is not fully loaded yet.
