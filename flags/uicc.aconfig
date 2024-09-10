@@ -80,3 +80,11 @@ flag {
         purpose: PURPOSE_BUGFIX
     }
 }
+
+# OWNER=jhyoon TARGET=25Q2
+flag {
+    name: "support_isim_record"
+    namespace: "telephony"
+    description: "This flag controls the type of API that retrieves ISIM records, either hidden or system type."
+    bug:"359721349"
+}

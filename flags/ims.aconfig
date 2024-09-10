@@ -145,3 +145,11 @@ flag {
     description: "Used to expose SMS related hidden APIs for SMS over IMS to public API."
     bug:"359721349"
 }
+
+# OWNER=jhyoon TARGET=25Q2
+flag {
+    name: "support_ims_mmtel_interface"
+    namespace: "telephony"
+    description: "This flag controls the type of API regarding MmTelFeature, either hidden or system type."
+    bug:"359721349"
+}
