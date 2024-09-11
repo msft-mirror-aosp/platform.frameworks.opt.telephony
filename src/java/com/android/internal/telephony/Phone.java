@@ -5283,22 +5283,43 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     }
 
     /**
-     * Start callback mode
+     * Start the emergency callback mode
      * @param type for callback mode entry.
+     * @param durationMillis is the number of milliseconds remaining in the emergency callback
+     *                        mode.
      */
-    public void startCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type) {
-        Rlog.d(mLogTag, "startCallbackMode:type=" + type);
-        mNotifier.notifyCallbackModeStarted(this, type);
+    public void startEmergencyCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type,
+            long durationMillis) {
+        if (!mFeatureFlags.emergencyCallbackModeNotification()) return;
+
+        Rlog.d(mLogTag, "startEmergencyCallbackMode:type=" + type);
+        mNotifier.notifyCallbackModeStarted(this, type, durationMillis);
     }
 
     /**
-     * Stop callback mode
+     * Restart the emergency callback mode
+     * @param type for callback mode entry.
+     * @param durationMillis is the number of milliseconds remaining in the emergency callback
+     *                        mode.
+     */
+    public void restartEmergencyCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type,
+            long durationMillis) {
+        if (!mFeatureFlags.emergencyCallbackModeNotification()) return;
+
+        Rlog.d(mLogTag, "restartEmergencyCallbackMode:type=" + type);
+        mNotifier.notifyCallbackModeRestarted(this, type, durationMillis);
+    }
+
+    /**
+     * Stop the emergency callback mode
      * @param type for callback mode exit.
      * @param reason for stopping callback mode.
      */
-    public void stopCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type,
+    public void stopEmergencyCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type,
             @TelephonyManager.EmergencyCallbackModeStopReason int reason) {
-        Rlog.d(mLogTag, "stopCallbackMode:type=" + type + ", reason=" + reason);
+        if (!mFeatureFlags.emergencyCallbackModeNotification()) return;
+
+        Rlog.d(mLogTag, "stopEmergencyCallbackMode:type=" + type + ", reason=" + reason);
         mNotifier.notifyCallbackModeStopped(this, type, reason);
     }
 

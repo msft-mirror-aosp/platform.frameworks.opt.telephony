@@ -145,7 +145,12 @@ public interface PhoneNotifier {
             List<LinkCapacityEstimate> linkCapacityEstimateList);
 
     /** Notify callback mode started. */
-    void notifyCallbackModeStarted(Phone sender, @EmergencyCallbackModeType int type);
+    void notifyCallbackModeStarted(Phone sender, @EmergencyCallbackModeType int type,
+            long durationMillis);
+
+    /** Notify callback mode restarted. */
+    void notifyCallbackModeRestarted(Phone sender, @EmergencyCallbackModeType int type,
+            long durationMillis);
 
     /** Notify callback mode stopped. */
     void notifyCallbackModeStopped(Phone sender, @EmergencyCallbackModeType int type,

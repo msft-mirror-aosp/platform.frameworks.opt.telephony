@@ -378,6 +378,51 @@ public class DefaultPhoneNotifierTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testNotifyCallbackModeStarted() {
+        doReturn(true).when(mFeatureFlags).emergencyCallbackModeNotification();
+        int phoneId = mPhone.getPhoneId();
+        int subId = mPhone.getSubId();
+        int type = 1;
+        long durationMillis = 1000;
+
+        mDefaultPhoneNotifierUT.notifyCallbackModeStarted(mPhone, type, durationMillis);
+
+        verify(mTelephonyRegistryManager).notifyCallbackModeStarted(eq(phoneId), eq(subId),
+                eq(type), eq(durationMillis));
+    }
+
+    @Test
+    @SmallTest
+    public void testNotifyCallbackModeRestarted() {
+        doReturn(true).when(mFeatureFlags).emergencyCallbackModeNotification();
+        int phoneId = mPhone.getPhoneId();
+        int subId = mPhone.getSubId();
+        int type = 1;
+        long durationMillis = 1000;
+
+        mDefaultPhoneNotifierUT.notifyCallbackModeRestarted(mPhone, type, durationMillis);
+
+        verify(mTelephonyRegistryManager).notifyCallbackModeRestarted(eq(phoneId), eq(subId),
+                eq(type), eq(durationMillis));
+    }
+
+    @Test
+    @SmallTest
+    public void testNotifyCallbackModeStopped() {
+        doReturn(true).when(mFeatureFlags).emergencyCallbackModeNotification();
+        int phoneId = mPhone.getPhoneId();
+        int subId = mPhone.getSubId();
+        int type = 1;
+        int reason = 0;
+
+        mDefaultPhoneNotifierUT.notifyCallbackModeStopped(mPhone, type, reason);
+
+        verify(mTelephonyRegistryManager).notifyCallbackModeStopped(eq(phoneId), eq(subId),
+                eq(type), eq(reason));
+    }
+
+    @Test
+    @SmallTest
     public void testCarrierRoamingNtnModeChanged() {
         int subId = mPhone.getSubId();
         mDefaultPhoneNotifierUT.notifyCarrierRoamingNtnModeChanged(mPhone, true);
