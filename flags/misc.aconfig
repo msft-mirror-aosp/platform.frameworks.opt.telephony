@@ -1,6 +1,18 @@
 package: "com.android.internal.telephony.flags"
 container: "system"
 
+# OWNER=linggm TARGET=24Q3
+flag {
+    name: "combine_ril_death_handle"
+    namespace: "telephony"
+    description: "Upon radio service death, combine its handling to prevent race condition"
+    bug:"319612362"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=tjstuart TARGET=24Q3
 flag {
   name: "do_not_override_precise_label"
   namespace: "telephony"
@@ -9,6 +21,7 @@ flag {
   is_fixed_read_only: true
 }
 
+# OWNER=tnd TARGET=24Q1
 flag {
   name: "log_mms_sms_database_access_info"
   namespace: "telephony"
@@ -16,6 +29,7 @@ flag {
   bug: "275225402"
 }
 
+# OWNER=tjstuart TARGET=24Q3
 flag {
   name: "stop_spamming_emergency_notification"
   namespace: "telephony"
@@ -23,13 +37,16 @@ flag {
   bug: "275225402"
 }
 
+# OWNER=avinashmp TARGET=24Q3
 flag {
   name: "enable_wps_check_api_flag"
+  is_exported: true
   namespace: "telephony"
   description: "Enable system api isWpsCallNumber. Its an utility api to check if the dialed number is for Wireless Priority Service call."
   bug: "304272356"
 }
 
+# OWNER=grantmenke TARGET=24Q3
 flag {
   name: "ensure_access_to_call_settings_is_restricted"
   namespace: "telephony"
@@ -37,6 +54,7 @@ flag {
   bug: "309655251"
 }
 
+# OWNER=sangyun TARGET=24Q2
 flag {
   name: "reorganize_roaming_notification"
   namespace: "telephony"
@@ -44,6 +62,7 @@ flag {
   bug: "310594087"
 }
 
+# OWNER=sangyun TARGET=24Q2
 flag {
   name: "dismiss_network_selection_notification_on_sim_disable"
   namespace: "telephony"
@@ -51,6 +70,7 @@ flag {
   bug: "310594186"
 }
 
+# OWNER=nagendranb TARGET=24Q3
 flag {
   name: "enable_telephony_analytics"
   namespace: "telephony"
@@ -58,20 +78,25 @@ flag {
   bug: "309896524"
 }
 
+# OWNER=rambowang TARGET=24Q3
 flag {
   name: "show_call_id_and_call_waiting_in_additional_settings_menu"
+  is_exported: true
   namespace: "telephony"
   description: "Expose carrier config KEY_ADDITIONAL_SETTINGS_CALLER_ID_VISIBILITY_BOOL and KEY_ADDITIONAL_SETTINGS_CALL_WAITING_VISIBILITY_BOOL."
   bug: "310264981"
 }
 
+# OWNER=rambowang TARGET=24Q3
 flag {
     name: "reset_mobile_network_settings"
+    is_exported: true
     namespace: "telephony"
     description: "Allows applications to launch Reset Mobile Network Settings page in Settings app."
     bug:"271921464"
 }
 
+# OWNER=rambowang TARGET=24Q3
 flag {
     name: "fix_crash_on_getting_config_when_phone_is_gone"
     namespace: "telephony"
@@ -82,11 +107,112 @@ flag {
     }
 }
 
+# OWNER=rambowang TARGET=24Q3
 flag {
     name: "add_anomaly_when_notify_config_changed_with_invalid_phone"
     namespace: "telephony"
     description: "Report anomaly when CarrierConfigLoader received config change with sub that maps to invalid phoneId"
     bug:"270757342"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=rambowang TARGET=24Q3
+flag {
+    name: "hide_preinstalled_carrier_app_at_most_once"
+    namespace: "telephony"
+    description: "Fix bug when preloaded carrier app is uninstalled and lose provisioning data"
+    bug:"158028151"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=sangyun TARGET=24Q3
+flag {
+    name: "roaming_notification_for_single_data_network"
+    namespace: "telephony"
+    description: "Fix bug where roaming notification was not shown on a single data network."
+    bug:"249908996"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=joonhunshin TARGET=24Q3
+flag {
+    name: "enforce_telephony_feature_mapping"
+    namespace: "telephony"
+    description: "This flag controls telephony feature flags mapping."
+    bug:"297989574"
+}
+
+# OWNER=joonhunshin TARGET=24Q3
+flag {
+    name: "enforce_telephony_feature_mapping_for_public_apis"
+    namespace: "telephony"
+    description: "This flag controls telephony feature flags mapping for public APIs and CTS."
+    bug:"297989574"
+}
+
+# OWNER=stevestatia TARGET=24Q3
+flag {
+    name: "prevent_system_server_and_phone_deadlock"
+    namespace: "telephony"
+    description: "This flag controls the order of the binder to prevent deadlock in system_server"
+    bug: "315973270"
+}
+
+# OWNER=joonhunshin TARGET=24Q3
+flag {
+    name: "prevent_invocation_repeat_of_ril_call_when_device_does_not_support_voice"
+    namespace: "telephony"
+    description: "This flag prevents repeat invocation of call related APIs in RIL when the device is not voice capable"
+    bug: "290833783"
+}
+
+# OWNER=jackyu TARGET=24Q3
+flag {
+    name: "minimal_telephony_cdm_check"
+    namespace: "telephony"
+    description: "This flag disables Calling/Data/Messaging features if their respective feature is missing"
+    bug: "310710841"
+}
+
+# OWNER=jackyu TARGET=24Q3
+flag {
+    name: "minimal_telephony_managers_conditional_on_features"
+    namespace: "telephony"
+    description: "This flag enables checking for telephony features before initializing corresponding managers"
+    bug: "310710841"
+}
+
+# OWNER=joonhunshin TARGET=24Q3
+flag {
+    name: "set_no_reply_timer_for_cfnry"
+    namespace: "telephony"
+    description: "This flag supports setting the no reply timer for CFNRy based on carrier config"
+    bug:"314732435"
+}
+
+# OWNER=joonhunshin TARGET=24Q3
+flag {
+    name: "change_method_of_obtaining_ims_registration_radio_tech"
+    namespace: "telephony"
+    description: "This flag changes the method of obtaining IMS registration radio technology"
+    bug:"330120237"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=sasindran TARGET=24Q3
+flag {
+    name: "use_relaxed_id_match"
+    namespace: "telephony"
+    description: "This flag supports relaxed id match for radio state changes"
+    bug:"336916327"
     metadata {
         purpose: PURPOSE_BUGFIX
     }

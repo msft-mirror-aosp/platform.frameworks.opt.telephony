@@ -23,7 +23,7 @@ option java_outer_classname = "PersistAtomsProto";
 
 // Holds atoms to store on persist storage in case of power cycle or process crash.
 // NOTE: using int64 rather than google.protobuf.Timestamp for timestamps simplifies implementation.
-// Next id: 70
+// Next id: 82
 message PersistAtoms {
     /* Aggregated RAT usage during the call. */
     repeated VoiceCallRatUsage voice_call_rat_usage = 1;
@@ -231,6 +231,42 @@ message PersistAtoms {
 
     /* Timestamp of last satellite_sos_message_recommender pull. */
     optional int64 satellite_sos_message_recommender_pull_timestamp_millis = 69;
+
+    /* Data Network Validation statistics and information. */
+    repeated DataNetworkValidation data_network_validation = 70;
+
+    /* Timestamp of last data_network_validation pull. */
+    optional int64 data_network_validation_pull_timestamp_millis = 71;
+
+    /* Snapshot of carrier roaming satellite session. */
+    repeated CarrierRoamingSatelliteSession carrier_roaming_satellite_session = 72;
+
+    /* Timestamp of last carrier_roaming_satellite_session pull. */
+    optional int64 carrier_roaming_satellite_session_pull_timestamp_millis = 73;
+
+    /* Snapshot of carrier roaming satellite controller stats. */
+    repeated CarrierRoamingSatelliteControllerStats carrier_roaming_satellite_controller_stats = 74;
+
+    /* Timestamp of last carrier_roaming_satellite_controller_stats pull. */
+    optional int64 carrier_roaming_satellite_controller_stats_pull_timestamp_millis = 75;
+
+    /* Snapshot of satellite entitlement. */
+    repeated SatelliteEntitlement satellite_entitlement = 76;
+
+    /* Timestamp of last satellite_entitlement pull. */
+    optional int64 satellite_entitlement_pull_timestamp_millis = 77;
+
+    /* Snapshot of satellite config updater. */
+    repeated SatelliteConfigUpdater satellite_config_updater = 78;
+
+    /* Timestamp of last satellite_config_updater pull. */
+    optional int64 satellite_config_updater_pull_timestamp_millis = 79;
+
+    /** Snapshot of satellite access controller. */
+    repeated SatelliteAccessController satellite_access_controller = 80;
+
+    /* Timestamp of last satellite access controller pull. */
+    optional int64 satellite_access_controller_pull_timestamp_millis = 81;
 }
 
 // The canonical versions of the following enums live in:
@@ -281,6 +317,9 @@ message VoiceCallSession {
     optional bool is_iwlan_cross_sim_at_end = 38;
     optional bool is_iwlan_cross_sim_at_connected = 39;
     optional bool vonr_enabled = 40;
+    optional bool is_ntn = 41;
+    optional bool supports_business_call_composer = 42;
+    optional int32 call_composer_status = 43;
 
     // Internal use only
     optional int64 setup_begin_millis = 10001;
@@ -310,6 +349,8 @@ message IncomingSms {
     optional int64 message_id = 14;
     optional int32 count = 15;
     optional bool is_managed_profile = 16;
+    optional bool is_ntn = 17;
+    optional bool is_emergency = 18;
 
     // Internal use only
     optional int32 hashCode = 10001;
@@ -334,6 +375,8 @@ message OutgoingSms {
     optional int32 send_error_code = 16;
     optional int32 network_error_code = 17;
     optional bool is_managed_profile = 18;
+    optional bool is_emergency = 19;
+    optional bool is_ntn = 20;
 
     // Internal use only
     optional int32 hashCode = 10001;
@@ -370,6 +413,9 @@ message DataCallSession {
     repeated int32 handover_failure_rat = 21;
     optional bool is_non_dds = 22;
     optional bool is_iwlan_cross_sim = 23;
+    optional bool is_ntn = 24;
+    optional bool is_satellite_transport = 25;
+    optional bool is_provisioning_profile = 26;
 }
 
 message CellularServiceState {
@@ -388,6 +434,7 @@ message CellularServiceState {
     optional bool override_voice_service = 13;
     optional bool isDataEnabled = 14;
     optional bool is_iwlan_cross_sim = 15;
+    optional bool is_ntn = 16;
 
     // Internal use only
     optional int64 last_used_millis = 10001;
@@ -458,6 +505,12 @@ message NetworkRequestsV2 {
         PRIORITIZE_BANDWIDTH = 2;
         CBS = 3;
         ENTERPRISE = 4;
+        SATELLITE_INTERNET_RESTRICTED = 5;
+        SATELLITE_MMS_RESTRICTED = 6;
+        SATELLITE_IMS_RESTRICTED = 7;
+        SATELLITE_XCAP_RESTRICTED = 8;
+        SATELLITE_EIMS_RESTRICTED = 9;
+        SATELLITE_SUPL_RESTRICTED =10;
     }
     optional int32 carrier_id = 1;
     optional NetworkCapability capability = 2;
@@ -653,18 +706,40 @@ message SatelliteController {
     optional int32 total_service_uptime_sec = 15;
     optional int32 total_battery_consumption_percent = 16;
     optional int32 total_battery_charged_time_sec = 17;
+    optional int32 count_of_demo_mode_satellite_service_enablements_success = 18;
+    optional int32 count_of_demo_mode_satellite_service_enablements_fail = 19;
+    optional int32 count_of_demo_mode_outgoing_datagram_success = 20;
+    optional int32 count_of_demo_mode_outgoing_datagram_fail = 21;
+    optional int32 count_of_demo_mode_incoming_datagram_success = 22;
+    optional int32 count_of_demo_mode_incoming_datagram_fail = 23;
+    optional int32 count_of_datagram_type_keep_alive_success = 24;
+    optional int32 count_of_datagram_type_keep_alive_fail = 25;
+    optional int32 count_of_allowed_satellite_access = 26;
+    optional int32 count_of_disallowed_satellite_access = 27;
+    optional int32 count_of_satellite_access_check_fail = 28;
 }
 
 message SatelliteSession {
     optional int32 satellite_service_initialization_result = 1;
     optional int32 satellite_technology = 2;
     optional int32 count = 3;
+    optional int32 satellite_service_termination_result = 4;
+    optional int64 initialization_processing_time_millis = 5;
+    optional int64 termination_processing_time_millis = 6;
+    optional int32 session_duration_seconds = 7;
+    optional int32 count_of_outgoing_datagram_success = 8;
+    optional int32 count_of_outgoing_datagram_failed = 9;
+    optional int32 count_of_incoming_datagram_success = 10;
+    optional int32 count_of_incoming_datagram_failed = 11;
+    optional bool is_demo_mode = 12;
+    optional int32 max_ntn_signal_strength_level = 13;
 }
 
 message SatelliteIncomingDatagram {
     optional int32 result_code = 1;
     optional int32 datagram_size_bytes = 2;
     optional int64 datagram_transfer_time_millis = 3;
+    optional bool is_demo_mode = 4;
 }
 
 message SatelliteOutgoingDatagram {
@@ -672,6 +747,7 @@ message SatelliteOutgoingDatagram {
     optional int32 result_code = 2;
     optional int32 datagram_size_bytes = 3;
     optional int64 datagram_transfer_time_millis = 4;
+    optional bool is_demo_mode = 5;
 }
 
 message SatelliteProvision {
@@ -690,4 +766,70 @@ message SatelliteSosMessageRecommender {
     optional bool is_multi_sim = 6;
     optional int32 recommending_handover_type = 7;
     optional bool is_satellite_allowed_in_current_location = 8;
+}
+
+message DataNetworkValidation {
+    optional int32 network_type = 1;
+    optional int32 apn_type_bitmask = 2;
+    optional int32 signal_strength = 3;
+    optional int32 validation_result = 4;
+    optional int64 elapsed_time_in_millis = 5;
+    optional bool handover_attempted = 6;
+    optional int32 network_validation_count = 7;
+}
+
+message CarrierRoamingSatelliteSession {
+    optional int32 carrier_id = 1;
+    optional bool is_ntn_roaming_in_home_country = 2;
+    optional int32 total_satellite_mode_time_sec = 3;
+    optional int32 number_of_satellite_connections = 4;
+    optional int32 avg_duration_of_satellite_connection_sec = 5;
+    optional int32 satellite_connection_gap_min_sec = 6;
+    optional int32 satellite_connection_gap_avg_sec = 7;
+    optional int32 satellite_connection_gap_max_sec = 8;
+    optional int32 rsrp_avg = 9;
+    optional int32 rsrp_median = 10;
+    optional int32 rssnr_avg = 11;
+    optional int32 rssnr_median = 12;
+    optional int32 count_of_incoming_sms = 13;
+    optional int32 count_of_outgoing_sms = 14;
+    optional int32 count_of_incoming_mms = 15;
+    optional int32 count_of_outgoing_mms = 16;
+}
+
+message CarrierRoamingSatelliteControllerStats {
+    optional int32 config_data_source = 1;
+    optional int32 count_of_entitlement_status_query_request = 2;
+    optional int32 count_of_satellite_config_update_request = 3;
+    optional int32 count_of_satellite_notification_displayed = 4;
+    optional int32 satellite_session_gap_min_sec = 5;
+    optional int32 satellite_session_gap_avg_sec = 6;
+    optional int32 satellite_session_gap_max_sec = 7;
+}
+
+message SatelliteEntitlement {
+    optional int32 carrier_id = 1;
+    optional int32 result = 2;
+    optional int32 entitlement_status = 3;
+    optional bool is_retry = 4;
+    optional int32 count = 5;
+}
+
+message SatelliteConfigUpdater {
+    optional int32 config_version = 1;
+    optional int32 oem_config_result = 2;
+    optional int32 carrier_config_result = 3;
+    optional int32 count = 4;
+}
+
+message SatelliteAccessController {
+    optional int32 access_control_type = 1;
+    optional int64 location_query_time_millis = 2;
+    optional int64 on_device_lookup_time_millis = 3;
+    optional int64 total_checking_time_millis = 4;
+    optional bool is_allowed = 5;
+    optional bool is_emergency = 6;
+    optional int32 result_code = 7;
+    repeated string country_codes = 8;
+    optional int32 config_data_source = 9;
 }

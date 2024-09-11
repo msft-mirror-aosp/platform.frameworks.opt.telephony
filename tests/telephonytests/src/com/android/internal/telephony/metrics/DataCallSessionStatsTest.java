@@ -19,7 +19,9 @@ package com.android.internal.telephony.metrics;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,11 +34,13 @@ import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
-import android.test.suitebuilder.annotation.SmallTest;
+
+import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.nano.PersistAtomsProto.DataCallSession;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 
 import org.junit.After;
 import org.junit.Before;
@@ -94,7 +98,7 @@ public class DataCallSessionStatsTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testSetupDataCallOnCellularIms_success() {
-        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS);
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
         mDataCallSessionStats.onSetupDataCallResponse(
                 mDefaultImsResponse,
                 TelephonyManager.NETWORK_TYPE_LTE,
@@ -120,7 +124,7 @@ public class DataCallSessionStatsTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testSetupDataCallOnIwlan_success() {
-        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS);
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
         mDataCallSessionStats.onSetupDataCallResponse(
                 mDefaultImsResponse,
                 TelephonyManager.NETWORK_TYPE_IWLAN,
@@ -149,7 +153,7 @@ public class DataCallSessionStatsTest extends TelephonyTest {
     public void testSetupDataCallOnCrossSimCalling_success() {
         doReturn(mCellularNetworkCapabilities)
                 .when(mDefaultNetworkMonitor).getNetworkCapabilities();
-        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS);
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
         mDataCallSessionStats.onSetupDataCallResponse(
                 mDefaultImsResponse,
                 TelephonyManager.NETWORK_TYPE_IWLAN,
@@ -176,7 +180,7 @@ public class DataCallSessionStatsTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testSetupDataCallOnCellularIms_failure() {
-        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS);
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
         mDataCallSessionStats.onSetupDataCallResponse(
                 mDefaultImsResponse,
                 TelephonyManager.NETWORK_TYPE_LTE,
@@ -199,7 +203,7 @@ public class DataCallSessionStatsTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testHandoverFromCellularToIwlan_success() {
-        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS);
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
         mDataCallSessionStats.onSetupDataCallResponse(
                 mDefaultImsResponse,
                 TelephonyManager.NETWORK_TYPE_LTE,
@@ -225,7 +229,7 @@ public class DataCallSessionStatsTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testHandoverFromCellularToCrossSimCalling_success() {
-        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS);
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
         mDataCallSessionStats.onSetupDataCallResponse(
                 mDefaultImsResponse,
                 TelephonyManager.NETWORK_TYPE_LTE,
@@ -254,7 +258,7 @@ public class DataCallSessionStatsTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testHandoverFromCellularToIwlan_failure() {
-        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS);
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
         mDataCallSessionStats.onSetupDataCallResponse(
                 mDefaultImsResponse,
                 TelephonyManager.NETWORK_TYPE_LTE,
@@ -286,7 +290,7 @@ public class DataCallSessionStatsTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testSetupDataCallOnIwlan_success_thenOOS() {
-        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS);
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
         mDataCallSessionStats.onSetupDataCallResponse(
                 mDefaultImsResponse,
                 TelephonyManager.NETWORK_TYPE_IWLAN,
@@ -307,5 +311,101 @@ public class DataCallSessionStatsTest extends TelephonyTest {
         assertEquals(TelephonyManager.NETWORK_TYPE_IWLAN, stats.ratAtEnd);
         assertTrue(stats.oosAtEnd);
         assertFalse(stats.ongoing);
+    }
+
+    @Test
+    public void testIsNtn() {
+        when(mSatelliteController.isInSatelliteModeForCarrierRoaming(any())).thenReturn(true);
+
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
+        mDataCallSessionStats.onSetupDataCallResponse(
+                mDefaultImsResponse,
+                TelephonyManager.NETWORK_TYPE_LTE,
+                ApnSetting.TYPE_IMS,
+                ApnSetting.PROTOCOL_IP,
+                DataFailCause.NONE);
+
+        mDataCallSessionStats.setTimeMillis(60000L);
+        mDataCallSessionStats.conclude();
+
+        ArgumentCaptor<DataCallSession> callCaptor =
+                ArgumentCaptor.forClass(DataCallSession.class);
+        verify(mPersistAtomsStorage).addDataCallSession(callCaptor.capture());
+        DataCallSession stats = callCaptor.getValue();
+
+        assertTrue(stats.isNtn);
+
+        reset(mPersistAtomsStorage);
+
+        when(mSatelliteController.isInSatelliteModeForCarrierRoaming(any()))
+                .thenReturn(false);
+
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
+        mDataCallSessionStats.onSetupDataCallResponse(
+                mDefaultImsResponse,
+                TelephonyManager.NETWORK_TYPE_LTE,
+                ApnSetting.TYPE_IMS,
+                ApnSetting.PROTOCOL_IP,
+                DataFailCause.NONE);
+
+        mDataCallSessionStats.setTimeMillis(60000L);
+        mDataCallSessionStats.conclude();
+
+
+        verify(mPersistAtomsStorage).addDataCallSession(callCaptor.capture());
+        stats = callCaptor.getValue();
+
+        assertFalse(stats.isNtn);
+    }
+
+    @Test
+    public void testIsProvisioningProfile() {
+        SubscriptionInfoInternal mSubInfoInternal = new SubscriptionInfoInternal.Builder()
+            .setProfileClass(mSubscriptionManager.PROFILE_CLASS_PROVISIONING).build();
+
+        when(mSubscriptionManagerService.getSubscriptionInfoInternal(mPhone.getSubId()))
+            .thenReturn(mSubInfoInternal);
+
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
+        mDataCallSessionStats.onSetupDataCallResponse(
+            mDefaultImsResponse,
+            TelephonyManager.NETWORK_TYPE_IWLAN,
+            ApnSetting.TYPE_IMS,
+            ApnSetting.PROTOCOL_IP,
+            DataFailCause.NONE);
+
+        mDataCallSessionStats.setTimeMillis(60000L);
+        mDataCallSessionStats.conclude();
+
+        ArgumentCaptor<DataCallSession> callCaptor =
+            ArgumentCaptor.forClass(DataCallSession.class);
+        verify(mPersistAtomsStorage, times(1)).addDataCallSession(
+            callCaptor.capture());
+        DataCallSession stats = callCaptor.getValue();
+
+        assertTrue(stats.isProvisioningProfile);
+
+        reset(mPersistAtomsStorage);
+
+        mSubInfoInternal = new SubscriptionInfoInternal.Builder()
+            .setProfileClass(mSubscriptionManager.PROFILE_CLASS_OPERATIONAL).build();
+
+        when(mSubscriptionManagerService.getSubscriptionInfoInternal(mPhone.getSubId()))
+            .thenReturn(mSubInfoInternal);
+
+        mDataCallSessionStats.onSetupDataCall(ApnSetting.TYPE_IMS, false);
+        mDataCallSessionStats.onSetupDataCallResponse(
+            mDefaultImsResponse,
+            TelephonyManager.NETWORK_TYPE_IWLAN,
+            ApnSetting.TYPE_IMS,
+            ApnSetting.PROTOCOL_IP,
+            DataFailCause.NONE);
+
+        mDataCallSessionStats.setTimeMillis(60000L);
+        mDataCallSessionStats.conclude();
+        verify(mPersistAtomsStorage).addDataCallSession(callCaptor.capture());
+        stats = callCaptor.getValue();
+
+        assertFalse(stats.isProvisioningProfile);
     }
 }

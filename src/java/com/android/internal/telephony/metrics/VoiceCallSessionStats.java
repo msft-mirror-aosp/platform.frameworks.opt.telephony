@@ -41,16 +41,19 @@ import android.annotation.Nullable;
 import android.content.Context;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.os.PersistableBundle;
 import android.os.SystemClock;
 import android.telecom.VideoProfile;
 import android.telecom.VideoProfile.VideoState;
 import android.telephony.Annotation.NetworkType;
 import android.telephony.AnomalyReporter;
+import android.telephony.CarrierConfigManager;
 import android.telephony.DisconnectCause;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PreciseDataConnectionState;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
+import android.telephony.TelephonyManager.CallComposerStatus;
 import android.telephony.data.ApnSetting;
 import android.telephony.ims.ImsReasonInfo;
 import android.telephony.ims.ImsStreamMediaProfile;
@@ -75,6 +78,7 @@ import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneConnection;
 import com.android.internal.telephony.nano.PersistAtomsProto.VoiceCallSession;
 import com.android.internal.telephony.nano.TelephonyProto.TelephonyCallSession.Event.AudioCodec;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.telephony.Rlog;
 
@@ -167,15 +171,16 @@ public class VoiceCallSessionStats {
     private final UiccController mUiccController = UiccController.getInstance();
     private final DeviceStateHelper mDeviceStateHelper =
             PhoneFactory.getMetricsCollector().getDeviceStateHelper();
-
     private final VonrHelper mVonrHelper =
             PhoneFactory.getMetricsCollector().getVonrHelper();
+    private final SatelliteController mSatelliteController;
 
     public VoiceCallSessionStats(int phoneId, Phone phone, @NonNull FeatureFlags featureFlags) {
         mPhoneId = phoneId;
         mPhone = phone;
         mFlags = featureFlags;
         DataConnectionStateTracker.getInstance(phoneId).start(phone);
+        mSatelliteController = SatelliteController.getInstance();
     }
 
     /* CS calls */
@@ -570,6 +575,13 @@ public class VoiceCallSessionStats {
             proto.vonrEnabled = mVonrHelper.getVonrEnabled(mPhone.getSubId());
         }
 
+        proto.supportsBusinessCallComposer = isBusinessCallSupported();
+        // 0 is defined as UNKNOWN in Enum
+        proto.callComposerStatus = getCallComposerStatusForPhone() + 1;
+
+        proto.isNtn = mSatelliteController != null
+                ? mSatelliteController.isInSatelliteModeForCarrierRoaming(mPhone) : false;
+
         mAtomsStorage.addVoiceCallSession(proto);
 
         // merge RAT usages to PersistPullers when the call session ends (i.e. no more active calls)
@@ -790,11 +802,8 @@ public class VoiceCallSessionStats {
                 }
             }
         }
-        if (bearer == VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS) {
-            return TelephonyManager.NETWORK_TYPE_UNKNOWN;
-        } else {
-            return ServiceStateStats.getRat(state, NetworkRegistrationInfo.DOMAIN_CS);
-        }
+
+        return ServiceStateStats.getRat(state, NetworkRegistrationInfo.DOMAIN_CS);
     }
 
     /** Resets the list of codecs used for the connection with only the codec currently in use. */
@@ -941,6 +950,36 @@ public class VoiceCallSessionStats {
                     == ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM;
         }
         return false;
+    }
+
+    private @CallComposerStatus int getCallComposerStatusForPhone() {
+        TelephonyManager telephonyManager = mPhone.getContext()
+                .getSystemService(TelephonyManager.class);
+        if (telephonyManager == null) {
+            return TelephonyManager.CALL_COMPOSER_STATUS_OFF;
+        }
+        telephonyManager = telephonyManager.createForSubscriptionId(mPhone.getSubId());
+        return telephonyManager.getCallComposerStatus();
+    }
+
+    private boolean isBusinessCallSupported() {
+        CarrierConfigManager carrierConfigManager = (CarrierConfigManager)
+                mPhone.getContext().getSystemService(Context.CARRIER_CONFIG_SERVICE);
+        if (carrierConfigManager == null) {
+            return false;
+        }
+        int subId = mPhone.getSubId();
+        PersistableBundle b = null;
+        try {
+            b = carrierConfigManager.getConfigForSubId(subId,
+                    CarrierConfigManager.KEY_SUPPORTS_BUSINESS_CALL_COMPOSER_BOOL);
+        } catch (RuntimeException e) {
+            loge("CarrierConfigLoader is not available.");
+        }
+        if (b == null || b.isEmpty()) {
+            return false;
+        }
+        return b.getBoolean(CarrierConfigManager.KEY_SUPPORTS_BUSINESS_CALL_COMPOSER_BOOL);
     }
 
     @VisibleForTesting
