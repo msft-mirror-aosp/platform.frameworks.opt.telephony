@@ -16,7 +16,6 @@
 
 package com.android.internal.telephony.satellite;
 
-import static android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP;
 import static android.telephony.ServiceState.STATE_EMERGENCY_ONLY;
 import static android.telephony.ServiceState.STATE_IN_SERVICE;
 import static android.telephony.ServiceState.STATE_OUT_OF_SERVICE;
@@ -30,7 +29,6 @@ import static com.android.internal.telephony.satellite.SatelliteController.INVAL
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.app.ActivityOptions;
 import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
@@ -253,11 +251,10 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
         selectEmergencyCallWaitForConnectionTimeoutDuration();
         if (mEmergencyConnection == null) {
+            handleStateChangedEventForHysteresisTimer();
             registerForInterestedStateChangedEvents();
         }
         mEmergencyConnection = connection;
-        handleStateChangedEventForHysteresisTimer();
-
         synchronized (mLock) {
             mCheckingAccessRestrictionInProgress = false;
             mIsSatelliteAllowedForCurrentLocation = false;
@@ -416,6 +413,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
         for (Phone phone : PhoneFactory.getPhones()) {
             phone.registerForServiceStateChanged(
                     this, EVENT_SERVICE_STATE_CHANGED, null);
+            registerForImsRegistrationStateChanged(phone);
         }
     }
 
@@ -435,6 +433,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, mISatelliteProvisionStateCallback);
         for (Phone phone : PhoneFactory.getPhones()) {
             phone.unregisterForServiceStateChanged(this);
+            unregisterForImsRegistrationStateChanged(phone);
         }
     }
 
@@ -526,7 +525,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private synchronized void handleStateChangedEventForHysteresisTimer() {
-        if (!isCellularAvailable() && mEmergencyConnection != null) {
+        if (!isCellularAvailable()) {
             startTimer();
         } else {
             logv("handleStateChangedEventForHysteresisTimer stopTimer");
@@ -702,15 +701,10 @@ public class SatelliteSOSMessageRecommender extends Handler {
             intent = new Intent(Intent.ACTION_SENDTO, uri);
         } else {
             intent = new Intent(action);
-            intent.addFlags(FLAG_ACTIVITY_CLEAR_TOP);
         }
-        Bundle activityOptions = ActivityOptions.makeBasic()
-                .setPendingIntentCreatorBackgroundActivityStartMode(
-                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-                .toBundle();
         intent.setComponent(new ComponentName(packageName, className));
         return PendingIntent.getActivity(mContext, 0, intent,
-                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE, activityOptions);
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     private boolean isEmergencyCallToSatelliteHandoverTypeT911Enforced() {
