@@ -305,9 +305,9 @@ public abstract class InboundSmsHandler extends StateMachine {
         mResolver = context.getContentResolver();
         mWapPush = new WapPushOverSms(context, mFeatureFlags);
 
-        boolean smsCapable = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_sms_capable);
-        mSmsReceiveDisabled = !TelephonyManager.from(mContext).getSmsReceiveCapableForPhone(
+        TelephonyManager telephonyManager = TelephonyManager.from(mContext);
+        boolean smsCapable = telephonyManager.isDeviceSmsCapable();
+        mSmsReceiveDisabled = !telephonyManager.getSmsReceiveCapableForPhone(
                 mPhone.getPhoneId(), smsCapable);
 
         PowerManager pm = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
@@ -806,7 +806,12 @@ public abstract class InboundSmsHandler extends StateMachine {
             Intent intent = new Intent(Intents.SMS_REJECTED_ACTION);
             intent.putExtra("result", result);
             intent.putExtra("subId", mPhone.getSubId());
-            mContext.sendBroadcast(intent, android.Manifest.permission.RECEIVE_SMS);
+            if (mFeatureFlags.hsumBroadcast()) {
+                mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
+                        android.Manifest.permission.RECEIVE_SMS);
+            } else {
+                mContext.sendBroadcast(intent, android.Manifest.permission.RECEIVE_SMS);
+            }
         }
         acknowledgeLastIncomingSms(success, result, response);
     }
@@ -1069,7 +1074,7 @@ public abstract class InboundSmsHandler extends StateMachine {
 
         SmsBroadcastReceiver resultReceiver = tracker.getSmsBroadcastReceiver(this);
 
-        if (!mUserManager.isUserUnlocked()) {
+        if (!isMainUserUnlocked()) {
             log("processMessagePart: !isUserUnlocked; calling processMessagePartWithUserLocked. "
                     + "Port: " + destPort, tracker.getMessageId());
             return processMessagePartWithUserLocked(
@@ -1187,6 +1192,15 @@ public abstract class InboundSmsHandler extends StateMachine {
         return false;
     }
 
+    private boolean isMainUserUnlocked() {
+        UserHandle mainUser = mFeatureFlags.smsMmsDeliverBroadcastsRedirectToMainUser() ?
+                mUserManager.getMainUser() : null;
+        if (mainUser != null) {
+            return mUserManager.isUserUnlocked(mainUser);
+        }
+        return mUserManager.isUserUnlocked();
+    }
+
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private void showNewMessageNotification() {
         // Do not show the notification on non-FBE devices.
@@ -1210,8 +1224,15 @@ public abstract class InboundSmsHandler extends StateMachine {
                 .setChannelId(NotificationChannelController.CHANNEL_ID_SMS);
         NotificationManager mNotificationManager =
             (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
-        mNotificationManager.notify(
-                NOTIFICATION_TAG, NOTIFICATION_ID_NEW_MESSAGE, mBuilder.build());
+        UserHandle mainUser = mFeatureFlags.smsMmsDeliverBroadcastsRedirectToMainUser() ?
+                mUserManager.getMainUser() : null;
+        if (mainUser != null) {
+            mNotificationManager.notifyAsUser(
+                    NOTIFICATION_TAG, NOTIFICATION_ID_NEW_MESSAGE, mBuilder.build(), mainUser);
+        } else {
+            mNotificationManager.notify(
+                    NOTIFICATION_TAG, NOTIFICATION_ID_NEW_MESSAGE, mBuilder.build());
+        }
     }
 
     static void cancelNewMessageNotification(Context context) {
@@ -2129,6 +2150,7 @@ public abstract class InboundSmsHandler extends StateMachine {
         public void onReceive(Context context, Intent intent) {
             if (ACTION_OPEN_SMS_APP.equals(intent.getAction())) {
                 // do nothing if the user had not unlocked the device yet
+                // TODO(b/355049884): This is looking at sms package of the wrong user!
                 UserManager userManager =
                         (UserManager) context.getSystemService(Context.USER_SERVICE);
                 if (userManager.isUserUnlocked()) {

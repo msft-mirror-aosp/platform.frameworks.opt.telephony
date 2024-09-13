@@ -580,6 +580,8 @@ public abstract class TelephonyTest {
         mNullCipherNotifier = Mockito.mock(NullCipherNotifier.class);
 
         doReturn(true).when(mFeatureFlags).minimalTelephonyCdmCheck();
+        doReturn(true).when(mFeatureFlags).supportNetworkProvider();
+        doReturn(true).when(mFeatureFlags).hsumBroadcast();
 
         TelephonyManager.disableServiceHandleCaching();
         PropertyInvalidatedCache.disableForTestMode();

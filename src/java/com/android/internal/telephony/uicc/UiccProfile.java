@@ -67,6 +67,7 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.TelephonyStatsLog;
 import com.android.internal.telephony.cat.CatService;
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppType;
@@ -105,7 +106,8 @@ public class UiccProfile extends IccCard {
 
     private static final String OPERATOR_BRAND_OVERRIDE_PREFIX = "operator_branding_";
 
-    private final @NonNull FeatureFlags mFlags;
+    @NonNull
+    private final FeatureFlags mFlags;
     // The lock object is created by UiccSlot that owns the UiccCard that owns this UiccProfile.
     // This is to share the lock between UiccSlot, UiccCard and UiccProfile for now.
     private final Object mLock;
@@ -1139,7 +1141,7 @@ public class UiccProfile extends IccCard {
                     //Create newly added Applications
                     if (i < ics.mApplications.length) {
                         mUiccApplications[i] = new UiccCardApplication(this,
-                                ics.mApplications[i], mContext, mCi);
+                                ics.mApplications[i], mContext, mCi, mFlags);
                     }
                 } else if (i >= ics.mApplications.length) {
                     //Delete removed applications
@@ -1155,7 +1157,9 @@ public class UiccProfile extends IccCard {
 
             // Reload the carrier privilege rules if necessary.
             log("Before privilege rules: " + mCarrierPrivilegeRules + " : " + ics.mCardState);
-            if (mCarrierPrivilegeRules == null && ics.mCardState == CardState.CARDSTATE_PRESENT) {
+            if (mCarrierPrivilegeRules == null && ics.mCardState == CardState.CARDSTATE_PRESENT && (
+                    !Flags.uiccAppCountCheckToCreateChannel()
+                            || mLastReportedNumOfUiccApplications > 0)) {
                 mCarrierPrivilegeRules = new UiccCarrierPrivilegeRules(this,
                         mHandler.obtainMessage(EVENT_CARRIER_PRIVILEGES_LOADED));
             } else if (mCarrierPrivilegeRules != null
