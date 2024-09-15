@@ -56,19 +56,24 @@ public class KeepaliveTracker extends Handler {
     private static final int EVENT_UNREGISTER_FOR_KEEPALIVE_STATUS = 5;
 
     /** The phone instance. */
-    private final @NonNull Phone mPhone;
+    @NonNull
+    private final Phone mPhone;
 
     /** The parent data network. */
-    private final @NonNull DataNetwork mDataNetwork;
+    @NonNull
+    private final DataNetwork mDataNetwork;
 
     /** The associated network agent. */
-    private final @NonNull TelephonyNetworkAgent mNetworkAgent;
+    @NonNull
+    private final TelephonyNetworkAgent mNetworkAgent;
 
     /** The log tag. */
-    private final @NonNull String mLogTag;
+    @NonNull
+    private final String mLogTag;
 
     /** The keepalive records. */
-    private final @NonNull SparseArray<KeepaliveRecord> mKeepalives = new SparseArray<>();
+    @NonNull
+    private final SparseArray<KeepaliveRecord> mKeepalives = new SparseArray<>();
 
     /**
      * Keepalive session record
@@ -78,7 +83,8 @@ public class KeepaliveTracker extends Handler {
         public int slotIndex;
 
         /** The current status. */
-        public @KeepaliveStatusCode int currentStatus;
+        @KeepaliveStatusCode
+        public int currentStatus;
 
         /**
          * Constructor
@@ -254,17 +260,12 @@ public class KeepaliveTracker extends Handler {
      * @return The socket alive error.
      */
     private int keepaliveStatusErrorToPacketKeepaliveError(int error) {
-        switch(error) {
-            case KeepaliveStatus.ERROR_NONE:
-                return SocketKeepalive.SUCCESS;
-            case KeepaliveStatus.ERROR_UNSUPPORTED:
-                return SocketKeepalive.ERROR_UNSUPPORTED;
-            case KeepaliveStatus.ERROR_NO_RESOURCES:
-                return SocketKeepalive.ERROR_INSUFFICIENT_RESOURCES;
-            case KeepaliveStatus.ERROR_UNKNOWN:
-            default:
-                return SocketKeepalive.ERROR_HARDWARE_ERROR;
-        }
+        return switch (error) {
+            case KeepaliveStatus.ERROR_NONE -> SocketKeepalive.SUCCESS;
+            case KeepaliveStatus.ERROR_UNSUPPORTED -> SocketKeepalive.ERROR_UNSUPPORTED;
+            case KeepaliveStatus.ERROR_NO_RESOURCES -> SocketKeepalive.ERROR_INSUFFICIENT_RESOURCES;
+            default -> SocketKeepalive.ERROR_HARDWARE_ERROR;
+        };
     }
 
     /**

@@ -17,6 +17,7 @@
 package com.android.internal.telephony.satellite;
 
 import static junit.framework.Assert.assertNotNull;
+import static junit.framework.TestCase.assertFalse;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -24,6 +25,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 
 import android.testing.AndroidTestingRunner;
@@ -34,11 +36,9 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
@@ -182,30 +182,27 @@ public class SatelliteConfigParserTest extends TelephonyTest {
 
     @Test
     public void testGetSatelliteS2CellFile() {
-        final String filePath = "/data/user_de/0/com.android.phone/app_satellite/s2_cell_file";
-        Path targetSatS2FilePath = Paths.get(filePath);
-
-        SatelliteConfigParser mockedSatelliteConfigParserNull = spy(
+        SatelliteConfigParser spySatelliteConfigParserNull = spy(
                 new SatelliteConfigParser((byte[]) null));
-        assertNotNull(mockedSatelliteConfigParserNull);
-        assertNull(mockedSatelliteConfigParserNull.getConfig());
+        assertNotNull(spySatelliteConfigParserNull);
+        assertNull(spySatelliteConfigParserNull.getConfig());
 
-        SatelliteConfigParser mockedSatelliteConfigParserPlaceholder = spy(
+        SatelliteConfigParser spySatelliteConfigParserPlaceholder = spy(
                 new SatelliteConfigParser("test".getBytes()));
-        assertNotNull(mockedSatelliteConfigParserPlaceholder);
-        assertNull(mockedSatelliteConfigParserPlaceholder.getConfig());
+        assertNotNull(spySatelliteConfigParserPlaceholder);
+        assertNull(spySatelliteConfigParserPlaceholder.getConfig());
 
-        SatelliteConfigParser mockedSatelliteConfigParser =
+        SatelliteConfigParser spySatelliteConfigParser =
                 spy(new SatelliteConfigParser(mBytesProtoBuffer));
-        SatelliteConfig mockedSatelliteConfig = Mockito.mock(SatelliteConfig.class);
-        doReturn(targetSatS2FilePath).when(mockedSatelliteConfig).getSatelliteS2CellFile(any());
-        doReturn(mockedSatelliteConfig).when(mockedSatelliteConfigParser).getConfig();
-//        assertNotNull(mockedSatelliteConfigParser.getConfig());
-//        doReturn(false).when(mockedSatelliteConfigParser).getConfig().isFileExist(any());
-//        doReturn(targetSatS2FilePath).when(mockedSatelliteConfigParser).getConfig()
-//                .copySatS2FileToPhoneDirectory(any(), any());
-        assertEquals(targetSatS2FilePath,
-                mockedSatelliteConfigParser.getConfig().getSatelliteS2CellFile(mContext));
+        assertNotNull(spySatelliteConfigParser.getConfig());
+        assertFalse(spySatelliteConfigParser.getConfig().isFileExist(null));
+
+        SatelliteConfig mockedSatelliteConfig = mock(SatelliteConfig.class);
+        File mMockSatS2File = mock(File.class);
+        doReturn(mMockSatS2File).when(mockedSatelliteConfig).getSatelliteS2CellFile(any());
+        doReturn(mockedSatelliteConfig).when(spySatelliteConfigParser).getConfig();
+        assertEquals(mMockSatS2File,
+                spySatelliteConfigParser.getConfig().getSatelliteS2CellFile(mContext));
     }
 
     @Test

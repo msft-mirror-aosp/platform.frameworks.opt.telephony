@@ -203,7 +203,8 @@ public class ImsSmsDispatcher extends SMSDispatcher {
                         mTrackers.remove(token);
                         mPhone.notifySmsSent(tracker.mDestAddress);
                         mSmsDispatchersController.notifySmsSentToEmergencyStateTracker(
-                                tracker.mDestAddress, tracker.mMessageId, true);
+                                tracker.mDestAddress, tracker.mMessageId, true,
+                                tracker.isSinglePartOrLastPart());
                         break;
                     case ImsSmsImplBase.SEND_STATUS_ERROR:
                         tracker.onFailed(mContext, reason, networkReasonCode);
@@ -247,7 +248,8 @@ public class ImsSmsDispatcher extends SMSDispatcher {
                         networkReasonCode,
                         tracker.mMessageId,
                         tracker.isFromDefaultSmsApplication(mContext),
-                        tracker.getInterval());
+                        tracker.getInterval(),
+                        mTelephonyManager.isEmergencyNumber(tracker.mDestAddress));
                 if (mPhone != null) {
                     TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
                     if (telephonyAnalytics != null) {
@@ -664,7 +666,8 @@ public class ImsSmsDispatcher extends SMSDispatcher {
                     SmsManager.RESULT_SYSTEM_ERROR,
                     tracker.mMessageId,
                     tracker.isFromDefaultSmsApplication(mContext),
-                    tracker.getInterval());
+                    tracker.getInterval(),
+                    mTelephonyManager.isEmergencyNumber(tracker.mDestAddress));
             if (mPhone != null) {
                 TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
                 if (telephonyAnalytics != null) {
