@@ -19,6 +19,7 @@ package com.android.internal.telephony.uicc;
 import static com.android.internal.telephony.TelephonyStatsLog.PIN_STORAGE_EVENT;
 import static com.android.internal.telephony.TelephonyStatsLog.PIN_STORAGE_EVENT__EVENT__PIN_VERIFICATION_FAILURE;
 import static com.android.internal.telephony.TelephonyStatsLog.PIN_STORAGE_EVENT__EVENT__PIN_VERIFICATION_SUCCESS;
+import static com.android.internal.telephony.util.TelephonyUtils.FORCE_VERBOSE_STATE_LOGGING;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -53,6 +54,7 @@ import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.IndentingPrintWriter;
+import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.CarrierAppUtils;
@@ -102,11 +104,13 @@ import java.util.Set;
 public class UiccProfile extends IccCard {
     protected static final String LOG_TAG = "UiccProfile";
     protected static final boolean DBG = true;
-    private static final boolean VDBG = false; //STOPSHIP if true
+    private static final boolean VDBG = FORCE_VERBOSE_STATE_LOGGING ||
+            Rlog.isLoggable(LOG_TAG, Log.VERBOSE);
 
     private static final String OPERATOR_BRAND_OVERRIDE_PREFIX = "operator_branding_";
 
-    private final @NonNull FeatureFlags mFlags;
+    @NonNull
+    private final FeatureFlags mFlags;
     // The lock object is created by UiccSlot that owns the UiccCard that owns this UiccProfile.
     // This is to share the lock between UiccSlot, UiccCard and UiccProfile for now.
     private final Object mLock;
@@ -1140,7 +1144,7 @@ public class UiccProfile extends IccCard {
                     //Create newly added Applications
                     if (i < ics.mApplications.length) {
                         mUiccApplications[i] = new UiccCardApplication(this,
-                                ics.mApplications[i], mContext, mCi);
+                                ics.mApplications[i], mContext, mCi, mFlags);
                     }
                 } else if (i >= ics.mApplications.length) {
                     //Delete removed applications
