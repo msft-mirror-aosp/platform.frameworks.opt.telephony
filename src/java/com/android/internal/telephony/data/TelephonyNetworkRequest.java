@@ -24,6 +24,7 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.net.NetworkSpecifier;
 import android.os.SystemClock;
+import android.telephony.Annotation.ConnectivityTransport;
 import android.telephony.Annotation.NetCapability;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataProfile;
@@ -31,6 +32,7 @@ import android.telephony.data.TrafficDescriptor;
 import android.telephony.data.TrafficDescriptor.OsAppId;
 
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.flags.FeatureFlags;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -136,19 +138,22 @@ public class TelephonyNetworkRequest {
     );
 
     /** The phone instance. */
-    private final @NonNull Phone mPhone;
+    @NonNull
+    private final Phone mPhone;
 
     /**
      * Native network request from the clients. See {@link NetworkRequest};
      */
-    private final @NonNull NetworkRequest mNativeNetworkRequest;
+    @NonNull
+    private final NetworkRequest mNativeNetworkRequest;
 
     /**
      * The attributes of the network capabilities in this network request. This describes how this
      * network request can be translated to different fields in {@link DataProfile} or perform
      * special actions in telephony.
      */
-    private final @NetCapabilityAttribute int mCapabilitiesAttributes;
+    @NetCapabilityAttribute
+    private final int mCapabilitiesAttributes;
 
     /**
      * Priority of the network request. The network request has higher priority will be satisfied
@@ -159,13 +164,15 @@ public class TelephonyNetworkRequest {
     /**
      * Data config manager for retrieving data config.
      */
-    private final @NonNull DataConfigManager mDataConfigManager;
+    @NonNull
+    private final DataConfigManager mDataConfigManager;
 
     /**
      * The attached data network. Note that the data network could be in any state. {@code null}
      * indicates this network request is not satisfied.
      */
-    private @Nullable DataNetwork mAttachedDataNetwork;
+    @Nullable
+    private DataNetwork mAttachedDataNetwork;
 
     /**
      * The state of the network request.
@@ -174,23 +181,33 @@ public class TelephonyNetworkRequest {
      * @see #REQUEST_STATE_SATISFIED
      */
     // This is not a boolean because there might be more states in the future.
-    private @RequestState int mState;
+    @RequestState
+    private int mState;
 
     /** The timestamp when this network request enters telephony. */
-    private final @ElapsedRealtimeLong long mCreatedTimeMillis;
+    @ElapsedRealtimeLong
+    private final long mCreatedTimeMillis;
 
     /** The data evaluation result. */
-    private @Nullable DataEvaluation mEvaluation;
+    @Nullable
+    private DataEvaluation mEvaluation;
+
+    /** Feature flag. */
+    @NonNull
+    private final FeatureFlags mFeatureFlags;
 
     /**
      * Constructor
      *
      * @param request The native network request from the clients.
      * @param phone The phone instance
+     * @param featureFlags The feature flag
      */
-    public TelephonyNetworkRequest(NetworkRequest request, Phone phone) {
+    public TelephonyNetworkRequest(@NonNull NetworkRequest request, @NonNull Phone phone,
+                                   @NonNull FeatureFlags featureFlags) {
         mPhone = phone;
         mNativeNetworkRequest = request;
+        mFeatureFlags = featureFlags;
 
         int capabilitiesAttributes = CAPABILITY_ATTRIBUTE_NONE;
         for (int networkCapability : mNativeNetworkRequest.getCapabilities()) {
@@ -212,14 +229,17 @@ public class TelephonyNetworkRequest {
     /**
      * @see NetworkRequest#getNetworkSpecifier()
      */
-    public @Nullable NetworkSpecifier getNetworkSpecifier() {
+    @Nullable
+    public NetworkSpecifier getNetworkSpecifier() {
         return mNativeNetworkRequest.getNetworkSpecifier();
     }
 
     /**
      * @see NetworkRequest#getCapabilities()
      */
-    public @NonNull @NetCapability int[] getCapabilities() {
+    @NonNull
+    @NetCapability
+    public int[] getCapabilities() {
         return mNativeNetworkRequest.getCapabilities();
     }
 
@@ -228,6 +248,23 @@ public class TelephonyNetworkRequest {
      */
     public boolean hasCapability(@NetCapability int capability) {
         return mNativeNetworkRequest.hasCapability(capability);
+    }
+
+    /**
+     * @see NetworkRequest#getTransportTypes()
+     */
+    @NonNull
+    @ConnectivityTransport
+    public int[] getTransportTypes() {
+        return mNativeNetworkRequest.getTransportTypes();
+    }
+
+    /**
+     * @return {@code true} if the request can be served on the specified transport.
+     * @see NetworkRequest#hasTransport
+     */
+    public boolean hasTransport(@ConnectivityTransport int transport) {
+        return mNativeNetworkRequest.hasTransport(transport);
     }
 
     /**
@@ -274,6 +311,31 @@ public class TelephonyNetworkRequest {
         if ((hasAttribute(CAPABILITY_ATTRIBUTE_APN_SETTING)
                 || hasAttribute(CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_DNN))
                 && dataProfile.getApnSetting() != null) {
+            if (mFeatureFlags.satelliteInternet()) {
+                if (mNativeNetworkRequest.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                        && !mNativeNetworkRequest.hasTransport(
+                                NetworkCapabilities.TRANSPORT_SATELLITE)) {
+                    if (Arrays.stream(getCapabilities()).noneMatch(mDataConfigManager
+                            .getForcedCellularTransportCapabilities()::contains)) {
+                        // If the request is explicitly for the cellular, then the data profile
+                        // needs to support cellular.
+                        if (!dataProfile.getApnSetting().isForInfrastructure(
+                                ApnSetting.INFRASTRUCTURE_CELLULAR)) {
+                            return false;
+                        }
+                    }
+                } else if (mNativeNetworkRequest.hasTransport(
+                        NetworkCapabilities.TRANSPORT_SATELLITE)
+                        && !mNativeNetworkRequest.hasTransport(
+                                NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                    // If the request is explicitly for the satellite, then the data profile needs
+                    // to support satellite.
+                    if (!dataProfile.getApnSetting().isForInfrastructure(
+                            ApnSetting.INFRASTRUCTURE_SATELLITE)) {
+                        return false;
+                    }
+                }
+            }
             // Fallback to the legacy APN type matching.
             List<Integer> apnTypes = Arrays.stream(getCapabilities()).boxed()
                     .map(DataUtils::networkCapabilityToApnType)
@@ -322,7 +384,8 @@ public class TelephonyNetworkRequest {
      * @return The highest priority APN type based network capability from this network request. -1
      * if there is no APN type capabilities in this network request.
      */
-    public @NetCapability int getApnTypeNetworkCapability() {
+    @NetCapability
+    public int getApnTypeNetworkCapability() {
         if (!hasAttribute(CAPABILITY_ATTRIBUTE_APN_SETTING)) return -1;
         return Arrays.stream(getCapabilities()).boxed()
                 .filter(cap -> DataUtils.networkCapabilityToApnType(cap) != ApnSetting.TYPE_NONE)
@@ -332,7 +395,8 @@ public class TelephonyNetworkRequest {
     /**
      * @return The native network request.
      */
-    public @NonNull NetworkRequest getNativeNetworkRequest() {
+    @NonNull
+    public NetworkRequest getNativeNetworkRequest() {
         return mNativeNetworkRequest;
     }
 
@@ -341,7 +405,7 @@ public class TelephonyNetworkRequest {
      *
      * @param dataNetwork The data network.
      */
-    public void setAttachedNetwork(@NonNull DataNetwork dataNetwork) {
+    public void setAttachedNetwork(@Nullable DataNetwork dataNetwork) {
         mAttachedDataNetwork = dataNetwork;
     }
 
@@ -349,7 +413,8 @@ public class TelephonyNetworkRequest {
      * @return The attached network. {@code null} indicates the request is not attached to any
      * network (i.e. the request is unsatisfied).
      */
-    public @Nullable DataNetwork getAttachedNetwork() {
+    @Nullable
+    public DataNetwork getAttachedNetwork() {
         return mAttachedDataNetwork;
     }
 
@@ -365,7 +430,8 @@ public class TelephonyNetworkRequest {
     /**
      * @return The state of the network request.
      */
-    public @RequestState int getState() {
+    @RequestState
+    public int getState() {
         return mState;
     }
 
@@ -408,7 +474,8 @@ public class TelephonyNetworkRequest {
      * @return Os/App id. {@code null} if the request does not have traffic descriptor based network
      * capabilities.
      */
-    public @Nullable OsAppId getOsAppId() {
+    @Nullable
+    public OsAppId getOsAppId() {
         if (!hasAttribute(CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_OS_APP_ID)) return null;
 
         // We do not support multiple network capabilities translated to Os/App id at this time.
@@ -439,18 +506,19 @@ public class TelephonyNetworkRequest {
      * @param state The request state.
      * @return The request state in string format.
      */
-    private static @NonNull String requestStateToString(
+    @NonNull
+    private static String requestStateToString(
             @TelephonyNetworkRequest.RequestState int state) {
-        switch (state) {
-            case TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED: return "UNSATISFIED";
-            case TelephonyNetworkRequest.REQUEST_STATE_SATISFIED: return "SATISFIED";
-            default: return "UNKNOWN(" + state + ")";
-        }
+        return switch (state) {
+            case TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED -> "UNSATISFIED";
+            case TelephonyNetworkRequest.REQUEST_STATE_SATISFIED -> "SATISFIED";
+            default -> "UNKNOWN(" + state + ")";
+        };
     }
 
     @Override
     public String toString() {
-        return "[" + mNativeNetworkRequest.toString() + ", mPriority=" + mPriority
+        return "[" + mNativeNetworkRequest + ", mPriority=" + mPriority
                 + ", state=" + requestStateToString(mState)
                 + ", mAttachedDataNetwork=" + (mAttachedDataNetwork != null
                 ? mAttachedDataNetwork.name() : null) + ", isMetered=" + isMeteredRequest()

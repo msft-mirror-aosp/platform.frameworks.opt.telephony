@@ -1054,7 +1054,8 @@ public abstract class SMSDispatcher extends Handler {
             tracker.onSent(mContext);
             mPhone.notifySmsSent(tracker.mDestAddress);
             mSmsDispatchersController.notifySmsSentToEmergencyStateTracker(
-                    tracker.mDestAddress, tracker.mMessageId, false);
+                    tracker.mDestAddress, tracker.mMessageId, false,
+                    tracker.isSinglePartOrLastPart());
 
             mPhone.getSmsStats().onOutgoingSms(
                     tracker.mImsRetry > 0 /* isOverIms */,
@@ -1063,7 +1064,8 @@ public abstract class SMSDispatcher extends Handler {
                     SmsManager.RESULT_ERROR_NONE,
                     tracker.mMessageId,
                     tracker.isFromDefaultSmsApplication(mContext),
-                    tracker.getInterval());
+                    tracker.getInterval(),
+                    mTelephonyManager.isEmergencyNumber(tracker.mDestAddress));
             if (mPhone != null) {
                 TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
                 if (telephonyAnalytics != null) {
@@ -1113,7 +1115,8 @@ public abstract class SMSDispatcher extends Handler {
                         getNotInServiceError(ss),
                         tracker.mMessageId,
                         tracker.isFromDefaultSmsApplication(mContext),
-                        tracker.getInterval());
+                        tracker.getInterval(),
+                        mTelephonyManager.isEmergencyNumber(tracker.mDestAddress));
                 if (mPhone != null) {
                     TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
                     if (telephonyAnalytics != null) {
@@ -1149,7 +1152,8 @@ public abstract class SMSDispatcher extends Handler {
                         errorCode,
                         tracker.mMessageId,
                         tracker.isFromDefaultSmsApplication(mContext),
-                        tracker.getInterval());
+                        tracker.getInterval(),
+                        mTelephonyManager.isEmergencyNumber(tracker.mDestAddress));
                 if (mPhone != null) {
                     TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
                     if (telephonyAnalytics != null) {
@@ -1175,7 +1179,8 @@ public abstract class SMSDispatcher extends Handler {
                         errorCode,
                         tracker.mMessageId,
                         tracker.isFromDefaultSmsApplication(mContext),
-                        tracker.getInterval());
+                        tracker.getInterval(),
+                        mTelephonyManager.isEmergencyNumber(tracker.mDestAddress));
                 if (mPhone != null) {
                     TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
                     if (telephonyAnalytics != null) {
@@ -2403,7 +2408,8 @@ public abstract class SMSDispatcher extends Handler {
                     error,
                     trackers[0].mMessageId,
                     trackers[0].isFromDefaultSmsApplication(mContext),
-                    trackers[0].getInterval());
+                    trackers[0].getInterval(),
+                    mTelephonyManager.isEmergencyNumber(trackers[0].mDestAddress));
             if (mPhone != null) {
                 TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
                 if (telephonyAnalytics != null) {
@@ -2605,6 +2611,14 @@ public abstract class SMSDispatcher extends Handler {
          */
         protected long getInterval() {
             return SystemClock.elapsedRealtime() - mTimestamp;
+        }
+
+        /**
+         * Returns the flag specifying whether this {@link SmsTracker} is a single part or
+         * the last part of multipart message.
+         */
+        protected boolean isSinglePartOrLastPart() {
+            return mUnsentPartCount != null ? (mUnsentPartCount.get() == 0) : true;
         }
 
         /**

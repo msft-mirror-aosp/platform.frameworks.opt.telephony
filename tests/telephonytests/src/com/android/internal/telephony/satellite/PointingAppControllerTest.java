@@ -76,6 +76,8 @@ public class PointingAppControllerTest extends TelephonyTest {
     private static final String KEY_POINTING_UI_PACKAGE_NAME = "default_pointing_ui_package";
     private static final String KEY_POINTING_UI_CLASS_NAME = "default_pointing_ui_class";
     private static final String KEY_NEED_FULL_SCREEN = "needFullScreen";
+    private static final String KEY_IS_DEMO_MODE = "isDemoMode";
+    private static final String KEY_IS_EMERGENCY = "isEmergency";
 
     private PointingAppController mPointingAppController;
     InOrder mInOrder;
@@ -98,12 +100,13 @@ public class PointingAppControllerTest extends TelephonyTest {
         super.setUp(getClass().getSimpleName());
         MockitoAnnotations.initMocks(this);
         logd(TAG + " Setup!");
+        when(mFeatureFlags.satellitePersistentLogging()).thenReturn(true);
         mInOrderForPointingUi = inOrder(mContext);
         replaceInstance(SatelliteModemInterface.class, "sInstance", null,
                 mMockSatelliteModemInterface);
         replaceInstance(SatelliteController.class, "sInstance", null,
                 mMockSatelliteController);
-        mPointingAppController = new PointingAppController(mContext);
+        mPointingAppController = new PointingAppController(mContext, mFeatureFlags);
         mContextFixture.putResource(R.string.config_pointing_ui_package,
                 KEY_POINTING_UI_PACKAGE_NAME);
         mContextFixture.putResource(R.string.config_pointing_ui_class,
@@ -150,6 +153,7 @@ public class PointingAppControllerTest extends TelephonyTest {
     }
     private class TestSatelliteTransmissionUpdateCallback
                                 extends ISatelliteTransmissionUpdateCallback.Stub {
+        int mDatagramType;
         int mState;
         int mSendPendingCount;
         int mReceivePendingCount;
@@ -163,8 +167,9 @@ public class PointingAppControllerTest extends TelephonyTest {
         }
 
         @Override
-        public void onSendDatagramStateChanged(int state, int sendPendingCount,
+        public void onSendDatagramStateChanged(int datagramType, int state, int sendPendingCount,
                                     int errorCode) {
+            mDatagramType = datagramType;
             mState = state;
             mSendPendingCount = sendPendingCount;
             mErrorCode = errorCode;
@@ -191,6 +196,10 @@ public class PointingAppControllerTest extends TelephonyTest {
             }
         }
 
+        public int getDatagramType() {
+            return mDatagramType;
+        }
+
         public int getState() {
             return mState;
         }
@@ -208,7 +217,7 @@ public class PointingAppControllerTest extends TelephonyTest {
         }
     }
 
-    private boolean waitForReceiveDatagramStateChangedRessult(
+    private boolean waitForReceiveDatagramStateChangedResult(
             int expectedNumberOfEvents) {
         for (int i = 0; i < expectedNumberOfEvents; i++) {
             try {
@@ -218,7 +227,7 @@ public class PointingAppControllerTest extends TelephonyTest {
                     return false;
                 }
             } catch (Exception ex) {
-                loge("waitForReceiveDatagramStateChangedRessult: Got exception=" + ex);
+                loge("waitForReceiveDatagramStateChangedResult: Got exception=" + ex);
                 return false;
             }
         }
@@ -306,7 +315,7 @@ public class PointingAppControllerTest extends TelephonyTest {
     @Test
     public void testStartPointingUI() throws Exception {
         ArgumentCaptor<Intent> startedIntentCaptor = ArgumentCaptor.forClass(Intent.class);
-        mPointingAppController.startPointingUI(true);
+        mPointingAppController.startPointingUI(true, true, true);
         verify(mContext).startActivity(startedIntentCaptor.capture());
         Intent intent = startedIntentCaptor.getValue();
         assertEquals(KEY_POINTING_UI_PACKAGE_NAME, intent.getComponent().getPackageName());
@@ -314,19 +323,24 @@ public class PointingAppControllerTest extends TelephonyTest {
         Bundle b = intent.getExtras();
         assertTrue(b.containsKey(KEY_NEED_FULL_SCREEN));
         assertTrue(b.getBoolean(KEY_NEED_FULL_SCREEN));
+        assertTrue(b.containsKey(KEY_IS_DEMO_MODE));
+        assertTrue(b.getBoolean(KEY_IS_DEMO_MODE));
+        assertTrue(b.containsKey(KEY_IS_EMERGENCY));
+        assertTrue(b.getBoolean(KEY_IS_EMERGENCY));
     }
 
     @Test
     public void testRestartPointingUi() throws Exception {
-        mPointingAppController.startPointingUI(true);
+        mPointingAppController.startPointingUI(true, false, true);
         mInOrderForPointingUi.verify(mContext).startActivity(any(Intent.class));
-        testRestartPointingUi(true);
-        mPointingAppController.startPointingUI(false);
+        testRestartPointingUi(true, false, true);
+        mPointingAppController.startPointingUI(false, true, false);
         mInOrderForPointingUi.verify(mContext).startActivity(any(Intent.class));
-        testRestartPointingUi(false);
+        testRestartPointingUi(false, true, false);
     }
 
-    private void testRestartPointingUi(boolean expectedFullScreen) {
+    private void testRestartPointingUi(boolean expectedFullScreen, boolean expectedDemoMode,
+            boolean expectedEmergency) {
         when(mContext.getPackageManager()).thenReturn(mPackageManager);
         doReturn(new String[]{KEY_POINTING_UI_PACKAGE_NAME}).when(mPackageManager)
             .getPackagesForUid(anyInt());
@@ -340,6 +354,12 @@ public class PointingAppControllerTest extends TelephonyTest {
         assertTrue(b.containsKey(KEY_NEED_FULL_SCREEN));
         // Checking if last value of KEY_NEED_FULL_SCREEN is taken or not
         assertEquals(expectedFullScreen, b.getBoolean(KEY_NEED_FULL_SCREEN));
+        assertTrue(b.containsKey(KEY_IS_DEMO_MODE));
+        // Checking if last value of KEY_IS_DEMO_MODE is taken or not
+        assertEquals(expectedDemoMode, b.getBoolean(KEY_IS_DEMO_MODE));
+        assertTrue(b.containsKey(KEY_IS_EMERGENCY));
+        // Checking if last value of KEY_IS_EMERGENCY is taken or not
+        assertEquals(expectedEmergency, b.getBoolean(KEY_IS_EMERGENCY));
     }
 
     @Test
@@ -347,9 +367,12 @@ public class PointingAppControllerTest extends TelephonyTest {
         mPointingAppController.registerForSatelliteTransmissionUpdates(SUB_ID,
                 mSatelliteTransmissionUpdateCallback);
         mPointingAppController.updateSendDatagramTransferState(SUB_ID,
+                SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE,
                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS, 1,
                 SatelliteManager.SATELLITE_RESULT_SUCCESS);
         assertTrue(waitForSendDatagramStateChangedRessult(1));
+        assertEquals(SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE,
+                mSatelliteTransmissionUpdateCallback.getDatagramType());
         assertEquals(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS,
                 mSatelliteTransmissionUpdateCallback.getState());
         assertEquals(1, mSatelliteTransmissionUpdateCallback.getSendPendingCount());
@@ -368,7 +391,7 @@ public class PointingAppControllerTest extends TelephonyTest {
         mPointingAppController.updateReceiveDatagramTransferState(SUB_ID,
                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS, 2,
                 SatelliteManager.SATELLITE_RESULT_SUCCESS);
-        assertTrue(waitForReceiveDatagramStateChangedRessult(1));
+        assertTrue(waitForReceiveDatagramStateChangedResult(1));
         assertEquals(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS,
                 mSatelliteTransmissionUpdateCallback.getState());
         assertEquals(2, mSatelliteTransmissionUpdateCallback.getReceivePendingCount());

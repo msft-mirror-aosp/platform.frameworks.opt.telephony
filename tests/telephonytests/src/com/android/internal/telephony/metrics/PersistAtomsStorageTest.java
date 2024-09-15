@@ -16,13 +16,27 @@
 
 package com.android.internal.telephony.metrics;
 
+import static android.telephony.SmsManager.RESULT_ERROR_NONE;
+import static android.telephony.SmsManager.RESULT_RIL_SMS_SEND_FAIL_RETRY;
 import static android.telephony.TelephonyManager.NETWORK_TYPE_BITMASK_GPRS;
 import static android.telephony.TelephonyManager.NETWORK_TYPE_BITMASK_GSM;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 import static android.text.format.DateUtils.DAY_IN_MILLIS;
 import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 
+import static com.android.internal.telephony.SmsResponse.NO_ERROR_CODE;
 import static com.android.internal.telephony.TelephonyStatsLog.GBA_EVENT__FAILED_REASON__FEATURE_NOT_READY;
 import static com.android.internal.telephony.TelephonyStatsLog.GBA_EVENT__FAILED_REASON__UNKNOWN;
+import static com.android.internal.telephony.TelephonyStatsLog.INCOMING_SMS__ERROR__SMS_ERROR_GENERIC;
+import static com.android.internal.telephony.TelephonyStatsLog.INCOMING_SMS__ERROR__SMS_SUCCESS;
+import static com.android.internal.telephony.TelephonyStatsLog.INCOMING_SMS__SMS_FORMAT__SMS_FORMAT_3GPP;
+import static com.android.internal.telephony.TelephonyStatsLog.INCOMING_SMS__SMS_FORMAT__SMS_FORMAT_3GPP2;
+import static com.android.internal.telephony.TelephonyStatsLog.INCOMING_SMS__SMS_TECH__SMS_TECH_CS_3GPP;
+import static com.android.internal.telephony.TelephonyStatsLog.INCOMING_SMS__SMS_TECH__SMS_TECH_CS_3GPP2;
+import static com.android.internal.telephony.TelephonyStatsLog.INCOMING_SMS__SMS_TYPE__SMS_TYPE_NORMAL;
+import static com.android.internal.telephony.TelephonyStatsLog.INCOMING_SMS__SMS_TYPE__SMS_TYPE_SMS_PP;
+import static com.android.internal.telephony.TelephonyStatsLog.OUTGOING_SMS__SEND_RESULT__SMS_SEND_RESULT_ERROR;
+import static com.android.internal.telephony.TelephonyStatsLog.OUTGOING_SMS__SEND_RESULT__SMS_SEND_RESULT_SUCCESS;
 import static com.android.internal.telephony.TelephonyStatsLog.RCS_ACS_PROVISIONING_STATS__RESPONSE_TYPE__ERROR;
 import static com.android.internal.telephony.TelephonyStatsLog.RCS_ACS_PROVISIONING_STATS__RESPONSE_TYPE__PROVISIONING_XML;
 import static com.android.internal.telephony.TelephonyStatsLog.RCS_CLIENT_PROVISIONING_STATS__EVENT__CLIENT_PARAMS_SENT;
@@ -31,6 +45,10 @@ import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSIO
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MO;
 import static com.android.internal.telephony.TelephonyStatsLog.VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MT;
+import static com.android.internal.telephony.satellite.SatelliteConstants.ACCESS_CONTROL_TYPE_CURRENT_LOCATION;
+import static com.android.internal.telephony.satellite.SatelliteConstants.ACCESS_CONTROL_TYPE_NETWORK_COUNTRY_CODE;
+import static com.android.internal.telephony.satellite.SatelliteConstants.CONFIG_DATA_SOURCE_CONFIG_UPDATER;
+import static com.android.internal.telephony.satellite.SatelliteConstants.CONFIG_DATA_SOURCE_DEVICE_CONFIG;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -49,10 +67,13 @@ import android.annotation.Nullable;
 import android.content.Context;
 import android.os.Build;
 import android.telephony.DisconnectCause;
+import android.telephony.PreciseDataConnectionState;
 import android.telephony.SatelliteProtoEnums;
 import android.telephony.ServiceState;
+import android.telephony.SignalStrength;
 import android.telephony.TelephonyManager;
 import android.telephony.TelephonyProtoEnums;
+import android.telephony.data.ApnSetting;
 import android.telephony.ims.ImsReasonInfo;
 import android.telephony.ims.SipDelegateManager;
 
@@ -60,9 +81,12 @@ import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.TelephonyStatsLog;
 import com.android.internal.telephony.TelephonyTest;
+import com.android.internal.telephony.nano.PersistAtomsProto.CarrierRoamingSatelliteControllerStats;
+import com.android.internal.telephony.nano.PersistAtomsProto.CarrierRoamingSatelliteSession;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularDataServiceSwitch;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularServiceState;
 import com.android.internal.telephony.nano.PersistAtomsProto.DataCallSession;
+import com.android.internal.telephony.nano.PersistAtomsProto.DataNetworkValidation;
 import com.android.internal.telephony.nano.PersistAtomsProto.GbaEvent;
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsDedicatedBearerEvent;
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsDedicatedBearerListenerEvent;
@@ -70,12 +94,17 @@ import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationFeat
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationServiceDescStats;
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationStats;
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsRegistrationTermination;
+import com.android.internal.telephony.nano.PersistAtomsProto.IncomingSms;
 import com.android.internal.telephony.nano.PersistAtomsProto.OutgoingShortCodeSms;
+import com.android.internal.telephony.nano.PersistAtomsProto.OutgoingSms;
 import com.android.internal.telephony.nano.PersistAtomsProto.PersistAtoms;
 import com.android.internal.telephony.nano.PersistAtomsProto.PresenceNotifyEvent;
 import com.android.internal.telephony.nano.PersistAtomsProto.RcsAcsProvisioningStats;
 import com.android.internal.telephony.nano.PersistAtomsProto.RcsClientProvisioningStats;
+import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteAccessController;
+import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteConfigUpdater;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteController;
+import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteEntitlement;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteIncomingDatagram;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteOutgoingDatagram;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteProvision;
@@ -106,6 +135,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedList;
 import java.util.Queue;
+import java.util.concurrent.TimeUnit;
 
 public class PersistAtomsStorageTest extends TelephonyTest {
     private static final String TEST_FILE = "PersistAtomsStorageTest.pb";
@@ -235,6 +265,14 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     private SipTransportSession mSipTransportSession2;
     private SipTransportSession[] mSipTransportSession;
 
+    private IncomingSms mIncomingSms1;
+    private IncomingSms mIncomingSms2;
+    private IncomingSms[] mIncomingSms;
+
+    private OutgoingSms mOutgoingSms1;
+    private OutgoingSms mOutgoingSms2;
+    private OutgoingSms[] mOutgoingSms;
+
     private OutgoingShortCodeSms mOutgoingShortCodeSms1;
     private OutgoingShortCodeSms mOutgoingShortCodeSms2;
     private OutgoingShortCodeSms[] mOutgoingShortCodeSms;
@@ -262,6 +300,32 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     private SatelliteSosMessageRecommender mSatelliteSosMessageRecommender1;
     private SatelliteSosMessageRecommender mSatelliteSosMessageRecommender2;
     private SatelliteSosMessageRecommender[] mSatelliteSosMessageRecommenders;
+
+    private DataNetworkValidation mDataNetworkValidationLte1;
+    private DataNetworkValidation mDataNetworkValidationLte2;
+    private DataNetworkValidation mDataNetworkValidationIwlan1;
+    private DataNetworkValidation mDataNetworkValidationIwlan2;
+    private DataNetworkValidation[] mDataNetworkValidations;
+
+    private CarrierRoamingSatelliteSession mCarrierRoamingSatelliteSession1;
+    private CarrierRoamingSatelliteSession mCarrierRoamingSatelliteSession2;
+    private CarrierRoamingSatelliteSession[] mCarrierRoamingSatelliteSessions;
+
+    private CarrierRoamingSatelliteControllerStats mCarrierRoamingSatelliteControllerStats1;
+    private CarrierRoamingSatelliteControllerStats mCarrierRoamingSatelliteControllerStats2;
+    private CarrierRoamingSatelliteControllerStats[] mCarrierRoamingSatelliteControllerStats;
+
+    private SatelliteEntitlement mSatelliteEntitlement1;
+    private SatelliteEntitlement mSatelliteEntitlement2;
+    private SatelliteEntitlement[] mSatelliteEntitlements;
+
+    private SatelliteConfigUpdater mSatelliteConfigUpdater1;
+    private SatelliteConfigUpdater mSatelliteConfigUpdater2;
+    private SatelliteConfigUpdater[] mSatelliteConfigUpdaters;
+
+    private SatelliteAccessController mSatelliteAccessController1;
+    private SatelliteAccessController mSatelliteAccessController2;
+    private SatelliteAccessController[] mSatelliteAccessControllers;
 
     private void makeTestData() {
         // MO call with SRVCC (LTE to UMTS)
@@ -946,6 +1010,97 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSipTransportSession =
                 new SipTransportSession[] {mSipTransportSession1, mSipTransportSession2};
 
+        generateTestSmsData();
+        generateTestSatelliteData();
+    }
+
+    private void generateTestSmsData() {
+        mIncomingSms1 = new IncomingSms();
+        mIncomingSms1.smsFormat = INCOMING_SMS__SMS_FORMAT__SMS_FORMAT_3GPP;
+        mIncomingSms1.smsTech = INCOMING_SMS__SMS_TECH__SMS_TECH_CS_3GPP;
+        mIncomingSms1.rat = TelephonyManager.NETWORK_TYPE_LTE;
+        mIncomingSms1.smsType = INCOMING_SMS__SMS_TYPE__SMS_TYPE_NORMAL;
+        mIncomingSms1.totalParts = 1;
+        mIncomingSms1.receivedParts = 1;
+        mIncomingSms1.blocked = false;
+        mIncomingSms1.error = INCOMING_SMS__ERROR__SMS_SUCCESS;
+        mIncomingSms1.isRoaming = false;
+        mIncomingSms1.simSlotIndex = 0;
+        mIncomingSms1.isMultiSim = false;
+        mIncomingSms1.isEsim = false;
+        mIncomingSms1.carrierId = TelephonyManager.UNKNOWN_CARRIER_ID;
+        mIncomingSms1.messageId = 0;
+        mIncomingSms1.count = 1;
+        mIncomingSms1.isManagedProfile = false;
+        mIncomingSms1.isNtn = false;
+        mIncomingSms1.isEmergency = true;
+
+        mIncomingSms2 = new IncomingSms();
+        mIncomingSms2.smsFormat = INCOMING_SMS__SMS_FORMAT__SMS_FORMAT_3GPP2;
+        mIncomingSms2.smsTech = INCOMING_SMS__SMS_TECH__SMS_TECH_CS_3GPP2;
+        mIncomingSms2.rat = TelephonyManager.NETWORK_TYPE_CDMA;
+        mIncomingSms2.smsType = INCOMING_SMS__SMS_TYPE__SMS_TYPE_SMS_PP;
+        mIncomingSms2.totalParts = 2;
+        mIncomingSms2.receivedParts = 2;
+        mIncomingSms2.blocked = true;
+        mIncomingSms2.error = INCOMING_SMS__ERROR__SMS_ERROR_GENERIC;
+        mIncomingSms2.isRoaming = true;
+        mIncomingSms2.simSlotIndex = 1;
+        mIncomingSms2.isMultiSim = true;
+        mIncomingSms2.isEsim = true;
+        mIncomingSms2.carrierId = TelephonyManager.UNKNOWN_CARRIER_ID;
+        mIncomingSms2.messageId = 1;
+        mIncomingSms2.count = 2;
+        mIncomingSms2.isManagedProfile = true;
+        mIncomingSms2.isNtn = true;
+        mIncomingSms2.isEmergency = true;
+
+        mIncomingSms = new IncomingSms[] {mIncomingSms1, mIncomingSms2};
+
+        mOutgoingSms1 = new OutgoingSms();
+        mOutgoingSms1.smsFormat = INCOMING_SMS__SMS_FORMAT__SMS_FORMAT_3GPP;
+        mOutgoingSms1.smsTech = INCOMING_SMS__SMS_TECH__SMS_TECH_CS_3GPP;
+        mOutgoingSms1.rat = TelephonyManager.NETWORK_TYPE_LTE;
+        mOutgoingSms1.sendResult = OUTGOING_SMS__SEND_RESULT__SMS_SEND_RESULT_SUCCESS;
+        mOutgoingSms1.errorCode = NO_ERROR_CODE;
+        mOutgoingSms1.isRoaming = false;
+        mOutgoingSms1.isFromDefaultApp = true;
+        mOutgoingSms1.simSlotIndex = 0;
+        mOutgoingSms1.isMultiSim = false;
+        mOutgoingSms1.carrierId = TelephonyManager.UNKNOWN_CARRIER_ID;
+        mOutgoingSms1.messageId = 0;
+        mOutgoingSms1.retryId = 0;
+        mOutgoingSms1.intervalMillis = 0;
+        mOutgoingSms1.count = 1;
+        mOutgoingSms1.sendErrorCode = RESULT_ERROR_NONE;
+        mOutgoingSms1.networkErrorCode = NO_ERROR_CODE;
+        mOutgoingSms1.isManagedProfile = false;
+        mOutgoingSms1.isEmergency = false;
+        mOutgoingSms1.isNtn = false;
+
+        mOutgoingSms2 = new OutgoingSms();
+        mOutgoingSms2.smsFormat = INCOMING_SMS__SMS_FORMAT__SMS_FORMAT_3GPP2;
+        mOutgoingSms2.smsTech = INCOMING_SMS__SMS_TECH__SMS_TECH_CS_3GPP2;
+        mOutgoingSms2.rat = TelephonyManager.NETWORK_TYPE_CDMA;
+        mOutgoingSms2.sendResult = OUTGOING_SMS__SEND_RESULT__SMS_SEND_RESULT_ERROR;
+        mOutgoingSms2.errorCode = NO_ERROR_CODE;
+        mOutgoingSms2.isRoaming = true;
+        mOutgoingSms2.isFromDefaultApp = false;
+        mOutgoingSms2.simSlotIndex = 1;
+        mOutgoingSms2.isMultiSim = true;
+        mOutgoingSms2.carrierId = TelephonyManager.UNKNOWN_CARRIER_ID;
+        mOutgoingSms2.messageId = 1;
+        mOutgoingSms2.retryId = 1;
+        mOutgoingSms2.intervalMillis = 10;
+        mOutgoingSms2.count = 2;
+        mOutgoingSms2.sendErrorCode = RESULT_RIL_SMS_SEND_FAIL_RETRY;
+        mOutgoingSms2.networkErrorCode = NO_ERROR_CODE;
+        mOutgoingSms2.isManagedProfile = true;
+        mOutgoingSms2.isEmergency = true;
+        mOutgoingSms2.isNtn = true;
+
+        mOutgoingSms = new OutgoingSms[] {mOutgoingSms1, mOutgoingSms2};
+
         mOutgoingShortCodeSms1 = new OutgoingShortCodeSms();
         mOutgoingShortCodeSms1.category = 1;
         mOutgoingShortCodeSms1.xmlVersion = 30;
@@ -960,6 +1115,8 @@ public class PersistAtomsStorageTest extends TelephonyTest {
                 mOutgoingShortCodeSms2};
 
         generateTestSatelliteData();
+
+        generateTestDataNetworkValidationsData();
     }
 
     private void generateTestSatelliteData() {
@@ -981,6 +1138,14 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteController1.totalServiceUptimeSec = 60 * 60 * 24 * 7;
         mSatelliteController1.totalBatteryConsumptionPercent = 7;
         mSatelliteController1.totalBatteryChargedTimeSec = 60 * 60 * 3 * 1;
+        mSatelliteController1.countOfDemoModeSatelliteServiceEnablementsSuccess = 3;
+        mSatelliteController1.countOfDemoModeSatelliteServiceEnablementsFail = 1;
+        mSatelliteController1.countOfDemoModeOutgoingDatagramSuccess = 4;
+        mSatelliteController1.countOfDemoModeOutgoingDatagramFail = 2;
+        mSatelliteController1.countOfDemoModeIncomingDatagramSuccess = 3;
+        mSatelliteController1.countOfDemoModeIncomingDatagramFail = 2;
+        mSatelliteController1.countOfDatagramTypeKeepAliveSuccess = 1;
+        mSatelliteController1.countOfDatagramTypeKeepAliveFail = 2;
 
         mSatelliteController2 = new SatelliteController();
         mSatelliteController2.countOfSatelliteServiceEnablementsSuccess = 2 + 1;
@@ -999,7 +1164,15 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteController2.countOfDeprovisionFail = 16;
         mSatelliteController2.totalServiceUptimeSec = 60 * 60 * 12;
         mSatelliteController2.totalBatteryConsumptionPercent = 14;
-        mSatelliteController1.totalBatteryChargedTimeSec = 60 * 60 * 3;
+        mSatelliteController2.totalBatteryChargedTimeSec = 60 * 60 * 3;
+        mSatelliteController2.countOfDemoModeSatelliteServiceEnablementsSuccess = 5;
+        mSatelliteController2.countOfDemoModeSatelliteServiceEnablementsFail = 4;
+        mSatelliteController2.countOfDemoModeOutgoingDatagramSuccess = 3;
+        mSatelliteController2.countOfDemoModeOutgoingDatagramFail = 7;
+        mSatelliteController2.countOfDemoModeIncomingDatagramSuccess = 2;
+        mSatelliteController2.countOfDemoModeIncomingDatagramFail = 3;
+        mSatelliteController2.countOfDatagramTypeKeepAliveSuccess = 4;
+        mSatelliteController2.countOfDatagramTypeKeepAliveFail = 5;
 
         // SatelliteController atom has one data point
         mSatelliteControllers =
@@ -1013,6 +1186,17 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteSession1.satelliteTechnology =
                 SatelliteProtoEnums.NT_RADIO_TECHNOLOGY_PROPRIETARY;
         mSatelliteSession1.count = 1;
+        mSatelliteSession1.satelliteServiceTerminationResult =
+                SatelliteProtoEnums.SATELLITE_ERROR_NONE;
+        mSatelliteSession1.initializationProcessingTimeMillis = 100;
+        mSatelliteSession1.terminationProcessingTimeMillis = 200;
+        mSatelliteSession1.sessionDurationSeconds = 3;
+        mSatelliteSession1.countOfOutgoingDatagramSuccess = 1;
+        mSatelliteSession1.countOfOutgoingDatagramFailed = 0;
+        mSatelliteSession1.countOfIncomingDatagramSuccess = 1;
+        mSatelliteSession1.countOfIncomingDatagramFailed = 0;
+        mSatelliteSession1.isDemoMode = false;
+        mSatelliteSession1.maxNtnSignalStrengthLevel = 2;
 
         mSatelliteSession2 = new SatelliteSession();
         mSatelliteSession2.satelliteServiceInitializationResult =
@@ -1020,6 +1204,17 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteSession2.satelliteTechnology =
                 SatelliteProtoEnums.NT_RADIO_TECHNOLOGY_NB_IOT_NTN;
         mSatelliteSession2.count = 1;
+        mSatelliteSession2.satelliteServiceTerminationResult =
+                SatelliteProtoEnums.SATELLITE_ERROR_NONE;
+        mSatelliteSession2.initializationProcessingTimeMillis = 300;
+        mSatelliteSession2.terminationProcessingTimeMillis = 100;
+        mSatelliteSession2.sessionDurationSeconds = 10;
+        mSatelliteSession2.countOfOutgoingDatagramSuccess = 0;
+        mSatelliteSession2.countOfOutgoingDatagramFailed = 2;
+        mSatelliteSession2.countOfIncomingDatagramSuccess = 0;
+        mSatelliteSession2.countOfIncomingDatagramFailed = 1;
+        mSatelliteSession2.isDemoMode = true;
+        mSatelliteSession2.maxNtnSignalStrengthLevel = 4;
 
         mSatelliteSessions =
                 new SatelliteSession[] {
@@ -1030,11 +1225,13 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteIncomingDatagram1.resultCode = SatelliteProtoEnums.SATELLITE_ERROR_NONE;
         mSatelliteIncomingDatagram1.datagramSizeBytes = 1 * 1024;
         mSatelliteIncomingDatagram1.datagramTransferTimeMillis = 3 * 1000;
+        mSatelliteIncomingDatagram1.isDemoMode = false;
 
         mSatelliteIncomingDatagram2 = new SatelliteIncomingDatagram();
         mSatelliteIncomingDatagram2.resultCode = SatelliteProtoEnums.SATELLITE_MODEM_ERROR;
         mSatelliteIncomingDatagram2.datagramSizeBytes = 512;
         mSatelliteIncomingDatagram2.datagramTransferTimeMillis = 1 * 1000;
+        mSatelliteIncomingDatagram1.isDemoMode = true;
 
         mSatelliteIncomingDatagrams =
                 new SatelliteIncomingDatagram[] {
@@ -1047,6 +1244,7 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteOutgoingDatagram1.resultCode = SatelliteProtoEnums.SATELLITE_ERROR_NONE;
         mSatelliteOutgoingDatagram1.datagramSizeBytes = 1 * 1024;
         mSatelliteOutgoingDatagram1.datagramTransferTimeMillis = 3 * 1000;
+        mSatelliteOutgoingDatagram1.isDemoMode = false;
 
         mSatelliteOutgoingDatagram2 = new SatelliteOutgoingDatagram();
         mSatelliteOutgoingDatagram2.datagramType =
@@ -1054,6 +1252,7 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteOutgoingDatagram2.resultCode = SatelliteProtoEnums.SATELLITE_MODEM_ERROR;
         mSatelliteOutgoingDatagram2.datagramSizeBytes = 512;
         mSatelliteOutgoingDatagram2.datagramTransferTimeMillis = 1 * 1000;
+        mSatelliteOutgoingDatagram1.isDemoMode = true;
 
         mSatelliteOutgoingDatagrams =
                 new SatelliteOutgoingDatagram[] {
@@ -1103,6 +1302,187 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteSosMessageRecommenders =
                 new SatelliteSosMessageRecommender[] {
                         mSatelliteSosMessageRecommender1, mSatelliteSosMessageRecommender2
+                };
+
+        mCarrierRoamingSatelliteSession1 = new CarrierRoamingSatelliteSession();
+        mCarrierRoamingSatelliteSession1.carrierId = 1;
+        mCarrierRoamingSatelliteSession1.isNtnRoamingInHomeCountry = false;
+        mCarrierRoamingSatelliteSession1.totalSatelliteModeTimeSec = 60;
+        mCarrierRoamingSatelliteSession1.numberOfSatelliteConnections = 3;
+        mCarrierRoamingSatelliteSession1.avgDurationOfSatelliteConnectionSec = 20;
+        mCarrierRoamingSatelliteSession1.satelliteConnectionGapMinSec = 2;
+        mCarrierRoamingSatelliteSession1.satelliteConnectionGapAvgSec = 5;
+        mCarrierRoamingSatelliteSession1.satelliteConnectionGapMaxSec = 8;
+        mCarrierRoamingSatelliteSession1.rsrpAvg = 3;
+        mCarrierRoamingSatelliteSession1.rsrpMedian = 2;
+        mCarrierRoamingSatelliteSession1.rssnrAvg = 5;
+        mCarrierRoamingSatelliteSession1.rssnrMedian = 3;
+        mCarrierRoamingSatelliteSession1.countOfIncomingSms = 2;
+        mCarrierRoamingSatelliteSession1.countOfOutgoingSms = 4;
+        mCarrierRoamingSatelliteSession1.countOfIncomingMms = 1;
+        mCarrierRoamingSatelliteSession1.countOfOutgoingMms = 1;
+
+        mCarrierRoamingSatelliteSession2 = new CarrierRoamingSatelliteSession();
+        mCarrierRoamingSatelliteSession2.carrierId = 2;
+        mCarrierRoamingSatelliteSession2.isNtnRoamingInHomeCountry = true;
+        mCarrierRoamingSatelliteSession2.totalSatelliteModeTimeSec = 120;
+        mCarrierRoamingSatelliteSession2.numberOfSatelliteConnections = 5;
+        mCarrierRoamingSatelliteSession2.avgDurationOfSatelliteConnectionSec = 20;
+        mCarrierRoamingSatelliteSession2.satelliteConnectionGapMinSec = 2;
+        mCarrierRoamingSatelliteSession2.satelliteConnectionGapAvgSec = 5;
+        mCarrierRoamingSatelliteSession2.satelliteConnectionGapMaxSec = 8;
+        mCarrierRoamingSatelliteSession2.rsrpAvg = 3;
+        mCarrierRoamingSatelliteSession2.rsrpMedian = 2;
+        mCarrierRoamingSatelliteSession2.rssnrAvg = 8;
+        mCarrierRoamingSatelliteSession2.rssnrMedian = 15;
+        mCarrierRoamingSatelliteSession2.countOfIncomingSms = 2;
+        mCarrierRoamingSatelliteSession2.countOfOutgoingSms = 4;
+        mCarrierRoamingSatelliteSession2.countOfIncomingMms = 1;
+        mCarrierRoamingSatelliteSession2.countOfOutgoingMms = 1;
+
+        mCarrierRoamingSatelliteSessions = new CarrierRoamingSatelliteSession[] {
+                mCarrierRoamingSatelliteSession1, mCarrierRoamingSatelliteSession2};
+
+        mCarrierRoamingSatelliteControllerStats1 = new CarrierRoamingSatelliteControllerStats();
+        mCarrierRoamingSatelliteControllerStats1.configDataSource =
+                SatelliteProtoEnums.CONFIG_DATA_SOURCE_ENTITLEMENT;
+        mCarrierRoamingSatelliteControllerStats1.countOfEntitlementStatusQueryRequest = 2;
+        mCarrierRoamingSatelliteControllerStats1.countOfSatelliteConfigUpdateRequest = 1;
+        mCarrierRoamingSatelliteControllerStats1.countOfSatelliteNotificationDisplayed = 1;
+        mCarrierRoamingSatelliteControllerStats1.satelliteSessionGapMinSec = 2;
+        mCarrierRoamingSatelliteControllerStats1.satelliteSessionGapAvgSec = 3;
+        mCarrierRoamingSatelliteControllerStats1.satelliteSessionGapMaxSec = 4;
+
+        mCarrierRoamingSatelliteControllerStats2 = new CarrierRoamingSatelliteControllerStats();
+        mCarrierRoamingSatelliteControllerStats2.configDataSource =
+                SatelliteProtoEnums.CONFIG_DATA_SOURCE_CONFIG_UPDATER;
+        mCarrierRoamingSatelliteControllerStats2.countOfEntitlementStatusQueryRequest = 4;
+        mCarrierRoamingSatelliteControllerStats2.countOfSatelliteConfigUpdateRequest = 1;
+        mCarrierRoamingSatelliteControllerStats2.countOfSatelliteNotificationDisplayed = 1;
+        mCarrierRoamingSatelliteControllerStats2.satelliteSessionGapMinSec = 5;
+        mCarrierRoamingSatelliteControllerStats2.satelliteSessionGapAvgSec = 10;
+        mCarrierRoamingSatelliteControllerStats2.satelliteSessionGapMaxSec = 15;
+
+        // CarrierRoamingSatelliteController has one data point
+        mCarrierRoamingSatelliteControllerStats = new CarrierRoamingSatelliteControllerStats[] {
+                mCarrierRoamingSatelliteControllerStats1};
+
+        mSatelliteEntitlement1 = new SatelliteEntitlement();
+        mSatelliteEntitlement1.carrierId = 1;
+        mSatelliteEntitlement1.result = 0;
+        mSatelliteEntitlement1.entitlementStatus =
+                SatelliteProtoEnums.SATELLITE_ENTITLEMENT_STATUS_ENABLED;
+        mSatelliteEntitlement1.isRetry = false;
+        mSatelliteEntitlement1.count = 1;
+
+        mSatelliteEntitlement2 = new SatelliteEntitlement();
+        mSatelliteEntitlement2.carrierId = 2;
+        mSatelliteEntitlement2.result = 1;
+        mSatelliteEntitlement2.entitlementStatus =
+                SatelliteProtoEnums.SATELLITE_ENTITLEMENT_STATUS_DISABLED;
+        mSatelliteEntitlement1.isRetry = true;
+        mSatelliteEntitlement2.count = 1;
+
+        mSatelliteEntitlements = new SatelliteEntitlement[] {mSatelliteEntitlement1,
+                mSatelliteEntitlement2};
+
+        mSatelliteConfigUpdater1 = new SatelliteConfigUpdater();
+        mSatelliteConfigUpdater1.configVersion = 1;
+        mSatelliteConfigUpdater1.oemConfigResult = SatelliteProtoEnums.CONFIG_UPDATE_RESULT_SUCCESS;
+        mSatelliteConfigUpdater1.carrierConfigResult =
+                SatelliteProtoEnums.CONFIG_UPDATE_RESULT_CARRIER_DATA_INVALID_PLMN;
+        mSatelliteConfigUpdater1.count = 1;
+
+        mSatelliteConfigUpdater2 = new SatelliteConfigUpdater();
+        mSatelliteConfigUpdater2.configVersion = 2;
+        mSatelliteConfigUpdater2.oemConfigResult =
+                SatelliteProtoEnums.CONFIG_UPDATE_RESULT_DEVICE_DATA_INVALID_COUNTRY_CODE;
+        mSatelliteConfigUpdater2.carrierConfigResult =
+                SatelliteProtoEnums.CONFIG_UPDATE_RESULT_SUCCESS;
+        mSatelliteConfigUpdater2.count = 1;
+
+        mSatelliteConfigUpdaters = new SatelliteConfigUpdater[] {mSatelliteConfigUpdater1,
+                mSatelliteConfigUpdater2};
+
+        mSatelliteAccessController1 = new SatelliteAccessController();
+        mSatelliteAccessController1.accessControlType = ACCESS_CONTROL_TYPE_NETWORK_COUNTRY_CODE;
+        mSatelliteAccessController1.locationQueryTimeMillis = TimeUnit.SECONDS.toMillis(1);
+        mSatelliteAccessController1.onDeviceLookupTimeMillis = TimeUnit.SECONDS.toMillis(2);
+        mSatelliteAccessController1.totalCheckingTimeMillis = TimeUnit.SECONDS.toMillis(3);
+        mSatelliteAccessController1.isAllowed = true;
+        mSatelliteAccessController1.isEmergency = false;
+        mSatelliteAccessController1.resultCode = SATELLITE_RESULT_SUCCESS;
+        mSatelliteAccessController1.countryCodes = new String[]{"AB", "CD"};
+        mSatelliteAccessController1.configDataSource = CONFIG_DATA_SOURCE_DEVICE_CONFIG;
+
+        mSatelliteAccessController2 = new SatelliteAccessController();
+        mSatelliteAccessController1.accessControlType = ACCESS_CONTROL_TYPE_CURRENT_LOCATION;
+        mSatelliteAccessController1.locationQueryTimeMillis = TimeUnit.SECONDS.toMillis(4);
+        mSatelliteAccessController2.onDeviceLookupTimeMillis = TimeUnit.SECONDS.toMillis(5);
+        mSatelliteAccessController2.totalCheckingTimeMillis = TimeUnit.SECONDS.toMillis(6);
+        mSatelliteAccessController2.isAllowed = false;
+        mSatelliteAccessController2.isEmergency = true;
+        mSatelliteAccessController2.resultCode = SATELLITE_RESULT_SUCCESS;
+        mSatelliteAccessController2.countryCodes = new String[]{"EF", "GH"};
+        mSatelliteAccessController2.configDataSource = CONFIG_DATA_SOURCE_CONFIG_UPDATER;
+
+        mSatelliteAccessControllers = new SatelliteAccessController[]{
+                mSatelliteAccessController1, mSatelliteAccessController2
+        };
+    }
+
+    private void generateTestDataNetworkValidationsData() {
+
+        // for LTE #1
+        mDataNetworkValidationLte1 = new DataNetworkValidation();
+        mDataNetworkValidationLte1.networkType = TelephonyManager.NETWORK_TYPE_LTE;
+        mDataNetworkValidationLte1.apnTypeBitmask = ApnSetting.TYPE_IMS;
+        mDataNetworkValidationLte1.signalStrength = SignalStrength.SIGNAL_STRENGTH_GREAT;
+        mDataNetworkValidationLte1.validationResult =
+                PreciseDataConnectionState.NETWORK_VALIDATION_SUCCESS;
+        mDataNetworkValidationLte1.elapsedTimeInMillis = 100L;
+        mDataNetworkValidationLte1.handoverAttempted = false;
+        mDataNetworkValidationLte1.networkValidationCount = 1;
+
+        // for LTE #2
+        mDataNetworkValidationLte2 = new DataNetworkValidation();
+        mDataNetworkValidationLte2.networkType = TelephonyManager.NETWORK_TYPE_LTE;
+        mDataNetworkValidationLte2.apnTypeBitmask = ApnSetting.TYPE_IMS;
+        mDataNetworkValidationLte2.signalStrength = SignalStrength.SIGNAL_STRENGTH_GREAT;
+        mDataNetworkValidationLte2.validationResult =
+                PreciseDataConnectionState.NETWORK_VALIDATION_SUCCESS;
+        mDataNetworkValidationLte2.elapsedTimeInMillis = 100L;
+        mDataNetworkValidationLte2.handoverAttempted = false;
+        mDataNetworkValidationLte2.networkValidationCount = 1;
+
+        // for IWLAN #1
+        mDataNetworkValidationIwlan1 = new DataNetworkValidation();
+        mDataNetworkValidationIwlan1.networkType = TelephonyManager.NETWORK_TYPE_IWLAN;
+        mDataNetworkValidationIwlan1.apnTypeBitmask = ApnSetting.TYPE_IMS;
+        mDataNetworkValidationIwlan1.signalStrength = SignalStrength.SIGNAL_STRENGTH_POOR;
+        mDataNetworkValidationIwlan1.validationResult =
+                PreciseDataConnectionState.NETWORK_VALIDATION_FAILURE;
+        mDataNetworkValidationIwlan1.elapsedTimeInMillis = 10000L;
+        mDataNetworkValidationIwlan1.handoverAttempted = false;
+        mDataNetworkValidationIwlan1.networkValidationCount = 1;
+
+        // for IWLAN #2
+        mDataNetworkValidationIwlan2 = new DataNetworkValidation();
+        mDataNetworkValidationIwlan2.networkType = TelephonyManager.NETWORK_TYPE_IWLAN;
+        mDataNetworkValidationIwlan2.apnTypeBitmask = ApnSetting.TYPE_IMS;
+        mDataNetworkValidationIwlan2.signalStrength = SignalStrength.SIGNAL_STRENGTH_POOR;
+        mDataNetworkValidationIwlan2.validationResult =
+                PreciseDataConnectionState.NETWORK_VALIDATION_FAILURE;
+        mDataNetworkValidationIwlan2.elapsedTimeInMillis = 30000L;
+        mDataNetworkValidationIwlan2.handoverAttempted = false;
+        mDataNetworkValidationIwlan2.networkValidationCount = 1;
+
+        mDataNetworkValidations =
+                new DataNetworkValidation[] {
+                        mDataNetworkValidationLte1,
+                        mDataNetworkValidationLte1,
+                        mDataNetworkValidationIwlan1,
+                        mDataNetworkValidationIwlan2,
                 };
     }
 
@@ -1244,6 +1624,12 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSipTransportSession1 = null;
         mSipTransportSession2 = null;
         mSipTransportSession = null;
+        mIncomingSms = null;
+        mIncomingSms1 = null;
+        mIncomingSms2 = null;
+        mOutgoingSms = null;
+        mOutgoingSms1 = null;
+        mOutgoingSms2 = null;
         mOutgoingShortCodeSms1 = null;
         mOutgoingShortCodeSms2 = null;
         mOutgoingShortCodeSms = null;
@@ -1265,6 +1651,25 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteSosMessageRecommender1 = null;
         mSatelliteSosMessageRecommender2 = null;
         mSatelliteSosMessageRecommenders = null;
+        mDataNetworkValidationLte1 = null;
+        mDataNetworkValidationLte2 = null;
+        mDataNetworkValidationIwlan1 = null;
+        mDataNetworkValidationIwlan2 = null;
+        mCarrierRoamingSatelliteSession1 = null;
+        mCarrierRoamingSatelliteSession2 = null;
+        mCarrierRoamingSatelliteSessions = null;
+        mCarrierRoamingSatelliteControllerStats1 = null;
+        mCarrierRoamingSatelliteControllerStats2 = null;
+        mCarrierRoamingSatelliteControllerStats = null;
+        mSatelliteEntitlement1 = null;
+        mSatelliteEntitlement2 = null;
+        mSatelliteEntitlements = null;
+        mSatelliteConfigUpdater1 = null;
+        mSatelliteConfigUpdater2 = null;
+        mSatelliteConfigUpdaters = null;
+        mSatelliteAccessController1 = null;
+        mSatelliteAccessController2 = null;
+        mSatelliteAccessControllers = null;
         super.tearDown();
     }
 
@@ -3721,6 +4126,88 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     }
 
     @Test
+    public void addIncomingSms_emptyProto() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addIncomingSms(mIncomingSms1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // IncomingSms should be added successfully, changes should be saved.
+        verifyCurrentStateSavedToFileOnce();
+        IncomingSms[] expectedList = new IncomingSms[] {mIncomingSms1};
+        assertProtoArrayEquals(expectedList, mPersistAtomsStorage.getIncomingSms(0L));
+    }
+
+    @Test
+    public void addIncomingSms_withExistingEntries() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addIncomingSms(mIncomingSms1);
+        mPersistAtomsStorage.addIncomingSms(mIncomingSms2);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // IncomingSms should be added successfully.
+        verifyCurrentStateSavedToFileOnce();
+        IncomingSms[] expectedList = new IncomingSms[] {mIncomingSms1, mIncomingSms2};
+        assertProtoArrayEqualsIgnoringOrder(expectedList, mPersistAtomsStorage.getIncomingSms(0L));
+    }
+
+    @Test
+    public void getIncomingSms_tooFrequent() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        // Pull interval less than minimum.
+        mPersistAtomsStorage.incTimeMillis(50L);
+        IncomingSms[] outgoingShortCodeSmsList = mPersistAtomsStorage.getIncomingSms(100L);
+        // Should be denied.
+        assertNull(outgoingShortCodeSmsList);
+    }
+
+    @Test
+    public void addOutgoingSms_emptyProto() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addOutgoingSms(mOutgoingSms1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // OutgoingSms should be added successfully, changes should be saved.
+        verifyCurrentStateSavedToFileOnce();
+        OutgoingSms[] expectedList = new OutgoingSms[] {mOutgoingSms1};
+        assertProtoArrayEquals(expectedList, mPersistAtomsStorage.getOutgoingSms(0L));
+    }
+
+    @Test
+    public void addOutgoingSms_withExistingEntries() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addOutgoingSms(mOutgoingSms1);
+        mPersistAtomsStorage.addOutgoingSms(mOutgoingSms2);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // OutgoingSms should be added successfully.
+        verifyCurrentStateSavedToFileOnce();
+        OutgoingSms[] expectedList = new OutgoingSms[] {mOutgoingSms1, mOutgoingSms2};
+        assertProtoArrayEqualsIgnoringOrder(expectedList, mPersistAtomsStorage.getOutgoingSms(0L));
+    }
+
+    @Test
+    public void getOutgoingSms_tooFrequent() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        // Pull interval less than minimum.
+        mPersistAtomsStorage.incTimeMillis(50L);
+        OutgoingSms[] outgoingShortCodeSmsList = mPersistAtomsStorage.getOutgoingSms(100L);
+        // Should be denied.
+        assertNull(outgoingShortCodeSmsList);
+    }
+
+    @Test
     public void addOutgoingShortCodeSms_emptyProto() throws Exception {
         createEmptyTestFile();
 
@@ -3910,6 +4397,30 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         expected.totalBatteryChargedTimeSec =
                 mSatelliteController1.totalBatteryChargedTimeSec
                         + mSatelliteController2.totalBatteryChargedTimeSec;
+        expected.countOfDemoModeSatelliteServiceEnablementsSuccess =
+                mSatelliteController1.countOfDemoModeSatelliteServiceEnablementsSuccess
+                        + mSatelliteController2.countOfDemoModeSatelliteServiceEnablementsSuccess;
+        expected.countOfDemoModeSatelliteServiceEnablementsFail =
+                mSatelliteController1.countOfDemoModeSatelliteServiceEnablementsFail
+                        + mSatelliteController2.countOfDemoModeSatelliteServiceEnablementsFail;
+        expected.countOfDemoModeOutgoingDatagramSuccess =
+                mSatelliteController1.countOfDemoModeOutgoingDatagramSuccess
+                        + mSatelliteController2.countOfDemoModeOutgoingDatagramSuccess;
+        expected.countOfDemoModeOutgoingDatagramFail =
+                mSatelliteController1.countOfDemoModeOutgoingDatagramFail
+                        + mSatelliteController2.countOfDemoModeOutgoingDatagramFail;
+        expected.countOfDemoModeIncomingDatagramSuccess =
+                mSatelliteController1.countOfDemoModeIncomingDatagramSuccess
+                        + mSatelliteController2.countOfDemoModeIncomingDatagramSuccess;
+        expected.countOfDemoModeIncomingDatagramFail =
+                mSatelliteController1.countOfDemoModeIncomingDatagramFail
+                        + mSatelliteController2.countOfDemoModeIncomingDatagramFail;
+        expected.countOfDatagramTypeKeepAliveSuccess =
+                mSatelliteController1.countOfDatagramTypeKeepAliveSuccess
+                        + mSatelliteController2.countOfDatagramTypeKeepAliveSuccess;
+        expected.countOfDatagramTypeKeepAliveFail =
+                mSatelliteController1.countOfDatagramTypeKeepAliveFail
+                        + mSatelliteController2.countOfDatagramTypeKeepAliveFail;
 
         // Service state and service switch should be added successfully
         verifyCurrentStateSavedToFileOnce();
@@ -4314,6 +4825,533 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     }
 
     @Test
+    public void addCarrierRoamingSatelliteSessionStats_emptyProto() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addCarrierRoamingSatelliteSessionStats(
+                mCarrierRoamingSatelliteSession1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        verifyCurrentStateSavedToFileOnce();
+        CarrierRoamingSatelliteSession[] output =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteSessionStats(0L);
+        assertProtoArrayEquals(new CarrierRoamingSatelliteSession[] {
+                mCarrierRoamingSatelliteSession1}, output);
+    }
+
+    @Test
+    public void addCarrierRoamingSatelliteSessionStats_withExistingEntries() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addCarrierRoamingSatelliteSessionStats(
+                mCarrierRoamingSatelliteSession1);
+        mPersistAtomsStorage.addCarrierRoamingSatelliteSessionStats(
+                mCarrierRoamingSatelliteSession2);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        verifyCurrentStateSavedToFileOnce();
+        CarrierRoamingSatelliteSession[] output =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteSessionStats(0L);
+        assertProtoArrayEqualsIgnoringOrder(
+                new CarrierRoamingSatelliteSession[] {mCarrierRoamingSatelliteSession2}, output);
+    }
+
+    @Test
+    public void addCarrierRoamingSatelliteSessionStats_tooManyEntries() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+
+        // Store atoms up to maximum number + 1
+        int maxCount = 1 + 1;
+        for (int i = 0; i < maxCount; i++) {
+            mPersistAtomsStorage.addCarrierRoamingSatelliteSessionStats(
+                    copyOf(mCarrierRoamingSatelliteSession1));
+            mPersistAtomsStorage.incTimeMillis(100L);
+        }
+
+        // Store 1 different atom
+        mPersistAtomsStorage.addCarrierRoamingSatelliteSessionStats(
+                mCarrierRoamingSatelliteSession2);
+
+        verifyCurrentStateSavedToFileOnce();
+
+        CarrierRoamingSatelliteSession[] result =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteSessionStats(0L);
+
+        // First atom has count 0, the other has 1
+        assertHasStatsAndCount(result, mCarrierRoamingSatelliteSession1, 0);
+        assertHasStatsAndCount(result, mCarrierRoamingSatelliteSession2, 1);
+    }
+
+    @Test
+    public void getCarrierRoamingSatelliteSessionStats_tooFrequent() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.incTimeMillis(50L); // pull interval less than minimum
+        CarrierRoamingSatelliteSession[] output =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteSessionStats(100L);
+
+        // Should be denied
+        assertNull(output);
+    }
+
+    @Test
+    public void getCarrierRoamingSatelliteSessionStats_withSavedAtoms() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.incTimeMillis(100L);
+        CarrierRoamingSatelliteSession[] carrierRoamingSatelliteSessionStatsList1 =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteSessionStats(50L);
+        mPersistAtomsStorage.incTimeMillis(100L);
+        CarrierRoamingSatelliteSession[] carrierRoamingSatelliteSessionStatsList2 =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteSessionStats(50L);
+
+        // First set of results should be equal to file contents.
+        CarrierRoamingSatelliteSession[] expectedList = new CarrierRoamingSatelliteSession[] {
+                mCarrierRoamingSatelliteSession1, mCarrierRoamingSatelliteSession2};
+        assertProtoArrayEqualsIgnoringOrder(expectedList, carrierRoamingSatelliteSessionStatsList1);
+        // Second set of results should be empty.
+        assertProtoArrayEquals(new CarrierRoamingSatelliteSession[0],
+                carrierRoamingSatelliteSessionStatsList2);
+        // Corresponding pull timestamp should be updated and saved.
+        assertEquals(START_TIME_MILLIS + 200L, mPersistAtomsStorage
+                .getAtomsProto().carrierRoamingSatelliteSessionPullTimestampMillis);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+        assertEquals(START_TIME_MILLIS + 100L,
+                getAtomsWritten(inOrder).carrierRoamingSatelliteSessionPullTimestampMillis);
+        assertEquals(START_TIME_MILLIS + 200L,
+                getAtomsWritten(inOrder).carrierRoamingSatelliteSessionPullTimestampMillis);
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    public void addCarrierRoamingSatelliteControllerStats_emptyProto() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addCarrierRoamingSatelliteControllerStats(
+                mCarrierRoamingSatelliteControllerStats1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        verifyCurrentStateSavedToFileOnce();
+        CarrierRoamingSatelliteControllerStats[] output =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteControllerStats(0L);
+        assertProtoArrayEquals(new CarrierRoamingSatelliteControllerStats[] {
+                mCarrierRoamingSatelliteControllerStats1}, output);
+    }
+
+    @Test
+    public void addCarrierRoamingSatelliteControllerStats_withExistingEntries() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addCarrierRoamingSatelliteControllerStats(
+                mCarrierRoamingSatelliteControllerStats1);
+        mPersistAtomsStorage.addCarrierRoamingSatelliteControllerStats(
+                mCarrierRoamingSatelliteControllerStats2);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        CarrierRoamingSatelliteControllerStats expected =
+                new CarrierRoamingSatelliteControllerStats();
+        expected.configDataSource = mCarrierRoamingSatelliteControllerStats2.configDataSource;
+        expected.countOfEntitlementStatusQueryRequest =
+                mCarrierRoamingSatelliteControllerStats1.countOfEntitlementStatusQueryRequest
+                        + mCarrierRoamingSatelliteControllerStats2
+                        .countOfEntitlementStatusQueryRequest;
+        expected.countOfSatelliteConfigUpdateRequest =
+                mCarrierRoamingSatelliteControllerStats1.countOfSatelliteConfigUpdateRequest
+                        + mCarrierRoamingSatelliteControllerStats2
+                        .countOfSatelliteConfigUpdateRequest;
+        expected.countOfSatelliteNotificationDisplayed =
+                mCarrierRoamingSatelliteControllerStats1.countOfSatelliteNotificationDisplayed
+                + mCarrierRoamingSatelliteControllerStats2
+                        .countOfSatelliteNotificationDisplayed;
+        expected.satelliteSessionGapMinSec =
+                mCarrierRoamingSatelliteControllerStats2.satelliteSessionGapMinSec;
+        expected.satelliteSessionGapAvgSec =
+                mCarrierRoamingSatelliteControllerStats2.satelliteSessionGapAvgSec;
+        expected.satelliteSessionGapMaxSec =
+                mCarrierRoamingSatelliteControllerStats2.satelliteSessionGapMaxSec;
+
+        verifyCurrentStateSavedToFileOnce();
+        CarrierRoamingSatelliteControllerStats[] output =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteControllerStats(0L);
+        assertHasStats(output, expected);
+    }
+
+    @Test
+    public void getCarrierRoamingSatelliteControllerStats_tooFrequent() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.incTimeMillis(50L); // pull interval less than minimum
+        CarrierRoamingSatelliteControllerStats[] output =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteControllerStats(100L);
+
+        // Should be denied
+        assertNull(output);
+    }
+
+
+    @Test
+    public void addSatelliteEntitlementStats_emptyProto() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addSatelliteEntitlementStats(mSatelliteEntitlement1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        verifyCurrentStateSavedToFileOnce();
+        SatelliteEntitlement[] output =
+                mPersistAtomsStorage.getSatelliteEntitlementStats(0L);
+        assertProtoArrayEquals(new SatelliteEntitlement[] {mSatelliteEntitlement1}, output);
+    }
+
+    @Test
+    public void addSatelliteEntitlementStats_withExistingEntries() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addSatelliteEntitlementStats(mSatelliteEntitlement1);
+        mPersistAtomsStorage.addSatelliteEntitlementStats(mSatelliteEntitlement2);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        verifyCurrentStateSavedToFileOnce();
+        SatelliteEntitlement[] output =
+                mPersistAtomsStorage.getSatelliteEntitlementStats(0L);
+        assertProtoArrayEqualsIgnoringOrder(
+                new SatelliteEntitlement[] {
+                        mSatelliteEntitlement1, mSatelliteEntitlement2}, output);
+    }
+
+    @Test
+    public void addSatelliteEntitlementStats_updateExistingEntries() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addSatelliteEntitlementStats(copyOf(mSatelliteEntitlement1));
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // Count should be increased by 1.
+        verifyCurrentStateSavedToFileOnce();
+        SatelliteEntitlement newSatelliteEntitlement1 = copyOf(mSatelliteEntitlement1);
+        newSatelliteEntitlement1.count = 2;
+        SatelliteEntitlement[] expectedList = new SatelliteEntitlement[] {newSatelliteEntitlement1,
+                mSatelliteEntitlement2};
+        assertProtoArrayEqualsIgnoringOrder(expectedList,
+                mPersistAtomsStorage.getSatelliteEntitlementStats(0L));
+    }
+
+    @Test
+    public void addSatelliteEntitlementStats_tooManyEntries() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+
+        // Store atoms up to maximum number + 1
+        int maxCount = 15 + 1;
+        for (int i = 0; i < maxCount; i++) {
+            mPersistAtomsStorage.addSatelliteEntitlementStats(mSatelliteEntitlement1);
+            mPersistAtomsStorage.incTimeMillis(100L);
+        }
+
+        // Store 1 different atom
+        mPersistAtomsStorage.addSatelliteEntitlementStats(mSatelliteEntitlement2);
+
+        verifyCurrentStateSavedToFileOnce();
+
+        SatelliteEntitlement[] result =
+                mPersistAtomsStorage.getSatelliteEntitlementStats(0L);
+
+        // First atom has count 14, the other has 1
+        assertHasStatsAndCount(result, mSatelliteEntitlement1, 16);
+        assertHasStatsAndCount(result, mSatelliteEntitlement2, 1);
+    }
+
+    @Test
+    public void getSatelliteEntitlementStats_tooFrequent() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.incTimeMillis(50L); // pull interval less than minimum
+        SatelliteEntitlement[] output =
+                mPersistAtomsStorage.getSatelliteEntitlementStats(100L);
+
+        // Should be denied
+        assertNull(output);
+    }
+
+    @Test
+    public void getSatelliteEntitlementStats_withSavedAtoms() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.incTimeMillis(100L);
+        SatelliteEntitlement[] satelliteEntitlementStatsList1 =
+                mPersistAtomsStorage.getSatelliteEntitlementStats(50L);
+        mPersistAtomsStorage.incTimeMillis(100L);
+        SatelliteEntitlement[] satelliteEntitlementStatsList2 =
+                mPersistAtomsStorage.getSatelliteEntitlementStats(50L);
+
+        // First set of results should be equal to file contents.
+        SatelliteEntitlement[] expectedList = new SatelliteEntitlement[] {
+                mSatelliteEntitlement1, mSatelliteEntitlement2};
+        assertProtoArrayEqualsIgnoringOrder(expectedList, satelliteEntitlementStatsList1);
+        // Second set of results should be empty.
+        assertProtoArrayEquals(new SatelliteEntitlement[0], satelliteEntitlementStatsList2);
+        // Corresponding pull timestamp should be updated and saved.
+        assertEquals(START_TIME_MILLIS + 200L, mPersistAtomsStorage
+                .getAtomsProto().satelliteEntitlementPullTimestampMillis);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+        assertEquals(START_TIME_MILLIS + 100L,
+                getAtomsWritten(inOrder).satelliteEntitlementPullTimestampMillis);
+        assertEquals(START_TIME_MILLIS + 200L,
+                getAtomsWritten(inOrder).satelliteEntitlementPullTimestampMillis);
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    public void addSatelliteConfigUpdaterStats_emptyProto() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addSatelliteConfigUpdaterStats(mSatelliteConfigUpdater1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        verifyCurrentStateSavedToFileOnce();
+        SatelliteConfigUpdater[] output =
+                mPersistAtomsStorage.getSatelliteConfigUpdaterStats(0L);
+        assertProtoArrayEquals(new SatelliteConfigUpdater[] {mSatelliteConfigUpdater1}, output);
+    }
+
+    @Test
+    public void addSatelliteConfigUpdaterStats_withExistingEntries() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addSatelliteConfigUpdaterStats(mSatelliteConfigUpdater1);
+        mPersistAtomsStorage.addSatelliteConfigUpdaterStats(mSatelliteConfigUpdater2);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        verifyCurrentStateSavedToFileOnce();
+        SatelliteConfigUpdater[] output =
+                mPersistAtomsStorage.getSatelliteConfigUpdaterStats(0L);
+        assertProtoArrayEqualsIgnoringOrder(new SatelliteConfigUpdater[] {
+                mSatelliteConfigUpdater1, mSatelliteConfigUpdater2}, output);
+    }
+
+    @Test
+    public void addSatelliteConfigUpdaterStats_updateExistingEntries() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addSatelliteConfigUpdaterStats(copyOf(mSatelliteConfigUpdater1));
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // Count should be increased by 1.
+        verifyCurrentStateSavedToFileOnce();
+        SatelliteConfigUpdater newSatelliteConfigUpdater1 = copyOf(mSatelliteConfigUpdater1);
+        newSatelliteConfigUpdater1.count = 2;
+        SatelliteConfigUpdater[] expectedList = new SatelliteConfigUpdater[] {
+                newSatelliteConfigUpdater1, mSatelliteConfigUpdater2};
+        assertProtoArrayEqualsIgnoringOrder(expectedList,
+                mPersistAtomsStorage.getSatelliteConfigUpdaterStats(0L));
+    }
+
+    @Test
+    public void addSatelliteConfigUpdaterStats_tooManyEntries() throws Exception {
+        createEmptyTestFile();
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+
+        // Store atoms up to maximum number + 1
+        int maxCount = 15 + 1;
+        for (int i = 0; i < maxCount; i++) {
+            mPersistAtomsStorage.addSatelliteConfigUpdaterStats(mSatelliteConfigUpdater1);
+            mPersistAtomsStorage.incTimeMillis(100L);
+        }
+
+        // Store 1 different atom
+        mPersistAtomsStorage.addSatelliteConfigUpdaterStats(mSatelliteConfigUpdater2);
+
+        verifyCurrentStateSavedToFileOnce();
+
+        SatelliteConfigUpdater[] result =
+                mPersistAtomsStorage.getSatelliteConfigUpdaterStats(0L);
+
+        // First atom has count 14, the other has 1
+        assertHasStatsAndCount(result, mSatelliteConfigUpdater1, 16);
+        assertHasStatsAndCount(result, mSatelliteConfigUpdater2, 1);
+    }
+
+    @Test
+    public void getSatelliteConfigUpdaterStats_tooFrequent() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.incTimeMillis(50L); // pull interval less than minimum
+        SatelliteConfigUpdater[] output =
+                mPersistAtomsStorage.getSatelliteConfigUpdaterStats(100L);
+
+        // Should be denied
+        assertNull(output);
+    }
+
+    @Test
+    public void getSatelliteConfigUpdaterStats_withSavedAtoms() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.incTimeMillis(100L);
+        SatelliteConfigUpdater[] satelliteConfigUpdaterStatsList1 =
+                mPersistAtomsStorage.getSatelliteConfigUpdaterStats(50L);
+        mPersistAtomsStorage.incTimeMillis(100L);
+        SatelliteConfigUpdater[] satelliteConfigUpdaterStatsList2 =
+                mPersistAtomsStorage.getSatelliteConfigUpdaterStats(50L);
+
+        // First set of results should be equal to file contents.
+        SatelliteConfigUpdater[] expectedList = new SatelliteConfigUpdater[] {
+                mSatelliteConfigUpdater1, mSatelliteConfigUpdater2};
+        assertProtoArrayEqualsIgnoringOrder(expectedList, satelliteConfigUpdaterStatsList1);
+        // Second set of results should be empty.
+        assertProtoArrayEquals(new SatelliteConfigUpdater[0], satelliteConfigUpdaterStatsList2);
+        // Corresponding pull timestamp should be updated and saved.
+        assertEquals(START_TIME_MILLIS + 200L, mPersistAtomsStorage
+                .getAtomsProto().satelliteConfigUpdaterPullTimestampMillis);
+        InOrder inOrder = inOrder(mTestFileOutputStream);
+        assertEquals(START_TIME_MILLIS + 100L,
+                getAtomsWritten(inOrder).satelliteConfigUpdaterPullTimestampMillis);
+        assertEquals(START_TIME_MILLIS + 200L,
+                getAtomsWritten(inOrder).satelliteConfigUpdaterPullTimestampMillis);
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    public void addSatelliteAccessControllerStats_emptyProto() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addSatelliteAccessControllerStats(
+                mSatelliteAccessController1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // Service state and service switch should be added successfully
+        verifyCurrentStateSavedToFileOnce();
+        SatelliteAccessController[] output =
+                mPersistAtomsStorage.getSatelliteAccessControllerStats(0L);
+        assertProtoArrayEquals(
+                new SatelliteAccessController[] {mSatelliteAccessController1}, output);
+    }
+
+    @Test
+    public void addSatelliteAccessControllerStats_tooManyEntries() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+
+        // Store atoms up to maximum number + 1
+        int maxCount = 15 + 1;
+        for (int i = 0; i < maxCount; i++) {
+            mPersistAtomsStorage
+                    .addSatelliteAccessControllerStats(//mSatelliteAccessController1);
+                            copyOf(mSatelliteAccessController1));
+            mPersistAtomsStorage.incTimeMillis(100L);
+        }
+
+        // Store 1 different atom
+        mPersistAtomsStorage
+                .addSatelliteAccessControllerStats(mSatelliteAccessController2);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        verifyCurrentStateSavedToFileOnce();
+
+        SatelliteAccessController[] result =
+                mPersistAtomsStorage.getSatelliteAccessControllerStats(0L);
+        // First atom should have count 14, the other should have 1
+        assertHasStatsAndCount(result, mSatelliteAccessController1, 14);
+        assertHasStatsAndCount(result, mSatelliteAccessController2, 1);
+    }
+
+    @Test
+    public void getSatelliteAccessControllerStats_tooFrequent() throws Exception {
+        createTestFile(START_TIME_MILLIS);
+
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.incTimeMillis(50L); // pull interval less than minimum
+        SatelliteAccessController[] output =
+                mPersistAtomsStorage.getSatelliteAccessControllerStats(100L);
+
+        // Should be denied
+        assertNull(output);
+    }
+
+    @Test
+    @SmallTest
+    public void addDataNetworkValidation_newEntry() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+
+        mPersistAtomsStorage.addDataNetworkValidation(mDataNetworkValidationLte1);
+        mPersistAtomsStorage.addDataNetworkValidation(mDataNetworkValidationIwlan1);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // There should be 2 DataNetworkValidation
+        verifyCurrentStateSavedToFileOnce();
+        DataNetworkValidation[] output = mPersistAtomsStorage.getDataNetworkValidation(0L);
+        assertProtoArrayEqualsIgnoringOrder(
+                new DataNetworkValidation[] {
+                        mDataNetworkValidationLte1, mDataNetworkValidationIwlan1},
+                output);
+    }
+
+    @Test
+    public void addDataNetworkValidation_existingEntry() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+
+        int expectedNetworkValidationCount =
+                mDataNetworkValidationLte1.networkValidationCount
+                        + mDataNetworkValidationLte2.networkValidationCount;
+
+        mPersistAtomsStorage.addDataNetworkValidation(mDataNetworkValidationLte1);
+        mPersistAtomsStorage.addDataNetworkValidation(mDataNetworkValidationLte2);
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        DataNetworkValidation expected = copyOf(mDataNetworkValidationLte1);
+        expected.networkValidationCount = expectedNetworkValidationCount;
+
+        // There should be 1 DataNetworkValidation
+        verifyCurrentStateSavedToFileOnce();
+        DataNetworkValidation[] output =
+                mPersistAtomsStorage.getDataNetworkValidation(0L);
+        assertProtoArrayEqualsIgnoringOrder(
+                new DataNetworkValidation[] {expected},
+                output);
+    }
+
+    @Test
+    public void addDataNetworkValidation_tooManyEntries() throws Exception {
+
+        // Set up
+        doReturn(false).when(mPackageManager).hasSystemFeature(anyString());
+
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+
+        // Currently, the maximum number that can be stored for DataNetworkValidation in Atom
+        // storage is 15. Try saving excess.
+        int maxNumDataNetworkValidation = 20;
+        mPersistAtomsStorage.addDataNetworkValidation(mDataNetworkValidationLte1);
+        for (int i = 0; i < maxNumDataNetworkValidation; i++) {
+            DataNetworkValidation copied = copyOf(mDataNetworkValidationLte1);
+            copied.apnTypeBitmask = mDataNetworkValidationLte1.apnTypeBitmask + i;
+            mPersistAtomsStorage.addDataNetworkValidation(copied);
+        }
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        // There should be less than or equal to maxNumDataNetworkValidation
+        verifyCurrentStateSavedToFileOnce();
+        DataNetworkValidation[] output =
+                mPersistAtomsStorage.getDataNetworkValidation(0L);
+        assertTrue(output.length <= maxNumDataNetworkValidation);
+    }
+
+    @Test
     @SmallTest
     public void clearAtoms() throws Exception {
         createTestFile(START_TIME_MILLIS);
@@ -4398,6 +5436,17 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         atoms.satelliteProvisionPullTimestampMillis = lastPullTimeMillis;
         atoms.satelliteSosMessageRecommender = mSatelliteSosMessageRecommenders;
         atoms.satelliteSosMessageRecommenderPullTimestampMillis = lastPullTimeMillis;
+        atoms.dataNetworkValidation = mDataNetworkValidations;
+        atoms.dataNetworkValidationPullTimestampMillis = lastPullTimeMillis;
+        atoms.carrierRoamingSatelliteSession = mCarrierRoamingSatelliteSessions;
+        atoms.carrierRoamingSatelliteSessionPullTimestampMillis = lastPullTimeMillis;
+        atoms.carrierRoamingSatelliteControllerStats = mCarrierRoamingSatelliteControllerStats;
+        atoms.carrierRoamingSatelliteControllerStatsPullTimestampMillis = lastPullTimeMillis;
+        atoms.satelliteEntitlement = mSatelliteEntitlements;
+        atoms.satelliteEntitlementPullTimestampMillis = lastPullTimeMillis;
+        atoms.satelliteConfigUpdater = mSatelliteConfigUpdaters;
+        atoms.satelliteConfigUpdaterPullTimestampMillis = lastPullTimeMillis;
+        atoms.satelliteAccessControllerPullTimestampMillis = lastPullTimeMillis;
         FileOutputStream stream = new FileOutputStream(mTestFile);
         stream.write(PersistAtoms.toByteArray(atoms));
         stream.close();
@@ -4516,6 +5565,16 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         return SipTransportSession.parseFrom(MessageNano.toByteArray(source));
     }
 
+    private static IncomingSms copyOf(IncomingSms source)
+            throws Exception {
+        return IncomingSms.parseFrom(MessageNano.toByteArray(source));
+    }
+
+    private static OutgoingSms copyOf(OutgoingSms source)
+            throws Exception {
+        return OutgoingSms.parseFrom(MessageNano.toByteArray(source));
+    }
+
     private static OutgoingShortCodeSms copyOf(OutgoingShortCodeSms source)
             throws Exception {
         return OutgoingShortCodeSms.parseFrom(MessageNano.toByteArray(source));
@@ -4549,6 +5608,34 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     private static SatelliteSosMessageRecommender copyOf(SatelliteSosMessageRecommender source)
             throws Exception {
         return SatelliteSosMessageRecommender.parseFrom(MessageNano.toByteArray(source));
+    }
+
+    private static DataNetworkValidation copyOf(DataNetworkValidation source)
+            throws Exception {
+        return DataNetworkValidation.parseFrom(MessageNano.toByteArray(source));
+    }
+
+    private static CarrierRoamingSatelliteSession copyOf(CarrierRoamingSatelliteSession source)
+            throws Exception {
+        return CarrierRoamingSatelliteSession.parseFrom(MessageNano.toByteArray(source));
+    }
+
+    private static CarrierRoamingSatelliteControllerStats copyOf(
+            CarrierRoamingSatelliteControllerStats source) throws Exception {
+        return CarrierRoamingSatelliteControllerStats.parseFrom(MessageNano.toByteArray(source));
+    }
+
+    private static SatelliteEntitlement copyOf(SatelliteEntitlement source) throws Exception {
+        return SatelliteEntitlement.parseFrom(MessageNano.toByteArray(source));
+    }
+
+    private static SatelliteConfigUpdater copyOf(SatelliteConfigUpdater source) throws Exception {
+        return SatelliteConfigUpdater.parseFrom(MessageNano.toByteArray(source));
+    }
+
+    private static SatelliteAccessController copyOf(SatelliteAccessController source)
+            throws Exception {
+        return SatelliteAccessController.parseFrom(MessageNano.toByteArray(source));
     }
 
     private void assertAllPullTimestampEquals(long timestamp) {
@@ -4726,6 +5813,18 @@ public class PersistAtomsStorageTest extends TelephonyTest {
                 expectedStats.totalBatteryConsumptionPercent);
         assertEquals(tested[0].totalBatteryChargedTimeSec,
                 expectedStats.totalBatteryChargedTimeSec);
+        assertEquals(tested[0].countOfDemoModeSatelliteServiceEnablementsSuccess,
+                expectedStats.countOfDemoModeSatelliteServiceEnablementsSuccess);
+        assertEquals(tested[0].countOfDemoModeSatelliteServiceEnablementsFail,
+                expectedStats.countOfDemoModeSatelliteServiceEnablementsFail);
+        assertEquals(tested[0].countOfDemoModeOutgoingDatagramSuccess,
+                expectedStats.countOfDemoModeOutgoingDatagramSuccess);
+        assertEquals(tested[0].countOfDemoModeOutgoingDatagramFail,
+                expectedStats.countOfDemoModeOutgoingDatagramFail);
+        assertEquals(tested[0].countOfDemoModeIncomingDatagramSuccess,
+                expectedStats.countOfDemoModeIncomingDatagramSuccess);
+        assertEquals(tested[0].countOfDemoModeIncomingDatagramFail,
+                expectedStats.countOfDemoModeIncomingDatagramFail);
     }
 
     private static void assertHasStatsAndCount(
@@ -4736,7 +5835,23 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         for (SatelliteSession stats : tested) {
             if (stats.satelliteServiceInitializationResult
                     == expectedStats.satelliteServiceInitializationResult
-                    && stats.satelliteTechnology == expectedStats.satelliteTechnology) {
+                    && stats.satelliteTechnology == expectedStats.satelliteTechnology
+                    && stats.satelliteServiceTerminationResult
+                        == expectedStats.satelliteServiceTerminationResult
+                    && stats.initializationProcessingTimeMillis
+                        == expectedStats.initializationProcessingTimeMillis
+                    && stats.terminationProcessingTimeMillis
+                        == expectedStats.terminationProcessingTimeMillis
+                    && stats.sessionDurationSeconds == expectedStats.sessionDurationSeconds
+                    && stats.countOfOutgoingDatagramSuccess
+                        == expectedStats.countOfOutgoingDatagramSuccess
+                    && stats.countOfOutgoingDatagramFailed
+                        == expectedStats.countOfOutgoingDatagramFailed
+                    && stats.countOfIncomingDatagramSuccess
+                        == expectedStats.countOfIncomingDatagramSuccess
+                    && stats.countOfIncomingDatagramFailed
+                        == expectedStats.countOfIncomingDatagramFailed
+                    && stats.isDemoMode == expectedStats.isDemoMode) {
                 actualCount = stats.count;
             }
         }
@@ -4752,7 +5867,8 @@ public class PersistAtomsStorageTest extends TelephonyTest {
             if (stats.resultCode == expectedStats.resultCode
                     && stats.datagramSizeBytes == expectedStats.datagramSizeBytes
                     && stats.datagramTransferTimeMillis
-                        == expectedStats.datagramTransferTimeMillis) {
+                        == expectedStats.datagramTransferTimeMillis
+                    && stats.isDemoMode == expectedStats.isDemoMode) {
                 actualCount++;
             }
         }
@@ -4769,7 +5885,8 @@ public class PersistAtomsStorageTest extends TelephonyTest {
                     && stats.resultCode == expectedStats.resultCode
                     && stats.datagramSizeBytes == expectedStats.datagramSizeBytes
                     && stats.datagramTransferTimeMillis
-                        == expectedStats.datagramTransferTimeMillis) {
+                        == expectedStats.datagramTransferTimeMillis
+                    && stats.isDemoMode == expectedStats.isDemoMode) {
                 actualCount++;
             }
         }
@@ -4808,6 +5925,28 @@ public class PersistAtomsStorageTest extends TelephonyTest {
                     && stats.isSatelliteAllowedInCurrentLocation
                     == expectedStats.isSatelliteAllowedInCurrentLocation) {
                 actualCount = stats.count;
+            }
+        }
+        assertEquals(expectedCount, actualCount);
+    }
+
+    private static void assertHasStatsAndCount(
+            SatelliteAccessController[] tested,
+            @Nullable SatelliteAccessController expectedStats, int expectedCount) {
+        assertNotNull(tested);
+        int actualCount = 0;
+        for (SatelliteAccessController stats : tested) {
+            if (stats.accessControlType
+                    == expectedStats.accessControlType
+                    && stats.locationQueryTimeMillis == expectedStats.locationQueryTimeMillis
+                    && stats.onDeviceLookupTimeMillis == expectedStats.onDeviceLookupTimeMillis
+                    && stats.totalCheckingTimeMillis == expectedStats.totalCheckingTimeMillis
+                    && stats.isAllowed == expectedStats.isAllowed
+                    && stats.isEmergency == expectedStats.isEmergency
+                    && stats.resultCode == expectedStats.resultCode
+                    && Arrays.equals(stats.countryCodes, expectedStats.countryCodes)
+                    && stats.configDataSource == expectedStats.configDataSource) {
+                actualCount++;
             }
         }
         assertEquals(expectedCount, actualCount);
@@ -4949,6 +6088,65 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     }
 
     private static void assertHasStatsAndCount(
+            IncomingSms[] incomingSmsList,
+            @Nullable IncomingSms expectedIncomingSms, int expectedCount) {
+        assertNotNull(incomingSmsList);
+        int actualCount = -1;
+        for (IncomingSms incomingSms : incomingSmsList) {
+            if (incomingSms.smsFormat == expectedIncomingSms.smsFormat
+                    && incomingSms.smsTech == expectedIncomingSms.smsTech
+                    && incomingSms.rat == expectedIncomingSms.rat
+                    && incomingSms.smsType == expectedIncomingSms.smsType
+                    && incomingSms.totalParts == expectedIncomingSms.totalParts
+                    && incomingSms.receivedParts == expectedIncomingSms.receivedParts
+                    && incomingSms.blocked == expectedIncomingSms.blocked
+                    && incomingSms.error == expectedIncomingSms.error
+                    && incomingSms.isRoaming == expectedIncomingSms.isRoaming
+                    && incomingSms.simSlotIndex == expectedIncomingSms.simSlotIndex
+                    && incomingSms.isMultiSim == expectedIncomingSms.isMultiSim
+                    && incomingSms.isEsim == expectedIncomingSms.isEsim
+                    && incomingSms.carrierId == expectedIncomingSms.carrierId
+                    && incomingSms.messageId == expectedIncomingSms.messageId
+                    && incomingSms.isManagedProfile == expectedIncomingSms.isManagedProfile
+                    && incomingSms.isNtn == expectedIncomingSms.isNtn
+                    && incomingSms.isEmergency == expectedIncomingSms.isEmergency) {
+                actualCount = incomingSms.count;
+            }
+        }
+        assertEquals(expectedCount, actualCount);
+    }
+
+    private static void assertHasStatsAndCount(
+            OutgoingSms[] outgoingSmsList,
+            @Nullable OutgoingSms expectedOutgoingSms, int expectedCount) {
+        assertNotNull(outgoingSmsList);
+        int actualCount = -1;
+        for (OutgoingSms outgoingSms : outgoingSmsList) {
+            if (outgoingSms.smsFormat == expectedOutgoingSms.smsFormat
+                    && outgoingSms.smsTech == expectedOutgoingSms.smsTech
+                    && outgoingSms.rat == expectedOutgoingSms.rat
+                    && outgoingSms.sendResult == expectedOutgoingSms.sendResult
+                    && outgoingSms.errorCode == expectedOutgoingSms.errorCode
+                    && outgoingSms.isRoaming == expectedOutgoingSms.isRoaming
+                    && outgoingSms.isFromDefaultApp == expectedOutgoingSms.isFromDefaultApp
+                    && outgoingSms.simSlotIndex == expectedOutgoingSms.simSlotIndex
+                    && outgoingSms.isMultiSim == expectedOutgoingSms.isMultiSim
+                    && outgoingSms.carrierId == expectedOutgoingSms.carrierId
+                    && outgoingSms.messageId == expectedOutgoingSms.messageId
+                    && outgoingSms.retryId == expectedOutgoingSms.retryId
+                    && outgoingSms.intervalMillis == expectedOutgoingSms.intervalMillis
+                    && outgoingSms.sendErrorCode == expectedOutgoingSms.sendErrorCode
+                    && outgoingSms.networkErrorCode == expectedOutgoingSms.networkErrorCode
+                    && outgoingSms.isManagedProfile == expectedOutgoingSms.isManagedProfile
+                    && outgoingSms.isEmergency == expectedOutgoingSms.isEmergency
+                    && outgoingSms.isNtn == expectedOutgoingSms.isNtn) {
+                actualCount = outgoingSms.count;
+            }
+        }
+        assertEquals(expectedCount, actualCount);
+    }
+
+    private static void assertHasStatsAndCount(
             OutgoingShortCodeSms[] outgoingShortCodeSmsList,
             @Nullable OutgoingShortCodeSms expectedOutgoingShortCodeSms, int expectedCount) {
         assertNotNull(outgoingShortCodeSmsList);
@@ -4957,6 +6155,84 @@ public class PersistAtomsStorageTest extends TelephonyTest {
             if (outgoingShortCodeSms.category == expectedOutgoingShortCodeSms.category
                     && outgoingShortCodeSms.xmlVersion == expectedOutgoingShortCodeSms.xmlVersion) {
                 actualCount = outgoingShortCodeSms.shortCodeSmsCount;
+            }
+        }
+        assertEquals(expectedCount, actualCount);
+    }
+
+    private static void assertHasStatsAndCount(CarrierRoamingSatelliteSession[] tested,
+            @Nullable CarrierRoamingSatelliteSession expectedStats, int expectedCount) {
+        assertNotNull(tested);
+        int actualCount = 0;
+        for (CarrierRoamingSatelliteSession stats : tested) {
+            if (stats.carrierId == expectedStats.carrierId
+                    && stats.isNtnRoamingInHomeCountry == expectedStats.isNtnRoamingInHomeCountry
+                    && stats.totalSatelliteModeTimeSec == expectedStats.totalSatelliteModeTimeSec
+                    && stats.numberOfSatelliteConnections
+                    == expectedStats.numberOfSatelliteConnections
+                    && stats.avgDurationOfSatelliteConnectionSec
+                    == expectedStats.avgDurationOfSatelliteConnectionSec
+                    && stats.satelliteConnectionGapMinSec
+                    == expectedStats.satelliteConnectionGapMinSec
+                    && stats.satelliteConnectionGapAvgSec
+                    == expectedStats.satelliteConnectionGapAvgSec
+                    && stats.satelliteConnectionGapMaxSec
+                    == expectedStats.satelliteConnectionGapMaxSec
+                    && stats.rsrpAvg == expectedStats.rsrpAvg
+                    && stats.rsrpMedian == expectedStats.rsrpMedian
+                    && stats.rssnrAvg == expectedStats.rssnrAvg
+                    && stats.rssnrMedian == expectedStats.rssnrMedian
+                    && stats.countOfIncomingSms == expectedStats.countOfIncomingSms
+                    && stats.countOfOutgoingSms == expectedStats.countOfOutgoingSms
+                    && stats.countOfIncomingMms == expectedStats.countOfIncomingMms
+                    && stats.countOfOutgoingMms == expectedStats.countOfOutgoingMms) {
+                actualCount++;
+            }
+        }
+        assertEquals(expectedCount, actualCount);
+    }
+
+    private static void assertHasStats(CarrierRoamingSatelliteControllerStats[] tested,
+            @Nullable CarrierRoamingSatelliteControllerStats expectedStats) {
+        assertNotNull(tested);
+        assertEquals(tested[0].configDataSource, expectedStats.configDataSource);
+        assertEquals(tested[0].countOfEntitlementStatusQueryRequest,
+                expectedStats.countOfEntitlementStatusQueryRequest);
+        assertEquals(tested[0].countOfSatelliteConfigUpdateRequest,
+                expectedStats.countOfSatelliteConfigUpdateRequest);
+        assertEquals(tested[0].countOfSatelliteNotificationDisplayed,
+                expectedStats.countOfSatelliteNotificationDisplayed);
+        assertEquals(tested[0].satelliteSessionGapMinSec, expectedStats.satelliteSessionGapMinSec);
+        assertEquals(tested[0].satelliteSessionGapAvgSec, expectedStats.satelliteSessionGapAvgSec);
+        assertEquals(tested[0].satelliteSessionGapMaxSec, expectedStats.satelliteSessionGapMaxSec);
+    }
+
+    private static void assertHasStatsAndCount(
+            SatelliteEntitlement[] tested,
+            @Nullable SatelliteEntitlement expectedStats, int expectedCount) {
+        assertNotNull(tested);
+        int actualCount = 0;
+        for (SatelliteEntitlement stats : tested) {
+            if (stats.carrierId == expectedStats.carrierId
+                    && stats.result == expectedStats.result
+                    && stats.entitlementStatus == expectedStats.entitlementStatus
+                    && stats.isRetry == expectedStats.isRetry) {
+                actualCount = stats.count;
+            }
+        }
+        assertEquals(expectedCount, actualCount);
+    }
+
+    private static void assertHasStatsAndCount(
+            SatelliteConfigUpdater[] tested,
+            @Nullable SatelliteConfigUpdater expectedStats, int expectedCount) {
+        assertNotNull(tested);
+        int actualCount = 0;
+        for (SatelliteConfigUpdater stats : tested) {
+            if (stats.configVersion == expectedStats.configVersion
+                    && stats.oemConfigResult == expectedStats.oemConfigResult
+                    && stats.carrierConfigResult == expectedStats.carrierConfigResult) {
+                actualCount = stats.count;
             }
         }
         assertEquals(expectedCount, actualCount);
