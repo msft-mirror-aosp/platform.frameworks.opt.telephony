@@ -285,7 +285,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private void handleSatelliteProvisionStateChangedEvent(boolean provisioned) {
         if (!provisioned) {
-            cleanUpResources();
+            cleanUpResources(false);
         }
     }
 
@@ -336,8 +336,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
                     + ", isCellularAvailable=" + isCellularAvailable
                     + ", isSatelliteAllowed=" + isSatelliteAllowed()
                     + ", shouldTrackCall=" + shouldTrackCall(mEmergencyConnection.getState()));
-            reportESosRecommenderDecision(isDialerNotified);
-            cleanUpResources();
+            cleanUpResources(isDialerNotified);
         }
     }
 
@@ -388,13 +387,12 @@ public class SatelliteSOSMessageRecommender extends Handler {
              * we're not tracking. There must be some unexpected things happened in
              * TelephonyConnectionService. Thus, we need to clean up the resources.
              */
-            cleanUpResources();
+            cleanUpResources(false);
             return;
         }
 
         if (!shouldTrackCall(state)) {
-            reportESosRecommenderDecision(false);
-            cleanUpResources();
+            cleanUpResources(false);
         } else {
             // Location service will enter emergency mode only when connection state changes to
             // STATE_DIALING
@@ -405,7 +403,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
         }
     }
 
-    private void reportESosRecommenderDecision(boolean isDialerNotified) {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected void reportESosRecommenderDecision(boolean isDialerNotified) {
         SatelliteStats.getInstance().onSatelliteSosMessageRecommender(
                 new SatelliteStats.SatelliteSosMessageRecommenderParams.Builder()
                         .setDisplaySosMessageSent(isDialerNotified)
@@ -419,8 +418,9 @@ public class SatelliteSOSMessageRecommender extends Handler {
                         .setCarrierId(getAvailableNtnCarrierID()).build());
     }
 
-    private void cleanUpResources() {
+    private void cleanUpResources(boolean isDialerNotified) {
         plogd("cleanUpResources");
+        reportESosRecommenderDecision(isDialerNotified);
         synchronized (mLock) {
             stopTimer();
             if (mEmergencyConnection != null) {
