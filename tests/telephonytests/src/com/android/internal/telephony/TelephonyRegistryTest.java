@@ -981,6 +981,8 @@ public class TelephonyRegistryTest extends TelephonyTest {
 
         mApplicationInfo.targetSdkVersion = Build.VERSION_CODES.TIRAMISU;
         doReturn(mApplicationInfo).when(mPackageManager).getApplicationInfo(anyString(), anyInt());
+        doReturn(mApplicationInfo).when(mPackageManager).getApplicationInfoAsUser(
+                anyString(), anyInt(), any(UserHandle.class));
         mContextFixture.addCallingOrSelfPermission("");
         mContextFixture.addCallingOrSelfPermission(android.Manifest.permission.MODIFY_PHONE_STATE);
         mContextFixture.addCallingOrSelfPermission(
@@ -1077,6 +1079,8 @@ public class TelephonyRegistryTest extends TelephonyTest {
 
         mApplicationInfo.targetSdkVersion = Build.VERSION_CODES.TIRAMISU;
         doReturn(mApplicationInfo).when(mPackageManager).getApplicationInfo(anyString(), anyInt());
+        doReturn(mApplicationInfo).when(mPackageManager).getApplicationInfoAsUser(
+                anyString(), anyInt(), any(UserHandle.class));
         mContextFixture.addCallingOrSelfPermission("");
         mContextFixture.addCallingOrSelfPermission(android.Manifest.permission.MODIFY_PHONE_STATE);
         mContextFixture.addCallingOrSelfPermission(
