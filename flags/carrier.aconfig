@@ -1,0 +1,11 @@
+package: "com.android.internal.telephony.flags"
+container: "system"
+
+# OWNER=nharold TARGET=24Q4
+flag {
+    name: "async_init_carrier_privileges_tracker"
+    is_exported: true
+    namespace: "telephony"
+    description: "Offload the heavyweight initialization of CarrierPrivilegesTracker to a worker thread"
+    bug:"357096337"
+}
