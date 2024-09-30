@@ -2930,6 +2930,21 @@ public class SatelliteController extends Handler {
     }
 
     /**
+     * This API can be used by only CTS to control ingoring cellular service state event.
+     *
+     * @param enabled Whether to enable boolean config.
+     * @return {@code true} if the value is set successfully, {@code false} otherwise.
+     */
+    public boolean setSatelliteIgnoreCellularServiceState(boolean enabled) {
+        plogd("setSatelliteIgnoreCellularServiceState - " + enabled);
+        if (mSatelliteSessionController == null) {
+            ploge("setSatelliteIgnoreCellularServiceState is not initialized yet");
+            return false;
+        }
+        return mSatelliteSessionController.setSatelliteIgnoreCellularServiceState(enabled);
+    }
+
+    /**
      * This API can be used by only CTS to override timeout durations used by DatagramController
      * module.
      *
@@ -4823,6 +4838,17 @@ public class SatelliteController extends Handler {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
     public boolean isSatelliteEsosSupported(int subId) {
         return getConfigForSubId(subId).getBoolean(KEY_SATELLITE_ESOS_SUPPORTED_BOOL);
+    }
+
+    /**
+     * Return whether the device allows to turn off satellite session for emergency call.
+     *
+     * @param subId Associated subscription ID
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public boolean turnOffSatelliteSessionForEmergencyCall(int subId) {
+        return getConfigForSubId(subId).getBoolean(
+                KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL);
     }
 
     private int getCarrierRoamingNtnConnectType(int subId) {
