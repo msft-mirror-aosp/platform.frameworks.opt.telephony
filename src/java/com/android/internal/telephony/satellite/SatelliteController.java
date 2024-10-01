@@ -2094,13 +2094,15 @@ public class SatelliteController extends Handler {
      *
      * @return {@code true} if the satellite modem is enabled and {@code false} otherwise.
      */
-    public boolean isSatelliteEnabled() {
+    private boolean isSatelliteEnabled() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("isSatelliteEnabled: oemEnabledSatelliteFlag is disabled");
             return false;
         }
-        if (mIsSatelliteEnabled == null) return false;
-        return mIsSatelliteEnabled;
+        synchronized (mIsSatelliteEnabledLock) {
+            if (mIsSatelliteEnabled == null) return false;
+            return mIsSatelliteEnabled;
+        }
     }
 
     /**
@@ -2108,7 +2110,7 @@ public class SatelliteController extends Handler {
      *
      * @return {@code true} if the satellite modem is being enabled and {@code false} otherwise.
      */
-    public boolean isSatelliteBeingEnabled() {
+    private boolean isSatelliteBeingEnabled() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("isSatelliteBeingEnabled: oemEnabledSatelliteFlag is disabled");
             return false;
@@ -2118,6 +2120,17 @@ public class SatelliteController extends Handler {
             return mSatelliteSessionController.isInEnablingState();
         }
         return false;
+    }
+
+    /**
+     * Get whether the satellite modem is enabled or being enabled.
+     * This will return the cached value instead of querying the satellite modem.
+     *
+     * @return {@code true} if the satellite modem is enabled or being enabled, {@code false}
+     * otherwise.
+     */
+    public boolean isSatelliteEnabledOrBeingEnabled() {
+        return isSatelliteEnabled() || isSatelliteBeingEnabled();
     }
 
     /**
@@ -3502,7 +3515,7 @@ public class SatelliteController extends Handler {
             return false;
         }
 
-        if (!isSatelliteEnabled()) {
+        if (!isSatelliteEnabledOrBeingEnabled()) {
             plogd("iisInCarrierRoamingNbIotNtn: satellite is disabled");
             return false;
         }
@@ -4139,7 +4152,7 @@ public class SatelliteController extends Handler {
                 mWaitingForSatelliteModemOff = false;
             }
         } else {
-            if (isSatelliteEnabled() || isSatelliteBeingEnabled() || isSatelliteBeingDisabled()) {
+            if (isSatelliteEnabledOrBeingEnabled() || isSatelliteBeingDisabled()) {
                 notifyModemStateChangedToSessionController(state);
             } else {
                 // Telephony framework and modem are out of sync. We need to disable modem
@@ -5629,7 +5642,7 @@ public class SatelliteController extends Handler {
             return;
         }
 
-        if (!isSatelliteEnabled()) {
+        if (!isSatelliteEnabledOrBeingEnabled()) {
             plogd("handleCmdUpdateNtnSignalStrengthReporting: ignore request, satellite is "
                     + "disabled");
             return;
