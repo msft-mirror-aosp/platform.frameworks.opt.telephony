@@ -986,6 +986,9 @@ public class SatelliteSessionController extends StateMachine {
                         @Override
                         public void accept(int result) {
                             plogd("requestSatelliteEnabled result=" + result);
+                            if (result == SatelliteManager.SATELLITE_RESULT_SUCCESS) {
+                                mSessionMetricsStats.addCountOfAutoExitDueToTnNetwork();
+                            }
                         }
                     });
         }
@@ -1710,7 +1713,6 @@ public class SatelliteSessionController extends StateMachine {
                         if (result == SATELLITE_RESULT_SUCCESS) {
                             mSessionMetricsStats.addCountOfAutoExitDueToScreenOff();
                         }
-                        // TODO(b/364738085): Add CountOfAutoExitDueToTnNetwork
                     }
                 });
     }
