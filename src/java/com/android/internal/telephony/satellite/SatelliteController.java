@@ -573,6 +573,7 @@ public class SatelliteController extends Handler {
     private static final String HOW_IT_WORKS_BUTTON = "how_it_works_button";
     private static final String ACTION_NOTIFICATION_CLICK = "action_notification_click";
     private static final String ACTION_NOTIFICATION_DISMISS = "action_notification_dismiss";
+    private AtomicBoolean mOverrideNtnEligibility;
     private BroadcastReceiver
             mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
                 @Override
@@ -2094,13 +2095,15 @@ public class SatelliteController extends Handler {
      *
      * @return {@code true} if the satellite modem is enabled and {@code false} otherwise.
      */
-    public boolean isSatelliteEnabled() {
+    private boolean isSatelliteEnabled() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("isSatelliteEnabled: oemEnabledSatelliteFlag is disabled");
             return false;
         }
-        if (mIsSatelliteEnabled == null) return false;
-        return mIsSatelliteEnabled;
+        synchronized (mIsSatelliteEnabledLock) {
+            if (mIsSatelliteEnabled == null) return false;
+            return mIsSatelliteEnabled;
+        }
     }
 
     /**
@@ -2108,7 +2111,7 @@ public class SatelliteController extends Handler {
      *
      * @return {@code true} if the satellite modem is being enabled and {@code false} otherwise.
      */
-    public boolean isSatelliteBeingEnabled() {
+    private boolean isSatelliteBeingEnabled() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("isSatelliteBeingEnabled: oemEnabledSatelliteFlag is disabled");
             return false;
@@ -2118,6 +2121,17 @@ public class SatelliteController extends Handler {
             return mSatelliteSessionController.isInEnablingState();
         }
         return false;
+    }
+
+    /**
+     * Get whether the satellite modem is enabled or being enabled.
+     * This will return the cached value instead of querying the satellite modem.
+     *
+     * @return {@code true} if the satellite modem is enabled or being enabled, {@code false}
+     * otherwise.
+     */
+    public boolean isSatelliteEnabledOrBeingEnabled() {
+        return isSatelliteEnabled() || isSatelliteBeingEnabled();
     }
 
     /**
@@ -3502,7 +3516,7 @@ public class SatelliteController extends Handler {
             return false;
         }
 
-        if (!isSatelliteEnabled()) {
+        if (!isSatelliteEnabledOrBeingEnabled()) {
             plogd("iisInCarrierRoamingNbIotNtn: satellite is disabled");
             return false;
         }
@@ -4139,7 +4153,7 @@ public class SatelliteController extends Handler {
                 mWaitingForSatelliteModemOff = false;
             }
         } else {
-            if (isSatelliteEnabled() || isSatelliteBeingEnabled() || isSatelliteBeingDisabled()) {
+            if (isSatelliteEnabledOrBeingEnabled() || isSatelliteBeingDisabled()) {
                 notifyModemStateChangedToSessionController(state);
             } else {
                 // Telephony framework and modem are out of sync. We need to disable modem
@@ -5347,6 +5361,11 @@ public class SatelliteController extends Handler {
             return;
         }
 
+        if (mOverrideNtnEligibility != null) {
+            mSatellitePhone.notifyCarrierRoamingNtnEligibleStateChanged(currentNtnEligibility);
+            return;
+        }
+
         synchronized (mSatellitePhoneLock) {
             if (mSatellitePhone == null) {
                 ploge("notifyNtnEligibility: mSatellitePhone is null");
@@ -5629,7 +5648,7 @@ public class SatelliteController extends Handler {
             return;
         }
 
-        if (!isSatelliteEnabled()) {
+        if (!isSatelliteEnabledOrBeingEnabled()) {
             plogd("handleCmdUpdateNtnSignalStrengthReporting: ignore request, satellite is "
                     + "disabled");
             return;
@@ -6516,6 +6535,11 @@ public class SatelliteController extends Handler {
             return false;
         }
 
+        if (mOverrideNtnEligibility != null) {
+            // TODO need to send the value from `mOverrideNtnEligibility` or simply true ?
+            return true;
+        }
+
         if (SatelliteServiceUtils.isCellularAvailable()) {
             plogd("isCarrierRoamingNtnEligible[phoneId=" + phone.getPhoneId()
                     + "]: cellular is available");
@@ -6744,5 +6768,30 @@ public class SatelliteController extends Handler {
         synchronized (mSatelliteEnabledRequestLock) {
             return !mWaitingForSatelliteModemOff;
         }
+    }
+
+    /**
+     * Method to override the Carrier roaming Non-terrestrial network eligibility check
+     *
+     * @param state         flag to enable or disable the Ntn eligibility check.
+     * @param resetRequired reset overriding the check with adb command.
+     */
+    public boolean overrideCarrierRoamingNtnEligibilityChanged(boolean state,
+            boolean resetRequired) {
+        Log.d(TAG, "overrideCarrierRoamingNtnEligibilityChanged state = " + state
+                + "  resetRequired = " + resetRequired);
+        if (resetRequired) {
+            mOverrideNtnEligibility = null;
+        } else {
+            if (mOverrideNtnEligibility == null) {
+                mOverrideNtnEligibility = new AtomicBoolean(state);
+            } else {
+                mOverrideNtnEligibility.set(state);
+            }
+            if (this.mSatellitePhone != null) {
+                updateLastNotifiedNtnEligibilityAndNotify(state);
+            }
+        }
+        return true;
     }
 }
