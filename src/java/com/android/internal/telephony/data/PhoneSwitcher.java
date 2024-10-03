@@ -1491,14 +1491,18 @@ public class PhoneSwitcher extends Handler {
             mPreferredDataPhoneId = mEmergencyOverride.mPhoneId;
             mLastSwitchPreferredDataReason = DataSwitch.Reason.DATA_SWITCH_REASON_UNKNOWN;
         } else {
-            int imsRegTech = mImsRegTechProvider.get(mContext, mPhoneIdInVoiceCall);
-            if (isAnyVoiceCallActiveOnDevice() && imsRegTech != REGISTRATION_TECH_IWLAN) {
-                if (imsRegTech != REGISTRATION_TECH_CROSS_SIM) {
-                    mPreferredDataPhoneId = shouldSwitchDataDueToInCall()
-                            ? mPhoneIdInVoiceCall : getFallbackDataPhoneIdForInternetRequests();
+            if (isAnyVoiceCallActiveOnDevice()) {
+                int imsRegTech = mImsRegTechProvider.get(mContext, mPhoneIdInVoiceCall);
+                if (imsRegTech != REGISTRATION_TECH_IWLAN) {
+                    if (imsRegTech != REGISTRATION_TECH_CROSS_SIM) {
+                        mPreferredDataPhoneId = shouldSwitchDataDueToInCall()
+                                ? mPhoneIdInVoiceCall : getFallbackDataPhoneIdForInternetRequests();
+                    } else {
+                        logl("IMS call on cross-SIM, skip switching data to phone "
+                                + mPhoneIdInVoiceCall);
+                    }
                 } else {
-                    logl("IMS call on cross-SIM, skip switching data to phone "
-                            + mPhoneIdInVoiceCall);
+                    mPreferredDataPhoneId = getFallbackDataPhoneIdForInternetRequests();
                 }
             } else {
                 mPreferredDataPhoneId = getFallbackDataPhoneIdForInternetRequests();
