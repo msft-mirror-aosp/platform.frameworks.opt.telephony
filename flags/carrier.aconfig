@@ -9,3 +9,15 @@ flag {
     description: "Offload the heavyweight initialization of CarrierPrivilegesTracker to a worker thread"
     bug:"357096337"
 }
+
+# OWNER=melhuishj TARGET=25Q1
+flag {
+    name: "cleanup_carrier_app_update_enabled_state_logic"
+    is_exported: true
+    namespace: "telephony"
+    description: "Improve readability of update state logic"
+    bug:"232141900"
+    metadata {
+      purpose: PURPOSE_BUGFIX
+    }
+}
