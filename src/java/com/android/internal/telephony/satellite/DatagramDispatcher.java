@@ -1060,7 +1060,7 @@ public class DatagramDispatcher extends Handler {
         SatelliteController.getInstance().startPointingUI();
 
         int subId = satellitePhone.getSubId();
-        long messageId = pendingSms.messageId;
+        long messageId = pendingSms.uniqueMessageId;
         plogd("sendSms: subId=" + subId + " messageId:" + messageId);
 
         synchronized (mLock) {
