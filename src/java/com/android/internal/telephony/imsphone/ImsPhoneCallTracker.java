@@ -2884,7 +2884,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         boolean rejectCall = false;
 
         if (mFeatureFlags.preventHangupDuringCallMerge()) {
-            if (imsCall.isCallSessionMergePending()) {
+            if (imsCall != null && imsCall.isCallSessionMergePending()) {
                 if (DBG) log("hangup call failed during call merge");
 
                 throw new CallStateException("can not hangup during call merge");
