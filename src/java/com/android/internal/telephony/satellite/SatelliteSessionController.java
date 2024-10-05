@@ -1558,8 +1558,13 @@ public class SatelliteSessionController extends StateMachine {
             return;
         }
 
+        if (!mSatelliteController.isInCarrierRoamingNbIotNtn()) {
+            logd("registerScreenOnOffChanged: device is not in CarrierRoamingNbIotNtn");
+            return;
+        }
+
         if (mSatelliteController.getRequestIsEmergency()) {
-            if (DBG) logd("registerScreenOnOffChanged: Emergency mode");
+            logd("registerScreenOnOffChanged: not register, device is in Emergency mode");
             // screen on/off timer is available in not emergency mode
             return;
         }
