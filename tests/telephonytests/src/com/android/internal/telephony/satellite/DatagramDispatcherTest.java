@@ -824,7 +824,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -858,7 +858,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, false);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, false);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -1056,7 +1056,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -1107,7 +1107,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
         processAllMessages();
         verifyZeroInteractions(mMockSatelliteModemInterface);
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
         processAllMessages();
         mInOrder.verify(mMockDatagramController)
                 .updateSendStatus(eq(SUB_ID), eq(datagramTypeSms),
