@@ -1450,8 +1450,8 @@ public class SubscriptionManagerService extends ISub.Stub {
             SatelliteController satelliteController = SatelliteController.getInstance();
             boolean isSatelliteEnabledOrBeingEnabled = false;
             if (satelliteController != null) {
-                isSatelliteEnabledOrBeingEnabled = satelliteController.isSatelliteEnabled()
-                        || satelliteController.isSatelliteBeingEnabled();
+                isSatelliteEnabledOrBeingEnabled =
+                        satelliteController.isSatelliteEnabledOrBeingEnabled();
             }
 
             if (!isSatelliteEnabledOrBeingEnabled) {
