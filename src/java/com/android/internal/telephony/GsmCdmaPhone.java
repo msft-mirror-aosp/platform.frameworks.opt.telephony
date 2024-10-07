@@ -390,8 +390,9 @@ public class GsmCdmaPhone extends Phone {
                 .makeDataNetworkController(this, getLooper(), featureFlags);
 
         mCarrierResolver = mTelephonyComponentFactory.inject(CarrierResolver.class.getName())
-                .makeCarrierResolver(this);
-        mCarrierPrivilegesTracker = new CarrierPrivilegesTracker(Looper.myLooper(), this, context);
+                .makeCarrierResolver(this, featureFlags);
+        mCarrierPrivilegesTracker = new CarrierPrivilegesTracker(
+                Looper.myLooper(), this, context, featureFlags);
 
         getCarrierActionAgent().registerForCarrierAction(
                 CarrierActionAgent.CARRIER_ACTION_SET_METERED_APNS_ENABLED, this,
@@ -5497,7 +5498,7 @@ public class GsmCdmaPhone extends Phone {
     public void refreshSafetySources(String refreshBroadcastId) {
         if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()
                 || mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
-            mSafetySource.refresh(mContext, refreshBroadcastId);
+            post(() -> mSafetySource.refresh(mContext, refreshBroadcastId));
         }
     }
 

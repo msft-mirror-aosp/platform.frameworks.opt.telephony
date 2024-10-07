@@ -40,6 +40,7 @@ import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteManager;
 import android.telephony.satellite.SatelliteManager.SatelliteException;
+import android.telephony.satellite.SatelliteModemEnableRequestAttributes;
 import android.telephony.satellite.stub.INtnSignalStrengthConsumer;
 import android.telephony.satellite.stub.ISatellite;
 import android.telephony.satellite.stub.ISatelliteCapabilitiesConsumer;
@@ -100,6 +101,8 @@ public class SatelliteModemInterface {
     @NonNull private final RegistrantList mSatelliteCapabilitiesChangedRegistrants =
             new RegistrantList();
     @NonNull private final RegistrantList mSatelliteSupportedStateChangedRegistrants =
+            new RegistrantList();
+    @NonNull private final RegistrantList mSatelliteRegistrationFailureRegistrants =
             new RegistrantList();
 
     private class SatelliteListener extends ISatelliteListener.Stub {
@@ -186,7 +189,7 @@ public class SatelliteModemInterface {
 
         @Override
         public void onRegistrationFailure(int causeCode) {
-            // TO-DO notify registrants
+            mSatelliteRegistrationFailureRegistrants.notifyResult(causeCode);
         }
 
         private boolean notifyResultIfExpectedListener() {
@@ -563,6 +566,27 @@ public class SatelliteModemInterface {
     }
 
     /**
+     * Registers for the satellite registration failed.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForSatelliteRegistrationFailure(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mSatelliteRegistrationFailureRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for the satellite registration failed.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForSatelliteRegistrationFailure(@NonNull Handler h) {
+        mSatelliteRegistrationFailureRegistrants.remove(h);
+    }
+
+    /**
      * Request to enable or disable the satellite service listening mode.
      * Listening mode allows the satellite service to listen for incoming pages.
      *
@@ -654,17 +678,16 @@ public class SatelliteModemInterface {
      * is enabled, this may also disable the cellular modem, and if the satellite modem is disabled,
      * this may also re-enable the cellular modem.
      *
-     * @param enableSatellite True to enable the satellite modem and false to disable.
-     * @param enableDemoMode True to enable demo mode and false to disable.
-     * @param isEmergency {@code true} to enable emergency mode, {@code false} otherwise.
+     * @param enableAttributes info needed to allow carrier to roam to satellite.
      * @param message The Message to send to result of the operation to.
      */
-    public void requestSatelliteEnabled(boolean enableSatellite, boolean enableDemoMode,
-            boolean isEmergency, @NonNull Message message) {
+    public void requestSatelliteEnabled(SatelliteModemEnableRequestAttributes enableAttributes,
+            @NonNull Message message) {
         if (mSatelliteService != null) {
             try {
-                mSatelliteService.requestSatelliteEnabled(enableSatellite, enableDemoMode,
-                        isEmergency, new IIntegerConsumer.Stub() {
+                mSatelliteService.requestSatelliteEnabled(SatelliteServiceUtils
+                        .toSatelliteModemEnableRequestAttributes(enableAttributes),
+                        new IIntegerConsumer.Stub() {
                             @Override
                             public void accept(int result) {
                                 int error = SatelliteServiceUtils.fromSatelliteError(result);

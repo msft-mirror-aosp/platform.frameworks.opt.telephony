@@ -180,7 +180,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
+                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS), eq(false));
         // isOkToCall() should return true when IN_SERVICE state
         assertFalse(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_OUT_OF_SERVICE, false));
@@ -239,7 +239,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
+                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS), eq(false));
         // onTimeout should return true when radion on
         assertFalse(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_OUT_OF_SERVICE, false));
@@ -287,7 +287,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
+                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS), eq(false));
 
         // Hangup the call
         emergencyStateTracker.endCall(mTestConnection1);
@@ -323,7 +323,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
+                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS), eq(false));
         // Verify future completes with DisconnectCause.POWER_OFF if radio not ready
         CompletableFuture<Void> unused = future.thenAccept((result) -> {
             assertEquals((Integer) result, (Integer) DisconnectCause.POWER_OFF);
@@ -346,7 +346,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 true /* isRadioOn */);
         when(mSST.isRadioOn()).thenReturn(true);
         // Satellite enabled
-        when(mSatelliteController.isSatelliteEnabled()).thenReturn(true);
+        when(mSatelliteController.isSatelliteEnabledOrBeingEnabled()).thenReturn(true);
 
         setConfigForDdsSwitch(testPhone, null,
                 CarrierConfigManager.Gps.SUPL_EMERGENCY_MODE_TYPE_DP_ONLY, "150");
@@ -359,11 +359,11 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(0));
+                eq(false), eq(0), eq(false));
         // isOkToCall() should return true once satellite modem is off
         assertFalse(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_IN_SERVICE, false));
-        when(mSatelliteController.isSatelliteEnabled()).thenReturn(false);
+        when(mSatelliteController.isSatelliteEnabledOrBeingEnabled()).thenReturn(false);
         assertTrue(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_IN_SERVICE, false));
         // Once radio on is complete, trigger delay dial
@@ -391,7 +391,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         Phone testPhone = setupTestPhoneForEmergencyCall(false /* isRoaming */,
                 true /* isRadioOn */);
         // Satellite enabled
-        when(mSatelliteController.isSatelliteEnabled()).thenReturn(true);
+        when(mSatelliteController.isSatelliteEnabledOrBeingEnabled()).thenReturn(true);
 
         CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(testPhone,
                 mTestConnection1, false);
@@ -400,7 +400,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(0));
+                eq(false), eq(0), eq(false));
         // Verify future completes with DisconnectCause.POWER_OFF if radio not ready
         CompletableFuture<Void> unused = future.thenAccept((result) -> {
             assertEquals((Integer) result, (Integer) DisconnectCause.SATELLITE_ENABLED);
@@ -428,7 +428,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
         // Radio already on so shouldn't trigger this
         verify(mRadioOnHelper, never()).triggerRadioOnAndListen(any(), anyBoolean(), any(),
-                anyBoolean(), eq(0));
+                anyBoolean(), eq(0), eq(false));
         // Carrier supports control-plane fallback, so no DDS switch
         verify(mPhoneSwitcher, never()).overrideDefaultDataForEmergency(anyInt(), anyInt(), any());
     }
@@ -3168,7 +3168,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         // Wait for the radio off for all phones
         verify(mSST, times(2)).registerForVoiceRegStateOrRatChanged(any(), anyInt(), any());
         verify(mRadioOnHelper, never()).triggerRadioOnAndListen(any(), anyBoolean(), any(),
-                anyBoolean(), eq(0));
+                anyBoolean(), eq(0), eq(false));
     }
 
     /**

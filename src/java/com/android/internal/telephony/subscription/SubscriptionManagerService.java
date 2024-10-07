@@ -1450,8 +1450,8 @@ public class SubscriptionManagerService extends ISub.Stub {
             SatelliteController satelliteController = SatelliteController.getInstance();
             boolean isSatelliteEnabledOrBeingEnabled = false;
             if (satelliteController != null) {
-                isSatelliteEnabledOrBeingEnabled = satelliteController.isSatelliteEnabled()
-                        || satelliteController.isSatelliteBeingEnabled();
+                isSatelliteEnabledOrBeingEnabled =
+                        satelliteController.isSatelliteEnabledOrBeingEnabled();
             }
 
             if (!isSatelliteEnabledOrBeingEnabled) {
@@ -4557,16 +4557,13 @@ public class SubscriptionManagerService extends ISub.Stub {
      */
     @NonNull
     private String getCallingPackage() {
-        if (Flags.supportPhoneUidCheckForMultiuser()) {
-            if (UserHandle.isSameApp(Binder.getCallingUid(), Process.PHONE_UID)) {
-                // Too many packages running with phone uid. Just return one here.
-                return "com.android.phone";
-            }
-        } else {
-            if (Binder.getCallingUid() == Process.PHONE_UID) {
-                // Too many packages running with phone uid. Just return one here.
-                return "com.android.phone";
-            }
+        if (UserHandle.isSameApp(Binder.getCallingUid(), Process.PHONE_UID)) {
+            // Too many packages running with phone uid. Just return one here.
+            return "com.android.phone";
+        }
+        if (mFeatureFlags.hsumPackageManager()) {
+            return Arrays.toString(mContext.createContextAsUser(Binder.getCallingUserHandle(), 0)
+                    .getPackageManager().getPackagesForUid(Binder.getCallingUid()));
         }
         return Arrays.toString(mContext.getPackageManager().getPackagesForUid(
                 Binder.getCallingUid()));
@@ -4772,9 +4769,16 @@ public class SubscriptionManagerService extends ISub.Stub {
      */
     @Nullable
     private String getCurrentPackageName() {
+        if (mFeatureFlags.hsumPackageManager()) {
+            PackageManager pm = mContext.createContextAsUser(Binder.getCallingUserHandle(), 0)
+                    .getPackageManager();
+            if (pm == null) return null;
+            String[] callingPackageNames = pm.getPackagesForUid(Binder.getCallingUid());
+            return (callingPackageNames == null) ? null : callingPackageNames[0];
+        }
         if (mPackageManager == null) return null;
-        String[] callingUids = mPackageManager.getPackagesForUid(Binder.getCallingUid());
-        return (callingUids == null) ? null : callingUids[0];
+        String[] callingPackageNames = mPackageManager.getPackagesForUid(Binder.getCallingUid());
+        return (callingPackageNames == null) ? null : callingPackageNames[0];
     }
 
     /**

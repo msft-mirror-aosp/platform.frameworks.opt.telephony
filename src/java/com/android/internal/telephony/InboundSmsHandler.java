@@ -75,6 +75,7 @@ import com.android.internal.telephony.SmsConstants.MessageClass;
 import com.android.internal.telephony.analytics.TelephonyAnalytics;
 import com.android.internal.telephony.analytics.TelephonyAnalytics.SmsMmsAnalytics;
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.satellite.metrics.CarrierRoamingSatelliteSessionStats;
 import com.android.internal.telephony.util.NotificationChannelController;
@@ -305,9 +306,9 @@ public abstract class InboundSmsHandler extends StateMachine {
         mResolver = context.getContentResolver();
         mWapPush = new WapPushOverSms(context, mFeatureFlags);
 
-        boolean smsCapable = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_sms_capable);
-        mSmsReceiveDisabled = !TelephonyManager.from(mContext).getSmsReceiveCapableForPhone(
+        TelephonyManager telephonyManager = TelephonyManager.from(mContext);
+        boolean smsCapable = telephonyManager.isDeviceSmsCapable();
+        mSmsReceiveDisabled = !telephonyManager.getSmsReceiveCapableForPhone(
                 mPhone.getPhoneId(), smsCapable);
 
         PowerManager pm = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
@@ -806,7 +807,12 @@ public abstract class InboundSmsHandler extends StateMachine {
             Intent intent = new Intent(Intents.SMS_REJECTED_ACTION);
             intent.putExtra("result", result);
             intent.putExtra("subId", mPhone.getSubId());
-            mContext.sendBroadcast(intent, android.Manifest.permission.RECEIVE_SMS);
+            if (mFeatureFlags.hsumBroadcast()) {
+                mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
+                        android.Manifest.permission.RECEIVE_SMS);
+            } else {
+                mContext.sendBroadcast(intent, android.Manifest.permission.RECEIVE_SMS);
+            }
         }
         acknowledgeLastIncomingSms(success, result, response);
     }
@@ -2148,9 +2154,13 @@ public abstract class InboundSmsHandler extends StateMachine {
                 // TODO(b/355049884): This is looking at sms package of the wrong user!
                 UserManager userManager =
                         (UserManager) context.getSystemService(Context.USER_SERVICE);
+                PackageManager pm = context.getPackageManager();
+                if (Flags.hsumPackageManager()) {
+                    pm = context.createContextAsUser(UserHandle.CURRENT, 0).getPackageManager();
+                }
                 if (userManager.isUserUnlocked()) {
-                    context.startActivity(context.getPackageManager().getLaunchIntentForPackage(
-                            Telephony.Sms.getDefaultSmsPackage(context)));
+                    context.startActivityAsUser(pm.getLaunchIntentForPackage(
+                            Telephony.Sms.getDefaultSmsPackage(context)), UserHandle.CURRENT);
                 }
             }
         }

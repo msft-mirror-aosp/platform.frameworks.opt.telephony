@@ -38,7 +38,6 @@ import android.os.Message;
 import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
-import android.telephony.SubscriptionManager;
 import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteManager;
 
@@ -94,6 +93,10 @@ public class DatagramDispatcher extends Handler {
 
     private final Object mLock = new Object();
     private long mDemoTimeoutDuration = TIMEOUT_DATAGRAM_DELAY_IN_DEMO_MODE;
+
+    /** {@code true} if already sent an emergency datagram during a session */
+    @GuardedBy("mLock")
+    private boolean mIsEmergencyCommunicationEstablished = false;
 
     @GuardedBy("mLock")
     private boolean mSendingInProgress;
@@ -310,6 +313,9 @@ public class DatagramDispatcher extends Handler {
                     // Remove current datagram from pending map.
                     if (SatelliteServiceUtils.isSosMessage(argument.datagramType)) {
                         mPendingEmergencyDatagramsMap.remove(argument.datagramId);
+                        if (error == SATELLITE_RESULT_SUCCESS) {
+                            mIsEmergencyCommunicationEstablished = true;
+                        }
                     } else {
                         mPendingNonEmergencyDatagramsMap.remove(argument.datagramId);
                     }
@@ -723,6 +729,7 @@ public class DatagramDispatcher extends Handler {
                         .setDatagramTransferTimeMillis(argument.datagramStartTime > 0
                                 ? (System.currentTimeMillis() - argument.datagramStartTime) : 0)
                         .setIsDemoMode(mIsDemoMode)
+                        .setCarrierId(SatelliteController.getInstance().getSatelliteCarrierId())
                         .build());
         if (resultCode == SatelliteManager.SATELLITE_RESULT_SUCCESS) {
             mControllerMetricsStats.reportOutgoingDatagramSuccessCount(argument.datagramType,
@@ -772,17 +779,20 @@ public class DatagramDispatcher extends Handler {
     private void cleanUpResources() {
         plogd("cleanUpResources");
         mSendingInProgress = false;
+        mIsEmergencyCommunicationEstablished = false;
+
+        int subId = SatelliteController.getInstance().getHighestPrioritySubscrption();
         if (getPendingMessagesCount() > 0) {
-            mDatagramController.updateSendStatus(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+            mDatagramController.updateSendStatus(subId,
                     mLastSendRequestDatagramType,
                     SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED,
                     getPendingMessagesCount(), SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED);
         }
-        mDatagramController.updateSendStatus(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+        mDatagramController.updateSendStatus(subId,
                 mLastSendRequestDatagramType,
                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
                 0, SatelliteManager.SATELLITE_RESULT_SUCCESS);
-        abortSendingPendingDatagrams(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+        abortSendingPendingDatagrams(subId,
                 SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED);
 
         stopSatelliteAlignedTimer();
@@ -793,6 +803,13 @@ public class DatagramDispatcher extends Handler {
         mSendSatelliteDatagramRequest = null;
         mIsAligned = false;
         mLastSendRequestDatagramType = DATAGRAM_TYPE_UNKNOWN;
+    }
+
+    /** @return {@code true} if already sent an emergency datagram during a session. */
+    public boolean isEmergencyCommunicationEstablished() {
+        synchronized (mLock) {
+            return mIsEmergencyCommunicationEstablished;
+        }
     }
 
     private void startDatagramWaitForConnectedStateTimer(
@@ -850,17 +867,18 @@ public class DatagramDispatcher extends Handler {
             @SatelliteManager.DatagramType int datagramType) {
         plogw("Timed out to wait for satellite connected before sending datagrams");
         synchronized (mLock) {
+            int subId = SatelliteController.getInstance().getHighestPrioritySubscrption();
             // Update send status
-            mDatagramController.updateSendStatus(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+            mDatagramController.updateSendStatus(subId,
                     datagramType,
                     SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED,
                     getPendingMessagesCount(),
                     SATELLITE_RESULT_NOT_REACHABLE);
-            mDatagramController.updateSendStatus(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+            mDatagramController.updateSendStatus(subId,
                     datagramType,
                     SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
                     0, SatelliteManager.SATELLITE_RESULT_SUCCESS);
-            abortSendingPendingDatagrams(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+            abortSendingPendingDatagrams(subId,
                     SATELLITE_RESULT_NOT_REACHABLE);
         }
     }
@@ -1042,7 +1060,7 @@ public class DatagramDispatcher extends Handler {
         SatelliteController.getInstance().startPointingUI();
 
         int subId = satellitePhone.getSubId();
-        long messageId = pendingSms.messageId;
+        long messageId = pendingSms.uniqueMessageId;
         plogd("sendSms: subId=" + subId + " messageId:" + messageId);
 
         synchronized (mLock) {

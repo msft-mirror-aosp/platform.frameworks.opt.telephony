@@ -35,6 +35,7 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Telephony.Sms;
 import android.provider.Telephony.Sms.Intents;
@@ -69,6 +70,7 @@ import com.android.telephony.Rlog;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -219,10 +221,12 @@ public class SmsDispatchersController extends Handler {
         public static final int TYPE_TEXT = 2;
         public static final int TYPE_MULTIPART_TEXT = 3;
         public static final int TYPE_RETRY_SMS = 4;
+        private static final AtomicLong sNextUniqueMessageId = new AtomicLong(0);
 
         public final int type;
         public final SMSDispatcher.SmsTracker tracker;
         public final String callingPackage;
+        public final int callingUser;
         public final String destAddr;
         public final String scAddr;
         public final ArrayList<PendingIntent> sentIntents;
@@ -240,16 +244,18 @@ public class SmsDispatchersController extends Handler {
         public final int validityPeriod;
         public final long messageId;
         public final boolean skipShortCodeCheck;
+        public final long uniqueMessageId;
 
         public PendingRequest(int type, SMSDispatcher.SmsTracker tracker, String callingPackage,
-                String destAddr, String scAddr, ArrayList<PendingIntent> sentIntents,
-                ArrayList<PendingIntent> deliveryIntents, boolean isForVvm, byte[] data,
-                int destPort, ArrayList<String> texts, Uri messageUri, boolean persistMessage,
-                int priority, boolean expectMore, int validityPeriod, long messageId,
-                boolean skipShortCodeCheck) {
+                int callingUser, String destAddr, String scAddr,
+                ArrayList<PendingIntent> sentIntents, ArrayList<PendingIntent> deliveryIntents,
+                boolean isForVvm, byte[] data, int destPort, ArrayList<String> texts,
+                Uri messageUri, boolean persistMessage, int priority, boolean expectMore,
+                int validityPeriod, long messageId, boolean skipShortCodeCheck) {
             this.type = type;
             this.tracker = tracker;
             this.callingPackage = callingPackage;
+            this.callingUser = callingUser;
             this.destAddr = destAddr;
             this.scAddr = scAddr;
             this.sentIntents = sentIntents;
@@ -267,6 +273,12 @@ public class SmsDispatchersController extends Handler {
             this.validityPeriod = validityPeriod;
             this.messageId = messageId;
             this.skipShortCodeCheck = skipShortCodeCheck;
+            this.uniqueMessageId = getNextUniqueMessageId();
+        }
+
+        public static long getNextUniqueMessageId() {
+            return sNextUniqueMessageId.getAndUpdate(
+                id -> ((id + 1) % Long.MAX_VALUE));
         }
     }
 
@@ -815,7 +827,9 @@ public class SmsDispatchersController extends Handler {
                 SomeArgs args = SomeArgs.obtain();
                 args.arg1 = getDomainSelectionConnectionHolder(isEmergency);
                 args.arg2 = new PendingRequest(PendingRequest.TYPE_RETRY_SMS, tracker,
-                        null, null, null, null, null, false, null, 0, null, null, false,
+                        null, UserHandle.USER_NULL, null, null,
+                        null, null, false, null, 0,
+                        null, null, false,
                         0, false, 0, 0L, false);
                 args.arg3 = "sendRetrySms";
                 sendMessage(obtainMessage(EVENT_REQUEST_DOMAIN_SELECTION, args));
@@ -862,8 +876,8 @@ public class SmsDispatchersController extends Handler {
                 // should never come here...
                 Rlog.e(TAG, "sendRetrySms failed to re-encode per missing fields!");
                 tracker.onFailed(mContext, SmsManager.RESULT_SMS_SEND_RETRY_FAILED, NO_ERROR_CODE);
-                notifySmsSent(tracker.mDestAddress, tracker.mMessageId,
-                        !retryUsingImsService, true /*isLastSmsPart*/, false /*success*/);
+                notifySmsSent(tracker, !retryUsingImsService,
+                        true /*isLastSmsPart*/, false /*success*/);
                 return;
             }
             String scAddr = (String) map.get("scAddr");
@@ -871,8 +885,8 @@ public class SmsDispatchersController extends Handler {
             if (destAddr == null) {
                 Rlog.e(TAG, "sendRetrySms failed due to null destAddr");
                 tracker.onFailed(mContext, SmsManager.RESULT_SMS_SEND_RETRY_FAILED, NO_ERROR_CODE);
-                notifySmsSent(tracker.mDestAddress, tracker.mMessageId,
-                        !retryUsingImsService, true /*isLastSmsPart*/, false /*success*/);
+                notifySmsSent(tracker, !retryUsingImsService,
+                        true /*isLastSmsPart*/, false /*success*/);
                 return;
             }
 
@@ -913,8 +927,8 @@ public class SmsDispatchersController extends Handler {
                         + "scAddr: %s, "
                         + "destPort: %s", scAddr, map.get("destPort")));
                 tracker.onFailed(mContext, SmsManager.RESULT_SMS_SEND_RETRY_FAILED, NO_ERROR_CODE);
-                notifySmsSent(tracker.mDestAddress, tracker.mMessageId,
-                        !retryUsingImsService, true /*isLastSmsPart*/, false /*success*/);
+                notifySmsSent(tracker, !retryUsingImsService,
+                    true /*isLastSmsPart*/, false /*success*/);
                 return;
             }
             // replace old smsc and pdu with newly encoded ones
@@ -1209,11 +1223,11 @@ public class SmsDispatchersController extends Handler {
     /**
      * Called when MO SMS is sent.
      */
-    protected void notifySmsSent(@NonNull String destAddr, long messageId, boolean isOverIms,
-            boolean isLastSmsPart, boolean success) {
-        notifySmsSentToEmergencyStateTracker(
-                destAddr, messageId, isOverIms, isLastSmsPart, success);
-        notifySmsSentToDatagramDispatcher(messageId, success);
+    protected void notifySmsSent(@NonNull SMSDispatcher.SmsTracker tracker,
+            boolean isOverIms, boolean isLastSmsPart, boolean success) {
+        notifySmsSentToEmergencyStateTracker(tracker.mDestAddress,
+            tracker.mMessageId, isOverIms, isLastSmsPart, success);
+        notifySmsSentToDatagramDispatcher(tracker.mUniqueMessageId, success);
     }
 
     /**
@@ -1395,17 +1409,20 @@ public class SmsDispatchersController extends Handler {
     private void sendData(@NetworkRegistrationInfo.Domain int domain,
             @NonNull PendingRequest request) {
         if (domain == NetworkRegistrationInfo.DOMAIN_PS) {
-            mImsSmsDispatcher.sendData(request.callingPackage, request.destAddr, request.scAddr,
-                    request.destPort, request.data, request.sentIntents.get(0),
-                    request.deliveryIntents.get(0), request.isForVvm);
+            mImsSmsDispatcher.sendData(request.callingPackage, request.callingUser,
+                    request.destAddr, request.scAddr, request.destPort, request.data,
+                    request.sentIntents.get(0), request.deliveryIntents.get(0), request.isForVvm,
+                    request.uniqueMessageId);
         } else if (isCdmaMo(domain)) {
-            mCdmaDispatcher.sendData(request.callingPackage, request.destAddr, request.scAddr,
-                    request.destPort, request.data, request.sentIntents.get(0),
-                    request.deliveryIntents.get(0), request.isForVvm);
+            mCdmaDispatcher.sendData(request.callingPackage, request.callingUser, request.destAddr,
+                    request.scAddr, request.destPort, request.data,
+                    request.sentIntents.get(0), request.deliveryIntents.get(0), request.isForVvm,
+                    request.uniqueMessageId);
         } else {
-            mGsmDispatcher.sendData(request.callingPackage, request.destAddr, request.scAddr,
-                    request.destPort, request.data, request.sentIntents.get(0),
-                    request.deliveryIntents.get(0), request.isForVvm);
+            mGsmDispatcher.sendData(request.callingPackage, request.callingUser, request.destAddr,
+                    request.scAddr, request.destPort, request.data,
+                    request.sentIntents.get(0), request.deliveryIntents.get(0), request.isForVvm,
+                    request.uniqueMessageId);
         }
     }
 
@@ -1422,22 +1439,25 @@ public class SmsDispatchersController extends Handler {
         if (domain == NetworkRegistrationInfo.DOMAIN_PS) {
             mImsSmsDispatcher.sendText(request.destAddr, request.scAddr, request.texts.get(0),
                     request.sentIntents.get(0), request.deliveryIntents.get(0),
-                    request.messageUri, request.callingPackage, request.persistMessage,
-                    request.priority, false /*request.expectMore*/, request.validityPeriod,
-                    request.isForVvm, request.messageId, request.skipShortCodeCheck);
+                    request.messageUri, request.callingPackage, request.callingUser,
+                    request.persistMessage, request.priority,  /*request.expectMore*/ false,
+                    request.validityPeriod, request.isForVvm, request.messageId,
+                    request.skipShortCodeCheck, request.uniqueMessageId);
         } else {
             if (isCdmaMo(domain)) {
                 mCdmaDispatcher.sendText(request.destAddr, request.scAddr, request.texts.get(0),
                         request.sentIntents.get(0), request.deliveryIntents.get(0),
-                        request.messageUri, request.callingPackage, request.persistMessage,
-                        request.priority, request.expectMore, request.validityPeriod,
-                        request.isForVvm, request.messageId, request.skipShortCodeCheck);
+                        request.messageUri, request.callingPackage, request.callingUser,
+                        request.persistMessage, request.priority, request.expectMore,
+                        request.validityPeriod, request.isForVvm, request.messageId,
+                        request.skipShortCodeCheck, request.uniqueMessageId);
             } else {
                 mGsmDispatcher.sendText(request.destAddr, request.scAddr, request.texts.get(0),
                         request.sentIntents.get(0), request.deliveryIntents.get(0),
-                        request.messageUri, request.callingPackage, request.persistMessage,
-                        request.priority, request.expectMore, request.validityPeriod,
-                        request.isForVvm, request.messageId, request.skipShortCodeCheck);
+                        request.messageUri, request.callingPackage, request.callingUser,
+                        request.persistMessage, request.priority, request.expectMore,
+                        request.validityPeriod, request.isForVvm, request.messageId,
+                        request.skipShortCodeCheck, request.uniqueMessageId);
             }
         }
     }
@@ -1455,24 +1475,31 @@ public class SmsDispatchersController extends Handler {
         if (domain == NetworkRegistrationInfo.DOMAIN_PS) {
             mImsSmsDispatcher.sendMultipartText(request.destAddr, request.scAddr, request.texts,
                     request.sentIntents, request.deliveryIntents, request.messageUri,
-                    request.callingPackage, request.persistMessage, request.priority,
-                    false /*request.expectMore*/, request.validityPeriod, request.messageId);
+                    request.callingPackage, request.callingUser, request.persistMessage,
+                    request.priority, false /*request.expectMore*/, request.validityPeriod,
+                    request.messageId, request.uniqueMessageId);
         } else {
             if (isCdmaMo(domain)) {
                 mCdmaDispatcher.sendMultipartText(request.destAddr, request.scAddr, request.texts,
                         request.sentIntents, request.deliveryIntents, request.messageUri,
-                        request.callingPackage, request.persistMessage, request.priority,
-                        request.expectMore, request.validityPeriod, request.messageId);
+                        request.callingPackage, request.callingUser, request.persistMessage,
+                        request.priority, request.expectMore, request.validityPeriod,
+                        request.messageId, request.uniqueMessageId);
             } else {
                 mGsmDispatcher.sendMultipartText(request.destAddr, request.scAddr, request.texts,
                         request.sentIntents, request.deliveryIntents, request.messageUri,
-                        request.callingPackage, request.persistMessage, request.priority,
-                        request.expectMore, request.validityPeriod, request.messageId);
+                        request.callingPackage, request.callingUser, request.persistMessage,
+                        request.priority, request.expectMore, request.validityPeriod,
+                        request.messageId, request.uniqueMessageId);
             }
         }
     }
 
-    private void triggerSentIntentForFailure(@NonNull PendingIntent sentIntent) {
+    private void triggerSentIntentForFailure(PendingIntent sentIntent) {
+        if (sentIntent == null) {
+            logd("sentIntent is null");
+            return;
+        }
         try {
             sentIntent.send(SmsManager.RESULT_ERROR_GENERIC_FAILURE);
         } catch (CanceledException e) {
@@ -1480,7 +1507,11 @@ public class SmsDispatchersController extends Handler {
         }
     }
 
-    private void triggerSentIntentForFailure(@NonNull List<PendingIntent> sentIntents) {
+    private void triggerSentIntentForFailure(List<PendingIntent> sentIntents) {
+        if (sentIntents == null) {
+            logd("sentIntents is null");
+            return;
+        }
         for (PendingIntent sentIntent : sentIntents) {
             triggerSentIntentForFailure(sentIntent);
         }
@@ -1574,31 +1605,36 @@ public class SmsDispatchersController extends Handler {
      *  broadcast when the message is delivered to the recipient.  The
      *  raw pdu of the status report is in the extended data ("pdu").
      */
-    protected void sendData(String callingPackage, String destAddr, String scAddr, int destPort,
-            byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent, boolean isForVvm) {
+    protected void sendData(String callingPackage, int callingUser, String destAddr, String scAddr,
+            int destPort, byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent,
+            boolean isForVvm) {
         if (TextUtils.isEmpty(scAddr)) {
             scAddr = getSmscAddressFromUSIMWithPhoneIdentity(callingPackage);
         }
 
         if (isSmsDomainSelectionEnabled()) {
             sendSmsUsingDomainSelection(getDomainSelectionConnectionHolder(false),
-                    new PendingRequest(PendingRequest.TYPE_DATA, null, callingPackage,
+                    new PendingRequest(PendingRequest.TYPE_DATA, null, callingPackage, callingUser,
                             destAddr, scAddr, asArrayList(sentIntent),
-                            asArrayList(deliveryIntent), isForVvm, data, destPort, null, null,
-                            false, 0, false, 0, 0L, false),
+                            asArrayList(deliveryIntent), isForVvm, data, destPort, null,
+                            null, false, 0, false, 0,
+                            0L, false),
                     "sendData");
             return;
         }
 
         if (mImsSmsDispatcher.isAvailable()) {
-            mImsSmsDispatcher.sendData(callingPackage, destAddr, scAddr, destPort, data, sentIntent,
-                    deliveryIntent, isForVvm);
+            mImsSmsDispatcher.sendData(callingPackage, callingUser, destAddr, scAddr, destPort,
+                    data, sentIntent, deliveryIntent, isForVvm,
+                    PendingRequest.getNextUniqueMessageId());
         } else if (isCdmaMo()) {
-            mCdmaDispatcher.sendData(callingPackage, destAddr, scAddr, destPort, data, sentIntent,
-                    deliveryIntent, isForVvm);
+            mCdmaDispatcher.sendData(callingPackage, callingUser, destAddr, scAddr, destPort, data,
+                    sentIntent, deliveryIntent, isForVvm,
+                    PendingRequest.getNextUniqueMessageId());
         } else {
-            mGsmDispatcher.sendData(callingPackage, destAddr, scAddr, destPort, data, sentIntent,
-                    deliveryIntent, isForVvm);
+            mGsmDispatcher.sendData(callingPackage, callingUser, destAddr, scAddr, destPort, data,
+                    sentIntent, deliveryIntent, isForVvm,
+                    PendingRequest.getNextUniqueMessageId());
         }
     }
 
@@ -1700,11 +1736,12 @@ public class SmsDispatchersController extends Handler {
      *  Any Other values included Negative considered as Invalid Validity Period of the message.
      */
     public void sendText(String destAddr, String scAddr, String text, PendingIntent sentIntent,
-            PendingIntent deliveryIntent, Uri messageUri, String callingPkg, boolean persistMessage,
-            int priority, boolean expectMore, int validityPeriod, boolean isForVvm,
-            long messageId) {
+            PendingIntent deliveryIntent, Uri messageUri, String callingPkg, int callingUser,
+            boolean persistMessage, int priority, boolean expectMore, int validityPeriod,
+            boolean isForVvm, long messageId) {
         sendText(destAddr, scAddr, text, sentIntent, deliveryIntent, messageUri, callingPkg,
-                persistMessage, priority, expectMore, validityPeriod, isForVvm, messageId, false);
+                callingUser, persistMessage, priority, expectMore, validityPeriod, isForVvm,
+                messageId, false);
     }
 
     /**
@@ -1806,17 +1843,18 @@ public class SmsDispatchersController extends Handler {
      * @param skipShortCodeCheck Skip check for short code type destination address.
      */
     public void sendText(String destAddr, String scAddr, String text, PendingIntent sentIntent,
-            PendingIntent deliveryIntent, Uri messageUri, String callingPkg, boolean persistMessage,
-            int priority, boolean expectMore, int validityPeriod, boolean isForVvm,
-            long messageId, boolean skipShortCodeCheck) {
+            PendingIntent deliveryIntent, Uri messageUri, String callingPkg, int callingUser,
+            boolean persistMessage, int priority, boolean expectMore, int validityPeriod,
+            boolean isForVvm, long messageId, boolean skipShortCodeCheck) {
         if (TextUtils.isEmpty(scAddr)) {
             scAddr = getSmscAddressFromUSIMWithPhoneIdentity(callingPkg);
         }
 
         PendingRequest pendingRequest = new PendingRequest(PendingRequest.TYPE_TEXT, null,
-                callingPkg, destAddr, scAddr, asArrayList(sentIntent), asArrayList(deliveryIntent),
-                isForVvm, null, 0, asArrayList(text), messageUri, persistMessage,
-                priority, expectMore, validityPeriod, messageId, skipShortCodeCheck);
+                callingPkg, callingUser, destAddr, scAddr, asArrayList(sentIntent),
+                asArrayList(deliveryIntent), isForVvm, null, 0, asArrayList(text),
+                messageUri, persistMessage, priority, expectMore, validityPeriod, messageId,
+                skipShortCodeCheck);
 
         if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn()) {
             // Send P2P SMS using carrier roaming NB IOT NTN
@@ -1828,7 +1866,8 @@ public class SmsDispatchersController extends Handler {
     }
 
     private void sendTextInternal(PendingRequest request) {
-        logd("sendTextInternal: messageId=" + request.messageId);
+        logd("sendTextInternal: messageId=" + request.messageId
+                 + ", uniqueMessageId=" + request.uniqueMessageId);
         if (isSmsDomainSelectionEnabled()) {
             TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
             boolean isEmergency = tm.isEmergencyNumber(request.destAddr);
@@ -1841,22 +1880,25 @@ public class SmsDispatchersController extends Handler {
                 request.destAddr)) {
             mImsSmsDispatcher.sendText(request.destAddr, request.scAddr, request.texts.get(0),
                     request.sentIntents.get(0), request.deliveryIntents.get(0),
-                    request.messageUri, request.callingPackage, request.persistMessage,
-                    request.priority, false /*expectMore*/, request.validityPeriod,
-                    request.isForVvm, request.messageId, request.skipShortCodeCheck);
+                    request.messageUri, request.callingPackage, request.callingUser,
+                    request.persistMessage, request.priority, false /*expectMore*/,
+                    request.validityPeriod, request.isForVvm, request.messageId,
+                    request.skipShortCodeCheck, request.uniqueMessageId);
         } else {
             if (isCdmaMo()) {
                 mCdmaDispatcher.sendText(request.destAddr, request.scAddr, request.texts.get(0),
                         request.sentIntents.get(0), request.deliveryIntents.get(0),
-                        request.messageUri, request.callingPackage, request.persistMessage,
-                        request.priority, request.expectMore, request.validityPeriod,
-                        request.isForVvm, request.messageId, request.skipShortCodeCheck);
+                        request.messageUri, request.callingPackage, request.callingUser,
+                        request.persistMessage, request.priority, request.expectMore,
+                        request.validityPeriod, request.isForVvm, request.messageId,
+                        request.skipShortCodeCheck, request.uniqueMessageId);
             } else {
                 mGsmDispatcher.sendText(request.destAddr, request.scAddr, request.texts.get(0),
                         request.sentIntents.get(0), request.deliveryIntents.get(0),
-                        request.messageUri, request.callingPackage, request.persistMessage,
-                        request.priority, request.expectMore, request.validityPeriod,
-                        request.isForVvm, request.messageId, request.skipShortCodeCheck);
+                        request.messageUri, request.callingPackage, request.callingUser,
+                        request.persistMessage, request.priority, request.expectMore,
+                        request.validityPeriod, request.isForVvm, request.messageId,
+                        request.skipShortCodeCheck, request.uniqueMessageId);
             }
         }
     }
@@ -1968,14 +2010,14 @@ public class SmsDispatchersController extends Handler {
     protected void sendMultipartText(String destAddr, String scAddr,
             ArrayList<String> parts, ArrayList<PendingIntent> sentIntents,
             ArrayList<PendingIntent> deliveryIntents, Uri messageUri, String callingPkg,
-            boolean persistMessage, int priority, boolean expectMore, int validityPeriod,
-            long messageId) {
+            int callingUser, boolean persistMessage, int priority, boolean expectMore,
+            int validityPeriod, long messageId) {
         if (TextUtils.isEmpty(scAddr)) {
             scAddr = getSmscAddressFromUSIMWithPhoneIdentity(callingPkg);
         }
 
         PendingRequest pendingRequest = new PendingRequest(PendingRequest.TYPE_MULTIPART_TEXT, null,
-                callingPkg, destAddr, scAddr, sentIntents, deliveryIntents, false,
+                callingPkg, callingUser, destAddr, scAddr, sentIntents, deliveryIntents, false,
                 null, 0, parts, messageUri, persistMessage, priority, expectMore,
                 validityPeriod, messageId, false);
 
@@ -2001,19 +2043,22 @@ public class SmsDispatchersController extends Handler {
         if (mImsSmsDispatcher.isAvailable()) {
             mImsSmsDispatcher.sendMultipartText(request.destAddr, request.scAddr, request.texts,
                     request.sentIntents, request.deliveryIntents, request.messageUri,
-                    request.callingPackage, request.persistMessage, request.priority,
-                    false /*expectMore*/, request.validityPeriod, request.messageId);
+                    request.callingPackage, request.callingUser, request.persistMessage,
+                    request.priority, false /*expectMore*/, request.validityPeriod,
+                    request.messageId, request.uniqueMessageId);
         } else {
             if (isCdmaMo()) {
                 mCdmaDispatcher.sendMultipartText(request.destAddr, request.scAddr, request.texts,
                         request.sentIntents, request.deliveryIntents, request.messageUri,
-                        request.callingPackage, request.persistMessage, request.priority,
-                        request.expectMore, request.validityPeriod, request.messageId);
+                        request.callingPackage, request.callingUser, request.persistMessage,
+                        request.priority, request.expectMore, request.validityPeriod,
+                        request.messageId, request.uniqueMessageId);
             } else {
                 mGsmDispatcher.sendMultipartText(request.destAddr, request.scAddr, request.texts,
                         request.sentIntents, request.deliveryIntents, request.messageUri,
-                        request.callingPackage, request.persistMessage, request.priority,
-                        request.expectMore, request.validityPeriod, request.messageId);
+                        request.callingPackage, request.callingUser, request.persistMessage,
+                        request.priority, request.expectMore, request.validityPeriod,
+                        request.messageId, request.uniqueMessageId);
             }
         }
     }
