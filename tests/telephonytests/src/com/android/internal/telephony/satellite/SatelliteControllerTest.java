@@ -16,6 +16,11 @@
 
 package com.android.internal.telephony.satellite;
 
+import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_INNER_PRIMARY;
+import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_OUTER_PRIMARY;
+import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_CLOSED;
+import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_OPEN;
+import static android.hardware.devicestate.feature.flags.Flags.FLAG_DEVICE_STATE_PROPERTY_MIGRATION;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_EMERGENCY_CALL_TO_SATELLITE_T911_HANDOVER_TIMEOUT_MILLIS_INT;
@@ -110,6 +115,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Resources;
+import android.hardware.devicestate.DeviceState;
 import android.os.AsyncResult;
 import android.os.Bundle;
 import android.os.CancellationSignal;
@@ -121,6 +127,10 @@ import android.os.OutcomeReceiver;
 import android.os.PersistableBundle;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
+import android.platform.test.annotations.RequiresFlagsDisabled;
+import android.platform.test.annotations.RequiresFlagsEnabled;
+import android.platform.test.flag.junit.CheckFlagsRule;
+import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellSignalStrength;
@@ -168,6 +178,7 @@ import com.android.internal.telephony.subscription.SubscriptionManagerService;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -515,6 +526,10 @@ public class SatelliteControllerTest extends TelephonyTest {
         }
     };
 
+    @Rule
+    public final CheckFlagsRule mCheckFlagsRule =
+            DeviceFlagsValueProvider.createCheckFlagsRule();
+
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
@@ -563,6 +578,9 @@ public class SatelliteControllerTest extends TelephonyTest {
         mContextFixture.putIntResource(
                 R.integer.config_satellite_wait_for_cellular_modem_off_timeout_millis,
                 TEST_WAIT_FOR_CELLULAR_MODEM_OFF_TIMEOUT_MILLIS);
+        mContextFixture.putIntArrayResource(
+                R.array.config_foldedDeviceStates,
+                new int[0]);
         doReturn(ACTIVE_SUB_IDS).when(mMockSubscriptionManagerService).getActiveSubIdList(true);
 
         mCarrierConfigBundle = mContextFixture.getCarrierConfigBundle();
@@ -4186,7 +4204,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertTrue(mSatelliteControllerUT.getWwanIsInService(mServiceState));
 
         nri = new NetworkRegistrationInfo.Builder().setRegistrationState(
-                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING)
+                        NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING)
                 .build();
         when(mServiceState.getNetworkRegistrationInfoListForTransportType(
                 eq(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)))
@@ -4232,6 +4250,41 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegistrationFailureCallback"));
         assertEquals(expectedErrorCode, resultErrorCode[0]);
+    }
+
+    @RequiresFlagsDisabled(FLAG_DEVICE_STATE_PROPERTY_MIGRATION)
+    @Test
+    public void testDetermineIsFoldable_overlayConfigurationValues() {
+        // isFoldable should return false with the base configuration.
+        assertFalse(mSatelliteControllerUT.isFoldable(mContext,
+                mSatelliteControllerUT.getSupportedDeviceStates()));
+
+        mContextFixture.putIntArrayResource(R.array.config_foldedDeviceStates, new int[2]);
+        assertTrue(mSatelliteControllerUT.isFoldable(mContext,
+                mSatelliteControllerUT.getSupportedDeviceStates()));
+    }
+
+    @RequiresFlagsEnabled(FLAG_DEVICE_STATE_PROPERTY_MIGRATION)
+    @Test
+    public void testDetermineIsFoldable_deviceStateManager() {
+        // isFoldable should return false with the base configuration.
+        assertFalse(mSatelliteControllerUT.isFoldable(mContext,
+                mSatelliteControllerUT.getSupportedDeviceStates()));
+
+        DeviceState foldedDeviceState = new DeviceState(new DeviceState.Configuration.Builder(
+                0 /* identifier */, "FOLDED")
+                .setSystemProperties(Set.of(PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_OUTER_PRIMARY))
+                .setPhysicalProperties(
+                        Set.of(PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_CLOSED))
+                .build());
+        DeviceState unfoldedDeviceState = new DeviceState(new DeviceState.Configuration.Builder(
+                1 /* identifier */, "UNFOLDED")
+                .setSystemProperties(Set.of(PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_INNER_PRIMARY))
+                .setPhysicalProperties(
+                        Set.of(PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_OPEN))
+                .build());
+        List<DeviceState> foldableDeviceStateList = List.of(foldedDeviceState, unfoldedDeviceState);
+        assertTrue(mSatelliteControllerUT.isFoldable(mContext, foldableDeviceStateList));
     }
 
     private boolean mProvisionState = false;
@@ -5511,6 +5564,12 @@ public class SatelliteControllerTest extends TelephonyTest {
                 }
             }
             return false;
+        }
+
+        @Override
+        protected List<DeviceState> getSupportedDeviceStates() {
+            return List.of(new DeviceState(new DeviceState.Configuration.Builder(0 /* identifier */,
+                    "DEFAULT" /* name */).build()));
         }
 
         void setSatelliteProvisioned(@Nullable Boolean isProvisioned) {
