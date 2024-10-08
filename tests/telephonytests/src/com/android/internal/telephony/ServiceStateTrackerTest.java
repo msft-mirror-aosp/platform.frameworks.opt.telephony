@@ -2983,7 +2983,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(ServiceState.STATE_IN_SERVICE).when(mSST).getCombinedRegState(ss);
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Plmn should be shown, and the string is "Emergency call only"
         Bundle b = getExtrasFromLastSpnUpdateIntent();
@@ -3005,7 +3005,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         sst.mSS = ss;
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Plmn should be shown, and the string is "No service"
         Bundle b = getExtrasFromLastSpnUpdateIntent();
@@ -3026,7 +3026,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         sst.mSS = ss;
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Plmn should be shown, and the string is null
         Bundle b = getExtrasFromLastSpnUpdateIntent();
@@ -3049,7 +3049,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(false).when(mPhone).isWifiCallingEnabled();
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Show both spn & plmn
         String spn = mBundle.getString(CarrierConfigManager.KEY_CARRIER_NAME_STRING);
@@ -3091,7 +3091,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(formats).when(r).getStringArray(anyInt());
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Only spn should be shown
         String spn = mBundle.getString(CarrierConfigManager.KEY_CARRIER_NAME_STRING);
@@ -3128,7 +3128,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(true).when(mPhone).isImsRegistered();
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Only spn should be shown
         String spn = mBundle.getString(CarrierConfigManager.KEY_CARRIER_NAME_STRING);
@@ -3161,7 +3161,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(true).when(mPhone).isImsRegistered();
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Only plmn should be shown
         String plmn = mBundle.getStringArray(CarrierConfigManager.KEY_PNN_OVERRIDE_STRING_ARRAY)[0];
@@ -3187,7 +3187,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(false).when(mPhone).isWifiCallingEnabled();
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Show both spn & plmn
         String spn = mBundle.getString(CarrierConfigManager.KEY_CARRIER_NAME_STRING);
@@ -3240,7 +3240,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(false).when(mPhone).isWifiCallingEnabled();
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Plmn should be shown, and the string is "No service"
         Bundle b = getExtrasFromLastSpnUpdateIntent();
@@ -3271,7 +3271,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(true).when(mPhone).isWifiCallingEnabled();
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Plmn should be shown, and the string is "No service"
         Bundle b = getExtrasFromLastSpnUpdateIntent();
@@ -3303,7 +3303,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(true).when(mPhone).isWifiCallingEnabled();
 
         // update the spn
-        sst.updateSpnDisplay();
+        sst.updateCarrierDisplayName();
 
         // Plmn should be shown, and the string is "No service"
         Bundle b = getExtrasFromLastSpnUpdateIntent();
