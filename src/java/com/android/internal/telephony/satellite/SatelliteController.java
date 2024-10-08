@@ -272,6 +272,7 @@ public class SatelliteController extends Handler {
             EVENT_WAIT_FOR_UPDATE_SATELLITE_ENABLE_ATTRIBUTES_RESPONSE_TIMED_OUT = 52;
     private static final int EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT = 53;
     protected static final int EVENT_SATELLITE_REGISTRATION_FAILURE = 54;
+    private static final int EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED = 55;
 
     @NonNull private static SatelliteController sInstance;
     @NonNull private final Context mContext;
@@ -354,6 +355,8 @@ public class SatelliteController extends Handler {
             new AtomicBoolean(false);
     private final AtomicBoolean mRegisteredForSatelliteRegistrationFailure =
             new AtomicBoolean(false);
+    private final AtomicBoolean mRegisteredForTerrestrialNetworkAvailableChanged =
+            new AtomicBoolean(false);
     /**
      * Map key: subId, value: callback to get error code of the provision request.
      */
@@ -388,6 +391,12 @@ public class SatelliteController extends Handler {
      */
     private final ConcurrentHashMap<IBinder, ISatelliteModemStateCallback>
             mSatelliteRegistrationFailureListeners = new ConcurrentHashMap<>();
+    /**
+     * Map key: binder of the callback, value: callback to receive terrestrial network
+     * available changed
+     */
+    private final ConcurrentHashMap<IBinder, ISatelliteModemStateCallback>
+            mTerrestrialNetworkAvailableChangedListeners = new ConcurrentHashMap<>();
     private final Object mIsSatelliteSupportedLock = new Object();
     @GuardedBy("mIsSatelliteSupportedLock")
     private Boolean mIsSatelliteSupported = null;
@@ -1848,6 +1857,15 @@ public class SatelliteController extends Handler {
                 }
                 break;
 
+            case EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED:
+                ar = (AsyncResult) msg.obj;
+                if (ar.result == null) {
+                    loge("EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED: result is null");
+                } else {
+                    handleEventTerrestrialNetworkAvailableChanged((boolean) ar.result);
+                }
+                break;
+
             default:
                 Log.w(TAG, "SatelliteControllerHandler: unexpected message code: " +
                         msg.what);
@@ -2494,8 +2512,9 @@ public class SatelliteController extends Handler {
             return SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
         }
         if (mFeatureFlags.carrierRoamingNbIotNtn()) {
-            plogd("registerForSatelliteModemStateChanged: add RegistrationFailure Listeners");
+            plogd("registerForSatelliteModemStateChanged: add Listeners for ModemState");
             mSatelliteRegistrationFailureListeners.put(callback.asBinder(), callback);
+            mTerrestrialNetworkAvailableChangedListeners.put(callback.asBinder(), callback);
         }
         if (mSatelliteSessionController != null) {
             mSatelliteSessionController.registerForSatelliteModemStateChanged(callback);
@@ -2527,8 +2546,9 @@ public class SatelliteController extends Handler {
                     + " is not initialized yet");
         }
         if (mFeatureFlags.carrierRoamingNbIotNtn()) {
-            plogd("unregisterForModemStateChanged: remove RegistrationFailure Listeners");
+            plogd("unregisterForModemStateChanged: remove Listeners for ModemState");
             mSatelliteRegistrationFailureListeners.remove(callback.asBinder());
+            mTerrestrialNetworkAvailableChangedListeners.remove(callback.asBinder());
         }
     }
 
@@ -4060,6 +4080,7 @@ public class SatelliteController extends Handler {
             registerForNtnSignalStrengthChanged();
             registerForCapabilitiesChanged();
             registerForSatelliteRegistrationFailure();
+            registerForTerrestrialNetworkAvailableChanged();
 
             requestIsSatelliteProvisioned(
                     new ResultReceiver(this) {
@@ -4171,6 +4192,16 @@ public class SatelliteController extends Handler {
                 mSatelliteModemInterface.registerForSatelliteRegistrationFailure(this,
                         EVENT_SATELLITE_REGISTRATION_FAILURE, null);
                 mRegisteredForSatelliteRegistrationFailure.set(true);
+            }
+        }
+    }
+
+    private void registerForTerrestrialNetworkAvailableChanged() {
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+            if (!mRegisteredForTerrestrialNetworkAvailableChanged.get()) {
+                mSatelliteModemInterface.registerForTerrestrialNetworkAvailableChanged(this,
+                        EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED, null);
+                mRegisteredForTerrestrialNetworkAvailableChanged.set(true);
             }
         }
     }
@@ -6890,6 +6921,42 @@ public class SatelliteController extends Handler {
         deadCallersList.forEach(listener -> {
             mSatelliteRegistrationFailureListeners.remove(listener.asBinder());
         });
+    }
+
+    private void handleEventTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("handleEventTerrestrialNetworkAvailableChanged: "
+                    + "carrierRoamingNbIotNtn flag is disabled");
+            return;
+        }
+
+        plogd("handleEventTerrestrialNetworkAvailableChanged: " + isAvailable);
+
+        List<ISatelliteModemStateCallback> deadCallersList = new ArrayList<>();
+        mTerrestrialNetworkAvailableChangedListeners.values().forEach(listener -> {
+            try {
+                listener.onTerrestrialNetworkAvailableChanged(isAvailable);
+            } catch (RemoteException e) {
+                logd("handleEventTerrestrialNetworkAvailableChanged RemoteException: " + e);
+                deadCallersList.add(listener);
+            }
+        });
+        deadCallersList.forEach(listener -> {
+            mTerrestrialNetworkAvailableChangedListeners.remove(listener.asBinder());
+        });
+
+        if (isAvailable && !mIsEmergency) {
+            requestSatelliteEnabled(
+                    false /* enableSatellite */, false /* enableDemoMode */,
+                    false /* isEmergency */,
+                    new IIntegerConsumer.Stub() {
+                        @Override
+                        public void accept(int result) {
+                            plogd("handleEventTerrestrialNetworkAvailableChanged:"
+                                    + " requestSatelliteEnabled result=" + result);
+                        }
+                    });
+        }
     }
 
     /**
