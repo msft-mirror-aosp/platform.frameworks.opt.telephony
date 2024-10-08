@@ -137,3 +137,11 @@ flag {
         purpose: PURPOSE_BUGFIX
     }
 }
+
+# OWNER=meghapatil TARGET=25Q2
+flag {
+    name: "support_sms_over_ims_apis"
+    namespace: "telephony"
+    description: "Used to expose SMS related hidden APIs for SMS over IMS to public API."
+    bug:"359721349"
+}
