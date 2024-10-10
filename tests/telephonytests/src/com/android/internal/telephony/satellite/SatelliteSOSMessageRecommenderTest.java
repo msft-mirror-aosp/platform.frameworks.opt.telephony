@@ -42,6 +42,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
+import android.hardware.devicestate.DeviceState;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Looper;
@@ -551,12 +552,13 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
 
     @Test
     public void testOnEmergencyCallStarted() {
-        SatelliteController satelliteController = new SatelliteController(
-                mContext, Looper.myLooper(), mFeatureFlags);
+        SatelliteController satelliteController = new MinimalSatelliteControllerWrapper(mContext,
+                Looper.myLooper(), mFeatureFlags);
         TestSOSMessageRecommender testSOSMessageRecommender = new TestSOSMessageRecommender(
                 mContext,
                 Looper.myLooper(),
                 satelliteController, mTestImsManager);
+        mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(true);
         testSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         processAllMessages();
 
@@ -846,6 +848,12 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
             return carrierEmergencyCallWaitForConnectionTimeoutMillis;
         }
 
+        @Override
+        protected List<DeviceState> getSupportedDeviceStates() {
+            return List.of(new DeviceState(new DeviceState.Configuration.Builder(0 /* identifier */,
+                    "DEFAULT" /* name */).build()));
+        }
+
         public void setSatelliteConnectedViaCarrierWithinHysteresisTime(
                 boolean connectedViaCarrier) {
             mIsSatelliteConnectedViaCarrierWithinHysteresisTime = connectedViaCarrier;
@@ -876,6 +884,26 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Now that {@link SatelliteController} uses
+     * {@link android.hardware.devicestate.DeviceStateManager} to determine if a device is a
+     * foldable or not, we have to provide a minimal wrapper for {@link SatelliteController} for
+     * tests that want to use a non-fake {@link SatelliteController}.
+     */
+    private static class MinimalSatelliteControllerWrapper extends SatelliteController {
+
+        protected MinimalSatelliteControllerWrapper(
+                Context context, Looper looper, FeatureFlags featureFlags) {
+            super(context, looper, featureFlags);
+        }
+
+        @Override
+        protected List<DeviceState> getSupportedDeviceStates() {
+            return List.of(new DeviceState(new DeviceState.Configuration.Builder(0 /* identifier */,
+                    "DEFAULT" /* name */).build()));
         }
     }
 
