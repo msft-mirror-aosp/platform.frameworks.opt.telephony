@@ -233,6 +233,8 @@ public class NetworkTypeController extends StateMachine {
     private int mLastAnchorNrCellId = PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN;
     private boolean mDoesPccListIndicateIdle = false;
 
+    private boolean mInVoiceCall = false;
+
     /**
      * NetworkTypeController constructor.
      *
@@ -729,6 +731,7 @@ public class NetworkTypeController extends StateMachine {
                             break;
                         }
                     }
+                    mInVoiceCall = inVoiceCall;
                     break;
                 default:
                     throw new RuntimeException("Received invalid event: " + msg.what);
@@ -1371,6 +1374,8 @@ public class NetworkTypeController extends StateMachine {
         if (mIsPrimaryTimerActive) {
             log("Transition without timer from " + getCurrentState().getName() + " to " + destName
                     + " due to existing " + mPrimaryTimerState + " primary timer.");
+        } else if (mInVoiceCall) {
+            log("Skip primary timer to " + destName + " due to in call");
         } else {
             if (DBG) {
                 log("Transition with primary timer from " + mPreviousState + " to " + destName);
@@ -1395,7 +1400,10 @@ public class NetworkTypeController extends StateMachine {
             log("Transition with secondary timer from " + currentName + " to "
                     + destState.getName());
         }
-        if (!mIsDeviceIdleMode && rule != null && rule.getSecondaryTimer(currentName) > 0) {
+        if (mInVoiceCall) {
+            log("Skip secondary timer from " + currentName + " to "
+                    + destState.getName() + " due to in call");
+        } else if (!mIsDeviceIdleMode && rule != null && rule.getSecondaryTimer(currentName) > 0) {
             int duration = rule.getSecondaryTimer(currentName);
             if (mLastShownNrDueToAdvancedBand && mNrAdvancedBandsSecondaryTimer > 0) {
                 duration = mNrAdvancedBandsSecondaryTimer;
