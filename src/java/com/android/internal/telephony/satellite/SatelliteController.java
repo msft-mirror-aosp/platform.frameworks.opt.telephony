@@ -6081,7 +6081,7 @@ public class SatelliteController extends Handler {
                         AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
 
         for (NetworkRegistrationInfo nri : nriList) {
-            if (nri.isInService() || nri.isEmergencyEnabled()) {
+            if (nri.isInService()) {
                 logv("getWwanIsInService: return true");
                 return true;
             }
