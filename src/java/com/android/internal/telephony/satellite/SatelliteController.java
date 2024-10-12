@@ -1743,28 +1743,24 @@ public class SatelliteController extends Handler {
                 setSatellitePhone(subId);
                 String iccId = mSubscriptionManagerService.getSubscriptionInfo(subId).getIccId();
                 argument.setIccId(iccId);
-                boolean sendResponse = false;
                 synchronized (mSatelliteTokenProvisionedLock) {
                     if (!iccId.equals(mLastConfiguredIccId)) {
                         logd("updateSatelliteSubscription subId=" + subId + ", iccId=" + iccId
                                 + " to modem");
                         mSatelliteModemInterface.updateSatelliteSubscription(iccId, onCompleted);
-                    } else {
-                        sendResponse = true;
                     }
                 }
                 if (provisionChanged) {
                     handleEventSatelliteSubscriptionProvisionStateChanged();
                 }
-                if (sendResponse) {
-                    // The response is sent immediately because the ICCID has already been
-                    // delivered to the modem.
-                    Bundle bundle = new Bundle();
-                    bundle.putBoolean(
-                            argument.mProvisioned ? SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS
-                                    : SatelliteManager.KEY_DEPROVISION_SATELLITE_TOKENS, true);
-                    argument.mResult.send(SATELLITE_RESULT_SUCCESS, bundle);
-                }
+
+                // The response is sent immediately because the ICCID has already been
+                // delivered to the modem.
+                Bundle bundle = new Bundle();
+                bundle.putBoolean(
+                        argument.mProvisioned ? SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS
+                                : SatelliteManager.KEY_DEPROVISION_SATELLITE_TOKENS, true);
+                argument.mResult.send(SATELLITE_RESULT_SUCCESS, bundle);
                 break;
             }
 
@@ -1781,12 +1777,6 @@ public class SatelliteController extends Handler {
                     }
                 }
                 logd("updateSatelliteSubscription result=" + error);
-                Bundle bundle = new Bundle();
-                bundle.putBoolean(
-                        argument.mProvisioned ? SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS :
-                                SatelliteManager.KEY_DEPROVISION_SATELLITE_TOKENS,
-                        error == SATELLITE_RESULT_SUCCESS);
-                argument.mResult.send(error, bundle);
                 break;
             }
 
@@ -2642,7 +2632,7 @@ public class SatelliteController extends Handler {
     }
 
     /**
-     * Inform whether the device is aligned with satellite for demo mode.
+     * Inform whether the device is aligned with the satellite in both real and demo mode.
      *
      * @param isAligned {@true} means device is aligned with the satellite, otherwise {@false}.
      */
