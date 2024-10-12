@@ -273,7 +273,11 @@ public class SmsDispatchersController extends Handler {
             this.validityPeriod = validityPeriod;
             this.messageId = messageId;
             this.skipShortCodeCheck = skipShortCodeCheck;
-            this.uniqueMessageId = getNextUniqueMessageId();
+            if (tracker != null) {
+                this.uniqueMessageId = tracker.mUniqueMessageId;
+            } else {
+                this.uniqueMessageId = getNextUniqueMessageId();
+            }
         }
 
         public static long getNextUniqueMessageId() {

@@ -62,3 +62,11 @@ flag {
         purpose: PURPOSE_BUGFIX
     }
 }
+
+# OWNER=yongnamcha TARGET=25Q2
+flag {
+    name: "emergency_callback_mode_notification"
+    namespace: "telephony"
+    description: "Used to notify the emergency callback mode for call/SMS to other applications."
+    bug:"359064059"
+}
