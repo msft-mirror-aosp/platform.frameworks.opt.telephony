@@ -273,7 +273,11 @@ public class SmsDispatchersController extends Handler {
             this.validityPeriod = validityPeriod;
             this.messageId = messageId;
             this.skipShortCodeCheck = skipShortCodeCheck;
-            this.uniqueMessageId = getNextUniqueMessageId();
+            if (tracker != null) {
+                this.uniqueMessageId = tracker.mUniqueMessageId;
+            } else {
+                this.uniqueMessageId = getNextUniqueMessageId();
+            }
         }
 
         public static long getNextUniqueMessageId() {
@@ -1248,7 +1252,7 @@ public class SmsDispatchersController extends Handler {
     }
 
     private void notifySmsSentToDatagramDispatcher(long messageId, boolean success) {
-        if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn()) {
+        if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
             DatagramDispatcher.getInstance().onSendSmsDone(mPhone.getSubId(), messageId, success);
         }
     }
@@ -1856,7 +1860,7 @@ public class SmsDispatchersController extends Handler {
                 messageUri, persistMessage, priority, expectMore, validityPeriod, messageId,
                 skipShortCodeCheck);
 
-        if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn()) {
+        if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
             // Send P2P SMS using carrier roaming NB IOT NTN
             DatagramDispatcher.getInstance().sendSms(pendingRequest);
             return;
@@ -2021,7 +2025,7 @@ public class SmsDispatchersController extends Handler {
                 null, 0, parts, messageUri, persistMessage, priority, expectMore,
                 validityPeriod, messageId, false);
 
-        if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn()) {
+        if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
             // Send multipart P2P SMS using carrier roaming NB IOT NTN
             DatagramDispatcher.getInstance().sendSms(pendingRequest);
             return;
