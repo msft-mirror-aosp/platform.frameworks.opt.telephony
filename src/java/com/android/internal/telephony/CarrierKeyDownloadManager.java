@@ -170,7 +170,13 @@ public class CarrierKeyDownloadManager extends Handler {
                                                 TelephonyManager.class)
                                         .createForSubscriptionId(subId);
                             }
-                            mCarrierId = carrierId;
+                            if (Flags.ignoreCarrieridResetForSimRemoval()) {
+                                if (carrierId > 0) {
+                                    mCarrierId = carrierId;
+                                }
+                            } else {
+                                mCarrierId = carrierId;
+                            }
                             updateSimOperator();
                             // If device is screen locked do not proceed to handle
                             // EVENT_ALARM_OR_CONFIG_CHANGE

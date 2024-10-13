@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony.satellite;
 
+import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_INNER_PRIMARY;
+import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_OUTER_PRIMARY;
 import static android.provider.Settings.ACTION_SATELLITE_SETTING;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_TYPE;
@@ -74,6 +76,8 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.database.ContentObserver;
+import android.hardware.devicestate.DeviceState;
+import android.hardware.devicestate.DeviceStateManager;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.nfc.NfcAdapter;
@@ -592,6 +596,10 @@ public class SatelliteController extends Handler {
                 }
             };
 
+    // List of device states returned from DeviceStateManager to determine if running on a foldable
+    // device.
+    private List<DeviceState> mDeviceStates = new ArrayList();
+
     /**
      * @return The singleton instance of SatelliteController.
      */
@@ -740,6 +748,9 @@ public class SatelliteController extends Handler {
         }
         registerDefaultSmsSubscriptionChangedBroadcastReceiver();
         updateSatelliteProvisionedStatePerSubscriberId();
+        if (android.hardware.devicestate.feature.flags.Flags.deviceStatePropertyMigration()) {
+            mDeviceStates = getSupportedDeviceStates();
+        }
     }
 
     class SatelliteSubscriptionsChangedListener
@@ -1732,28 +1743,24 @@ public class SatelliteController extends Handler {
                 setSatellitePhone(subId);
                 String iccId = mSubscriptionManagerService.getSubscriptionInfo(subId).getIccId();
                 argument.setIccId(iccId);
-                boolean sendResponse = false;
                 synchronized (mSatelliteTokenProvisionedLock) {
                     if (!iccId.equals(mLastConfiguredIccId)) {
                         logd("updateSatelliteSubscription subId=" + subId + ", iccId=" + iccId
                                 + " to modem");
                         mSatelliteModemInterface.updateSatelliteSubscription(iccId, onCompleted);
-                    } else {
-                        sendResponse = true;
                     }
                 }
                 if (provisionChanged) {
                     handleEventSatelliteSubscriptionProvisionStateChanged();
                 }
-                if (sendResponse) {
-                    // The response is sent immediately because the ICCID has already been
-                    // delivered to the modem.
-                    Bundle bundle = new Bundle();
-                    bundle.putBoolean(
-                            argument.mProvisioned ? SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS
-                                    : SatelliteManager.KEY_DEPROVISION_SATELLITE_TOKENS, true);
-                    argument.mResult.send(SATELLITE_RESULT_SUCCESS, bundle);
-                }
+
+                // The response is sent immediately because the ICCID has already been
+                // delivered to the modem.
+                Bundle bundle = new Bundle();
+                bundle.putBoolean(
+                        argument.mProvisioned ? SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS
+                                : SatelliteManager.KEY_DEPROVISION_SATELLITE_TOKENS, true);
+                argument.mResult.send(SATELLITE_RESULT_SUCCESS, bundle);
                 break;
             }
 
@@ -1770,12 +1777,6 @@ public class SatelliteController extends Handler {
                     }
                 }
                 logd("updateSatelliteSubscription result=" + error);
-                Bundle bundle = new Bundle();
-                bundle.putBoolean(
-                        argument.mProvisioned ? SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS :
-                                SatelliteManager.KEY_DEPROVISION_SATELLITE_TOKENS,
-                        error == SATELLITE_RESULT_SUCCESS);
-                argument.mResult.send(error, bundle);
                 break;
             }
 
@@ -2631,7 +2632,7 @@ public class SatelliteController extends Handler {
     }
 
     /**
-     * Inform whether the device is aligned with satellite for demo mode.
+     * Inform whether the device is aligned with the satellite in both real and demo mode.
      *
      * @param isAligned {@true} means device is aligned with the satellite, otherwise {@false}.
      */
@@ -3535,7 +3536,7 @@ public class SatelliteController extends Handler {
             return false;
         }
 
-        if (!isSatelliteEnabledOrBeingEnabled()) {
+        if (!isSatelliteEnabled()) {
             plogd("iisInCarrierRoamingNbIotNtn: satellite is disabled");
             return false;
         }
@@ -3545,7 +3546,34 @@ public class SatelliteController extends Handler {
             plogd("isInCarrierRoamingNbIotNtn: not carrier roaming ntn eligible.");
             return false;
         }
+        plogd("isInCarrierRoamingNbIotNtn: carrier roaming ntn eligible.");
+        return true;
+    }
 
+    /**
+     * @return {@code true} if phone is in carrier roaming nb iot ntn mode,
+     * else {@return false}
+     */
+    public boolean isInCarrierRoamingNbIotNtn(@NonNull Phone phone) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("isInCarrierRoamingNbIotNtn: carrier roaming nb iot ntn "
+                    + "feature flag is disabled");
+            return false;
+        }
+
+        if (!isSatelliteEnabled()) {
+            plogd("iisInCarrierRoamingNbIotNtn: satellite is disabled");
+            return false;
+        }
+
+        if (!isCarrierRoamingNtnEligible(phone)) {
+            plogd("isInCarrierRoamingNbIotNtn: phone associated with subId "
+                      + phone.getSubId()
+                      + " is not carrier roaming ntn eligible.");
+            return false;
+        }
+        plogd("isInCarrierRoamingNbIotNtn: carrier roaming ntn eligible for phone"
+                  + " associated with subId " + phone.getSubId());
         return true;
     }
 
@@ -4323,7 +4351,8 @@ public class SatelliteController extends Handler {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected void setSettingsKeyToAllowDeviceRotation(int val) {
         // Only allows on a foldable device type.
-        if (!isFoldable(mContext)) {
+        if (!isFoldable(mContext, mDeviceStates)) {
+            logd("setSettingsKeyToAllowDeviceRotation(" + val + "), device was not a foldable");
             return;
         }
 
@@ -4364,10 +4393,19 @@ public class SatelliteController extends Handler {
      * If the device type is foldable.
      *
      * @param context context
+     * @param deviceStates list of {@link DeviceState}s provided from {@link DeviceStateManager}
      * @return {@code true} if device type is foldable. {@code false} for otherwise.
      */
-    private boolean isFoldable(Context context) {
-        return context.getResources().getIntArray(R.array.config_foldedDeviceStates).length > 0;
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public boolean isFoldable(Context context, List<DeviceState> deviceStates) {
+        if (android.hardware.devicestate.feature.flags.Flags.deviceStatePropertyMigration()) {
+            return deviceStates.stream().anyMatch(deviceState -> deviceState.hasProperty(
+                    PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_INNER_PRIMARY)
+                    || deviceState.hasProperty(
+                    PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_OUTER_PRIMARY));
+        } else {
+            return context.getResources().getIntArray(R.array.config_foldedDeviceStates).length > 0;
+        }
     }
 
     /**
@@ -4678,25 +4716,29 @@ public class SatelliteController extends Handler {
     @NonNull private PersistableBundle getConfigForSubId(int subId) {
         PersistableBundle config = null;
         if (mCarrierConfigManager != null) {
-            config = mCarrierConfigManager.getConfigForSubId(subId,
-                    KEY_CARRIER_SUPPORTED_SATELLITE_SERVICES_PER_PROVIDER_BUNDLE,
-                    KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
-                    KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL,
-                    KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT,
-                    KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL,
-                    KEY_CARRIER_ROAMING_SATELLITE_DEFAULT_SERVICES_INT_ARRAY,
-                    KEY_EMERGENCY_MESSAGING_SUPPORTED_BOOL,
-                    KEY_EMERGENCY_CALL_TO_SATELLITE_T911_HANDOVER_TIMEOUT_MILLIS_INT,
-                    KEY_SATELLITE_ESOS_SUPPORTED_BOOL,
-                    KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL,
-                    KEY_SATELLITE_NIDD_APN_NAME_STRING,
-                    KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT,
-                    KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT,
-                    KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT,
-                    KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
-                    KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
-                    KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT
-            );
+            try {
+                config = mCarrierConfigManager.getConfigForSubId(subId,
+                        KEY_CARRIER_SUPPORTED_SATELLITE_SERVICES_PER_PROVIDER_BUNDLE,
+                        KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
+                        KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL,
+                        KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT,
+                        KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL,
+                        KEY_CARRIER_ROAMING_SATELLITE_DEFAULT_SERVICES_INT_ARRAY,
+                        KEY_EMERGENCY_MESSAGING_SUPPORTED_BOOL,
+                        KEY_EMERGENCY_CALL_TO_SATELLITE_T911_HANDOVER_TIMEOUT_MILLIS_INT,
+                        KEY_SATELLITE_ESOS_SUPPORTED_BOOL,
+                        KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL,
+                        KEY_SATELLITE_NIDD_APN_NAME_STRING,
+                        KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT,
+                        KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT,
+                        KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT,
+                        KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
+                        KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
+                        KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT
+                );
+            } catch (Exception e) {
+                logw("getConfigForSubId: " + e);
+            }
         }
         if (config == null || config.isEmpty()) {
             config = CarrierConfigManager.getDefaultConfig();
@@ -6858,6 +6900,11 @@ public class SatelliteController extends Handler {
         IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(SubscriptionManager.ACTION_DEFAULT_SMS_SUBSCRIPTION_CHANGED);
         mContext.registerReceiver(mDefaultSmsSubscriptionChangedBroadcastReceiver, intentFilter);
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected List<DeviceState> getSupportedDeviceStates() {
+        return mContext.getSystemService(DeviceStateManager.class).getSupportedDeviceStates();
     }
 
     FeatureFlags getFeatureFlags() {

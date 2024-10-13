@@ -86,6 +86,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -123,6 +124,8 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private CellIdentity mCellIdentityForRegiFail;
     private int mRegistrationFailReason;
     private Set<Integer> mSimultaneousCallingSubscriptions;
+    private int mCallbackModeStopReason = TelephonyManager.STOP_REASON_UNKNOWN;
+    private long mCallbackModeDurationMillis;
     private boolean mCarrierRoamingNtnMode;
     private boolean mCarrierRoamingNtnEligible;
 
@@ -201,6 +204,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
             TelephonyCallback.RegistrationFailedListener,
             TelephonyCallback.DataActivityListener,
             TelephonyCallback.SimultaneousCellularCallingSupportListener,
+            TelephonyCallback.EmergencyCallbackModeListener,
             TelephonyCallback.CarrierRoamingNtnModeListener {
         // This class isn't mockable to get invocation counts because the IBinder is null and
         // crashes the TelephonyRegistry. Make a cheesy verify(times()) alternative.
@@ -295,6 +299,27 @@ public class TelephonyRegistryTest extends TelephonyTest {
                 @NonNull Set<Integer> simultaneousCallingSubscriptionIds) {
             invocationCount.incrementAndGet();
             mSimultaneousCallingSubscriptions = simultaneousCallingSubscriptionIds;
+        }
+
+        @Override
+        public void onCallbackModeStarted(@TelephonyManager.EmergencyCallbackModeType int type,
+                @NonNull Duration timerDuration, int subId) {
+            invocationCount.incrementAndGet();
+            mCallbackModeDurationMillis = timerDuration.toMillis();
+        }
+
+        @Override
+        public void onCallbackModeRestarted(@TelephonyManager.EmergencyCallbackModeType int type,
+                @NonNull Duration timerDuration, int subId) {
+            invocationCount.incrementAndGet();
+            mCallbackModeDurationMillis = timerDuration.toMillis();
+        }
+
+        @Override
+        public void onCallbackModeStopped(@TelephonyManager.EmergencyCallbackModeType int type,
+                @TelephonyManager.EmergencyCallbackModeStopReason int reason, int subId) {
+            invocationCount.incrementAndGet();
+            mCallbackModeStopReason = reason;
         }
 
         @Override
@@ -1590,6 +1615,57 @@ public class TelephonyRegistryTest extends TelephonyTest {
         mTelephonyRegistry.notifySimultaneousCellularCallingSubscriptionsChanged(subIds);
         processAllMessages();
         assertEquals(subIdSet, mSimultaneousCallingSubscriptions);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_EMERGENCY_CALLBACK_MODE_NOTIFICATION)
+    public void testNotifyCallbackModeStarted() {
+        final long durationMillis = 1000;
+        int[] events = {TelephonyCallback.EVENT_EMERGENCY_CALLBACK_MODE_CHANGED};
+
+        mTelephonyRegistry.listenWithEventList(false, false, 1/*subId*/,
+                mContext.getOpPackageName(), mContext.getAttributionTag(),
+                mTelephonyCallback.callback, events, true);
+        mTelephonyRegistry.notifyCallbackModeStarted(0/*phoneId*/, 1/*subId*/,
+                TelephonyManager.EMERGENCY_CALLBACK_MODE_CALL, durationMillis);
+        processAllMessages();
+
+        assertEquals(1, mTelephonyCallback.invocationCount.get());
+        assertEquals(durationMillis, mCallbackModeDurationMillis);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_EMERGENCY_CALLBACK_MODE_NOTIFICATION)
+    public void testNotifyCallbackModeReStarted() {
+        final long durationMillis = 1000;
+        int[] events = {TelephonyCallback.EVENT_EMERGENCY_CALLBACK_MODE_CHANGED};
+
+        mTelephonyRegistry.listenWithEventList(false, false, 1/*subId*/,
+                mContext.getOpPackageName(), mContext.getAttributionTag(),
+                mTelephonyCallback.callback, events, true);
+        mTelephonyRegistry.notifyCallbackModeRestarted(0/*phoneId*/, 1/*subId*/,
+                TelephonyManager.EMERGENCY_CALLBACK_MODE_CALL, durationMillis);
+        processAllMessages();
+
+        assertEquals(1, mTelephonyCallback.invocationCount.get());
+        assertEquals(durationMillis, mCallbackModeDurationMillis);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_EMERGENCY_CALLBACK_MODE_NOTIFICATION)
+    public void testNotifyCallbackModeStopped() {
+        final int reason = TelephonyManager.STOP_REASON_OUTGOING_EMERGENCY_CALL_INITIATED;
+        int[] events = {TelephonyCallback.EVENT_EMERGENCY_CALLBACK_MODE_CHANGED};
+
+        mTelephonyRegistry.listenWithEventList(false, false, 1/*subId*/,
+                mContext.getOpPackageName(), mContext.getAttributionTag(),
+                mTelephonyCallback.callback, events, true);
+        mTelephonyRegistry.notifyCallbackModeStopped(0/*phoneId*/, 1/*subId*/,
+                TelephonyManager.EMERGENCY_CALLBACK_MODE_CALL, reason);
+        processAllMessages();
+
+        assertEquals(1, mTelephonyCallback.invocationCount.get());
+        assertEquals(reason, mCallbackModeStopReason);
     }
 
     @Test
