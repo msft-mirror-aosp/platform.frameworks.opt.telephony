@@ -27,6 +27,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.UserIdInt;
+import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.app.PendingIntent;
 import android.app.compat.CompatChanges;
@@ -720,7 +721,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                     return false;
                 }
             } else {
-                if (!mSubscriptionManager.canManageSubscription(subInfo.toSubscriptionInfo(),
+                if (!canManageSubscription(subInfo.toSubscriptionInfo(),
                         callingPackage)) {
                     loge("checkCarrierPrivilegeOnSubList: cannot manage sub " + subId);
                     return false;
@@ -2266,7 +2267,7 @@ public class SubscriptionManagerService extends ISub.Stub {
         return getSubscriptionInfoStreamAsUser(BINDER_WRAPPER.getCallingUserHandle())
                 .map(SubscriptionInfoInternal::toSubscriptionInfo)
                 .filter(subInfo -> subInfo.isEmbedded()
-                        && mSubscriptionManager.canManageSubscription(subInfo, callingPackage))
+                        && canManageSubscription(subInfo, callingPackage))
                 .sorted(Comparator.comparing(SubscriptionInfo::getSimSlotIndex)
                         .thenComparing(SubscriptionInfo::getSubscriptionId))
                 .collect(Collectors.toList());
@@ -2992,7 +2993,7 @@ public class SubscriptionManagerService extends ISub.Stub {
         return mSubscriptionDatabaseManager.getAllSubscriptions().stream()
                 .map(SubscriptionInfoInternal::toSubscriptionInfo)
                 .filter(info -> groupUuid.equals(info.getGroupUuid())
-                        && (mSubscriptionManager.canManageSubscription(info, callingPackage)
+                        && (canManageSubscription(info, callingPackage)
                         || TelephonyPermissions.checkCallingOrSelfReadPhoneStateNoThrow(
                                 mContext, info.getSubscriptionId(), callingPackage,
                         callingFeatureId, "getSubscriptionsInGroup")))
@@ -4899,6 +4900,15 @@ public class SubscriptionManagerService extends ISub.Stub {
         }
 
         return cardNumber;
+    }
+
+    private boolean canManageSubscription(SubscriptionInfo subInfo, String packageName) {
+        if (Flags.hsumPackageManager() && UserManager.isHeadlessSystemUserMode()) {
+            return mSubscriptionManager.canManageSubscriptionAsUser(subInfo, packageName,
+                    UserHandle.of(ActivityManager.getCurrentUser()));
+        } else {
+            return mSubscriptionManager.canManageSubscription(subInfo, packageName);
+        }
     }
 
     /**
