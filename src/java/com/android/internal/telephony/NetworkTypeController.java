@@ -170,7 +170,6 @@ public class NetworkTypeController extends StateMachine {
                 @Override
                 public void onQosSessionsChanged(
                         @NonNull List<QosBearerSession> qosBearerSessions) {
-                    if (!mIsTimerResetEnabledOnVoiceQos) return;
                     sendMessage(obtainMessage(EVENT_QOS_SESSION_CHANGED, qosBearerSessions));
                 }
 
@@ -716,22 +715,22 @@ public class NetworkTypeController extends StateMachine {
                     break;
                 case EVENT_QOS_SESSION_CHANGED:
                     List<QosBearerSession> qosBearerSessions = (List<QosBearerSession>) msg.obj;
-                    boolean inVoiceCall = false;
+                    mInVoiceCall = false;
                     for (QosBearerSession session : qosBearerSessions) {
                         // TS 23.203 23.501 - 1 means conversational voice
-                        if (session.getQos() instanceof EpsQos qos) {
-                            inVoiceCall = qos.getQci() == 1;
-                        } else if (session.getQos() instanceof NrQos qos) {
-                            inVoiceCall = qos.get5Qi() == 1;
-                        }
-                        if (inVoiceCall) {
-                            if (DBG) log("Device in voice call, reset all timers");
-                            resetAllTimers();
-                            transitionToCurrentState();
+                        if (session.getQos() instanceof EpsQos qos && qos.getQci() == 1) {
+                            mInVoiceCall = true;
+                            break;
+                        } else if (session.getQos() instanceof NrQos qos && qos.get5Qi() == 1) {
+                            mInVoiceCall = true;
                             break;
                         }
                     }
-                    mInVoiceCall = inVoiceCall;
+                    if (mIsTimerResetEnabledOnVoiceQos && mInVoiceCall) {
+                        if (DBG) log("Device in voice call, reset all timers");
+                        resetAllTimers();
+                        transitionToCurrentState();
+                    }
                     break;
                 default:
                     throw new RuntimeException("Received invalid event: " + msg.what);
@@ -1374,7 +1373,7 @@ public class NetworkTypeController extends StateMachine {
         if (mIsPrimaryTimerActive) {
             log("Transition without timer from " + getCurrentState().getName() + " to " + destName
                     + " due to existing " + mPrimaryTimerState + " primary timer.");
-        } else if (mInVoiceCall) {
+        } else if (mIsTimerResetEnabledOnVoiceQos && mInVoiceCall) {
             log("Skip primary timer to " + destName + " due to in call");
         } else {
             if (DBG) {
@@ -1400,7 +1399,7 @@ public class NetworkTypeController extends StateMachine {
             log("Transition with secondary timer from " + currentName + " to "
                     + destState.getName());
         }
-        if (mInVoiceCall) {
+        if (mIsTimerResetEnabledOnVoiceQos && mInVoiceCall) {
             log("Skip secondary timer from " + currentName + " to "
                     + destState.getName() + " due to in call");
         } else if (!mIsDeviceIdleMode && rule != null && rule.getSecondaryTimer(currentName) > 0) {
@@ -1762,6 +1761,7 @@ public class NetworkTypeController extends StateMachine {
         pw.println("mPrimaryCellChangedWhileIdle=" + mPrimaryCellChangedWhileIdle);
         pw.println("mEnableNrAdvancedWhileRoaming=" + mEnableNrAdvancedWhileRoaming);
         pw.println("mIsDeviceIdleMode=" + mIsDeviceIdleMode);
+        pw.println("mIsTimerResetEnabledOnVoiceQos=" + mIsTimerResetEnabledOnVoiceQos);
         pw.decreaseIndent();
         pw.flush();
     }
