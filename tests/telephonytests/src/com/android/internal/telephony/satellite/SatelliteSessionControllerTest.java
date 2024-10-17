@@ -21,6 +21,7 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_S
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_SMS;
 import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE;
+import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_UNKNOWN;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS;
@@ -301,8 +302,6 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     public void testP2pSmsInactivityTimer() {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
-        when(mMockDatagramController.getDatagramType()).thenReturn(
-                SatelliteManager.DATAGRAM_TYPE_SMS);
 
         when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(false);
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
@@ -347,8 +346,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     public void testEsosInactivityTimer() {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
-        when(mMockDatagramController.getDatagramType()).thenReturn(
-                SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE);
+
         when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(true);
         when(mMockSatelliteController.isSatelliteEsosSupported(anyInt())).thenReturn(true);
         PersistableBundle bundle = new PersistableBundle();
@@ -423,7 +421,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Notify datagram controller is in WAITING_TO_CONNECT.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // Verify that ESOS, P2P_SMS timer are not started.
@@ -505,7 +504,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Notify datagram controller is in WAITING_TO_CONNECT.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // Verify that ESOS, P2P_SMS timer are not started.
@@ -579,7 +579,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Notify datagram controller is in WAITING_TO_CONNECT.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // Verify that ESOS, P2P_SMS timer are not started.
@@ -645,7 +646,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Notify datagram controller is in WAITING_TO_CONNECT.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // Verify that ESOS, P2P_SMS timer are not started.
@@ -716,7 +718,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Notify datagram controller is in WAITING_TO_CONNECT.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // Verify that ESOS, P2P_SMS timer are not started.
@@ -938,7 +941,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         // Start sending datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
-                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -950,7 +954,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Sending datagrams failed
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to IDLE state.
@@ -962,7 +967,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start sending datagrams again
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -974,7 +980,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Sending datagrams is successful and done.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to LISTENING state.
@@ -987,7 +994,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start receiving datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -999,7 +1007,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         // Receiving datagrams is successful and done.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to LISTENING state.
@@ -1012,7 +1021,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start receiving datagrams again
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -1025,7 +1035,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Receiving datagrams failed.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to IDLE state.
@@ -1037,7 +1048,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start receiving datagrams again
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -1048,7 +1060,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         // Receiving datagrams is successful and done.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to LISTENING state.
@@ -1072,7 +1085,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start receiving datagrams again
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -1084,7 +1098,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start sending datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should stay at TRANSFERRING state.
@@ -1095,7 +1110,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Receiving datagrams failed.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should stay at TRANSFERRING state instead of moving to IDLE
@@ -1107,7 +1123,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start receiving datagrams again.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should stay at TRANSFERRING state.
@@ -1118,7 +1135,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Sending datagrams failed.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should stay at TRANSFERRING state instead of moving to IDLE
@@ -1194,7 +1212,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         // Start sending datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
-                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // The datagram sending event should be ignored.
@@ -1217,7 +1236,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         // Start sending datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
-                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -1232,7 +1252,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Sending datagrams failed
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to CONNECTED state.
@@ -1247,7 +1268,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start sending datagrams again
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -1262,7 +1284,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Sending datagrams is successful and done.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to CONNECTED state.
@@ -1277,7 +1300,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start receiving datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -1291,7 +1315,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         // Receiving datagrams is successful and done.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to CONNECTED state.
@@ -1306,7 +1331,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start receiving datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -1320,7 +1346,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         // Receiving datagrams is successful and done.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to CONNECTED state.
@@ -1348,7 +1375,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start sending datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to NOT_CONNECTED state.
@@ -1446,7 +1474,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start sending datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should stay at IDLE state because it failed to disable
@@ -1502,7 +1531,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Start sending datagrams and the NB-IOT inactivity timer should be stopped.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         moveTimeForward(TEST_SATELLITE_TIMEOUT_MILLIS);
         processAllMessages();
 
@@ -1514,10 +1544,12 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // The NB-IOT inactivity timer should be started.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
         assertTrue(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
 
@@ -1775,17 +1807,15 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     }
 
     private void sendMessage(@SatelliteManager.DatagramType int datagramType) {
-        when(mMockDatagramController.getDatagramType()).thenReturn(datagramType);
-
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, datagramType);
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, datagramType);
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, datagramType);
 
         processAllMessages();
     }
@@ -1853,7 +1883,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         assertEquals(STATE_IDLE, mTestSatelliteSessionController.getCurrentStateName());
         // Start sending datagrams
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
-                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to TRANSFERRING state.
@@ -1868,7 +1899,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Sending datagrams is successful and done.
         mTestSatelliteSessionController.onDatagramTransferStateChanged(
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
         processAllMessages();
 
         // SatelliteSessionController should move to LISTENING state.
