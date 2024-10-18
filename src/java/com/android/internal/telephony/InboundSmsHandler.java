@@ -77,6 +77,7 @@ import com.android.internal.telephony.analytics.TelephonyAnalytics.SmsMmsAnalyti
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.satellite.metrics.CarrierRoamingSatelliteSessionStats;
 import com.android.internal.telephony.util.NotificationChannelController;
 import com.android.internal.telephony.util.TelephonyUtils;
@@ -685,6 +686,17 @@ public abstract class InboundSmsHandler extends StateMachine {
         } catch (RuntimeException ex) {
             loge("Exception dispatching message", ex);
             result = RESULT_SMS_DISPATCH_FAILURE;
+        }
+
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+            if (result == Intents.RESULT_SMS_HANDLED) {
+                SatelliteController satelliteController = SatelliteController.getInstance();
+                if (satelliteController == null) {
+                    log("SatelliteController is not initialized");
+                    return;
+                }
+                satelliteController.onSmsReceived(mPhone.getSubId());
+            }
         }
 
         // RESULT_OK means that the SMS will be acknowledged by special handling,
