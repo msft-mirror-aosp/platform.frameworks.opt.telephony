@@ -32,6 +32,7 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPOR
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT;
@@ -1437,11 +1438,12 @@ public class SatelliteController extends Handler {
                         synchronized (mNeedsSatellitePointingLock) {
                             mNeedsSatellitePointing = capabilities.isPointingRequired();
                         }
-                        if (DBG) plogd("getSatelliteCapabilities: " + capabilities);
-                        bundle.putParcelable(SatelliteManager.KEY_SATELLITE_CAPABILITIES,
-                                capabilities);
                         synchronized (mSatelliteCapabilitiesLock) {
                             mSatelliteCapabilities = capabilities;
+                            overrideSatelliteCapabilitiesIfApplicable();
+                            if (DBG) plogd("getSatelliteCapabilities: " + mSatelliteCapabilities);
+                            bundle.putParcelable(SatelliteManager.KEY_SATELLITE_CAPABILITIES,
+                                    mSatelliteCapabilities);
                         }
                     }
                 }
@@ -4298,8 +4300,11 @@ public class SatelliteController extends Handler {
 
         List<ISatelliteCapabilitiesCallback> deadCallersList = new ArrayList<>();
         mSatelliteCapabilitiesChangedListeners.values().forEach(listener -> {
+            synchronized (this.mSatelliteCapabilitiesLock) {
+                overrideSatelliteCapabilitiesIfApplicable();
+            }
             try {
-                listener.onSatelliteCapabilitiesChanged(capabilities);
+                listener.onSatelliteCapabilitiesChanged(this.mSatelliteCapabilities);
             } catch (RemoteException e) {
                 plogd("handleEventSatelliteCapabilitiesChanged RemoteException: " + e);
                 deadCallersList.add(listener);
@@ -6978,5 +6983,27 @@ public class SatelliteController extends Handler {
             }
         }
         return true;
+    }
+
+    /**
+     * This method check for the key KEY_SATELLITE_MAX_DATAGRAM_SIZE in carrier config. If
+     * available it fetches the value and override the same in SatelliteCapabilities. Otherwise it
+     * uses the value in the existed mSatelliteCapabilities.
+     */
+    private void overrideSatelliteCapabilitiesIfApplicable() {
+        synchronized (this.mSatellitePhoneLock) {
+            if (this.mSatellitePhone == null) {
+                return;
+            }
+        }
+        int subId = getSelectedSatelliteSubId();
+        PersistableBundle config = getPersistableBundle(subId);
+        if (config.containsKey(KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE)) {
+            int datagramSize = config.getInt(KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE);
+            SubscriptionInfo subInfo = mSubscriptionManagerService.getSubscriptionInfo(subId);
+            if (!(subInfo == null || subInfo.isOnlyNonTerrestrialNetwork())) {
+                this.mSatelliteCapabilities.setMaxBytesPerOutgoingDatagram(datagramSize);
+            }
+        }
     }
 }
