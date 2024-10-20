@@ -334,9 +334,10 @@ public class SatelliteSessionController extends StateMachine {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
     public void onDatagramTransferStateChanged(
             @SatelliteManager.SatelliteDatagramTransferState int sendState,
-            @SatelliteManager.SatelliteDatagramTransferState int receiveState) {
+            @SatelliteManager.SatelliteDatagramTransferState int receiveState,
+            @SatelliteManager.DatagramType int datagramType) {
         sendMessage(EVENT_DATAGRAM_TRANSFER_STATE_CHANGED,
-                new DatagramTransferState(sendState, receiveState));
+                new DatagramTransferState(sendState, receiveState, datagramType));
         if (sendState == SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING) {
             mIsSendingTriggeredDuringTransferringState.set(true);
         }
@@ -627,11 +628,14 @@ public class SatelliteSessionController extends StateMachine {
     private static class DatagramTransferState {
         @SatelliteManager.SatelliteDatagramTransferState public int sendState;
         @SatelliteManager.SatelliteDatagramTransferState public int receiveState;
+        @SatelliteManager.DatagramType public int datagramType;
 
         DatagramTransferState(@SatelliteManager.SatelliteDatagramTransferState int sendState,
-                @SatelliteManager.SatelliteDatagramTransferState int receiveState) {
+                @SatelliteManager.SatelliteDatagramTransferState int receiveState,
+                @SatelliteManager.DatagramType int datagramType) {
             this.sendState = sendState;
             this.receiveState = receiveState;
+            this.datagramType = datagramType;
         }
     }
 
@@ -1292,8 +1296,7 @@ public class SatelliteSessionController extends StateMachine {
                     || isReceiving(datagramTransferState.receiveState)) {
                 stopNbIotInactivityTimer();
 
-                DatagramController datagramController = DatagramController.getInstance();
-                int datagramType = datagramController.getDatagramType();
+                int datagramType = datagramTransferState.datagramType;
                 if (datagramType == DATAGRAM_TYPE_SOS_MESSAGE) {
                     stopEsosInactivityTimer();
                 } else if (datagramType == DATAGRAM_TYPE_SMS) {
@@ -1314,11 +1317,16 @@ public class SatelliteSessionController extends StateMachine {
             mCurrentState = SATELLITE_MODEM_STATE_CONNECTED;
             notifyStateChangedEvent(SATELLITE_MODEM_STATE_CONNECTED);
             startNbIotInactivityTimer();
+            evaluateStartingEsosInactivityTimer();
+            evaluateStartingP2pSmsInactivityTimer();
         }
 
         @Override
         public void exit() {
             if (DBG) plogd("Exiting ConnectedState");
+
+            stopEsosInactivityTimer();
+            stopP2pSmsInactivityTimer();
         }
 
         @Override
@@ -1346,6 +1354,22 @@ public class SatelliteSessionController extends StateMachine {
                     break;
                 case EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT:
                     handleEventScreenOffInactivityTimerTimedOut();
+                    break;
+                case EVENT_ESOS_INACTIVITY_TIMER_TIMED_OUT:
+                    if (isP2pSmsInActivityTimerStarted()) {
+                        plogd("ConnectedState: processing: P2P_SMS inactivity timer running "
+                                + "can not move to IDLE");
+                    } else {
+                        transitionTo(mIdleState);
+                    }
+                    break;
+                case EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT:
+                    if (isEsosInActivityTimerStarted()) {
+                        plogd("ConnectedState: processing: ESOS inactivity timer running "
+                                + "can not move to IDLE");
+                    } else {
+                        transitionTo(mIdleState);
+                    }
                     break;
             }
             // Ignore all unexpected events.
@@ -1434,12 +1458,7 @@ public class SatelliteSessionController extends StateMachine {
     }
 
     private int getSubId() {
-        Phone phone = mSatelliteController.getSatellitePhone();
-        if (phone == null) {
-            return SatelliteServiceUtils.getPhone().getSubId();
-        }
-
-        return phone.getSubId();
+        return mSatelliteController.getSelectedSatelliteSubId();
     }
 
     private void notifyStateChangedEvent(@SatelliteManager.SatelliteModemState int state) {
