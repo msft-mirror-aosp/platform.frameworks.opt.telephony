@@ -116,4 +116,7 @@ java_library {
         obfuscate: false,
         proguard_flags_files: ["proguard.flags"],
     },
+    lint: {
+        baseline_filename: "lint-baseline.xml",
+    },
 }
