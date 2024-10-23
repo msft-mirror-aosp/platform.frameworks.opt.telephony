@@ -23,7 +23,9 @@ import android.telephony.TelephonyManager;
 
 import com.android.telephony.Rlog;
 
+import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
 
 /**
  * Test cases to verify selection of the optimal 7 bit encoding tables
@@ -251,6 +253,11 @@ public class SmsMessageBodyTest extends TelephonyTest {
      * plus UDH length.
      */
     private static final int UDH_SEPTET_COST_CONCATENATED_MESSAGE = 6;
+
+    @Before
+    public void setUp() {
+        TelephonyManager.setupISmsForTest(Mockito.mock(ISms.class));
+    }
 
     @Test
     public void testCalcLengthAscii() throws Exception {
