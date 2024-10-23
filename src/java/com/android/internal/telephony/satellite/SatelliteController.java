@@ -1733,12 +1733,13 @@ public class SatelliteController extends Handler {
             case EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT: {
                 synchronized (mSatellitePhoneLock) {
                     mNtnEligibilityHysteresisTimedOut = true;
-                    boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
-                    plogd("EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT:"
-                            + " isCarrierRoamingNtnEligible=" + eligible);
-                    if (eligible) {
-                        requestIsSatelliteAllowedForCurrentLocation();
-                    }
+                }
+
+                boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
+                plogd("EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT:"
+                        + " isCarrierRoamingNtnEligible=" + eligible);
+                if (eligible) {
+                    requestIsSatelliteAllowedForCurrentLocation();
                 }
                 break;
             }
@@ -1809,8 +1810,8 @@ public class SatelliteController extends Handler {
                     mIsWifiConnected = (boolean) ar.result;
                     plogd("EVENT_WIFI_CONNECTIVITY_STATE_CHANGED: mIsWifiConnected="
                             + mIsWifiConnected);
-                    handleStateChangedForCarrierRoamingNtnEligibility();
                 }
+                handleStateChangedForCarrierRoamingNtnEligibility();
                 break;
             }
             case EVENT_SATELLITE_ACCESS_RESTRICTION_CHECKING_RESULT: {
@@ -5436,11 +5437,11 @@ public class SatelliteController extends Handler {
             return;
         }
 
-        synchronized (mSatellitePhoneLock) {
-            boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
-            plogd("handleStateChangedForCarrierRoamingNtnEligibility: "
-                    + "isCarrierRoamingNtnEligible=" + eligible);
+        boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
+        plogd("handleStateChangedForCarrierRoamingNtnEligibility: "
+                + "isCarrierRoamingNtnEligible=" + eligible);
 
+        synchronized (mSatellitePhoneLock) {
             if (eligible) {
                 if (shouldStartNtnEligibilityHysteresisTimer(eligible)) {
                     startNtnEligibilityHysteresisTimer();
