@@ -26,6 +26,7 @@ import android.telephony.CallQuality;
 import android.telephony.CellIdentity;
 import android.telephony.CellInfo;
 import android.telephony.LinkCapacityEstimate;
+import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneCapability;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseCallState;
@@ -303,14 +304,28 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
     }
 
     @Override
-    public void notifyCallbackModeStarted(Phone sender, @EmergencyCallbackModeType int type) {
-        mTelephonyRegistryMgr.notifyCallBackModeStarted(sender.getPhoneId(),
-                sender.getSubId(), type);
+    public void notifyCallbackModeStarted(Phone sender, @EmergencyCallbackModeType int type,
+            long durationMillis) {
+        if (!mFeatureFlags.emergencyCallbackModeNotification()) return;
+
+        mTelephonyRegistryMgr.notifyCallbackModeStarted(sender.getPhoneId(),
+                sender.getSubId(), type, durationMillis);
+    }
+
+    @Override
+    public void notifyCallbackModeRestarted(Phone sender, @EmergencyCallbackModeType int type,
+            long durationMillis) {
+        if (!mFeatureFlags.emergencyCallbackModeNotification()) return;
+
+        mTelephonyRegistryMgr.notifyCallbackModeRestarted(sender.getPhoneId(),
+                sender.getSubId(), type, durationMillis);
     }
 
     @Override
     public void notifyCallbackModeStopped(Phone sender, @EmergencyCallbackModeType int type,
             @EmergencyCallbackModeStopReason int reason) {
+        if (!mFeatureFlags.emergencyCallbackModeNotification()) return;
+
         mTelephonyRegistryMgr.notifyCallbackModeStopped(sender.getPhoneId(),
                 sender.getSubId(), type, reason);
     }
@@ -324,6 +339,13 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
     public void notifyCarrierRoamingNtnEligibleStateChanged(Phone sender, boolean eligible) {
         mTelephonyRegistryMgr.notifyCarrierRoamingNtnEligibleStateChanged(
                 sender.getSubId(), eligible);
+    }
+
+    @Override
+    public void notifyCarrierRoamingNtnAvailableServicesChanged(
+            Phone sender, @NetworkRegistrationInfo.ServiceType int[] availableServices) {
+        mTelephonyRegistryMgr.notifyCarrierRoamingNtnAvailableServicesChanged(
+                sender.getSubId(), availableServices);
     }
 
     /**

@@ -313,7 +313,7 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
         // send SMS and check sentIntent
         mReceivedTestIntent = false;
         mGsmSmsDispatcher.sendMultipartText("+123" /*destAddr*/, "222" /*scAddr*/, parts,
-                sentIntents, null, null, null, mCallingUserId, false, -1, false, -1, 0L);
+                sentIntents, null, null, null, mCallingUserId, false, -1, false, -1, 0L, 0L);
 
         waitForMs(500);
         synchronized (mLock) {
@@ -456,7 +456,7 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
 
         mGsmSmsDispatcher.sendMultipartText("6501002000" /*destAddr*/, "222" /*scAddr*/, parts,
                 withSentIntents ? sentIntents : null, null, null, null, mCallingUserId,
-                false, -1, false, -1, 0L);
+                false, -1, false, -1, 0L, 0L);
     }
 
     @Test
@@ -549,7 +549,7 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
             messageRef += parts.size();
         }
         mGsmSmsDispatcher.sendMultipartText("6501002000" /*destAddr*/, "222" /*scAddr*/, parts,
-                null, null, null, null, mCallingUserId, false, -1, false, -1, 0L);
+                null, null, null, null, mCallingUserId, false, -1, false, -1, 0L, 0L);
         waitForMs(150);
         ArgumentCaptor<String> pduCaptor = ArgumentCaptor.forClass(String.class);
 
@@ -565,7 +565,7 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
     @Test
     public void testSendTextWithMessageRefNegativeBoundaryCondition() throws Exception {
         mIsimUiccRecords = new IsimUiccRecords(mUiccCardApplication3gpp, mContext,
-                mSimulatedCommands);
+                mSimulatedCommands, mFeatureFlags);
         doReturn(mIsimUiccRecords).when(mPhone).getIccRecords();
         Message msg = mGsmSmsDispatcher.obtainMessage(17);
         mPhone.getIccRecords().setSmssTpmrValue(-1, msg);
@@ -584,7 +584,7 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
     @Test
     public void testSendTextWithMessageRefMaxBoundaryCondition() throws Exception {
         mIsimUiccRecords = new IsimUiccRecords(mUiccCardApplication3gpp, mContext,
-                mSimulatedCommands);
+                mSimulatedCommands, mFeatureFlags);
         doReturn(mIsimUiccRecords).when(mPhone).getIccRecords();
         Message msg = mGsmSmsDispatcher.obtainMessage(17);
         mPhone.getIccRecords().setSmssTpmrValue(255, msg);
