@@ -102,12 +102,15 @@ flag {
   bug:"318519337"
 }
 
-# OWNER=jackyu TARGET=24Q4
+# OWNER=jackyu TARGET=25Q1
 flag {
   name: "dds_callback"
   namespace: "telephony"
   description: "Adding new callback when DDS changed"
   bug:"353723350"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
 }
 
 # OWNER=jackyu TARGET=25Q1
