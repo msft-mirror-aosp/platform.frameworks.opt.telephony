@@ -1738,8 +1738,7 @@ public class EmergencyStateTracker {
                     return phone.getServiceStateTracker().isRadioOn()
                             && !satelliteController.isSatelliteEnabledOrBeingEnabled();
                 }
-            }, !isTestEmergencyNumber, phone, isTestEmergencyNumber, waitForInServiceTimeout,
-                    /* forNormalRoutingEmergencyCall */ false);
+            }, !isTestEmergencyNumber, phone, isTestEmergencyNumber, waitForInServiceTimeout);
         } else {
             switchDdsAndSetEmergencyMode(phone, emergencyType);
         }

@@ -273,6 +273,7 @@ public class SatelliteController extends Handler {
             EVENT_WAIT_FOR_UPDATE_SATELLITE_ENABLE_ATTRIBUTES_RESPONSE_TIMED_OUT = 52;
     private static final int EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT = 53;
     protected static final int EVENT_SATELLITE_REGISTRATION_FAILURE = 54;
+    private static final int EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED = 55;
 
     @NonNull private static SatelliteController sInstance;
     @NonNull private final Context mContext;
@@ -355,6 +356,8 @@ public class SatelliteController extends Handler {
             new AtomicBoolean(false);
     private final AtomicBoolean mRegisteredForSatelliteRegistrationFailure =
             new AtomicBoolean(false);
+    private final AtomicBoolean mRegisteredForTerrestrialNetworkAvailableChanged =
+            new AtomicBoolean(false);
     /**
      * Map key: subId, value: callback to get error code of the provision request.
      */
@@ -389,6 +392,12 @@ public class SatelliteController extends Handler {
      */
     private final ConcurrentHashMap<IBinder, ISatelliteModemStateCallback>
             mSatelliteRegistrationFailureListeners = new ConcurrentHashMap<>();
+    /**
+     * Map key: binder of the callback, value: callback to receive terrestrial network
+     * available changed
+     */
+    private final ConcurrentHashMap<IBinder, ISatelliteModemStateCallback>
+            mTerrestrialNetworkAvailableChangedListeners = new ConcurrentHashMap<>();
     private final Object mIsSatelliteSupportedLock = new Object();
     @GuardedBy("mIsSatelliteSupportedLock")
     private Boolean mIsSatelliteSupported = null;
@@ -587,6 +596,8 @@ public class SatelliteController extends Handler {
     private static final String ACTION_NOTIFICATION_CLICK = "action_notification_click";
     private static final String ACTION_NOTIFICATION_DISMISS = "action_notification_dismiss";
     private AtomicBoolean mOverrideNtnEligibility;
+    private String mDefaultSmsPackageName = "";
+    private String mSatelliteGatewayServicePackageName = "";
     private BroadcastReceiver
             mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
                 @Override
@@ -598,6 +609,32 @@ public class SatelliteController extends Handler {
                     }
                 }
             };
+
+    private BroadcastReceiver mPackageStateChangedReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            mDefaultSmsPackageName = Telephony.Sms.getDefaultSmsPackage(mContext);
+            mSatelliteGatewayServicePackageName = getConfigSatelliteGatewayServicePackage();
+            String schemeSpecificPart = intent.getData().getSchemeSpecificPart();
+            plogd("packageStateChanged: " + intent.getData().toString()
+                    + " DefaultSmsPackageName:" + mDefaultSmsPackageName);
+
+            if (!schemeSpecificPart.equals(mSatelliteGatewayServicePackageName)
+                    && !schemeSpecificPart.equals(mDefaultSmsPackageName)) {
+                plogv("Neither SMS or SatelliteGateway package");
+                return;
+            }
+            int[] activeSubIds = mSubscriptionManagerService.getActiveSubIdList(true);
+            if (activeSubIds != null) {
+                for (int activeSubId : activeSubIds) {
+                    plogd("mPackageStateChangedReceiver: activeSubId= " + activeSubId);
+                    handleCarrierRoamingNtnAvailableServicesChanged(activeSubId);
+                }
+            } else {
+                ploge("mPackageStateChangedReceiver: activeSubIds is null");
+            }
+        }
+    };
 
     // List of device states returned from DeviceStateManager to determine if running on a foldable
     // device.
@@ -707,6 +744,7 @@ public class SatelliteController extends Handler {
         }
 
         mSatellitePlmnListFromOverlayConfig = readSatellitePlmnsFromOverlayConfig();
+        registerApplicationStateChanged();
         updateSupportedSatelliteServicesForActiveSubscriptions();
         mCarrierConfigChangeListener =
                 (slotIndex, subId, carrierId, specificCarrierId) ->
@@ -1733,12 +1771,13 @@ public class SatelliteController extends Handler {
             case EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT: {
                 synchronized (mSatellitePhoneLock) {
                     mNtnEligibilityHysteresisTimedOut = true;
-                    boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
-                    plogd("EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT:"
-                            + " isCarrierRoamingNtnEligible=" + eligible);
-                    if (eligible) {
-                        requestIsSatelliteAllowedForCurrentLocation();
-                    }
+                }
+
+                boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
+                plogd("EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT:"
+                        + " isCarrierRoamingNtnEligible=" + eligible);
+                if (eligible) {
+                    requestIsSatelliteAllowedForCurrentLocation();
                 }
                 break;
             }
@@ -1809,8 +1848,8 @@ public class SatelliteController extends Handler {
                     mIsWifiConnected = (boolean) ar.result;
                     plogd("EVENT_WIFI_CONNECTIVITY_STATE_CHANGED: mIsWifiConnected="
                             + mIsWifiConnected);
-                    handleStateChangedForCarrierRoamingNtnEligibility();
                 }
+                handleStateChangedForCarrierRoamingNtnEligibility();
                 break;
             }
             case EVENT_SATELLITE_ACCESS_RESTRICTION_CHECKING_RESULT: {
@@ -1846,6 +1885,15 @@ public class SatelliteController extends Handler {
                     loge("EVENT_SATELLITE_REGISTRATION_FAILURE: result is null");
                 } else {
                     handleEventSatelliteRegistrationFailure((int) ar.result);
+                }
+                break;
+
+            case EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED:
+                ar = (AsyncResult) msg.obj;
+                if (ar.result == null) {
+                    loge("EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED: result is null");
+                } else {
+                    handleEventTerrestrialNetworkAvailableChanged((boolean) ar.result);
                 }
                 break;
 
@@ -2495,8 +2543,9 @@ public class SatelliteController extends Handler {
             return SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
         }
         if (mFeatureFlags.carrierRoamingNbIotNtn()) {
-            plogd("registerForSatelliteModemStateChanged: add RegistrationFailure Listeners");
+            plogd("registerForSatelliteModemStateChanged: add Listeners for ModemState");
             mSatelliteRegistrationFailureListeners.put(callback.asBinder(), callback);
+            mTerrestrialNetworkAvailableChangedListeners.put(callback.asBinder(), callback);
         }
         if (mSatelliteSessionController != null) {
             mSatelliteSessionController.registerForSatelliteModemStateChanged(callback);
@@ -2528,8 +2577,9 @@ public class SatelliteController extends Handler {
                     + " is not initialized yet");
         }
         if (mFeatureFlags.carrierRoamingNbIotNtn()) {
-            plogd("unregisterForModemStateChanged: remove RegistrationFailure Listeners");
+            plogd("unregisterForModemStateChanged: remove Listeners for ModemState");
             mSatelliteRegistrationFailureListeners.remove(callback.asBinder());
+            mTerrestrialNetworkAvailableChangedListeners.remove(callback.asBinder());
         }
     }
 
@@ -4061,6 +4111,7 @@ public class SatelliteController extends Handler {
             registerForNtnSignalStrengthChanged();
             registerForCapabilitiesChanged();
             registerForSatelliteRegistrationFailure();
+            registerForTerrestrialNetworkAvailableChanged();
 
             requestIsSatelliteProvisioned(
                     new ResultReceiver(this) {
@@ -4172,6 +4223,16 @@ public class SatelliteController extends Handler {
                 mSatelliteModemInterface.registerForSatelliteRegistrationFailure(this,
                         EVENT_SATELLITE_REGISTRATION_FAILURE, null);
                 mRegisteredForSatelliteRegistrationFailure.set(true);
+            }
+        }
+    }
+
+    private void registerForTerrestrialNetworkAvailableChanged() {
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+            if (!mRegisteredForTerrestrialNetworkAvailableChanged.get()) {
+                mSatelliteModemInterface.registerForTerrestrialNetworkAvailableChanged(this,
+                        EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED, null);
+                mRegisteredForTerrestrialNetworkAvailableChanged.set(true);
             }
         }
     }
@@ -5436,11 +5497,11 @@ public class SatelliteController extends Handler {
             return;
         }
 
-        synchronized (mSatellitePhoneLock) {
-            boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
-            plogd("handleStateChangedForCarrierRoamingNtnEligibility: "
-                    + "isCarrierRoamingNtnEligible=" + eligible);
+        boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
+        plogd("handleStateChangedForCarrierRoamingNtnEligibility: "
+                + "isCarrierRoamingNtnEligible=" + eligible);
 
+        synchronized (mSatellitePhoneLock) {
             if (eligible) {
                 if (shouldStartNtnEligibilityHysteresisTimer(eligible)) {
                     startNtnEligibilityHysteresisTimer();
@@ -6261,6 +6322,13 @@ public class SatelliteController extends Handler {
         }
     }
 
+    private void plogv(@NonNull String log) {
+        Rlog.v(TAG, log);
+        if (mPersistentLogger != null) {
+            mPersistentLogger.debug(TAG, log);
+        }
+    }
+
     private void handlePersistentLoggingOnSessionStart(RequestSatelliteEnabledArgument argument) {
         if (mPersistentLogger == null) {
             return;
@@ -6894,6 +6962,42 @@ public class SatelliteController extends Handler {
         });
     }
 
+    private void handleEventTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("handleEventTerrestrialNetworkAvailableChanged: "
+                    + "carrierRoamingNbIotNtn flag is disabled");
+            return;
+        }
+
+        plogd("handleEventTerrestrialNetworkAvailableChanged: " + isAvailable);
+
+        List<ISatelliteModemStateCallback> deadCallersList = new ArrayList<>();
+        mTerrestrialNetworkAvailableChangedListeners.values().forEach(listener -> {
+            try {
+                listener.onTerrestrialNetworkAvailableChanged(isAvailable);
+            } catch (RemoteException e) {
+                logd("handleEventTerrestrialNetworkAvailableChanged RemoteException: " + e);
+                deadCallersList.add(listener);
+            }
+        });
+        deadCallersList.forEach(listener -> {
+            mTerrestrialNetworkAvailableChangedListeners.remove(listener.asBinder());
+        });
+
+        if (isAvailable && !mIsEmergency) {
+            requestSatelliteEnabled(
+                    false /* enableSatellite */, false /* enableDemoMode */,
+                    false /* isEmergency */,
+                    new IIntegerConsumer.Stub() {
+                        @Override
+                        public void accept(int result) {
+                            plogd("handleEventTerrestrialNetworkAvailableChanged:"
+                                    + " requestSatelliteEnabled result=" + result);
+                        }
+                    });
+        }
+    }
+
     /**
      * This API can be used by only CTS to override the cached value for the device overlay config
      * value :
@@ -7046,7 +7150,8 @@ public class SatelliteController extends Handler {
         }
     }
 
-    private void handleCarrierRoamingNtnAvailableServicesChanged(int subId) {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected void handleCarrierRoamingNtnAvailableServicesChanged(int subId) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             plogd("handleCarrierRoamingNtnAvailableServicesChanged: "
                     + "carrierRoamingNbIotNtn flag is disabled");
@@ -7060,48 +7165,46 @@ public class SatelliteController extends Handler {
             plogd("notifyNtnAvailableServices: carrierRoamingNbIotNtn flag is disabled");
             return;
         }
-        synchronized (mSatellitePhoneLock) {
-            if (mSatellitePhone == null) {
-                plogd("updateLastNotifiedNtnAvailableServicesAndNotify: phone is null");
-                return;
+        Phone phone = SatelliteServiceUtils.getPhone(subId);
+        if (phone == null) {
+            plogd("notifyNtnAvailableServices: phone is null.");
+            return;
+        }
+        plogd("updateLastNotifiedNtnAvailableServicesAndNotify: phoneId= " + phone.getPhoneId());
+
+        if (isSatelliteSupportedViaCarrier(subId)) {
+            // TODO: Invoke SatelliteManager#getSatelliteDisallowedReasons() NOT EMPTY.
+            int[] services = getSupportedSatelliteServicesForCarrier(subId);
+            if (isP2PSmsDisallowedOnCarrierRoamingNtn(subId)) {
+                services = Arrays.stream(services).filter(
+                        value -> value != NetworkRegistrationInfo.SERVICE_TYPE_SMS).toArray();
             }
-            if (isSatelliteSupportedViaCarrier(subId)) {
-                int[] services = getSupportedSatelliteServicesForCarrier(subId);
-                if (isP2PSmsDisallowedOnCarrierRoamingNtn(mSatellitePhone)) {
-                    services = Arrays.stream(services).filter(
-                            value -> value != NetworkRegistrationInfo.SERVICE_TYPE_SMS).toArray();
-                }
-                mSatellitePhone.notifyCarrierRoamingNtnAvailableServicesChanged(services);
-            } else {
-                mSatellitePhone.notifyCarrierRoamingNtnAvailableServicesChanged(new int[0]);
-            }
+            phone.notifyCarrierRoamingNtnAvailableServicesChanged(services);
+        } else {
+            phone.notifyCarrierRoamingNtnAvailableServicesChanged(new int[0]);
         }
     }
 
     /**
      * Whether the P2P SMS over carrier roaming satellite is disallowed or not.
      *
-     * @param phone phone object
+     * @param subId Associated subscription ID
      * return {@code true} when the phone does not support P2P SMS over carrier roaming satellite
      *        {@code false} otherwise
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
-    public boolean isP2PSmsDisallowedOnCarrierRoamingNtn(@NonNull Phone phone) {
-        int subId = phone.getSubId();
+    public boolean isP2PSmsDisallowedOnCarrierRoamingNtn(int subId) {
         int carrierRoamingNtnConnectType = getCarrierRoamingNtnConnectType(subId);
         if (carrierRoamingNtnConnectType == CARRIER_ROAMING_NTN_CONNECT_MANUAL) {
             // Manual Connected
             plogd("isP2PSmsDisallowedOnCarrierRoamingNtn: manual connect");
-            String msgPackageName = Telephony.Sms.getDefaultSmsPackage(mContext);
-            String sgPackageName = getConfigSatelliteGatewayServicePackage();
-            if (!isApplicationSupportsP2P(msgPackageName)
-                    || !isApplicationSupportsP2P(sgPackageName)) {
-                plogd("isP2PSmsSupportedOnCarrierRoamingNtn APKs do not supports P2P");
+            if (!isApplicationSupportsP2P(mDefaultSmsPackageName)
+                    || !isApplicationSupportsP2P(mSatelliteGatewayServicePackageName)) {
+                plogd("isP2PSmsDisallowedOnCarrierRoamingNtn: APKs do not supports P2P");
                 return true;
             }
         }
-        plogd("isP2PSmsDisallowedOnCarrierRoamingNtn [phoneId="
-                + phone.getPhoneId() + "]: P2P is supported");
+        plogd("isP2PSmsDisallowedOnCarrierRoamingNtn: P2P is supported");
         return false;
     }
 
@@ -7119,12 +7222,13 @@ public class SatelliteController extends Handler {
         return availableServices;
     }
 
-/**
- * Whether application supports the P2P SMS to connect to carrier roaming non-terrestrial network.
- *
- * @param packageName application's default package name
- * return {@code true} when the application supports P2P SMS over the roaming satellite
- */
+    /**
+     * Whether application supports the P2P SMS to connect to carrier roaming non-terrestrial
+     * network.
+     *
+     * @param packageName application's default package name
+     * return {@code true} when the application supports P2P SMS over the roaming satellite
+     */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public boolean isApplicationSupportsP2P(String packageName) {
         PackageManager pm = mContext.getPackageManager();
@@ -7133,6 +7237,7 @@ public class SatelliteController extends Handler {
             applicationInfo = pm.getApplicationInfo(packageName, PackageManager.GET_META_DATA);
         } catch (PackageManager.NameNotFoundException e) {
             logd("isApplicationSupportsP2P pkgName: " + packageName + " is not installed.");
+            return false;
         }
         if (applicationInfo == null || applicationInfo.metaData == null) {
             logd("isApplicationSupportsP2P pkgName: " + packageName + " meta-data info is empty.");
@@ -7140,5 +7245,22 @@ public class SatelliteController extends Handler {
         }
         return applicationInfo.metaData.getBoolean(
                 SatelliteManager.METADATA_SATELLITE_MANUAL_CONNECT_P2P_SUPPORT);
+    }
+
+    /**
+     * Registers for the applications state changed.
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public void registerApplicationStateChanged() {
+        mDefaultSmsPackageName = Telephony.Sms.getDefaultSmsPackage(mContext);
+        mSatelliteGatewayServicePackageName = getConfigSatelliteGatewayServicePackage();
+
+        IntentFilter packageFilter = new IntentFilter();
+        packageFilter.addAction(Telephony.Sms.Intents.ACTION_DEFAULT_SMS_PACKAGE_CHANGED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_REPLACED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+        packageFilter.addDataScheme("package");
+        mContext.registerReceiver(mPackageStateChangedReceiver, packageFilter,
+                mContext.RECEIVER_EXPORTED);
     }
 }
