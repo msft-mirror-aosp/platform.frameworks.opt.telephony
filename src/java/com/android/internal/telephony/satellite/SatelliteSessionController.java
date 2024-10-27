@@ -40,18 +40,22 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCC
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.AlarmManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.AsyncResult;
 import android.os.Build;
+import android.os.HandlerExecutor;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.RemoteException;
+import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.os.WorkSource;
 import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.PersistentLogger;
 import android.telephony.ServiceState;
@@ -183,8 +187,15 @@ public class SatelliteSessionController extends StateMachine {
     @Nullable private PersistentLogger mPersistentLogger = null;
     @Nullable private DeviceStateMonitor mDeviceStateMonitor;
     @NonNull private SessionMetricsStats mSessionMetricsStats;
-
     @NonNull private FeatureFlags mFeatureFlags;
+    @NonNull private AlarmManager mAlarmManager;
+    private final AlarmManager.OnAlarmListener mAlarmListener = new AlarmManager.OnAlarmListener() {
+        @Override
+        public void onAlarm() {
+            plogd("onAlarm: screen off timer expired");
+            sendMessage(EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT);
+        }
+    };
 
     /**
      * @return The singleton instance of SatelliteSessionController.
@@ -296,20 +307,7 @@ public class SatelliteSessionController extends StateMachine {
         }
         mDeviceStateMonitor = satellitePhone.getDeviceStateMonitor();
         mSessionMetricsStats = SessionMetricsStats.getInstance();
-
-        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
-            // Register to received Cellular service state
-            for (Phone phone : PhoneFactory.getPhones()) {
-                if (phone == null) continue;
-
-                phone.registerForServiceStateChanged(
-                        getHandler(), EVENT_SERVICE_STATE_CHANGED, null);
-                if (DBG) {
-                    plogd("SatelliteSessionController: registerForServiceStateChanged phoneId "
-                            + phone.getPhoneId());
-                }
-            }
-        }
+        mAlarmManager = mContext.getSystemService(AlarmManager.class);
 
         addState(mUnavailableState);
         addState(mPowerOffState);
@@ -594,6 +592,9 @@ public class SatelliteSessionController extends StateMachine {
         plogd("cleanUpResource");
         mIsDeviceAlignedWithSatellite = false;
         unregisterForScreenStateChanged();
+        if (mAlarmManager != null) {
+            mAlarmManager.cancel(mAlarmListener);
+        }
 
         if (mFeatureFlags.carrierRoamingNbIotNtn()) {
             // Register to received Cellular service state
@@ -619,6 +620,16 @@ public class SatelliteSessionController extends StateMachine {
     @VisibleForTesting
     public void onCellularServiceStateChanged(ServiceState serviceState) {
         sendMessage(EVENT_SERVICE_STATE_CHANGED, new AsyncResult(null, serviceState, null));
+    }
+
+    /**
+     * Uses this function to set AlarmManager object for testing.
+     *
+     * @param alarmManager The instance of AlarmManager.
+     */
+    @VisibleForTesting
+    public void setAlarmManager(AlarmManager alarmManager) {
+        mAlarmManager = alarmManager;
     }
 
     private boolean isDemoMode() {
@@ -899,12 +910,7 @@ public class SatelliteSessionController extends StateMachine {
                     handleSatelliteModemStateChanged(msg);
                     break;
                 case EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE:
-                    if (!mIgnoreCellularServiceState) {
-                        handleEventEnableCellularModemWhileSatelliteModeIsOnDone();
-                    } else {
-                        plogd("IdleState: processing: ignore "
-                                + "EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE");
-                    }
+                    plogd("EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE");
                     break;
                 case EVENT_SERVICE_STATE_CHANGED:
                     if (!mIgnoreCellularServiceState) {
@@ -944,22 +950,6 @@ public class SatelliteSessionController extends StateMachine {
                     ploge("Unexpected transferring state received for non-NB-IOT NTN");
                 }
             }
-        }
-
-        private void handleEventEnableCellularModemWhileSatelliteModeIsOnDone() {
-            if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
-                Rlog.d(TAG, "handleEventEnableCellularModemWhileSatelliteModeIsOnDone: "
-                        + "carrierRoamingNbIotNtn is disabled");
-                return;
-            }
-
-            ServiceState serviceState = mSatelliteController.getSatellitePhone().getServiceState();
-            if (serviceState == null) {
-                plogd("handleEventEnableCellularModemWhileSatelliteModeIsOnDone: "
-                        + "can't access ServiceState");
-                return;
-            }
-            handleEventServiceStateChanged(serviceState);
         }
 
         private void handleEventServiceStateChanged(ServiceState serviceState) {
@@ -1672,13 +1662,26 @@ public class SatelliteSessionController extends StateMachine {
         if (!screenOn) {
             // Screen off, start timer
             int timeoutMillis = getScreenOffInactivityTimeoutDurationSec() * 1000;
-            sendMessageDelayed(EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT, timeoutMillis);
 
+            if (mAlarmManager == null) {
+                plogd("handleEventScreenStateChanged: can not access AlarmManager to start timer");
+                return;
+            }
+
+            mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + timeoutMillis,
+                    TAG, new HandlerExecutor(getHandler()), new WorkSource(), mAlarmListener);
             plogd("handleEventScreenStateChanged: start timer " + timeoutMillis);
         } else {
             // Screen on, stop timer
             removeMessages(EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT);
 
+            if (mAlarmManager == null) {
+                plogd("handleEventScreenStateChanged: can not access AlarmManager to stop timer");
+                return;
+            }
+
+            mAlarmManager.cancel(mAlarmListener);
             plogd("handleEventScreenStateChanged: stop timer");
         }
     }

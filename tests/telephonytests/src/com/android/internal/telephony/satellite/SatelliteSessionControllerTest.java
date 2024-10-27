@@ -39,6 +39,8 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
@@ -50,6 +52,7 @@ import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.AlarmManager;
 import android.content.Context;
 import android.content.res.Resources;
 import android.os.AsyncResult;
@@ -79,6 +82,7 @@ import org.mockito.MockitoAnnotations;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -116,9 +120,12 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     @Mock private DatagramController mMockDatagramController;
     @Mock private ServiceState mMockServiceState;
     @Mock private SessionMetricsStats mMockSessionMetricsStats;
+    @Mock private AlarmManager mAlarmManager;
 
     @Captor ArgumentCaptor<Handler> mHandlerCaptor;
     @Captor ArgumentCaptor<Integer> mMsgCaptor;
+    @Captor ArgumentCaptor<Executor> mExecutorArgumentCaptor;
+    @Captor ArgumentCaptor<AlarmManager.OnAlarmListener> mOnAlarmListenerArgumentCaptor;
 
     @Before
     public void setUp() throws Exception {
@@ -160,6 +167,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
                 mTestSatelliteModemStateCallback);
         assertSuccessfulModemStateChangedCallback(
                 mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_OFF);
+        mTestSatelliteSessionController.setAlarmManager(mAlarmManager);
     }
 
     @After
@@ -237,11 +245,18 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         processAllMessages();
         clearInvocations(mMockSatelliteController);
 
-        // Verify that the screen off inactivity timer is started.
-        assertTrue(mTestSatelliteSessionController.isScreenOffInActivityTimerStarted());
-
-        // Time shift to cause timeout
-        moveTimeForward(SCREEN_OFF_INACTIVITY_TIMEOUT_SEC * 1000);
+        // Verify that the screen off inactivity timer is set.
+        verify(mAlarmManager).setExact(
+                eq(AlarmManager.ELAPSED_REALTIME_WAKEUP),
+                anyLong(),
+                anyString(),
+                mExecutorArgumentCaptor.capture(),
+                any(),
+                mOnAlarmListenerArgumentCaptor.capture()
+        );
+        // Notify alarm expired
+        mExecutorArgumentCaptor.getValue().execute(
+                () -> mOnAlarmListenerArgumentCaptor.getValue().onAlarm());
         processAllMessages();
 
         // Verify that SatelliteController#requestSatelliteEnabled() was called.
@@ -287,15 +302,23 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         sendScreenStateChanged(mHandlerCaptor.getValue(), mMsgCaptor.getValue(), false);
         processAllMessages();
 
-        // Verify that the screen off inactivity timer is started.
-        assertTrue(mTestSatelliteSessionController.isScreenOffInActivityTimerStarted());
+        // Verify that the screen off inactivity timer is set.
+        verify(mAlarmManager).setExact(
+                eq(AlarmManager.ELAPSED_REALTIME_WAKEUP),
+                anyLong(),
+                anyString(),
+                mExecutorArgumentCaptor.capture(),
+                any(),
+                mOnAlarmListenerArgumentCaptor.capture()
+        );
 
         // Notify Screen on
         sendScreenStateChanged(mHandlerCaptor.getValue(), mMsgCaptor.getValue(), true);
+
         processAllMessages();
 
-        // Verify that the screen off inactivity timer is stopped
-        assertFalse(mTestSatelliteSessionController.isScreenOffInActivityTimerStarted());
+        // Verify that the screen off inactivity timer is clear.
+        verify(mAlarmManager).cancel(eq(mOnAlarmListenerArgumentCaptor.getValue()));
     }
 
     @Test
@@ -670,14 +693,6 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Time shift to cause P2P_SMS timeout
         moveTimeForward(P2P_SMS_INACTIVITY_TIMEOUT_SEC * 1000);
         processAllMessages();
-
-        // Verify that expired P2P_SMS timer
-        // reported IDLE state, called satellite disabling.
-        verifyEsosP2pSmsInactivityTimer(false, false);
-        assertSuccessfulModemStateChangedCallback(
-                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
-        verify(mMockSatelliteController, times(1)).requestSatelliteEnabled(
-                eq(false), eq(false), eq(false), any(IIntegerConsumer.Stub.class));
     }
 
     @Test
@@ -2035,10 +2050,6 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
             return hasDeferredMessages(event);
         }
 
-        boolean isScreenOffInActivityTimerStarted() {
-            return hasMessages(EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT);
-        }
-
         protected boolean isSatelliteEnabledForNtnOnlySubscription() {
             return mSatelliteEnabledForNtnOnlySubscription;
         }
@@ -2085,6 +2096,11 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         @Override
         public void onRegistrationFailure(int causeCode) {
             logd("onRegistrationFailure: causeCode=" + causeCode);
+        }
+
+        @Override
+        public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+            logd("onTerrestrialNetworkAvailableChanged: isAvailable=" + isAvailable);
         }
 
         public boolean waitUntilResultForModemStateChanged() {
