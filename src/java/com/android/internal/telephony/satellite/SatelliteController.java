@@ -596,6 +596,8 @@ public class SatelliteController extends Handler {
     private static final String ACTION_NOTIFICATION_CLICK = "action_notification_click";
     private static final String ACTION_NOTIFICATION_DISMISS = "action_notification_dismiss";
     private AtomicBoolean mOverrideNtnEligibility;
+    private String mDefaultSmsPackageName = "";
+    private String mSatelliteGatewayServicePackageName = "";
     private BroadcastReceiver
             mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
                 @Override
@@ -607,6 +609,32 @@ public class SatelliteController extends Handler {
                     }
                 }
             };
+
+    private BroadcastReceiver mPackageStateChangedReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            mDefaultSmsPackageName = Telephony.Sms.getDefaultSmsPackage(mContext);
+            mSatelliteGatewayServicePackageName = getConfigSatelliteGatewayServicePackage();
+            String schemeSpecificPart = intent.getData().getSchemeSpecificPart();
+            plogd("packageStateChanged: " + intent.getData().toString()
+                    + " DefaultSmsPackageName:" + mDefaultSmsPackageName);
+
+            if (!schemeSpecificPart.equals(mSatelliteGatewayServicePackageName)
+                    && !schemeSpecificPart.equals(mDefaultSmsPackageName)) {
+                plogv("Neither SMS or SatelliteGateway package");
+                return;
+            }
+            int[] activeSubIds = mSubscriptionManagerService.getActiveSubIdList(true);
+            if (activeSubIds != null) {
+                for (int activeSubId : activeSubIds) {
+                    plogd("mPackageStateChangedReceiver: activeSubId= " + activeSubId);
+                    handleCarrierRoamingNtnAvailableServicesChanged(activeSubId);
+                }
+            } else {
+                ploge("mPackageStateChangedReceiver: activeSubIds is null");
+            }
+        }
+    };
 
     // List of device states returned from DeviceStateManager to determine if running on a foldable
     // device.
@@ -716,6 +744,7 @@ public class SatelliteController extends Handler {
         }
 
         mSatellitePlmnListFromOverlayConfig = readSatellitePlmnsFromOverlayConfig();
+        registerApplicationStateChanged();
         updateSupportedSatelliteServicesForActiveSubscriptions();
         mCarrierConfigChangeListener =
                 (slotIndex, subId, carrierId, specificCarrierId) ->
@@ -6293,6 +6322,13 @@ public class SatelliteController extends Handler {
         }
     }
 
+    private void plogv(@NonNull String log) {
+        Rlog.v(TAG, log);
+        if (mPersistentLogger != null) {
+            mPersistentLogger.debug(TAG, log);
+        }
+    }
+
     private void handlePersistentLoggingOnSessionStart(RequestSatelliteEnabledArgument argument) {
         if (mPersistentLogger == null) {
             return;
@@ -7114,7 +7150,8 @@ public class SatelliteController extends Handler {
         }
     }
 
-    private void handleCarrierRoamingNtnAvailableServicesChanged(int subId) {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected void handleCarrierRoamingNtnAvailableServicesChanged(int subId) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             plogd("handleCarrierRoamingNtnAvailableServicesChanged: "
                     + "carrierRoamingNbIotNtn flag is disabled");
@@ -7128,48 +7165,46 @@ public class SatelliteController extends Handler {
             plogd("notifyNtnAvailableServices: carrierRoamingNbIotNtn flag is disabled");
             return;
         }
-        synchronized (mSatellitePhoneLock) {
-            if (mSatellitePhone == null) {
-                plogd("updateLastNotifiedNtnAvailableServicesAndNotify: phone is null");
-                return;
+        Phone phone = SatelliteServiceUtils.getPhone(subId);
+        if (phone == null) {
+            plogd("notifyNtnAvailableServices: phone is null.");
+            return;
+        }
+        plogd("updateLastNotifiedNtnAvailableServicesAndNotify: phoneId= " + phone.getPhoneId());
+
+        if (isSatelliteSupportedViaCarrier(subId)) {
+            // TODO: Invoke SatelliteManager#getSatelliteDisallowedReasons() NOT EMPTY.
+            int[] services = getSupportedSatelliteServicesForCarrier(subId);
+            if (isP2PSmsDisallowedOnCarrierRoamingNtn(subId)) {
+                services = Arrays.stream(services).filter(
+                        value -> value != NetworkRegistrationInfo.SERVICE_TYPE_SMS).toArray();
             }
-            if (isSatelliteSupportedViaCarrier(subId)) {
-                int[] services = getSupportedSatelliteServicesForCarrier(subId);
-                if (isP2PSmsDisallowedOnCarrierRoamingNtn(mSatellitePhone)) {
-                    services = Arrays.stream(services).filter(
-                            value -> value != NetworkRegistrationInfo.SERVICE_TYPE_SMS).toArray();
-                }
-                mSatellitePhone.notifyCarrierRoamingNtnAvailableServicesChanged(services);
-            } else {
-                mSatellitePhone.notifyCarrierRoamingNtnAvailableServicesChanged(new int[0]);
-            }
+            phone.notifyCarrierRoamingNtnAvailableServicesChanged(services);
+        } else {
+            phone.notifyCarrierRoamingNtnAvailableServicesChanged(new int[0]);
         }
     }
 
     /**
      * Whether the P2P SMS over carrier roaming satellite is disallowed or not.
      *
-     * @param phone phone object
+     * @param subId Associated subscription ID
      * return {@code true} when the phone does not support P2P SMS over carrier roaming satellite
      *        {@code false} otherwise
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
-    public boolean isP2PSmsDisallowedOnCarrierRoamingNtn(@NonNull Phone phone) {
-        int subId = phone.getSubId();
+    public boolean isP2PSmsDisallowedOnCarrierRoamingNtn(int subId) {
         int carrierRoamingNtnConnectType = getCarrierRoamingNtnConnectType(subId);
         if (carrierRoamingNtnConnectType == CARRIER_ROAMING_NTN_CONNECT_MANUAL) {
             // Manual Connected
             plogd("isP2PSmsDisallowedOnCarrierRoamingNtn: manual connect");
-            String msgPackageName = Telephony.Sms.getDefaultSmsPackage(mContext);
-            String sgPackageName = getConfigSatelliteGatewayServicePackage();
-            if (!isApplicationSupportsP2P(msgPackageName)
-                    || !isApplicationSupportsP2P(sgPackageName)) {
-                plogd("isP2PSmsSupportedOnCarrierRoamingNtn APKs do not supports P2P");
+            if (!isApplicationSupportsP2P(mDefaultSmsPackageName)
+                    || !isApplicationSupportsP2P(mSatelliteGatewayServicePackageName)) {
+                plogd("isP2PSmsDisallowedOnCarrierRoamingNtn: APKs do not supports P2P");
                 return true;
             }
         }
-        plogd("isP2PSmsDisallowedOnCarrierRoamingNtn [phoneId="
-                + phone.getPhoneId() + "]: P2P is supported");
+        plogd("isP2PSmsDisallowedOnCarrierRoamingNtn: P2P is supported");
         return false;
     }
 
@@ -7187,12 +7222,13 @@ public class SatelliteController extends Handler {
         return availableServices;
     }
 
-/**
- * Whether application supports the P2P SMS to connect to carrier roaming non-terrestrial network.
- *
- * @param packageName application's default package name
- * return {@code true} when the application supports P2P SMS over the roaming satellite
- */
+    /**
+     * Whether application supports the P2P SMS to connect to carrier roaming non-terrestrial
+     * network.
+     *
+     * @param packageName application's default package name
+     * return {@code true} when the application supports P2P SMS over the roaming satellite
+     */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public boolean isApplicationSupportsP2P(String packageName) {
         PackageManager pm = mContext.getPackageManager();
@@ -7201,6 +7237,7 @@ public class SatelliteController extends Handler {
             applicationInfo = pm.getApplicationInfo(packageName, PackageManager.GET_META_DATA);
         } catch (PackageManager.NameNotFoundException e) {
             logd("isApplicationSupportsP2P pkgName: " + packageName + " is not installed.");
+            return false;
         }
         if (applicationInfo == null || applicationInfo.metaData == null) {
             logd("isApplicationSupportsP2P pkgName: " + packageName + " meta-data info is empty.");
@@ -7208,5 +7245,22 @@ public class SatelliteController extends Handler {
         }
         return applicationInfo.metaData.getBoolean(
                 SatelliteManager.METADATA_SATELLITE_MANUAL_CONNECT_P2P_SUPPORT);
+    }
+
+    /**
+     * Registers for the applications state changed.
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public void registerApplicationStateChanged() {
+        mDefaultSmsPackageName = Telephony.Sms.getDefaultSmsPackage(mContext);
+        mSatelliteGatewayServicePackageName = getConfigSatelliteGatewayServicePackage();
+
+        IntentFilter packageFilter = new IntentFilter();
+        packageFilter.addAction(Telephony.Sms.Intents.ACTION_DEFAULT_SMS_PACKAGE_CHANGED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_REPLACED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+        packageFilter.addDataScheme("package");
+        mContext.registerReceiver(mPackageStateChangedReceiver, packageFilter,
+                mContext.RECEIVER_EXPORTED);
     }
 }
