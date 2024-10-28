@@ -109,8 +109,6 @@ public class EmergencyStateTracker {
      * from the modem.
      */
     private static final int DEFAULT_DATA_SWITCH_TIMEOUT_MS = 1 * 1000;
-    @VisibleForTesting
-    public static final int DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS = 3 * 1000;
     /** Default value for if Emergency Callback Mode is supported. */
     private static final boolean DEFAULT_EMERGENCY_CALLBACK_MODE_SUPPORTED = true;
     /** Default Emergency Callback Mode exit timeout value. */
@@ -142,6 +140,7 @@ public class EmergencyStateTracker {
     private final CarrierConfigManager mConfigManager;
     private final Handler mHandler;
     private final boolean mIsSuplDdsSwitchRequiredForEmergencyCall;
+    private final int mWaitForInServiceTimeoutMs;
     private final PowerManager.WakeLock mWakeLock;
     private RadioOnHelper mRadioOnHelper;
     @EmergencyConstants.EmergencyMode
@@ -474,10 +473,10 @@ public class EmergencyStateTracker {
      * @param featureFlags                            The telephony feature flags.
      */
     public static void make(Context context, boolean isSuplDdsSwitchRequiredForEmergencyCall,
-            @NonNull FeatureFlags featureFlags) {
+            int waitForInServiceTimeout, @NonNull FeatureFlags featureFlags) {
         if (INSTANCE == null) {
             INSTANCE = new EmergencyStateTracker(context, Looper.myLooper(),
-                    isSuplDdsSwitchRequiredForEmergencyCall, featureFlags);
+                    isSuplDdsSwitchRequiredForEmergencyCall, waitForInServiceTimeout, featureFlags);
         }
     }
 
@@ -497,11 +496,13 @@ public class EmergencyStateTracker {
      * Initializes EmergencyStateTracker.
      */
     private EmergencyStateTracker(Context context, Looper looper,
-            boolean isSuplDdsSwitchRequiredForEmergencyCall, @NonNull FeatureFlags featureFlags) {
+            boolean isSuplDdsSwitchRequiredForEmergencyCall, int waitForInServiceTimeout,
+            @NonNull FeatureFlags featureFlags) {
         mEcmExitTimeoutMs = DEFAULT_ECM_EXIT_TIMEOUT_MS;
         mContext = context;
         mHandler = new MyHandler(looper);
         mIsSuplDdsSwitchRequiredForEmergencyCall = isSuplDdsSwitchRequiredForEmergencyCall;
+        mWaitForInServiceTimeoutMs = waitForInServiceTimeout;
         mFeatureFlags = featureFlags;
         PowerManager pm = context.getSystemService(PowerManager.class);
         mWakeLock = (pm != null) ? pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
@@ -534,6 +535,10 @@ public class EmergencyStateTracker {
      * @param looper                                  The {@link Looper} of the application.
      * @param isSuplDdsSwitchRequiredForEmergencyCall Whether gnss supl requires default data for
      *                                                emergency call.
+     * @param waitForInServiceTimeout                 The timeout duration how long does it wait for
+     *                                                modem to get in-service state when emergency
+     *                                                call is dialed in airplane mode before
+     *                                                starting the emergency call.
      * @param phoneFactoryProxy                       The {@link PhoneFactoryProxy} to be injected.
      * @param phoneSwitcherProxy                      The {@link PhoneSwitcherProxy} to be injected.
      * @param telephonyManagerProxy                   The {@link TelephonyManagerProxy} to be
@@ -543,12 +548,14 @@ public class EmergencyStateTracker {
      */
     @VisibleForTesting
     public EmergencyStateTracker(Context context, Looper looper,
-            boolean isSuplDdsSwitchRequiredForEmergencyCall, PhoneFactoryProxy phoneFactoryProxy,
-            PhoneSwitcherProxy phoneSwitcherProxy, TelephonyManagerProxy telephonyManagerProxy,
-            RadioOnHelper radioOnHelper, long ecmExitTimeoutMs, FeatureFlags featureFlags) {
+            boolean isSuplDdsSwitchRequiredForEmergencyCall, int waitForInServiceTimeout,
+            PhoneFactoryProxy phoneFactoryProxy, PhoneSwitcherProxy phoneSwitcherProxy,
+            TelephonyManagerProxy telephonyManagerProxy, RadioOnHelper radioOnHelper,
+            long ecmExitTimeoutMs, FeatureFlags featureFlags) {
         mContext = context;
         mHandler = new MyHandler(looper);
         mIsSuplDdsSwitchRequiredForEmergencyCall = isSuplDdsSwitchRequiredForEmergencyCall;
+        mWaitForInServiceTimeoutMs = waitForInServiceTimeout;
         mPhoneFactoryProxy = phoneFactoryProxy;
         mPhoneSwitcherProxy = phoneSwitcherProxy;
         mTelephonyManagerProxy = telephonyManagerProxy;
@@ -1684,8 +1691,7 @@ public class EmergencyStateTracker {
 
             final Phone phoneForEmergency = phone;
             final android.telecom.Connection expectedConnection = mOngoingConnection;
-            final int waitForInServiceTimeout =
-                    needToTurnOnRadio ? DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS : 0;
+            final int waitForInServiceTimeout = needToTurnOnRadio ? mWaitForInServiceTimeoutMs : 0;
             Rlog.i(TAG, "turnOnRadioAndSwitchDds: timeout=" + waitForInServiceTimeout);
             mRadioOnHelper.triggerRadioOnAndListen(new RadioOnStateListener.Callback() {
                 @Override
