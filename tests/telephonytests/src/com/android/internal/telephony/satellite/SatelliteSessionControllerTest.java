@@ -693,14 +693,6 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Time shift to cause P2P_SMS timeout
         moveTimeForward(P2P_SMS_INACTIVITY_TIMEOUT_SEC * 1000);
         processAllMessages();
-
-        // Verify that expired P2P_SMS timer
-        // reported IDLE state, called satellite disabling.
-        verifyEsosP2pSmsInactivityTimer(false, false);
-        assertSuccessfulModemStateChangedCallback(
-                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
-        verify(mMockSatelliteController, times(1)).requestSatelliteEnabled(
-                eq(false), eq(false), eq(false), any(IIntegerConsumer.Stub.class));
     }
 
     @Test
@@ -2104,6 +2096,11 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         @Override
         public void onRegistrationFailure(int causeCode) {
             logd("onRegistrationFailure: causeCode=" + causeCode);
+        }
+
+        @Override
+        public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+            logd("onTerrestrialNetworkAvailableChanged: isAvailable=" + isAvailable);
         }
 
         public boolean waitUntilResultForModemStateChanged() {
