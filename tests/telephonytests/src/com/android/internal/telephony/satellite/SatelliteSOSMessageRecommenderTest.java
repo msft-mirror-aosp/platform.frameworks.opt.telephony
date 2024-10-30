@@ -266,7 +266,7 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
     @Test
     public void testTimeoutBeforeEmergencyCallEnd_EventDisplayEmergencyMessageNotSent() {
         mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(false);
-        mTestSatelliteController.setIsSatelliteViaOemProvisioned(false);
+        mTestSatelliteController.setDeviceProvisioned(false);
         mTestSOSMessageRecommender.isSatelliteAllowedCallback = null;
         mTestSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         processAllMessages();
@@ -568,20 +568,20 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
     }
 
     @Test
-    public void testIsSatelliteViaOemAvailable() {
+    public void testIsDeviceProvisioned() {
         Boolean originalIsSatelliteViaOemProvisioned =
-                mTestSatelliteController.mIsSatelliteViaOemProvisioned;
+                mTestSatelliteController.mIsDeviceProvisionedForTest;
 
-        mTestSatelliteController.mIsSatelliteViaOemProvisioned = null;
-        assertFalse(mTestSOSMessageRecommender.isSatelliteViaOemAvailable());
+        mTestSatelliteController.mIsDeviceProvisionedForTest = null;
+        assertFalse(mTestSOSMessageRecommender.isDeviceProvisioned());
 
-        mTestSatelliteController.mIsSatelliteViaOemProvisioned = true;
-        assertTrue(mTestSOSMessageRecommender.isSatelliteViaOemAvailable());
+        mTestSatelliteController.mIsDeviceProvisionedForTest = true;
+        assertTrue(mTestSOSMessageRecommender.isDeviceProvisioned());
 
-        mTestSatelliteController.mIsSatelliteViaOemProvisioned = false;
-        assertFalse(mTestSOSMessageRecommender.isSatelliteViaOemAvailable());
+        mTestSatelliteController.mIsDeviceProvisionedForTest = false;
+        assertFalse(mTestSOSMessageRecommender.isDeviceProvisioned());
 
-        mTestSatelliteController.mIsSatelliteViaOemProvisioned =
+        mTestSatelliteController.mIsDeviceProvisionedForTest =
                 originalIsSatelliteViaOemProvisioned;
     }
 
@@ -632,7 +632,7 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         mSetFlagsRule.enableFlags(Flags.FLAG_CARRIER_ROAMING_NB_IOT_NTN);
 
         mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(true);
-        mTestSatelliteController.mIsSatelliteViaOemProvisioned = true;
+        mTestSatelliteController.mIsDeviceProvisionedForTest = true;
         mTestSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         assertEquals(EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911,
                 mTestSOSMessageRecommender.getEmergencyCallToSatelliteHandoverType());
@@ -646,7 +646,7 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         mSetFlagsRule.enableFlags(Flags.FLAG_CARRIER_ROAMING_NB_IOT_NTN);
 
         mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(true);
-        mTestSatelliteController.mIsSatelliteViaOemProvisioned = false;
+        mTestSatelliteController.mIsDeviceProvisionedForTest = false;
         mTestSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         assertEquals(EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911,
                 mTestSOSMessageRecommender.getEmergencyCallToSatelliteHandoverType());
@@ -660,13 +660,13 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         mSetFlagsRule.enableFlags(Flags.FLAG_CARRIER_ROAMING_NB_IOT_NTN);
 
         mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(false);
-        mTestSatelliteController.mIsSatelliteViaOemProvisioned = true;
+        mTestSatelliteController.mIsDeviceProvisionedForTest = true;
         mTestSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         assertEquals(EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS,
                 mTestSOSMessageRecommender.getEmergencyCallToSatelliteHandoverType());
 
         mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(false);
-        mTestSatelliteController.mIsSatelliteViaOemProvisioned = false;
+        mTestSatelliteController.mIsDeviceProvisionedForTest = false;
         mTestSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         assertEquals(EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS,
                 mTestSOSMessageRecommender.getEmergencyCallToSatelliteHandoverType());
@@ -771,7 +771,7 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
                 mProvisionStateChangedCallbacks;
         private int mRegisterForSatelliteProvisionStateChangedCalls = 0;
         private int mUnregisterForSatelliteProvisionStateChangedCalls = 0;
-        private Boolean mIsSatelliteViaOemProvisioned = true;
+        private Boolean mIsDeviceProvisionedForTest = true;
         private boolean mIsSatelliteConnectedViaCarrierWithinHysteresisTime = true;
         public boolean isOemEnabledSatelliteSupported = true;
         public boolean isCarrierEnabledSatelliteSupported = true;
@@ -792,8 +792,8 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         }
 
         @Override
-        public Boolean isSatelliteViaOemProvisioned() {
-            return mIsSatelliteViaOemProvisioned;
+        public Boolean isDeviceProvisioned() {
+            return mIsDeviceProvisionedForTest;
         }
 
         @Override
@@ -867,12 +867,12 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
             return mUnregisterForSatelliteProvisionStateChangedCalls;
         }
 
-        public void setIsSatelliteViaOemProvisioned(boolean provisioned) {
-            mIsSatelliteViaOemProvisioned = provisioned;
+        public void setDeviceProvisioned(boolean provisioned) {
+            mIsDeviceProvisionedForTest = provisioned;
         }
 
         public void sendProvisionStateChangedEvent(int subId, boolean provisioned) {
-            mIsSatelliteViaOemProvisioned = provisioned;
+            mIsDeviceProvisionedForTest = provisioned;
             Set<ISatelliteProvisionStateCallback> perSubscriptionCallbacks =
                     mProvisionStateChangedCallbacks.get(SUB_ID);
             if (perSubscriptionCallbacks != null) {
