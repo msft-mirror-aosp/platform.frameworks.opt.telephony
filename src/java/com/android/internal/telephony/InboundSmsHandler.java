@@ -66,6 +66,7 @@ import android.service.carrier.CarrierMessagingService;
 import android.telephony.SmsMessage;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.text.TextUtils;
 import android.util.LocalLog;
 import android.util.Pair;
 
@@ -75,7 +76,9 @@ import com.android.internal.telephony.SmsConstants.MessageClass;
 import com.android.internal.telephony.analytics.TelephonyAnalytics;
 import com.android.internal.telephony.analytics.TelephonyAnalytics.SmsMmsAnalytics;
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.satellite.metrics.CarrierRoamingSatelliteSessionStats;
 import com.android.internal.telephony.util.NotificationChannelController;
 import com.android.internal.telephony.util.TelephonyUtils;
@@ -686,6 +689,17 @@ public abstract class InboundSmsHandler extends StateMachine {
             result = RESULT_SMS_DISPATCH_FAILURE;
         }
 
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+            if (result == Intents.RESULT_SMS_HANDLED) {
+                SatelliteController satelliteController = SatelliteController.getInstance();
+                if (satelliteController == null) {
+                    log("SatelliteController is not initialized");
+                    return;
+                }
+                satelliteController.onSmsReceived(mPhone.getSubId());
+            }
+        }
+
         // RESULT_OK means that the SMS will be acknowledged by special handling,
         // e.g. for SMS-PP data download. Any other result, we should ack here.
         if (result != Activity.RESULT_OK) {
@@ -743,6 +757,11 @@ public abstract class InboundSmsHandler extends StateMachine {
             // Device doesn't support receiving SMS,
             log("Received short message on device which doesn't support "
                     + "receiving SMS. Ignored.");
+            return Intents.RESULT_SMS_HANDLED;
+        }
+
+        if (isMtSmsPollingMessage(smsb)) {
+            log("Received MT SMS polling message. Ignored.");
             return Intents.RESULT_SMS_HANDLED;
         }
 
@@ -806,7 +825,12 @@ public abstract class InboundSmsHandler extends StateMachine {
             Intent intent = new Intent(Intents.SMS_REJECTED_ACTION);
             intent.putExtra("result", result);
             intent.putExtra("subId", mPhone.getSubId());
-            mContext.sendBroadcast(intent, android.Manifest.permission.RECEIVE_SMS);
+            if (mFeatureFlags.hsumBroadcast()) {
+                mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
+                        android.Manifest.permission.RECEIVE_SMS);
+            } else {
+                mContext.sendBroadcast(intent, android.Manifest.permission.RECEIVE_SMS);
+            }
         }
         acknowledgeLastIncomingSms(success, result, response);
     }
@@ -1964,6 +1988,17 @@ public abstract class InboundSmsHandler extends StateMachine {
         sendMessage(EVENT_BROADCAST_COMPLETE);
     }
 
+    private boolean isMtSmsPollingMessage(@NonNull SmsMessageBase smsb) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()
+                || !mContext.getResources().getBoolean(R.bool.config_enabled_mt_sms_polling)) {
+            return false;
+        }
+        String mtSmsPollingText = mContext.getResources()
+                .getString(R.string.config_mt_sms_polling_text);
+        return !TextUtils.isEmpty(mtSmsPollingText)
+                && mtSmsPollingText.equals(smsb.getMessageBody());
+    }
+
     /** Checks whether the flag to skip new message notification is set in the bitmask returned
      *  from the carrier app.
      */
@@ -2148,9 +2183,13 @@ public abstract class InboundSmsHandler extends StateMachine {
                 // TODO(b/355049884): This is looking at sms package of the wrong user!
                 UserManager userManager =
                         (UserManager) context.getSystemService(Context.USER_SERVICE);
+                PackageManager pm = context.getPackageManager();
+                if (Flags.hsumPackageManager()) {
+                    pm = context.createContextAsUser(UserHandle.CURRENT, 0).getPackageManager();
+                }
                 if (userManager.isUserUnlocked()) {
-                    context.startActivity(context.getPackageManager().getLaunchIntentForPackage(
-                            Telephony.Sms.getDefaultSmsPackage(context)));
+                    context.startActivityAsUser(pm.getLaunchIntentForPackage(
+                            Telephony.Sms.getDefaultSmsPackage(context)), UserHandle.CURRENT);
                 }
             }
         }

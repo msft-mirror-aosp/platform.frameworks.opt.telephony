@@ -126,6 +126,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -657,7 +658,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         // Initialize device storage and outgoing SMS usage monitors for SMSDispatchers.
         mTelephonyComponentFactory = telephonyComponentFactory;
         mSmsStorageMonitor = mTelephonyComponentFactory.inject(SmsStorageMonitor.class.getName())
-                .makeSmsStorageMonitor(this);
+                .makeSmsStorageMonitor(this, mFeatureFlags);
         mSmsUsageMonitor = mTelephonyComponentFactory.inject(SmsUsageMonitor.class.getName())
                 .makeSmsUsageMonitor(context);
         mUiccController = UiccController.getInstance();
@@ -898,6 +899,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
                         Rlog.e(mLogTag, "Invalid Exception for usage setting " + ar.exception);
                         break; // technically extraneous, but good hygiene
                     }
+                } else {
+                    mUsageSettingFromModem = msg.arg1;
                 }
                 break;
             default:
@@ -3179,7 +3182,11 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             Intent intent = new Intent(TelephonyIntents.SECRET_CODE_ACTION,
                     Uri.parse("android_secret_code://" + code));
             intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-            mContext.sendBroadcast(intent, null, options.toBundle());
+            if (mFeatureFlags.hsumBroadcast()) {
+                mContext.sendBroadcastAsUser(intent, UserHandle.ALL, null, options.toBundle());
+            } else {
+                mContext.sendBroadcast(intent, null, options.toBundle());
+            }
 
             // {@link TelephonyManager.ACTION_SECRET_CODE} will replace {@link
             // TelephonyIntents#SECRET_CODE_ACTION} in the next Android version. Before
@@ -3187,7 +3194,12 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             Intent secrectCodeIntent = new Intent(TelephonyManager.ACTION_SECRET_CODE,
                     Uri.parse("android_secret_code://" + code));
             secrectCodeIntent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-            mContext.sendBroadcast(secrectCodeIntent, null, options.toBundle());
+            if (mFeatureFlags.hsumBroadcast()) {
+                mContext.sendBroadcastAsUser(secrectCodeIntent, UserHandle.ALL, null,
+                        options.toBundle());
+            } else {
+                mContext.sendBroadcast(secrectCodeIntent, null, options.toBundle());
+            }
         }
     }
 
@@ -4475,7 +4487,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             mCi.getUsageSetting(obtainMessage(EVENT_GET_USAGE_SETTING_DONE));
             // If the modem value is already known, and the value has changed, proceed to update.
         } else if (mPreferredUsageSetting != mUsageSettingFromModem) {
-            mCi.setUsageSetting(obtainMessage(EVENT_SET_USAGE_SETTING_DONE),
+            mCi.setUsageSetting(obtainMessage(EVENT_SET_USAGE_SETTING_DONE,
+                        mPreferredUsageSetting, 0 /* unused */),
                     mPreferredUsageSetting);
         }
         return true;
@@ -5283,22 +5296,43 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     }
 
     /**
-     * Start callback mode
+     * Start the emergency callback mode
      * @param type for callback mode entry.
+     * @param durationMillis is the number of milliseconds remaining in the emergency callback
+     *                        mode.
      */
-    public void startCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type) {
-        Rlog.d(mLogTag, "startCallbackMode:type=" + type);
-        mNotifier.notifyCallbackModeStarted(this, type);
+    public void startEmergencyCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type,
+            long durationMillis) {
+        if (!mFeatureFlags.emergencyCallbackModeNotification()) return;
+
+        Rlog.d(mLogTag, "startEmergencyCallbackMode:type=" + type);
+        mNotifier.notifyCallbackModeStarted(this, type, durationMillis);
     }
 
     /**
-     * Stop callback mode
+     * Restart the emergency callback mode
+     * @param type for callback mode entry.
+     * @param durationMillis is the number of milliseconds remaining in the emergency callback
+     *                        mode.
+     */
+    public void restartEmergencyCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type,
+            long durationMillis) {
+        if (!mFeatureFlags.emergencyCallbackModeNotification()) return;
+
+        Rlog.d(mLogTag, "restartEmergencyCallbackMode:type=" + type);
+        mNotifier.notifyCallbackModeRestarted(this, type, durationMillis);
+    }
+
+    /**
+     * Stop the emergency callback mode
      * @param type for callback mode exit.
      * @param reason for stopping callback mode.
      */
-    public void stopCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type,
+    public void stopEmergencyCallbackMode(@TelephonyManager.EmergencyCallbackModeType int type,
             @TelephonyManager.EmergencyCallbackModeStopReason int reason) {
-        Rlog.d(mLogTag, "stopCallbackMode:type=" + type + ", reason=" + reason);
+        if (!mFeatureFlags.emergencyCallbackModeNotification()) return;
+
+        Rlog.d(mLogTag, "stopEmergencyCallbackMode:type=" + type + ", reason=" + reason);
         mNotifier.notifyCallbackModeStopped(this, type, reason);
     }
 
@@ -5333,6 +5367,17 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     public void notifyCarrierRoamingNtnEligibleStateChanged(boolean eligible) {
         logd("notifyCarrierRoamingNtnEligibleStateChanged eligible:" + eligible);
         mNotifier.notifyCarrierRoamingNtnEligibleStateChanged(this, eligible);
+    }
+
+    /**
+     * Notify external listeners that carrier roaming non-terrestrial available services changed.
+     * @param availableServices The list of the supported services.
+     */
+    public void notifyCarrierRoamingNtnAvailableServicesChanged(
+            @NetworkRegistrationInfo.ServiceType int[] availableServices) {
+        logd("notifyCarrierRoamingNtnAvailableServicesChanged availableServices:"
+                + Arrays.toString(availableServices));
+        mNotifier.notifyCarrierRoamingNtnAvailableServicesChanged(this, availableServices);
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
