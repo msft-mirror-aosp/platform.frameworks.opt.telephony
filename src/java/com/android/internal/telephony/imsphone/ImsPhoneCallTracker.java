@@ -70,6 +70,7 @@ import android.os.Registrant;
 import android.os.RegistrantList;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.sysprop.TelephonyProperties;
@@ -1543,7 +1544,11 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         Intent intent = new Intent(intentAction);
         intent.putExtra(ImsManager.EXTRA_PHONE_ID, mPhone.getPhoneId());
         if (mPhone != null && mPhone.getContext() != null) {
-            mPhone.getContext().sendBroadcast(intent);
+            if (mFeatureFlags.hsumBroadcast()) {
+                mPhone.getContext().sendBroadcastAsUser(intent, UserHandle.ALL);
+            } else {
+                mPhone.getContext().sendBroadcast(intent);
+            }
         }
     }
 
@@ -1792,7 +1797,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                                 dialArgs.intentExtras);
                     }
                 };
-                EmergencyStateTracker.getInstance().exitEmergencyCallbackMode(onComplete);
+                EmergencyStateTracker.getInstance().exitEmergencyCallbackMode(onComplete,
+                        TelephonyManager.STOP_REASON_OUTGOING_NORMAL_CALL_INITIATED);
             } else {
                 try {
                     getEcbmInterface().exitEmergencyCallbackMode();
@@ -2879,7 +2885,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         boolean rejectCall = false;
 
         if (mFeatureFlags.preventHangupDuringCallMerge()) {
-            if (imsCall.isCallSessionMergePending()) {
+            if (imsCall != null && imsCall.isCallSessionMergePending()) {
                 if (DBG) log("hangup call failed during call merge");
 
                 throw new CallStateException("can not hangup during call merge");
@@ -4680,8 +4686,14 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     configChangedIntent.putExtra(ImsConfig.EXTRA_CHANGED_ITEM, item);
                     configChangedIntent.putExtra(ImsConfig.EXTRA_NEW_VALUE, value);
                     if (mPhone != null && mPhone.getContext() != null) {
-                        mPhone.getContext().sendBroadcast(configChangedIntent,
-                                Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+                        if (mFeatureFlags.hsumBroadcast()) {
+                            mPhone.getContext().sendBroadcastAsUser(configChangedIntent,
+                                    UserHandle.ALL,
+                                    Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+                        } else {
+                            mPhone.getContext().sendBroadcast(configChangedIntent,
+                                    Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+                        }
                     }
                 }
 
@@ -6341,8 +6353,13 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         configChangedIntent.putExtra(ImsConfig.EXTRA_CHANGED_ITEM, item);
         configChangedIntent.putExtra(ImsConfig.EXTRA_NEW_VALUE, value);
         if (mPhone != null && mPhone.getContext() != null) {
-            mPhone.getContext().sendBroadcast(
-                    configChangedIntent, Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+            if (mFeatureFlags.hsumBroadcast()) {
+                mPhone.getContext().sendBroadcastAsUser(configChangedIntent, UserHandle.ALL,
+                        Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+            } else {
+                mPhone.getContext().sendBroadcast(
+                        configChangedIntent, Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+            }
         }
     }
 }

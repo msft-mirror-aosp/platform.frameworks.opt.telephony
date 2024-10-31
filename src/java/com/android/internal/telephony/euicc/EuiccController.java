@@ -22,6 +22,7 @@ import android.Manifest;
 import android.Manifest.permission;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.app.PendingIntent;
 import android.app.admin.DevicePolicyManager;
@@ -70,6 +71,7 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.euicc.EuiccConnector.OtaStatusChangedCallback;
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.UiccController;
@@ -1089,7 +1091,7 @@ public class EuiccController extends IEuiccController.Stub {
             // system or the caller manage the target subscription, we let it continue. This is
             // because deleting subscription won't change status of any other subscriptions.
             if (!callerCanWriteEmbeddedSubscriptions
-                    && !mSubscriptionManager.canManageSubscription(sub, callingPackage)
+                    && !canManageSubscription(sub, callingPackage)
                     && !adminOwned) {
                 Log.e(TAG, "No permissions: " + subscriptionId + " adminOwned=" + adminOwned);
                 sendResult(callbackIntent, ERROR, null /* extrasIntent */);
@@ -1208,7 +1210,7 @@ public class EuiccController extends IEuiccController.Stub {
                 if (callerCanWriteEmbeddedSubscriptions) {
                     passConsent = true;
                 } else {
-                    if (!mSubscriptionManager.canManageSubscription(sub, callingPackage)) {
+                    if (!canManageSubscription(sub, callingPackage)) {
                         Log.e(TAG, "Not permitted to switch to sub: " + subscriptionId);
                         sendResult(callbackIntent, ERROR, null /* extrasIntent */);
                         return;
@@ -1287,7 +1289,7 @@ public class EuiccController extends IEuiccController.Stub {
             if ((cardId == TelephonyManager.UNSUPPORTED_CARD_ID || subInfo.getCardId() == cardId)
                     && subInfo.isEmbedded()
                     && (callerCanWriteEmbeddedSubscriptions
-                    || mSubscriptionManager.canManageSubscription(subInfo, callingPackage))) {
+                    || canManageSubscription(subInfo, callingPackage))) {
                 return subInfo.getPortIndex();
             }
         }
@@ -1558,7 +1560,7 @@ public class EuiccController extends IEuiccController.Stub {
             // system or the caller can manage the target subscription, we let it continue. This is
             // because updating subscription nickname won't affect any other subscriptions.
             if (!callerCanWriteEmbeddedSubscriptions
-                    && !mSubscriptionManager.canManageSubscription(sub, callingPackage)) {
+                    && !canManageSubscription(sub, callingPackage)) {
                 Log.e(TAG, "No permissions: " + subscriptionId);
                 sendResult(callbackIntent, ERROR, null /* extrasIntent */);
                 return;
@@ -1855,7 +1857,12 @@ public class EuiccController extends IEuiccController.Stub {
         if (bestComponent != null) {
             intent.setPackage(bestComponent.packageName);
         }
-        mContext.sendBroadcast(intent, permission.WRITE_EMBEDDED_SUBSCRIPTIONS);
+        if (mFeatureFlags.hsumBroadcast()) {
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
+                    permission.WRITE_EMBEDDED_SUBSCRIPTIONS);
+        } else {
+            mContext.sendBroadcast(intent, permission.WRITE_EMBEDDED_SUBSCRIPTIONS);
+        }
     }
 
     @Nullable
@@ -2062,7 +2069,7 @@ public class EuiccController extends IEuiccController.Stub {
             if ((cardId == TelephonyManager.UNSUPPORTED_CARD_ID || subInfo.getCardId() == cardId)
                     && subInfo.isEmbedded()
                     && (!usePortIndex || subInfo.getPortIndex() == targetPortIndex)
-                    && mSubscriptionManager.canManageSubscription(subInfo, callingPackage)) {
+                    && canManageSubscription(subInfo, callingPackage)) {
                 return true;
             }
         }
@@ -2131,8 +2138,7 @@ public class EuiccController extends IEuiccController.Stub {
                     if (subInfo.isEmbedded()
                             && subInfo.getCardId() == cardId
                             && (!usePortIndex || subInfo.getPortIndex() == targetPortIndex)
-                            && mSubscriptionManager.canManageSubscription(
-                            subInfo, callingPackage)) {
+                            && canManageSubscription(subInfo, callingPackage)) {
                         return true;
                     }
                 }
@@ -2151,7 +2157,7 @@ public class EuiccController extends IEuiccController.Stub {
         } else {
             for (SubscriptionInfo subInfo : subInfoList) {
                 if (subInfo.isEmbedded()
-                        && mSubscriptionManager.canManageSubscription(subInfo, callingPackage)) {
+                        && canManageSubscription(subInfo, callingPackage)) {
                     return true;
                 }
             }
@@ -2384,6 +2390,15 @@ public class EuiccController extends IEuiccController.Stub {
         if (!mPackageManager.hasSystemFeature(FEATURE_TELEPHONY_EUICC)) {
             throw new UnsupportedOperationException(
                     methodName + " is unsupported without " + FEATURE_TELEPHONY_EUICC);
+        }
+    }
+
+    private boolean canManageSubscription(SubscriptionInfo subInfo, String packageName) {
+        if (Flags.hsumPackageManager() && UserManager.isHeadlessSystemUserMode()) {
+            return mSubscriptionManager.canManageSubscriptionAsUser(subInfo, packageName,
+                    UserHandle.of(ActivityManager.getCurrentUser()));
+        } else {
+            return mSubscriptionManager.canManageSubscription(subInfo, packageName);
         }
     }
 }
