@@ -78,24 +78,6 @@ flag {
   bug: "309896524"
 }
 
-# OWNER=rambowang TARGET=24Q3
-flag {
-  name: "show_call_id_and_call_waiting_in_additional_settings_menu"
-  is_exported: true
-  namespace: "telephony"
-  description: "Expose carrier config KEY_ADDITIONAL_SETTINGS_CALLER_ID_VISIBILITY_BOOL and KEY_ADDITIONAL_SETTINGS_CALL_WAITING_VISIBILITY_BOOL."
-  bug: "310264981"
-}
-
-# OWNER=rambowang TARGET=24Q3
-flag {
-    name: "reset_mobile_network_settings"
-    is_exported: true
-    namespace: "telephony"
-    description: "Allows applications to launch Reset Mobile Network Settings page in Settings app."
-    bug:"271921464"
-}
-
 # OWNER=sangyun TARGET=24Q3
 flag {
     name: "roaming_notification_for_single_data_network"
@@ -195,3 +177,37 @@ flag {
         purpose: PURPOSE_BUGFIX
     }
 }
+
+# OWNER=jackyu TARGET=25Q2
+flag {
+    name: "hsum_broadcast"
+    namespace: "telephony"
+    description: "Fixed the bug that broadcast intent is only sent to the system user."
+    bug:"362554272"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=rambowang TARGET=25Q2
+flag {
+    name: "support_carrier_services_for_hsum"
+    namespace: "telephony"
+    description: "Support Carrier Services (APIs) for HSUM."
+    bug:"345522246"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=jackyu TARGET=25Q2
+flag {
+    name: "hsum_package_manager"
+    namespace: "telephony"
+    description: "Fixed the bug that package manager is not for the right user"
+    bug:"356827794"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
