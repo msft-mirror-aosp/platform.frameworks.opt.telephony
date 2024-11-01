@@ -43,6 +43,7 @@ import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteManager;
 import android.telephony.satellite.SatelliteModemEnableRequestAttributes;
 import android.telephony.satellite.SatelliteSubscriptionInfo;
+import android.telephony.satellite.SystemSelectionSpecifier;
 import android.telephony.satellite.stub.NTRadioTechnology;
 import android.telephony.satellite.stub.SatelliteModemState;
 import android.telephony.satellite.stub.SatelliteResult;
@@ -53,6 +54,7 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.util.TelephonyUtils;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -540,6 +542,56 @@ public class SatelliteServiceUtils {
         }
 
         return mcc + mnc;
+    }
+
+    /**
+     * Convert SystemSelectionSpecifier from framework definition to service definition
+     * @param systemSelectionSpecifier The SystemSelectionSpecifier from the framework.
+     * @return The converted SystemSelectionSpecifier for the satellite service.
+     */
+    @NonNull public static List<android.telephony.satellite.stub
+            .SystemSelectionSpecifier> toSystemSelectionSpecifier(
+            @NonNull SystemSelectionSpecifier systemSelectionSpecifier) {
+        List<android.telephony.satellite.stub.SystemSelectionSpecifier> converted =
+                new ArrayList<>();
+        android.telephony.satellite.stub.SystemSelectionSpecifier convertedSpecifier =
+                new android.telephony.satellite.stub.SystemSelectionSpecifier();
+
+        convertedSpecifier.mMccMnc = systemSelectionSpecifier.getMccMnc();
+        convertedSpecifier.mBands = systemSelectionSpecifier.getBands().toArray();
+        convertedSpecifier.mEarfcs = systemSelectionSpecifier.getEarfcs().toArray();
+        converted.add(convertedSpecifier);
+        return converted;
+    }
+
+    /**
+     * Expected format of the input dictionary bundle is:
+     * <ul>
+     *     <li>Key: Regional satellite config Id string.</li>
+     *     <li>Value: Integer arrays of earfcns in the corresponding regions."</li>
+     * </ul>
+     * @return The map of earfcns with key: regional satellite config Id,
+     * value: set of earfcns in the corresponding regions.
+     */
+    @NonNull
+    public static Map<String, Set<Integer>> parseRegionalSatelliteEarfcns(
+            @Nullable PersistableBundle earfcnsBundle) {
+        Map<String, Set<Integer>> earfcnsMap = new HashMap<>();
+        if (earfcnsBundle == null || earfcnsBundle.isEmpty()) {
+            logd("parseRegionalSatelliteEarfcns: earfcnsBundle is null or empty");
+            return earfcnsMap;
+        }
+
+        for (String configId : earfcnsBundle.keySet()) {
+            Set<Integer> earfcnsSet = new HashSet<>();
+            for (int earfcn : earfcnsBundle.getIntArray(configId)) {
+                earfcnsSet.add(earfcn);
+            }
+            logd("parseRegionalSatelliteEarfcns: configId = " + configId + ", earfcns ="
+                    + earfcnsSet.stream().map(String::valueOf).collect(joining(",")));
+            earfcnsMap.put(configId, earfcnsSet);
+        }
+        return earfcnsMap;
     }
 
     private static void logd(@NonNull String log) {
