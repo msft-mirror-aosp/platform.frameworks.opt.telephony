@@ -33,7 +33,6 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPOR
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
-import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT;
@@ -41,6 +40,7 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_S
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE;
 import static android.telephony.SubscriptionManager.SATELLITE_ATTACH_ENABLED_FOR_CARRIER;
 import static android.telephony.SubscriptionManager.SATELLITE_ENTITLEMENT_STATUS;
 import static android.telephony.SubscriptionManager.isValidSubscriptionId;
@@ -113,6 +113,7 @@ import android.provider.Settings;
 import android.provider.Telephony;
 import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
+import android.telephony.AnomalyReporter;
 import android.telephony.CarrierConfigManager;
 import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.NetworkRegistrationInfo;
@@ -180,6 +181,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -655,6 +657,79 @@ public class SatelliteController extends Handler {
     // List of device states returned from DeviceStateManager to determine if running on a foldable
     // device.
     private List<DeviceState> mDeviceStates = new ArrayList();
+
+    public static final int RESULT_RECEIVER_COUNT_ANOMALY_THRESHOLD = 100;
+    protected final Object mResultReceiverTotalCountLock = new Object();
+    @GuardedBy("mResultReceiverTotalCountLock")
+    protected int mResultReceiverTotalCount;
+    @GuardedBy("mResultReceiverTotalCountLock")
+    protected HashMap<String, Integer> mResultReceiverCountPerMethodMap = new HashMap<>();
+
+    // Satellite anomaly uuid -- ResultReceiver count threshold exceeded
+    private final UUID mAnomalyUnexpectedResultReceiverCountUUID =
+            UUID.fromString("e268f22d-9bba-4d27-b76a-1c7f5b42e241");
+
+    private UUID generateAnomalyUnexpectedResultReceiverCountUUID(int error, int errorCode) {
+        long lerror = error;
+        long lerrorCode = errorCode;
+        return new UUID(mAnomalyUnexpectedResultReceiverCountUUID.getMostSignificantBits(),
+                mAnomalyUnexpectedResultReceiverCountUUID.getLeastSignificantBits()
+                        + ((lerrorCode << 32) + lerror));
+    }
+
+    /**
+     * Increments the ResultReceiver count and logs the caller information.
+     * If the count exceeds the threshold, it reports an anomaly via AnomalyReporter.
+     *
+     * @param caller The caller information that created the ResultReceiver
+     *               (e.g., class name and method name)
+     */
+    public void incrementResultReceiverCount(String caller) {
+        if (mFeatureFlags.geofenceEnhancementForBetterUx()) {
+            synchronized (mResultReceiverTotalCountLock) {
+                mResultReceiverTotalCount++;
+                logd("[incrementResultReceiverCount] : " + caller
+                        + " | ResultReceiver total count= " + mResultReceiverTotalCount);
+                mResultReceiverCountPerMethodMap.compute(caller, (k, v) -> v == null ? 1 : v + 1);
+
+                if (mResultReceiverTotalCount > RESULT_RECEIVER_COUNT_ANOMALY_THRESHOLD) {
+                    loge("[mResultReceiverTotalCount] is exceeds limits : "
+                            + mResultReceiverTotalCount);
+                    loge("[incrementResultReceiverCount] mResultReceiverCountPerMethodMap is "
+                            + mResultReceiverCountPerMethodMap);
+                    AnomalyReporter.reportAnomaly(
+                            generateAnomalyUnexpectedResultReceiverCountUUID(0, 0),
+                            "Satellite ResultReceiver total count= "
+                                    + mResultReceiverTotalCount + " exceeds limit.");
+                }
+            }
+        } else {
+            logd("[incrementResultReceiverCount]: geofenceEnhancementForBetterUx is not enabled");
+        }
+    }
+
+    /**
+     * Decrements the ResultReceiver count and logs the caller information.
+     * Prevents the count from going below zero.
+     *
+     * @param caller The caller information that released the ResultReceiver
+     *               (e.g., class name and method name)
+     */
+    public void decrementResultReceiverCount(String caller) {
+        if (mFeatureFlags.geofenceEnhancementForBetterUx()) {
+            synchronized (mResultReceiverTotalCountLock) {
+                if (mResultReceiverTotalCount > 0) {
+                    mResultReceiverTotalCount--;
+                }
+                logd("[decrementResultReceiverCount] : " + caller
+                        + " | ResultReceiver total count=" + mResultReceiverTotalCount);
+                mResultReceiverCountPerMethodMap.computeIfPresent(caller,
+                        (k, v) -> v > 0 ? v - 1 : v);
+            }
+        } else {
+            logd("[decrementResultReceiverCount]: geofenceEnhancementForBetterUx is not enabled");
+        }
+    }
 
     /**
      * @return The singleton instance of SatelliteController.
@@ -1454,6 +1529,7 @@ public class SatelliteController extends Handler {
                     updateSatelliteSupportedState(false);
                 }
                 ((ResultReceiver) request.argument).send(error, bundle);
+                decrementResultReceiverCount("SC:requestIsSatelliteEnabled");
                 break;
             }
 
@@ -1548,6 +1624,7 @@ public class SatelliteController extends Handler {
                     }
                 }
                 ((ResultReceiver) request.argument).send(error, bundle);
+                decrementResultReceiverCount("SC:requestTimeForNextSatelliteVisibility");
                 break;
             }
 
@@ -1573,16 +1650,19 @@ public class SatelliteController extends Handler {
                     if (mSatelliteModemInterface.isSatelliteServiceConnected()) {
                         synchronized (mIsSatelliteSupportedLock) {
                             if (mIsSatelliteSupported == null || !mIsSatelliteSupported) {
+                                final String caller = "SC:CMD_IS_SATELLITE_SUPPORTED";
                                 ResultReceiver receiver = new ResultReceiver(this) {
                                     @Override
                                     protected void onReceiveResult(
                                             int resultCode, Bundle resultData) {
+                                        decrementResultReceiverCount(caller);
                                         plogd("onRadioStateChanged.requestIsSatelliteSupported: "
                                                 + "resultCode=" + resultCode
                                                 + ", resultData=" + resultData);
                                     }
                                 };
                                 sendRequestAsync(CMD_IS_SATELLITE_SUPPORTED, receiver, null);
+                                incrementResultReceiverCount(caller);
                             }
                         }
                     }
@@ -1700,6 +1780,7 @@ public class SatelliteController extends Handler {
                     }
                     result.send(errorCode, null);
                 }
+                decrementResultReceiverCount("SC:requestNtnSignalStrength");
                 break;
             }
 
@@ -1839,6 +1920,7 @@ public class SatelliteController extends Handler {
                         argument.mProvisioned ? SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS
                                 : SatelliteManager.KEY_DEPROVISION_SATELLITE_TOKENS, true);
                 argument.mResult.send(SATELLITE_RESULT_SUCCESS, bundle);
+                decrementResultReceiverCount("SC:provisionSatellite");
                 break;
             }
 
@@ -2289,6 +2371,7 @@ public class SatelliteController extends Handler {
         }
 
         sendRequestAsync(CMD_IS_SATELLITE_ENABLED, result, null);
+        incrementResultReceiverCount("SC:requestIsSatelliteEnabled");
     }
 
     /**
@@ -2696,6 +2779,7 @@ public class SatelliteController extends Handler {
         }
 
         sendRequestAsync(CMD_IS_SATELLITE_PROVISIONED, result, null);
+        incrementResultReceiverCount("SC:requestIsSatelliteProvisioned");
     }
 
     /**
@@ -2871,6 +2955,7 @@ public class SatelliteController extends Handler {
         }
 
         sendRequestAsync(CMD_GET_TIME_SATELLITE_NEXT_VISIBLE, result, null);
+        incrementResultReceiverCount("SC:requestTimeForNextSatelliteVisibility");
     }
 
     /**
@@ -3023,6 +3108,7 @@ public class SatelliteController extends Handler {
 
         Phone phone = SatelliteServiceUtils.getPhone();
         sendRequestAsync(CMD_REQUEST_NTN_SIGNAL_STRENGTH, result, phone);
+        incrementResultReceiverCount("SC:requestNtnSignalStrength");
     }
 
     /**
@@ -3435,15 +3521,18 @@ public class SatelliteController extends Handler {
             plogd("onSatelliteServiceConnected");
             // Vendor service might have just come back from a crash
             moveSatelliteToOffStateAndCleanUpResources(SATELLITE_RESULT_MODEM_ERROR);
+            final String caller = "SC:onSatelliteServiceConnected";
             ResultReceiver receiver = new ResultReceiver(this) {
                 @Override
                 protected void onReceiveResult(
                         int resultCode, Bundle resultData) {
+                    decrementResultReceiverCount(caller);
                     plogd("onSatelliteServiceConnected.requestIsSatelliteSupported:"
                             + " resultCode=" + resultCode);
                 }
             };
             requestIsSatelliteSupported(receiver);
+            incrementResultReceiverCount(caller);
         } else {
             plogd("onSatelliteServiceConnected: Satellite vendor service is not supported."
                     + " Ignored the event");
@@ -4072,10 +4161,13 @@ public class SatelliteController extends Handler {
                 new ResultReceiver(this) {
                     @Override
                     protected void onReceiveResult(int resultCode, Bundle resultData) {
+                        decrementResultReceiverCount(
+                                "SC:isSatelliteSupportedViaOemInternal");
                         plogd("isSatelliteSupportedViaOemInternal.requestIsSatelliteSupported:"
                                 + " resultCode=" + resultCode);
                     }
                 });
+        incrementResultReceiverCount("SC:isSatelliteSupportedViaOemInternal");
         return null;
     }
 
@@ -4301,6 +4393,7 @@ public class SatelliteController extends Handler {
                         protected void onReceiveResult(int resultCode, Bundle resultData) {
                             plogd("updateSatelliteSupportedState.requestIsSatelliteProvisioned: "
                                     + "resultCode=" + resultCode + ", resultData=" + resultData);
+                            decrementResultReceiverCount("SC:requestIsSatelliteProvisioned");
                             requestSatelliteEnabled(false, false, false,
                                     new IIntegerConsumer.Stub() {
                                         @Override
@@ -4311,14 +4404,18 @@ public class SatelliteController extends Handler {
                                     });
                         }
                     });
+            incrementResultReceiverCount("SC:requestIsSatelliteProvisioned");
+
             requestSatelliteCapabilities(
                     new ResultReceiver(this) {
                         @Override
                         protected void onReceiveResult(int resultCode, Bundle resultData) {
                             plogd("updateSatelliteSupportedState.requestSatelliteCapabilities: "
                                     + "resultCode=" + resultCode + ", resultData=" + resultData);
+                            decrementResultReceiverCount("SC:requestSatelliteCapabilities");
                         }
                     });
+            incrementResultReceiverCount("SC:requestSatelliteCapabilities");
         }
         registerForSatelliteSupportedStateChanged();
         selectBindingSatelliteSubscription();
@@ -5909,6 +6006,7 @@ public class SatelliteController extends Handler {
         bundle.putBoolean(SatelliteManager.KEY_SATELLITE_PROVISIONED,
                 Boolean.TRUE.equals(isDeviceProvisioned()));
         ((ResultReceiver) request.argument).send(SATELLITE_RESULT_SUCCESS, bundle);
+        decrementResultReceiverCount("SC:requestIsSatelliteProvisioned");
     }
 
     private long getWaitForSatelliteEnablingResponseTimeoutMillis() {
@@ -6960,6 +7058,7 @@ public class SatelliteController extends Handler {
         RequestProvisionSatelliteArgument request = new RequestProvisionSatelliteArgument(list,
                 result, true);
         sendRequestAsync(CMD_UPDATE_PROVISION_SATELLITE_TOKEN, request, null);
+        incrementResultReceiverCount("SC:provisionSatellite");
     }
 
     /**
@@ -6985,6 +7084,7 @@ public class SatelliteController extends Handler {
         RequestProvisionSatelliteArgument request = new RequestProvisionSatelliteArgument(list,
                 result, false);
         sendRequestAsync(CMD_UPDATE_PROVISION_SATELLITE_TOKEN, request, null);
+        incrementResultReceiverCount("SC:provisionSatellite");
     }
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
