@@ -60,6 +60,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
+import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.SatelliteManager;
@@ -221,6 +222,13 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     @Test
     public void testScreenOffInactivityTimer() {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        // Support P2P_SMS
+        when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
+                anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
         doNothing().when(mDeviceStateMonitor).registerForScreenStateChanged(
                 eq(mTestSatelliteSessionController.getHandler()), anyInt(), any());
         when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(false);
@@ -267,6 +275,13 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     @Test
     public void testScreenOffInactivityTimerStop() {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        // Support P2P_SMS
+        when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
+                anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
         doNothing().when(mDeviceStateMonitor).registerForScreenStateChanged(
                 eq(mTestSatelliteSessionController.getHandler()), anyInt(), any());
         // Satellite enabling request is for an emergency.
@@ -329,6 +344,10 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(false);
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
                 anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
         when(mMockSatelliteController.isInCarrierRoamingNbIotNtn()).thenReturn(true);
         PersistableBundle bundle = new PersistableBundle();
         bundle.putInt(KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
@@ -423,6 +442,10 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Support P2P_SMS
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
                 anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
 
         // Setup carrier config for timer values
         PersistableBundle bundle = new PersistableBundle();
@@ -506,6 +529,10 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Support P2P_SMS
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
                 anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
 
         // Setup carrier config for timer values
         PersistableBundle bundle = new PersistableBundle();
@@ -581,6 +608,10 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Support P2P_SMS
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
                 anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
 
         // Setup carrier config for timer values
         PersistableBundle bundle = new PersistableBundle();
@@ -648,6 +679,10 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Support P2P_SMS
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
                 anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
 
         // Setup carrier config for timer values
         PersistableBundle bundle = new PersistableBundle();
@@ -712,6 +747,10 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Support P2P_SMS
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
                 anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
 
         // Setup carrier config for timer values
         PersistableBundle bundle = new PersistableBundle();
@@ -789,6 +828,10 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Support P2P_SMS
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
                 anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
 
         // Setup carrier config for timer values
         PersistableBundle bundle = new PersistableBundle();
