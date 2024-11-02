@@ -122,6 +122,7 @@ import android.telephony.ServiceState;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.telephony.TelephonyRegistryManager;
 import android.telephony.satellite.INtnSignalStrengthCallback;
 import android.telephony.satellite.ISatelliteCapabilitiesCallback;
 import android.telephony.satellite.ISatelliteDatagramCallback;
@@ -2448,6 +2449,7 @@ public class SatelliteController extends Handler {
         synchronized (mSatelliteCapabilitiesLock) {
             if (mSatelliteCapabilities != null) {
                 Bundle bundle = new Bundle();
+                overrideSatelliteCapabilitiesIfApplicable();
                 bundle.putParcelable(SatelliteManager.KEY_SATELLITE_CAPABILITIES,
                         mSatelliteCapabilities);
                 result.send(SATELLITE_RESULT_SUCCESS, bundle);
@@ -4326,6 +4328,9 @@ public class SatelliteController extends Handler {
         if (!enabled) {
             mIsModemEnabledReportingNtnSignalStrength.set(false);
         }
+        if (mFeatureFlags.satelliteStateChangeListener()) {
+            notifyEnabledStateChanged(enabled);
+        }
     }
 
     private void registerForPendingDatagramCount() {
@@ -4584,13 +4589,11 @@ public class SatelliteController extends Handler {
 
         synchronized (mSatelliteCapabilitiesLock) {
             mSatelliteCapabilities = capabilities;
+            overrideSatelliteCapabilitiesIfApplicable();
         }
 
         List<ISatelliteCapabilitiesCallback> deadCallersList = new ArrayList<>();
         mSatelliteCapabilitiesChangedListeners.values().forEach(listener -> {
-            synchronized (this.mSatelliteCapabilitiesLock) {
-                overrideSatelliteCapabilitiesIfApplicable();
-            }
             try {
                 listener.onSatelliteCapabilitiesChanged(this.mSatelliteCapabilities);
             } catch (RemoteException e) {
@@ -5064,7 +5067,8 @@ public class SatelliteController extends Handler {
                         KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT,
                         KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
                         KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
-                        KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT
+                        KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT,
+                        KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE
                 );
             } catch (Exception e) {
                 logw("getConfigForSubId: " + e);
@@ -7542,5 +7546,16 @@ public class SatelliteController extends Handler {
         packageFilter.addDataScheme("package");
         mContext.registerReceiver(mPackageStateChangedReceiver, packageFilter,
                 mContext.RECEIVER_EXPORTED);
+    }
+
+    private void notifyEnabledStateChanged(boolean isEnabled) {
+        TelephonyRegistryManager trm = mContext.getSystemService(TelephonyRegistryManager.class);
+        if (trm == null) {
+            loge("Telephony registry service is down!");
+            return;
+        }
+
+        trm.notifySatelliteStateChanged(isEnabled);
+        logd("notifyEnabledStateChanged to " + isEnabled);
     }
 }
