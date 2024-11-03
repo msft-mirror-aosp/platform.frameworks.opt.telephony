@@ -62,6 +62,7 @@ import static com.android.internal.telephony.configupdate.ConfigProviderAdaptor.
 import android.annotation.ArrayRes;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -77,6 +78,7 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.hardware.devicestate.DeviceState;
@@ -106,6 +108,7 @@ import android.os.ServiceSpecificException;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UserHandle;
+import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.provider.Telephony;
 import android.telecom.TelecomManager;
@@ -119,6 +122,7 @@ import android.telephony.ServiceState;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.telephony.TelephonyRegistryManager;
 import android.telephony.satellite.INtnSignalStrengthCallback;
 import android.telephony.satellite.ISatelliteCapabilitiesCallback;
 import android.telephony.satellite.ISatelliteDatagramCallback;
@@ -140,6 +144,7 @@ import android.util.Pair;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.uwb.UwbManager;
+import android.view.WindowManager;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
@@ -221,6 +226,14 @@ public class SatelliteController extends Handler {
     private static final long WAIT_FOR_REPORT_ENTITLED_MERTICS_TIMEOUT_MILLIS =
             TimeUnit.HOURS.toMillis(23);
 
+    /**
+     * Delay SatelliteEnable request when network selection auto. current RIL not verified to
+     * response right after network selection auto changed. Some RIL has delay for waiting in-svc
+     * with Automatic selection request.
+     */
+    private static final long DELAY_WAITING_SET_NETWORK_SELECTION_AUTO_MILLIS =
+            TimeUnit.SECONDS.toMillis(1);
+
     /** Message codes used in handleMessage() */
     //TODO: Move the Commands and events related to position updates to PointingAppController
     private static final int CMD_START_SATELLITE_TRANSMISSION_UPDATES = 1;
@@ -274,6 +287,7 @@ public class SatelliteController extends Handler {
     private static final int EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT = 53;
     protected static final int EVENT_SATELLITE_REGISTRATION_FAILURE = 54;
     private static final int EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED = 55;
+    private static final int EVENT_SET_NETWORK_SELECTION_AUTO_DONE = 56;
 
     @NonNull private static SatelliteController sInstance;
     @NonNull private final Context mContext;
@@ -557,6 +571,7 @@ public class SatelliteController extends Handler {
     private long mLastEmergencyCallTime;
     private long mSatelliteEmergencyModeDurationMillis;
     private static final int DEFAULT_SATELLITE_EMERGENCY_MODE_DURATION_SECONDS = 300;
+    private AlertDialog mNetworkSelectionModeAutoDialog = null;
 
     /** Key used to read/write satellite system notification done in shared preferences. */
     private static final String SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY =
@@ -1897,6 +1912,14 @@ public class SatelliteController extends Handler {
                 }
                 break;
 
+            case EVENT_SET_NETWORK_SELECTION_AUTO_DONE: {
+                logd("EVENT_SET_NETWORK_SELECTION_AUTO_DONE");
+                RequestSatelliteEnabledArgument argument =
+                        (RequestSatelliteEnabledArgument) msg.obj;
+                sendRequestAsync(CMD_SET_SATELLITE_ENABLED, argument, null);
+                break;
+            }
+
             default:
                 Log.w(TAG, "SatelliteControllerHandler: unexpected message code: " +
                         msg.what);
@@ -2012,6 +2035,21 @@ public class SatelliteController extends Handler {
          *      4. ongoing request = enable, current request = disable: send request to modem
          */
         synchronized (mSatelliteEnabledRequestLock) {
+            if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+                if (mSatelliteEnabledRequest != null && mNetworkSelectionModeAutoDialog != null
+                        && mNetworkSelectionModeAutoDialog.isShowing()
+                        && request.isEmergency && request.enableSatellite) {
+                    synchronized (mSatellitePhoneLock) {
+                        sendErrorAndReportSessionMetrics(
+                                SatelliteManager.SATELLITE_RESULT_ILLEGAL_STATE,
+                                FunctionalUtils.ignoreRemoteException(
+                                        mSatelliteEnabledRequest.callback::accept));
+                    }
+                    mSatelliteEnabledRequest = null;
+                    mNetworkSelectionModeAutoDialog.dismiss();
+                    mNetworkSelectionModeAutoDialog = null;
+                }
+            }
             if (!isSatelliteEnabledRequestInProgress()) {
                 synchronized (mIsSatelliteEnabledLock) {
                     if (mIsSatelliteEnabled != null && mIsSatelliteEnabled == enableSatellite) {
@@ -2074,7 +2112,87 @@ public class SatelliteController extends Handler {
                 }
             }
         }
-        sendRequestAsync(CMD_SET_SATELLITE_ENABLED, request, null);
+
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+            Phone satellitePhone = getSatellitePhone();
+            if (enableSatellite && satellitePhone != null
+                    && satellitePhone.getServiceStateTracker() != null
+                    && satellitePhone.getServiceStateTracker().getServiceState()
+                    .getIsManualSelection()) {
+                checkNetworkSelectionModeAuto(request);
+            } else {
+                sendRequestAsync(CMD_SET_SATELLITE_ENABLED, request, null);
+            }
+        } else {
+            sendRequestAsync(CMD_SET_SATELLITE_ENABLED, request, null);
+        }
+    }
+
+    private void checkNetworkSelectionModeAuto(RequestSatelliteEnabledArgument argument) {
+        plogd("checkNetworkSelectionModeAuto");
+        if (argument.isEmergency) {
+            // ESOS
+            getSatellitePhone().setNetworkSelectionModeAutomatic(null);
+            sendMessageDelayed(obtainMessage(EVENT_SET_NETWORK_SELECTION_AUTO_DONE, argument),
+                    DELAY_WAITING_SET_NETWORK_SELECTION_AUTO_MILLIS);
+        } else {
+            // P2P
+            if (mNetworkSelectionModeAutoDialog != null
+                    && mNetworkSelectionModeAutoDialog.isShowing()) {
+                logd("requestSatelliteEnabled: already auto network selection mode popup showing");
+                sendErrorAndReportSessionMetrics(
+                        SatelliteManager.SATELLITE_RESULT_REQUEST_IN_PROGRESS,
+                        FunctionalUtils.ignoreRemoteException(argument.callback::accept));
+                return;
+            }
+            logd("requestSatelliteEnabled: auto network selection mode popup");
+            Configuration configuration = Resources.getSystem().getConfiguration();
+            boolean nightMode = (configuration.uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                    == Configuration.UI_MODE_NIGHT_YES;
+
+            AlertDialog.Builder builder = new AlertDialog.Builder(mContext, nightMode
+                    ? AlertDialog.THEME_DEVICE_DEFAULT_DARK
+                    : AlertDialog.THEME_DEVICE_DEFAULT_LIGHT);
+
+            String title = mContext.getResources().getString(
+                    R.string.satellite_manual_selection_state_popup_title);
+            String message = mContext.getResources().getString(
+                    R.string.satellite_manual_selection_state_popup_message);
+            String ok = mContext.getResources().getString(
+                    R.string.satellite_manual_selection_state_popup_ok);
+            String cancel = mContext.getResources().getString(
+                    R.string.satellite_manual_selection_state_popup_cancel);
+
+            builder.setTitle(title).setMessage(message)
+                    .setPositiveButton(ok, (dialog, which) -> {
+                        logd("checkNetworkSelectionModeAuto: setPositiveButton");
+                        getSatellitePhone().setNetworkSelectionModeAutomatic(null);
+                        sendMessageDelayed(obtainMessage(EVENT_SET_NETWORK_SELECTION_AUTO_DONE,
+                                argument), DELAY_WAITING_SET_NETWORK_SELECTION_AUTO_MILLIS);
+                    })
+                    .setNegativeButton(cancel, (dialog, which) -> {
+                        logd("checkNetworkSelectionModeAuto: setNegativeButton");
+                        synchronized (mSatelliteEnabledRequestLock) {
+                            mSatelliteEnabledRequest = null;
+                        }
+                        sendErrorAndReportSessionMetrics(
+                                SatelliteManager.SATELLITE_RESULT_ILLEGAL_STATE,
+                                FunctionalUtils.ignoreRemoteException(argument.callback::accept));
+                    })
+                    .setOnCancelListener(dialog -> {
+                        logd("checkNetworkSelectionModeAuto: setOnCancelListener");
+                        synchronized (mSatelliteEnabledRequestLock) {
+                            mSatelliteEnabledRequest = null;
+                        }
+                        sendErrorAndReportSessionMetrics(
+                                SatelliteManager.SATELLITE_RESULT_ILLEGAL_STATE,
+                                FunctionalUtils.ignoreRemoteException(argument.callback::accept));
+                    });
+            mNetworkSelectionModeAutoDialog = builder.create();
+            mNetworkSelectionModeAutoDialog.getWindow()
+                    .setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+            mNetworkSelectionModeAutoDialog.show();
+        }
     }
 
     /**
@@ -2331,6 +2449,7 @@ public class SatelliteController extends Handler {
         synchronized (mSatelliteCapabilitiesLock) {
             if (mSatelliteCapabilities != null) {
                 Bundle bundle = new Bundle();
+                overrideSatelliteCapabilitiesIfApplicable();
                 bundle.putParcelable(SatelliteManager.KEY_SATELLITE_CAPABILITIES,
                         mSatelliteCapabilities);
                 result.send(SATELLITE_RESULT_SUCCESS, bundle);
@@ -4209,6 +4328,9 @@ public class SatelliteController extends Handler {
         if (!enabled) {
             mIsModemEnabledReportingNtnSignalStrength.set(false);
         }
+        if (mFeatureFlags.satelliteStateChangeListener()) {
+            notifyEnabledStateChanged(enabled);
+        }
     }
 
     private void registerForPendingDatagramCount() {
@@ -4467,13 +4589,11 @@ public class SatelliteController extends Handler {
 
         synchronized (mSatelliteCapabilitiesLock) {
             mSatelliteCapabilities = capabilities;
+            overrideSatelliteCapabilitiesIfApplicable();
         }
 
         List<ISatelliteCapabilitiesCallback> deadCallersList = new ArrayList<>();
         mSatelliteCapabilitiesChangedListeners.values().forEach(listener -> {
-            synchronized (this.mSatelliteCapabilitiesLock) {
-                overrideSatelliteCapabilitiesIfApplicable();
-            }
             try {
                 listener.onSatelliteCapabilitiesChanged(this.mSatelliteCapabilities);
             } catch (RemoteException e) {
@@ -4947,7 +5067,8 @@ public class SatelliteController extends Handler {
                         KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT,
                         KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
                         KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
-                        KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT
+                        KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT,
+                        KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE
                 );
             } catch (Exception e) {
                 logw("getConfigForSubId: " + e);
@@ -7425,5 +7546,16 @@ public class SatelliteController extends Handler {
         packageFilter.addDataScheme("package");
         mContext.registerReceiver(mPackageStateChangedReceiver, packageFilter,
                 mContext.RECEIVER_EXPORTED);
+    }
+
+    private void notifyEnabledStateChanged(boolean isEnabled) {
+        TelephonyRegistryManager trm = mContext.getSystemService(TelephonyRegistryManager.class);
+        if (trm == null) {
+            loge("Telephony registry service is down!");
+            return;
+        }
+
+        trm.notifySatelliteStateChanged(isEnabled);
+        logd("notifyEnabledStateChanged to " + isEnabled);
     }
 }
