@@ -178,6 +178,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
     /** @hide */
     public static final HalVersion RADIO_HAL_VERSION_2_2 = new HalVersion(2, 2);
 
+    /** @hide */
+    public static final HalVersion RADIO_HAL_VERSION_2_3 = new HalVersion(2, 3);
+
     // Hal version
     private final Map<Integer, HalVersion> mHalVersion = new HashMap<>();
 
@@ -6206,6 +6209,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case 1: return RADIO_HAL_VERSION_2_0;
             case 2: return RADIO_HAL_VERSION_2_1;
             case 3: return RADIO_HAL_VERSION_2_2;
+            case 4: return RADIO_HAL_VERSION_2_3;
             default: return RADIO_HAL_VERSION_UNKNOWN;
         }
     }
