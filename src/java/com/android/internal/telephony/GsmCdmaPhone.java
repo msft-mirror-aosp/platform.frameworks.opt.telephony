@@ -42,7 +42,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.database.SQLException;
 import android.hardware.radio.modem.ImeiInfo;
 import android.net.Uri;
@@ -469,12 +468,6 @@ public class GsmCdmaPhone extends Phone {
             }
         }
     };
-
-    private boolean hasCalling() {
-        if (!TelephonyCapabilities.minimalTelephonyCdmCheck(mFeatureFlags)) return true;
-        return mContext.getPackageManager().hasSystemFeature(
-            PackageManager.FEATURE_TELEPHONY_CALLING);
-    }
 
     private void initOnce(CommandsInterface ci) {
         if (ci instanceof SimulatedRadioControl) {

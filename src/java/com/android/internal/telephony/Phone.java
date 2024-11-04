@@ -659,7 +659,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         mSmsStorageMonitor = mTelephonyComponentFactory.inject(SmsStorageMonitor.class.getName())
                 .makeSmsStorageMonitor(this, mFeatureFlags);
         mSmsUsageMonitor = mTelephonyComponentFactory.inject(SmsUsageMonitor.class.getName())
-                .makeSmsUsageMonitor(context);
+                .makeSmsUsageMonitor(context, mFeatureFlags);
         mUiccController = UiccController.getInstance();
         mUiccController.registerForIccChanged(this, EVENT_ICC_CHANGED, null);
         mSimActivationTracker = mTelephonyComponentFactory
@@ -1962,6 +1962,13 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         ServiceStateTracker sst = getServiceStateTracker();
         return sst != null && sst.getRadioPowerOffReasons()
                 .contains(TelephonyManager.RADIO_POWER_REASON_THERMAL);
+    }
+
+    /**
+     * @return true if this device supports calling, false otherwise.
+     */
+    public boolean hasCalling() {
+        return TelephonyCapabilities.supportsTelephonyCalling(mFeatureFlags, mContext);
     }
 
     /**

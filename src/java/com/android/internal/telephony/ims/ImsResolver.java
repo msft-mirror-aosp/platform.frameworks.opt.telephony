@@ -164,14 +164,19 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     }
 
     private static class OverrideConfig {
+        public final String packageName;
         public final int slotId;
+        public final int userId;
         public final boolean isCarrierService;
-        public final Map<Integer, String> featureTypeToPackageMap;
+        public final int[] featureTypes;
 
-        OverrideConfig(int slotIndex, boolean isCarrier, Map<Integer, String> feature) {
+        OverrideConfig(String pkgName, int slotIndex, int userIndex, boolean isCarrier,
+                int[] features) {
+            packageName = pkgName;
             slotId = slotIndex;
+            userId = userIndex;
             isCarrierService = isCarrier;
-            featureTypeToPackageMap = feature;
+            featureTypes = features;
         }
     }
 
@@ -552,11 +557,15 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
                 }
                 case HANDLER_OVERRIDE_IMS_SERVICE_CONFIG: {
                     OverrideConfig config = (OverrideConfig) msg.obj;
+                    setPackageNameUserOverride(config.packageName, config.userId);
+                    Map<Integer, String> featureConfig = new HashMap<>();
+                    for (int featureType : config.featureTypes) {
+                        featureConfig.put(featureType, config.packageName);
+                    }
                     if (config.isCarrierService) {
-                        overrideCarrierService(config.slotId,
-                                config.featureTypeToPackageMap);
+                        overrideCarrierService(config.slotId, featureConfig);
                     } else {
-                        overrideDeviceService(config.featureTypeToPackageMap);
+                        overrideDeviceService(featureConfig);
                     }
                     break;
                 }
@@ -618,6 +627,8 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     // Array index corresponds to slot, per slot there is a feature->package name mapping.
     // should only be accessed from handler
     private final SparseArray<SparseArray<String>> mOverrideServices;
+    //Used during testing, restricts the ImsService to be bound on a specific user.
+    private final Map<String, UserHandle> mImsServiceTestUserRestrictions = new HashMap<>();
     // Outer array index corresponds to Slot Id, Maps ImsFeature.FEATURE->bound ImsServiceController
     // Locked on mBoundServicesLock
     private final SparseArray<SparseArray<ImsServiceController>> mBoundImsServicesByFeature;
@@ -899,14 +910,15 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     }
 
     // Used for testing only.
-    public boolean overrideImsServiceConfiguration(int slotId, boolean isCarrierService,
-            Map<Integer, String> featureConfig) {
+    public boolean overrideImsServiceConfiguration(String packageName, int slotId, int userId,
+            boolean isCarrierService, int[] overrideFeatureTypes) {
         if (slotId < 0 || slotId >= mNumSlots) {
             Log.w(TAG, "overrideImsServiceConfiguration: invalid slotId!");
             return false;
         }
 
-        OverrideConfig overrideConfig = new OverrideConfig(slotId, isCarrierService, featureConfig);
+        OverrideConfig overrideConfig = new OverrideConfig(packageName, slotId, userId,
+                isCarrierService, overrideFeatureTypes);
         Message.obtain(mHandler, HANDLER_OVERRIDE_IMS_SERVICE_CONFIG, overrideConfig)
                 .sendToTarget();
         return true;
@@ -947,16 +959,36 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     }
 
     // not synchronized, access in handler ONLY.
-    private void removeOverridePackageName(int slotId) {
+    private Set<String> removeOverridePackageName(int slotId) {
+        Set<String> removedOverrides = new HashSet<>();
         for (int f = ImsFeature.FEATURE_EMERGENCY_MMTEL; f < ImsFeature.FEATURE_MAX; f++) {
-            getOverridePackageName(slotId).remove(f);
+            SparseArray<String> overrides = getOverridePackageName(slotId);
+            String packageName = overrides.removeReturnOld(f);
+            if (packageName != null) removedOverrides.add(packageName);
         }
+        return removedOverrides;
     }
 
     // not synchronized, access in handler ONLY.
     private void setOverridePackageName(@Nullable String packageName, int slotId,
             @ImsFeature.FeatureType int featureType) {
         getOverridePackageName(slotId).put(featureType, packageName);
+    }
+
+    // not synchronized, access in handler ONLY.
+    private void setPackageNameUserOverride(String packageName, int userId) {
+        if (packageName == null || packageName.isEmpty() || userId == UserHandle.USER_NULL) return;
+        Log.i(TAG, "setPackageNameUserOverride: set for " + packageName + ", user= " + userId);
+        mImsServiceTestUserRestrictions.put(packageName, UserHandle.of(userId));
+    }
+
+    // not synchronized, access in handler ONLY.
+    private void clearPackageNameUserOverride(String packageName) {
+        UserHandle handle = mImsServiceTestUserRestrictions.remove(packageName);
+        if (handle != null) {
+            Log.i(TAG, "clearPackageNameUserOverride: cleared for " + packageName
+                    + "on user " + handle);
+        }
     }
 
     // not synchronized, access in handler ONLY.
@@ -1266,6 +1298,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
                     match.controllerFactory);
             ImsServiceInfo newMatch = imsServices.isEmpty() ? null : imsServices.getFirst();
             if (newMatch == null) {
+                clearPackageNameUserOverride(match.name.getPackageName());
                 // The package doesn't exist anymore on any user, so remove
                 mInstalledServicesCache.remove(match.name);
                 mEventLog.log("maybeRemovedImsService - removing ImsService: " + match);
@@ -1327,11 +1360,10 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     private List<Integer> getSlotsForActiveCarrierService(ImsServiceInfo info) {
         if (info == null) return Collections.emptyList();
         if (mFeatureFlags.imsResolverUserAware()) {
-            Set<UserHandle> activeUsers = getActiveUsers();
-            activeUsers.retainAll(info.users);
-            if (activeUsers.isEmpty()) {
+            UserHandle activeUser = getUserForBind(info);
+            if (activeUser == null) {
                 Log.d(TAG, "getSlotsForActiveCarrierService: ImsService " + info.name + "is not "
-                        + "configured to run for users " + activeUsers + ", skipping...");
+                        + "configured to run for any users, skipping...");
                 return Collections.emptyList();
             }
         }
@@ -1542,7 +1574,10 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     private void clearCarrierServiceOverrides(int slotId) {
         Log.i(TAG, "clearing carrier ImsService overrides");
         mEventLog.log("clearing carrier ImsService overrides");
-        removeOverridePackageName(slotId);
+        Set<String> removedPackages = removeOverridePackageName(slotId);
+        for (String pkg : removedPackages) {
+            clearPackageNameUserOverride(pkg);
+        }
         carrierConfigChanged(slotId, getSubId(slotId));
     }
 
@@ -1560,6 +1595,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
                         + oldPackageName + " -> " + overridePackageName);
                 mEventLog.log("overrideDeviceService - device package changed (override): "
                         + oldPackageName + " -> " + overridePackageName);
+                clearPackageNameUserOverride(oldPackageName);
                 setDeviceConfiguration(overridePackageName, featureType);
                 ImsServiceInfo info = getVisibleImsServiceInfoFromCache(overridePackageName);
                 if (info == null || info.featureFromMetadata) {
@@ -1908,6 +1944,13 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
         List<UserHandle> activeUsers = getActiveUsers().stream()
                 .filter(info.users::contains).toList();
         if (activeUsers.isEmpty()) return null;
+        // If there is a test restriction in place for this package, prioritize that restriction
+        UserHandle testRestriction = mImsServiceTestUserRestrictions.getOrDefault(
+                info.name.getPackageName(), null);
+        if (testRestriction != null && activeUsers.stream()
+                .anyMatch(u -> Objects.equals(u, testRestriction))) {
+            return testRestriction;
+        }
         // Prioritize the User that Telephony is in, since it is always running
         if (activeUsers.stream()
                 .anyMatch(u -> Objects.equals(u, mContext.getUser()))) {
@@ -1955,11 +1998,10 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
             return match;
         }
         if (match == null) return null;
-        Set<UserHandle> activeUsers = getActiveUsers();
-        activeUsers.retainAll(match.users);
+        UserHandle targetUser = getUserForBind(match);
         Log.d(TAG, "getVisibleImsServiceInfoFromCache: " + packageName + ", match=" + match
-                + ", activeUsers=" + activeUsers);
-        if (!activeUsers.isEmpty()) return match; else return null;
+                + ", targetUser=" + targetUser);
+        if (targetUser != null) return match; else return null;
     }
 
     /**

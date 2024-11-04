@@ -816,8 +816,7 @@ public class SmsDispatchersController extends Handler {
 
         if (!tracker.mUsesImsServiceForIms) {
             if (isSmsDomainSelectionEnabled()) {
-                TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-                boolean isEmergency = tm.isEmergencyNumber(tracker.mDestAddress);
+                boolean isEmergency = isEmergencyNumber(tracker.mDestAddress);
                 // This may be invoked by another thread, so this operation is posted and
                 // handled through the execution flow of SmsDispatchersController.
                 SomeArgs args = SomeArgs.obtain();
@@ -1208,8 +1207,7 @@ public class SmsDispatchersController extends Handler {
     private void handleSmsSentCompletedUsingDomainSelection(@NonNull String destAddr,
             long messageId, boolean success, boolean isOverIms, boolean isLastSmsPart) {
         if (mEmergencyStateTracker != null) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            if (tm.isEmergencyNumber(destAddr)) {
+            if (isEmergencyNumber(destAddr)) {
                 mEmergencyStateTracker.endSms(String.valueOf(messageId), success,
                         isOverIms ? NetworkRegistrationInfo.DOMAIN_PS
                                   : NetworkRegistrationInfo.DOMAIN_CS,
@@ -1258,8 +1256,7 @@ public class SmsDispatchersController extends Handler {
      */
     private void handleSmsReceivedViaIms(@Nullable String origAddr) {
         if (mEmergencyStateTracker != null) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            if (origAddr != null && tm.isEmergencyNumber(origAddr)) {
+            if (origAddr != null && isEmergencyNumber(origAddr)) {
                 mEmergencyStateTracker.onEmergencySmsReceived();
             }
         }
@@ -1277,7 +1274,9 @@ public class SmsDispatchersController extends Handler {
 
     private boolean isTestEmergencyNumber(String number) {
         try {
+            if (!mPhone.hasCalling()) return false;
             TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
+            if (tm == null) return false;
             Map<Integer, List<EmergencyNumber>> eMap = tm.getEmergencyNumberList();
             return eMap.values().stream().flatMap(Collection::stream).anyMatch(eNumber ->
                     eNumber.isFromSources(EmergencyNumber.EMERGENCY_NUMBER_SOURCE_TEST)
@@ -1852,8 +1851,7 @@ public class SmsDispatchersController extends Handler {
     private void sendTextInternal(PendingRequest request) {
         logd("sendTextInternal: messageId=" + request.messageId);
         if (isSmsDomainSelectionEnabled()) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            boolean isEmergency = tm.isEmergencyNumber(request.destAddr);
+            boolean isEmergency = isEmergencyNumber(request.destAddr);
             sendSmsUsingDomainSelection(getDomainSelectionConnectionHolder(isEmergency),
                     request, "sendText");
             return;
@@ -2013,11 +2011,17 @@ public class SmsDispatchersController extends Handler {
         sendMultipartTextInternal(pendingRequest);
     }
 
+    private boolean isEmergencyNumber(String number) {
+        if (!mPhone.hasCalling()) return false;
+        TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
+        if (tm == null) return false;
+        return tm.isEmergencyNumber(number);
+    }
+
     private void sendMultipartTextInternal(PendingRequest request) {
         logd("sendMultipartTextInternal: messageId=" + request.messageId);
         if (isSmsDomainSelectionEnabled()) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            boolean isEmergency = tm.isEmergencyNumber(request.destAddr);
+            boolean isEmergency = isEmergencyNumber(request.destAddr);
             sendSmsUsingDomainSelection(getDomainSelectionConnectionHolder(isEmergency),
                     request, "sendMultipartText");
             return;
