@@ -21,6 +21,8 @@ import static android.telephony.NetworkRegistrationInfo.DOMAIN_CS;
 import static android.telephony.NetworkRegistrationInfo.DOMAIN_CS_PS;
 import static android.telephony.NetworkRegistrationInfo.DOMAIN_PS;
 import static android.telephony.NetworkRegistrationInfo.REGISTRATION_STATE_HOME;
+import static android.telephony.TelephonyManager.EMERGENCY_CALLBACK_MODE_CALL;
+import static android.telephony.TelephonyManager.EMERGENCY_CALLBACK_MODE_SMS;
 
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_CALLBACK;
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_WLAN;
@@ -36,6 +38,7 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyBoolean;
 import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.anyVararg;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
@@ -121,6 +124,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
         doReturn(TelephonyManager.SIM_STATE_READY)
                 .when(mTelephonyManagerProxy).getSimState(anyInt());
+        doReturn(true).when(mFeatureFlags).emergencyCallbackModeNotification();
     }
 
     @After
@@ -135,7 +139,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
             EmergencyStateTracker.getInstance();
         });
 
-        EmergencyStateTracker.make(mContext, true);
+        EmergencyStateTracker.make(mContext, true, mFeatureFlags);
 
         assertNotNull(EmergencyStateTracker.getInstance());
     }
@@ -143,7 +147,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
     @Test
     @SmallTest
     public void getInstance_returnsSameInstance() {
-        EmergencyStateTracker.make(mContext, true);
+        EmergencyStateTracker.make(mContext, true, mFeatureFlags);
         EmergencyStateTracker instance1 = EmergencyStateTracker.getInstance();
         EmergencyStateTracker instance2 = EmergencyStateTracker.getInstance();
 
@@ -180,7 +184,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS), eq(false));
+                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
         // isOkToCall() should return true when IN_SERVICE state
         assertFalse(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_OUT_OF_SERVICE, false));
@@ -239,7 +243,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS), eq(false));
+                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
         // onTimeout should return true when radion on
         assertFalse(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_OUT_OF_SERVICE, false));
@@ -287,7 +291,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS), eq(false));
+                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
 
         // Hangup the call
         emergencyStateTracker.endCall(mTestConnection1);
@@ -323,7 +327,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS), eq(false));
+                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
         // Verify future completes with DisconnectCause.POWER_OFF if radio not ready
         CompletableFuture<Void> unused = future.thenAccept((result) -> {
             assertEquals((Integer) result, (Integer) DisconnectCause.POWER_OFF);
@@ -346,7 +350,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 true /* isRadioOn */);
         when(mSST.isRadioOn()).thenReturn(true);
         // Satellite enabled
-        when(mSatelliteController.isSatelliteEnabled()).thenReturn(true);
+        when(mSatelliteController.isSatelliteEnabledOrBeingEnabled()).thenReturn(true);
 
         setConfigForDdsSwitch(testPhone, null,
                 CarrierConfigManager.Gps.SUPL_EMERGENCY_MODE_TYPE_DP_ONLY, "150");
@@ -359,11 +363,11 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(0), eq(false));
+                eq(false), eq(0));
         // isOkToCall() should return true once satellite modem is off
         assertFalse(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_IN_SERVICE, false));
-        when(mSatelliteController.isSatelliteEnabled()).thenReturn(false);
+        when(mSatelliteController.isSatelliteEnabledOrBeingEnabled()).thenReturn(false);
         assertTrue(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_IN_SERVICE, false));
         // Once radio on is complete, trigger delay dial
@@ -391,7 +395,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         Phone testPhone = setupTestPhoneForEmergencyCall(false /* isRoaming */,
                 true /* isRadioOn */);
         // Satellite enabled
-        when(mSatelliteController.isSatelliteEnabled()).thenReturn(true);
+        when(mSatelliteController.isSatelliteEnabledOrBeingEnabled()).thenReturn(true);
 
         CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(testPhone,
                 mTestConnection1, false);
@@ -400,7 +404,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(0), eq(false));
+                eq(false), eq(0));
         // Verify future completes with DisconnectCause.POWER_OFF if radio not ready
         CompletableFuture<Void> unused = future.thenAccept((result) -> {
             assertEquals((Integer) result, (Integer) DisconnectCause.SATELLITE_ENABLED);
@@ -428,7 +432,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
         // Radio already on so shouldn't trigger this
         verify(mRadioOnHelper, never()).triggerRadioOnAndListen(any(), anyBoolean(), any(),
-                anyBoolean(), eq(0), eq(false));
+                anyBoolean(), eq(0));
         // Carrier supports control-plane fallback, so no DDS switch
         verify(mPhoneSwitcher, never()).overrideDefaultDataForEmergency(anyInt(), anyInt(), any());
     }
@@ -761,6 +765,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 .getBooleanExtra(TelephonyManager.EXTRA_PHONE_IN_ECM_STATE, true));
         // Verify emergency callback mode set on modem
         verify(testPhone).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any());
+        // Verify emergency callback mode started with the correct emergency type
+        verify(testPhone).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_CALL), anyLong());
     }
 
     /**
@@ -819,6 +825,9 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
         processAllFutureMessages();
 
+        // Verify emergency callback mode stopped with the correct emergency type and reason.
+        verify(testPhone).stopEmergencyCallbackMode(eq(EmergencyStateTracker.EMERGENCY_TYPE_CALL),
+                eq(TelephonyManager.STOP_REASON_TIMER_EXPIRED));
         // Verify exitEmergencyMode() is called after timeout
         verify(testPhone).exitEmergencyMode(any(Message.class));
         assertFalse(emergencyStateTracker.isInEmergencyMode());
@@ -854,6 +863,9 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
         emergencyStateTracker.onCellularRadioPowerOffRequested();
 
+        // Verify emergency callback mode stopped with the correct emergency type and reason.
+        verify(testPhone).stopEmergencyCallbackMode(eq(EmergencyStateTracker.EMERGENCY_TYPE_CALL),
+                eq(TelephonyManager.STOP_REASON_UNKNOWN));
         // Verify exitEmergencyMode() is called.
         verify(testPhone).exitEmergencyMode(any(Message.class));
         assertFalse(emergencyStateTracker.isInEcm());
@@ -1005,7 +1017,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         assertTrue(emergencyStateTracker.isInEcm());
         verify(phone0, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
         verify(phone0, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
-
+        verify(phone0, times(1)).startEmergencyCallbackMode(
+                eq(EMERGENCY_CALLBACK_MODE_CALL), anyLong());
         // Second emergency call started.
         CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(phone0,
                 mTestConnection2, false);
@@ -1013,6 +1026,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         assertFalse(future.isDone());
         verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
         verify(phone0, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        verify(phone0, times(1)).startEmergencyCallbackMode(
+                eq(EMERGENCY_CALLBACK_MODE_CALL), anyLong());
     }
 
     @Test
@@ -1087,6 +1102,10 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_WLAN), any(Message.class));
         verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
         verify(phone0, never()).exitEmergencyMode(any(Message.class));
+        verify(phone0, times(2)).startEmergencyCallbackMode(
+                eq(EMERGENCY_CALLBACK_MODE_CALL), anyLong());
+        verify(phone0, never()).stopEmergencyCallbackMode(
+                eq(EMERGENCY_CALLBACK_MODE_CALL), anyInt());
     }
 
     @Test
@@ -1224,6 +1243,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         verify(mCarrierConfigManager).getConfigForSubId(anyInt(),
                 eq(CarrierConfigManager.KEY_EMERGENCY_SMS_MODE_TIMER_MS_INT));
         verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        verify(phone0).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_SMS), anyLong());
         assertTrue(emergencyStateTracker.isInEmergencyMode());
         assertTrue(emergencyStateTracker.isInScbm());
     }
@@ -1256,6 +1276,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         verify(mCarrierConfigManager).getConfigForSubId(anyInt(),
                 eq(CarrierConfigManager.KEY_EMERGENCY_SMS_MODE_TIMER_MS_INT));
         verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        verify(phone0).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_SMS), anyLong());
         assertTrue(emergencyStateTracker.isInEmergencyMode());
         assertTrue(emergencyStateTracker.isInScbm());
     }
@@ -1288,6 +1309,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         verify(mCarrierConfigManager, times(2)).getConfigForSubId(anyInt(),
                 eq(CarrierConfigManager.KEY_EMERGENCY_SMS_MODE_TIMER_MS_INT));
         verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        verify(phone0).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_SMS), anyLong());
+        verify(phone0).restartEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_SMS), anyLong());
         assertTrue(emergencyStateTracker.isInEmergencyMode());
         assertTrue(emergencyStateTracker.isInScbm());
     }
@@ -1413,6 +1436,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         processAllMessages();
 
         verify(phone0, times(2)).setEmergencyMode(anyInt(), any(Message.class));
+        verify(phone0).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_CALL), anyLong());
         // Expect: DisconnectCause#NOT_DISCONNECTED.
         assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
                 Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
@@ -1473,6 +1497,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone1,
                 TEST_SMS_ID_2, false);
 
+        verify(phone0).stopEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_SMS),
+                eq(TelephonyManager.STOP_REASON_EMERGENCY_SMS_SENT));
         verify(phone0).exitEmergencyMode(any(Message.class));
         // Waits for exiting emergency mode on other phone.
         assertFalse(future.isDone());
@@ -1726,6 +1752,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         assertFalse(emergencyStateTracker.isInEmergencyCall());
         assertTrue(emergencyStateTracker.isInScbm());
         verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        verify(phone0).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_SMS), anyLong());
     }
 
     @Test
@@ -2156,6 +2183,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         processAllMessages();
 
         verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        verify(phone0).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_CALL), anyLong());
         assertTrue(emergencyStateTracker.isInEmergencyMode());
         assertTrue(emergencyStateTracker.isInEcm());
         assertFalse(emergencyStateTracker.isInEmergencyCall());
@@ -2212,6 +2240,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
         // Enter emergency callback mode and emergency mode changed by SMS end.
         verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        verify(phone0).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_CALL), anyLong());
+        verify(phone0).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_SMS), anyLong());
         assertTrue(emergencyStateTracker.isInEmergencyMode());
         assertTrue(emergencyStateTracker.isInEcm());
         assertFalse(emergencyStateTracker.isInEmergencyCall());
@@ -3168,7 +3198,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         // Wait for the radio off for all phones
         verify(mSST, times(2)).registerForVoiceRegStateOrRatChanged(any(), anyInt(), any());
         verify(mRadioOnHelper, never()).triggerRadioOnAndListen(any(), anyBoolean(), any(),
-                anyBoolean(), eq(0), eq(false));
+                anyBoolean(), eq(0));
     }
 
     /**
@@ -3379,7 +3409,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 anyInt(), anyInt(), any());
         return new EmergencyStateTracker(mContext, mTestableLooper.getLooper(),
                 isSuplDdsSwitchRequiredForEmergencyCall, mPhoneFactoryProxy, mPhoneSwitcherProxy,
-                mTelephonyManagerProxy, mRadioOnHelper, TEST_ECM_EXIT_TIMEOUT_MS);
+                mTelephonyManagerProxy, mRadioOnHelper, TEST_ECM_EXIT_TIMEOUT_MS, mFeatureFlags);
     }
 
     private Phone setupTestPhoneForEmergencyCall(boolean isRoaming, boolean isRadioOn) {
@@ -3483,6 +3513,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 eq(CarrierConfigManager.KEY_EMERGENCY_SMS_MODE_TIMER_MS_INT));
         if (!emergencyStateTracker.isInEcm() && !emergencyStateTracker.isInEmergencyCall()) {
             verify(phone).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+            verify(phone).startEmergencyCallbackMode(eq(EMERGENCY_CALLBACK_MODE_SMS), anyLong());
         }
         assertTrue(emergencyStateTracker.isInEmergencyMode());
         assertTrue(emergencyStateTracker.isInScbm());
