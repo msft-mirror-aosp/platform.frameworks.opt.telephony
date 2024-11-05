@@ -74,6 +74,7 @@ import android.telephony.emergency.EmergencyNumber;
 import android.telephony.ims.RegistrationManager;
 import android.telephony.ims.feature.MmTelFeature;
 import android.telephony.ims.stub.ImsRegistrationImplBase;
+import android.telephony.satellite.NtnSignalStrength;
 import android.text.TextUtils;
 import android.util.LocalLog;
 import android.util.Log;
@@ -5378,6 +5379,18 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         logd("notifyCarrierRoamingNtnAvailableServicesChanged availableServices:"
                 + Arrays.toString(availableServices));
         mNotifier.notifyCarrierRoamingNtnAvailableServicesChanged(this, availableServices);
+    }
+
+    /**
+     * Notify external listeners that carrier roaming non-terrestrial network
+     * signal strength changed.
+     * @param ntnSignalStrength non-terrestrial network signal strength.
+     */
+    public void notifyCarrierRoamingNtnSignalStrengthChanged(
+            @NonNull NtnSignalStrength ntnSignalStrength) {
+        logd("notifyCarrierRoamingNtnSignalStrengthChanged: ntnSignalStrength="
+                + ntnSignalStrength.getLevel());
+        mNotifier.notifyCarrierRoamingNtnSignalStrengthChanged(this, ntnSignalStrength);
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {

@@ -289,6 +289,7 @@ public class SatelliteController extends Handler {
     protected static final int EVENT_SATELLITE_REGISTRATION_FAILURE = 54;
     private static final int EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED = 55;
     private static final int EVENT_SET_NETWORK_SELECTION_AUTO_DONE = 56;
+    private static final int EVENT_SIGNAL_STRENGTH_CHANGED = 57;
 
     @NonNull private static SatelliteController sInstance;
     @NonNull private final Context mContext;
@@ -513,6 +514,10 @@ public class SatelliteController extends Handler {
     @GuardedBy("mSatelliteConnectedLock")
     @NonNull private final Map<Integer, List<Integer>>
             mSatModeCapabilitiesForCarrierRoaming = new HashMap<>();
+
+    @GuardedBy("mSatelliteConnectedLock")
+    private SparseArray<NtnSignalStrength> mLastNotifiedCarrierRoamingNtnSignalStrength =
+            new SparseArray<>();
 
     /**
      * This is used for testing only. When mEnforcedEmergencyCallToSatelliteHandoverType is valid,
@@ -740,6 +745,7 @@ public class SatelliteController extends Handler {
         registerForPendingDatagramCount();
         registerForSatelliteModemStateChanged();
         registerForServiceStateChanged();
+        registerForSignalStrengthChanged();
         mContentResolver = mContext.getContentResolver();
         mCarrierConfigManager = mContext.getSystemService(CarrierConfigManager.class);
 
@@ -1621,6 +1627,7 @@ public class SatelliteController extends Handler {
                     ploge("EVENT_SATELLITE_MODEM_STATE_CHANGED: result is null");
                 } else {
                     handleEventSatelliteModemStateChanged((int) ar.result);
+                    updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(getSatellitePhone());
                 }
                 break;
 
@@ -1709,6 +1716,7 @@ public class SatelliteController extends Handler {
                     ploge("EVENT_NTN_SIGNAL_STRENGTH_CHANGED: result is null");
                 } else {
                     handleEventNtnSignalStrengthChanged((NtnSignalStrength) ar.result);
+                    updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(getSatellitePhone());
                 }
                 break;
             }
@@ -1919,6 +1927,13 @@ public class SatelliteController extends Handler {
                         (RequestSatelliteEnabledArgument) msg.obj;
                 sendRequestAsync(CMD_SET_SATELLITE_ENABLED, argument, null);
                 break;
+            }
+
+            case EVENT_SIGNAL_STRENGTH_CHANGED: {
+                ar = (AsyncResult) msg.obj;
+                int phoneId = (int) ar.userObj;
+                updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(
+                        PhoneFactory.getPhone(phoneId));
             }
 
             default:
@@ -3807,24 +3822,7 @@ public class SatelliteController extends Handler {
      * else {@return false}
      */
     public boolean isInCarrierRoamingNbIotNtn() {
-        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
-            plogd("isInCarrierRoamingNbIotNtn: carrier roaming nb iot ntn "
-                    + "feature flag is disabled");
-            return false;
-        }
-
-        if (!isSatelliteEnabled()) {
-            plogd("iisInCarrierRoamingNbIotNtn: satellite is disabled");
-            return false;
-        }
-
-        Phone satellitePhone = getSatellitePhone();
-        if (!isCarrierRoamingNtnEligible(satellitePhone)) {
-            plogd("isInCarrierRoamingNbIotNtn: not carrier roaming ntn eligible.");
-            return false;
-        }
-        plogd("isInCarrierRoamingNbIotNtn: carrier roaming ntn eligible.");
-        return true;
+        return isInCarrierRoamingNbIotNtn(getSatellitePhone());
     }
 
     /**
@@ -5596,6 +5594,13 @@ public class SatelliteController extends Handler {
         }
     }
 
+    private void registerForSignalStrengthChanged() {
+        for (Phone phone : PhoneFactory.getPhones()) {
+            phone.getSignalStrengthController().registerForSignalStrengthChanged(this,
+                    EVENT_SIGNAL_STRENGTH_CHANGED, phone.getPhoneId());
+        }
+    }
+
     private void handleEventServiceStateChanged() {
         handleStateChangedForCarrierRoamingNtnEligibility();
         handleServiceStateForSatelliteConnectionViaCarrier();
@@ -5661,6 +5666,7 @@ public class SatelliteController extends Handler {
                     mWasSatelliteConnectedViaCarrier.put(subId, false);
                 }
                 updateLastNotifiedNtnModeAndNotify(phone);
+                updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(phone);
             }
         }
         determineAutoConnectSystemNotification();
@@ -5681,6 +5687,7 @@ public class SatelliteController extends Handler {
                 if (!initialized) mInitialized.put(subId, true);
                 mLastNotifiedNtnMode.put(subId, currNtnMode);
                 phone.notifyCarrierRoamingNtnModeChanged(currNtnMode);
+                updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(phone);
                 logCarrierRoamingSatelliteSessionStats(phone, lastNotifiedNtnMode, currNtnMode);
                 if(mIsNotificationShowing && !currNtnMode) {
                     dismissSatelliteNotification();
@@ -7600,6 +7607,50 @@ public class SatelliteController extends Handler {
 
         trm.notifySatelliteStateChanged(isEnabled);
         logd("notifyEnabledStateChanged to " + isEnabled);
+    }
+
+    private NtnSignalStrength getCarrierRoamingNtnSignalStrength(@NonNull Phone phone) {
+        NtnSignalStrength carrierRoamingNtnSignalStrength = new NtnSignalStrength(
+                NTN_SIGNAL_STRENGTH_NONE);
+
+        if (isInCarrierRoamingNbIotNtn(phone)) {
+            if (mSatelliteSessionController.isInConnectedState()) {
+                synchronized (mNtnSignalsStrengthLock) {
+                    carrierRoamingNtnSignalStrength = mNtnSignalStrength;
+                }
+                plogd("getCarrierRoamingNtnSignalStrength[phoneId=" + phone.getPhoneId()
+                        + "]: in carrier roaming nb iot ntn mode.");
+            }
+        } else if (isInSatelliteModeForCarrierRoaming(phone)) {
+            ServiceState serviceState = phone.getServiceState();
+            if (serviceState.getState() != ServiceState.STATE_OUT_OF_SERVICE) {
+                carrierRoamingNtnSignalStrength = new NtnSignalStrength(
+                        phone.getSignalStrength().getLevel());
+                plogd("getCarrierRoamingNtnSignalStrength[phoneId=" + phone.getPhoneId()
+                        + "]: is in satellite mode for carrier roaming.");
+            }
+        }
+
+        return carrierRoamingNtnSignalStrength;
+    }
+
+    private void updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(@Nullable Phone phone) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) return;
+        if (phone == null) {
+            return;
+        }
+
+        NtnSignalStrength currSignalStrength = getCarrierRoamingNtnSignalStrength(phone);
+        int subId = phone.getSubId();
+        synchronized (mSatelliteConnectedLock) {
+            NtnSignalStrength lastNotifiedSignalStrength =
+                    mLastNotifiedCarrierRoamingNtnSignalStrength.get(subId);
+            if (lastNotifiedSignalStrength == null
+                    || lastNotifiedSignalStrength.getLevel() != currSignalStrength.getLevel()) {
+                mLastNotifiedCarrierRoamingNtnSignalStrength.put(subId, currSignalStrength);
+                phone.notifyCarrierRoamingNtnSignalStrengthChanged(currSignalStrength);
+            }
+        }
     }
 
     /** Returns whether to send SMS to DatagramDispatcher or not. */

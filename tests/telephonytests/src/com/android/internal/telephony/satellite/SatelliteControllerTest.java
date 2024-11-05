@@ -146,6 +146,7 @@ import android.telephony.CellSignalStrength;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
+import android.telephony.SignalStrength;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.satellite.INtnSignalStrengthCallback;
@@ -576,9 +577,11 @@ public class SatelliteControllerTest extends TelephonyTest {
         when(mPhone.getServiceState()).thenReturn(mServiceState);
         when(mPhone.getSubId()).thenReturn(SUB_ID);
         when(mPhone.getPhoneId()).thenReturn(0);
+        when(mPhone.getSignalStrengthController()).thenReturn(mSignalStrengthController);
         when(mPhone2.getServiceState()).thenReturn(mServiceState2);
         when(mPhone2.getSubId()).thenReturn(SUB_ID1);
         when(mPhone2.getPhoneId()).thenReturn(1);
+        when(mPhone2.getSignalStrengthController()).thenReturn(mSignalStrengthController);
 
         mContextFixture.putStringArrayResource(
                 R.array.config_satellite_providers,
@@ -4228,6 +4231,43 @@ public class SatelliteControllerTest extends TelephonyTest {
     }
 
     @Test
+    public void testNotifyCarrierRoamingNtnSignalStrengthChanged() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+
+        sendSignalStrengthChangedEvent(mPhone.getPhoneId());
+        processAllMessages();
+        ArgumentCaptor<NtnSignalStrength> captor = ArgumentCaptor.forClass(NtnSignalStrength.class);
+        verify(mPhone, times(1)).notifyCarrierRoamingNtnSignalStrengthChanged(
+                captor.capture());
+        NtnSignalStrength actualSignalStrength = captor.getValue();
+        assertEquals(NTN_SIGNAL_STRENGTH_NONE, actualSignalStrength.getLevel());
+        clearInvocations(mPhone);
+
+        when(mSignalStrength.getLevel()).thenReturn(SignalStrength.SIGNAL_STRENGTH_GOOD);
+        when(mPhone.getSignalStrength()).thenReturn(mSignalStrength);
+        mCarrierConfigBundle.putInt(KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT, 1 * 60);
+        mCarrierConfigBundle.putBoolean(KEY_SATELLITE_ATTACH_SUPPORTED_BOOL, true);
+        for (Pair<Executor, CarrierConfigManager.CarrierConfigChangeListener> pair
+                : mCarrierConfigChangedListenerList) {
+            pair.first.execute(() -> pair.second.onCarrierConfigChanged(
+                    /*slotIndex*/ 0, /*subId*/ SUB_ID, /*carrierId*/ 0, /*specificCarrierId*/ 0)
+            );
+        }
+        processAllMessages();
+        when(mServiceState.isUsingNonTerrestrialNetwork()).thenReturn(true);
+        when(mServiceState.getState()).thenReturn(ServiceState.STATE_IN_SERVICE);
+        sendServiceStateChangedEvent();
+        processAllMessages();
+        captor = ArgumentCaptor.forClass(NtnSignalStrength.class);
+        verify(mPhone, times(1)).notifyCarrierRoamingNtnSignalStrengthChanged(
+                captor.capture());
+        actualSignalStrength = captor.getValue();
+        assertEquals(NTN_SIGNAL_STRENGTH_GOOD, actualSignalStrength.getLevel());
+        clearInvocations(mPhone);
+    }
+
+    @Test
     public void testGetWwanIsInService() {
         when(mServiceState.getNetworkRegistrationInfoListForTransportType(
                 eq(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)))
@@ -5473,6 +5513,13 @@ public class SatelliteControllerTest extends TelephonyTest {
                 34 /* EVENT_NTN_SIGNAL_STRENGTH_CHANGED */);
         msg.obj = new AsyncResult(null, new NtnSignalStrength(ntnSignalStrengthLevel),
                 exception);
+        msg.sendToTarget();
+    }
+
+    private void sendSignalStrengthChangedEvent(int phoneId) {
+        Message msg = mSatelliteControllerUT.obtainMessage(
+                57 /* EVENT_SIGNAL_STRENGTH_CHANGED */);
+        msg.obj = new AsyncResult(phoneId, null, null);
         msg.sendToTarget();
     }
 
