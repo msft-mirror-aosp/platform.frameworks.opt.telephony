@@ -1086,7 +1086,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
 
     @Test
     public void testSendSmsToDatagramDispatcher() {
-        when(mSatelliteController.isInCarrierRoamingNbIotNtn()).thenReturn(true);
+        when(mSatelliteController.isInCarrierRoamingNbIotNtn(any(Phone.class))).thenReturn(true);
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
                 "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
@@ -1391,6 +1391,6 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
                 SmsDispatchersController.PendingRequest.TYPE_TEXT, null, "test-app",
                 mCallingUserId, "1111", "2222", asArrayList(mSentIntent), asArrayList(null),
                 false, null, 0, asArrayList("text"), null,
-                false, 0, false, 10, 100L, false);
+                false, 0, false, 10, 100L, false, false);
     }
 }
