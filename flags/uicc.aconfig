@@ -69,3 +69,22 @@ flag {
     description: "This flag controls optimization of apdu sender class."
     bug:"335257880"
 }
+
+# OWNER=arunvoddu TARGET=24Q4
+flag {
+    name: "ignore_carrierid_reset_for_sim_removal"
+    namespace: "telephony"
+    description: "This flag controls the carrierId reset while imsi key deletion time upon sim ejection."
+    bug:"366178705"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=jhyoon TARGET=25Q2
+flag {
+    name: "support_isim_record"
+    namespace: "telephony"
+    description: "This flag controls the type of API that retrieves ISIM records, either hidden or system type."
+    bug:"359721349"
+}

@@ -824,7 +824,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -858,7 +858,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, false);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, false);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -1056,7 +1056,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -1107,7 +1107,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
         processAllMessages();
         verifyZeroInteractions(mMockSatelliteModemInterface);
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
         processAllMessages();
         mInOrder.verify(mMockDatagramController)
                 .updateSendStatus(eq(SUB_ID), eq(datagramTypeSms),
@@ -1204,6 +1204,6 @@ public class DatagramDispatcherTest extends TelephonyTest {
                 SmsDispatchersController.PendingRequest.TYPE_TEXT, null, "test-app",
                 Binder.getCallingUserHandle().getIdentifier(), "1111", "2222", asArrayList(null),
                 asArrayList(null), false, null, 0, asArrayList("text"), null, false, 0, false,
-                10, 100L, false);
+                10, 100L, false, false);
     }
 }

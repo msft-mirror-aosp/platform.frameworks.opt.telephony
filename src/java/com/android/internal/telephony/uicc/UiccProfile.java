@@ -19,6 +19,7 @@ package com.android.internal.telephony.uicc;
 import static com.android.internal.telephony.TelephonyStatsLog.PIN_STORAGE_EVENT;
 import static com.android.internal.telephony.TelephonyStatsLog.PIN_STORAGE_EVENT__EVENT__PIN_VERIFICATION_FAILURE;
 import static com.android.internal.telephony.TelephonyStatsLog.PIN_STORAGE_EVENT__EVENT__PIN_VERIFICATION_SUCCESS;
+import static com.android.internal.telephony.util.TelephonyUtils.FORCE_VERBOSE_STATE_LOGGING;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -40,6 +41,7 @@ import android.os.ParcelUuid;
 import android.os.PersistableBundle;
 import android.os.Registrant;
 import android.os.RegistrantList;
+import android.os.UserHandle;
 import android.os.UserManager;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
@@ -53,6 +55,7 @@ import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.IndentingPrintWriter;
+import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.CarrierAppUtils;
@@ -102,7 +105,8 @@ import java.util.Set;
 public class UiccProfile extends IccCard {
     protected static final String LOG_TAG = "UiccProfile";
     protected static final boolean DBG = true;
-    private static final boolean VDBG = false; //STOPSHIP if true
+    private static final boolean VDBG = FORCE_VERBOSE_STATE_LOGGING ||
+            Rlog.isLoggable(LOG_TAG, Log.VERBOSE);
 
     private static final String OPERATOR_BRAND_OVERRIDE_PREFIX = "operator_branding_";
 
@@ -1353,7 +1357,7 @@ public class UiccProfile extends IccCard {
     private void promptInstallCarrierApp(String pkgName) {
         Intent showDialogIntent = InstallCarrierAppTrampolineActivity.get(mContext, pkgName);
         showDialogIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        mContext.startActivity(showDialogIntent);
+        mContext.startActivityAsUser(showDialogIntent, UserHandle.CURRENT);
     }
 
     private void onCarrierPrivilegesLoadedMessage() {

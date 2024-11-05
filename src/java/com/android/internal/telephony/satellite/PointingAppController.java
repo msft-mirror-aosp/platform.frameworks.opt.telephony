@@ -34,9 +34,11 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
 import android.os.SystemProperties;
+import android.os.UserHandle;
 import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
+import android.telephony.SubscriptionManager;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
 import android.telephony.satellite.PointingInfo;
 import android.telephony.satellite.SatelliteManager;
@@ -309,6 +311,7 @@ public class PointingAppController {
      */
     public void registerForSatelliteTransmissionUpdates(int subId,
             ISatelliteTransmissionUpdateCallback callback) {
+        subId = SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
         SatelliteTransmissionUpdateHandler handler =
                 mSatelliteTransmissionUpdateHandlers.get(subId);
         if (handler != null) {
@@ -337,6 +340,7 @@ public class PointingAppController {
      */
     public void unregisterForSatelliteTransmissionUpdates(int subId, Consumer<Integer> result,
             ISatelliteTransmissionUpdateCallback callback) {
+        subId = SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
         SatelliteTransmissionUpdateHandler handler =
                 mSatelliteTransmissionUpdateHandlers.get(subId);
         if (handler != null) {
@@ -423,7 +427,7 @@ public class PointingAppController {
             mLastNeedFullScreenPointingUI = needFullScreenPointingUI;
             mLastIsDemoMode = isDemoMode;
             mLastIsEmergency = isEmergency;
-            mContext.startActivity(launchIntent);
+            mContext.startActivityAsUser(launchIntent, UserHandle.CURRENT);
         } catch (ActivityNotFoundException ex) {
             ploge("startPointingUI: Pointing UI app activity is not found, ex=" + ex);
         }
@@ -445,6 +449,7 @@ public class PointingAppController {
             int sendPendingCount, int errorCode) {
         DatagramTransferStateHandlerRequest request = new DatagramTransferStateHandlerRequest(
                 datagramType, datagramTransferState, sendPendingCount, errorCode);
+        subId = SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
         SatelliteTransmissionUpdateHandler handler =
                 mSatelliteTransmissionUpdateHandlers.get(subId);
 
@@ -464,6 +469,7 @@ public class PointingAppController {
      */
     public void onSendDatagramRequested(
             int subId, @SatelliteManager.DatagramType int datagramType) {
+        subId = SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
         SatelliteTransmissionUpdateHandler handler =
                 mSatelliteTransmissionUpdateHandlers.get(subId);
         if (handler != null) {
@@ -482,6 +488,7 @@ public class PointingAppController {
         DatagramTransferStateHandlerRequest request = new DatagramTransferStateHandlerRequest(
                 SatelliteManager.DATAGRAM_TYPE_UNKNOWN, datagramTransferState, receivePendingCount,
                 errorCode);
+        subId = SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
         SatelliteTransmissionUpdateHandler handler =
                 mSatelliteTransmissionUpdateHandlers.get(subId);
 

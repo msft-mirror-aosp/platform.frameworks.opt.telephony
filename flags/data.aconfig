@@ -132,3 +132,10 @@ flag {
   }
 }
 
+# OWNER=TBD TARGET=TBD
+flag {
+  name: "oem_paid_private"
+  namespace: "telephony"
+  description: "Support OEM_PAID and OEM_PRIVATE networks"
+  bug: "366194627"
+}
