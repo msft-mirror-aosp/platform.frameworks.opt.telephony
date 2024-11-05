@@ -34,6 +34,7 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HY
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT;
@@ -108,7 +109,6 @@ import android.os.ServiceSpecificException;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UserHandle;
-import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.provider.Telephony;
 import android.telecom.TelecomManager;
@@ -5068,7 +5068,8 @@ public class SatelliteController extends Handler {
                         KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
                         KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
                         KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT,
-                        KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE
+                        KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE,
+                        KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY
                 );
             } catch (Exception e) {
                 logw("getConfigForSubId: " + e);
@@ -5552,6 +5553,17 @@ public class SatelliteController extends Handler {
             }
             return SatelliteManager.NT_RADIO_TECHNOLOGY_UNKNOWN;
         }
+    }
+
+    /**
+     * Returns a list of messaging apps that support satellite.
+     */
+    @NonNull public List<String> getSatelliteSupportedMsgApps(int subId) {
+        String[] satelliteSupportedMsgApps = getConfigForSubId(subId)
+                .getStringArray(KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY);
+
+        return satelliteSupportedMsgApps != null
+                ? List.of(satelliteSupportedMsgApps) : Collections.emptyList();
     }
 
     private void sendErrorAndReportSessionMetrics(@SatelliteManager.SatelliteResult int error,
@@ -7078,7 +7090,15 @@ public class SatelliteController extends Handler {
         return true;
     }
 
-    private boolean isSatelliteServiceSupportedByCarrier(int subId,
+
+    /**
+     * Checks if the satellite service is supported by the carrier for the specified
+     * subscription ID and servicetype.
+     *
+     * @param subId The subscription id.
+     * @param serviceType The type of service to check
+     */
+    public boolean isSatelliteServiceSupportedByCarrier(int subId,
             @NetworkRegistrationInfo.ServiceType int serviceType) {
         List<String> satellitePlmnList = getSatellitePlmnsForCarrier(subId);
         for (String satellitePlmn : satellitePlmnList) {
@@ -7456,8 +7476,15 @@ public class SatelliteController extends Handler {
         }
         plogd("updateLastNotifiedNtnAvailableServicesAndNotify: phoneId= " + phone.getPhoneId());
 
-        if (isSatelliteSupportedViaCarrier(subId)) {
-            // TODO: Invoke SatelliteManager#getSatelliteDisallowedReasons() NOT EMPTY.
+        SatelliteManager satelliteManager = mContext.getSystemService(SatelliteManager.class);
+        if (satelliteManager == null) {
+            plogd("updateLastNotifiedNtnAvailableServicesAndNotify: satelliteManager is null");
+            phone.notifyCarrierRoamingNtnAvailableServicesChanged(new int[0]);
+            return;
+        }
+        List<Integer> satelliteDisallowedReasons = satelliteManager.getSatelliteDisallowedReasons();
+        if (isSatelliteSupportedViaCarrier(subId)
+                && (satelliteDisallowedReasons != null && !satelliteDisallowedReasons.isEmpty())) {
             int[] services = getSupportedSatelliteServicesForCarrier(subId);
             if (isP2PSmsDisallowedOnCarrierRoamingNtn(subId)) {
                 services = Arrays.stream(services).filter(
