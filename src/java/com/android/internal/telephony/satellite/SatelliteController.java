@@ -1296,8 +1296,8 @@ public class SatelliteController extends Handler {
                     // If Satellite enable/disable request returned Error, no need to wait for radio
                     argument.callback.accept(error);
                 }
-
                 if (argument.enableSatellite) {
+                    mSessionMetricsStats.resetSessionStatsShadowCounters();
                     mSessionMetricsStats.setInitializationResult(error)
                             .setSatelliteTechnology(getSupportedNtnRadioTechnology())
                             .setInitializationProcessingTime(
