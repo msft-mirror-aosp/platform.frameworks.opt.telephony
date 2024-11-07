@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.telephony.ims;
+package android.telephony.ims;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
