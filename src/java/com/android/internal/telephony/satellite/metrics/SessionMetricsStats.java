@@ -46,9 +46,13 @@ public class SessionMetricsStats {
     private long mTerminationProcessingTimeMillis;
     private int mSessionDurationSec;
     private int mCountOfSuccessfulOutgoingDatagram;
+    private int mShadowCountOfSuccessfulOutgoingDatagram;
     private int mCountOfFailedOutgoingDatagram;
+    private int mShadowCountOfFailedOutgoingDatagram;
     private int mCountOfTimedOutUserMessagesWaitingForConnection;
+    private int mShadowCountOfTimedOutUserMessagesWaitingForConnection;
     private int mCountOfTimedOutUserMessagesWaitingForAck;
+    private int mShadowCountOfTimedOutUserMessagesWaitingForAck;
     private int mCountOfSuccessfulIncomingDatagram;
     private int mCountOfIncomingDatagramFailed;
     private boolean mIsDemoMode;
@@ -131,6 +135,7 @@ public class SessionMetricsStats {
         }
 
         mCountOfSuccessfulOutgoingDatagram++;
+        mShadowCountOfSuccessfulOutgoingDatagram++;
         logd("addCountOfSuccessfulOutgoingDatagram: current count="
                 + mCountOfSuccessfulOutgoingDatagram);
         return this;
@@ -146,6 +151,7 @@ public class SessionMetricsStats {
         }
 
         mCountOfFailedOutgoingDatagram++;
+        mShadowCountOfFailedOutgoingDatagram++;
         logd("addCountOfFailedOutgoingDatagram: current count=" + mCountOfFailedOutgoingDatagram);
 
         if (resultCode == SatelliteManager.SATELLITE_RESULT_NOT_REACHABLE) {
@@ -166,6 +172,7 @@ public class SessionMetricsStats {
         }
 
         mCountOfTimedOutUserMessagesWaitingForConnection++;
+        mShadowCountOfTimedOutUserMessagesWaitingForConnection++;
         logd("addCountOfTimedOutUserMessagesWaitingForConnection: current count="
                 + mCountOfTimedOutUserMessagesWaitingForConnection);
         return this;
@@ -180,6 +187,7 @@ public class SessionMetricsStats {
         }
 
         mCountOfTimedOutUserMessagesWaitingForAck++;
+        mShadowCountOfTimedOutUserMessagesWaitingForAck++;
         logd("addCountOfTimedOutUserMessagesWaitingForAck: current count="
                 + mCountOfTimedOutUserMessagesWaitingForAck);
         return this;
@@ -278,12 +286,12 @@ public class SessionMetricsStats {
     public void requestSatelliteSessionStats(int subId, @NonNull ResultReceiver result) {
         Bundle bundle = new Bundle();
         SatelliteSessionStats sessionStats = new SatelliteSessionStats.Builder()
-                .setCountOfSuccessfulUserMessages(mCountOfSuccessfulOutgoingDatagram)
-                .setCountOfUnsuccessfulUserMessages(mCountOfFailedOutgoingDatagram)
+                .setCountOfSuccessfulUserMessages(mShadowCountOfSuccessfulOutgoingDatagram)
+                .setCountOfUnsuccessfulUserMessages(mShadowCountOfFailedOutgoingDatagram)
                 .setCountOfTimedOutUserMessagesWaitingForConnection(
-                        mCountOfTimedOutUserMessagesWaitingForConnection)
+                        mShadowCountOfTimedOutUserMessagesWaitingForConnection)
                 .setCountOfTimedOutUserMessagesWaitingForAck(
-                        mCountOfTimedOutUserMessagesWaitingForAck)
+                        mShadowCountOfTimedOutUserMessagesWaitingForAck)
                 .setCountOfUserMessagesInQueueToBeSent(
                         DatagramDispatcher.getInstance().getPendingUserMessagesCount())
                 .build();
@@ -320,6 +328,14 @@ public class SessionMetricsStats {
         mCountOfSatelliteNotificationDisplayed = 0;
         mCountOfAutoExitDueToScreenOff = 0;
         mCountOfAutoExitDueToTnNetwork = 0;
+    }
+
+    public void resetSessionStatsShadowCounters() {
+        logd("resetTheStatsCounters");
+        mShadowCountOfSuccessfulOutgoingDatagram = 0;
+        mShadowCountOfFailedOutgoingDatagram = 0;
+        mShadowCountOfTimedOutUserMessagesWaitingForConnection = 0;
+        mShadowCountOfTimedOutUserMessagesWaitingForAck = 0;
     }
 
     private static void logd(@NonNull String log) {
