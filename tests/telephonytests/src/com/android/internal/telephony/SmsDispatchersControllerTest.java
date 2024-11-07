@@ -1086,7 +1086,8 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
 
     @Test
     public void testSendSmsToDatagramDispatcher() {
-        when(mSatelliteController.isInCarrierRoamingNbIotNtn(any(Phone.class))).thenReturn(true);
+        when(mSatelliteController.shouldSendSmsToDatagramDispatcher(any(Phone.class)))
+                .thenReturn(true);
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
                 "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();

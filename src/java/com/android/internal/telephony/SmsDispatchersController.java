@@ -29,7 +29,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.res.Resources;
 import android.net.Uri;
 import android.os.AsyncResult;
 import android.os.Binder;
@@ -46,13 +45,14 @@ import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.SmsManager;
 import android.telephony.SmsMessage;
-import android.telephony.TelephonyManager;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import android.telephony.emergency.EmergencyNumber;
 import android.telephony.satellite.SatelliteManager;
 import android.text.TextUtils;
 
 import com.android.ims.ImsManager;
+import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.SomeArgs;
 import com.android.internal.telephony.cdma.CdmaInboundSmsHandler;
@@ -67,18 +67,17 @@ import com.android.internal.telephony.gsm.GsmInboundSmsHandler;
 import com.android.internal.telephony.gsm.GsmSMSDispatcher;
 import com.android.internal.telephony.satellite.DatagramDispatcher;
 import com.android.internal.telephony.satellite.SatelliteController;
-import com.android.internal.R;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  *
@@ -1258,7 +1257,7 @@ public class SmsDispatchersController extends Handler {
     }
 
     private void notifySmsSentToDatagramDispatcher(long messageId, boolean success) {
-        if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
+        if (SatelliteController.getInstance().shouldSendSmsToDatagramDispatcher(mPhone)) {
             DatagramDispatcher.getInstance().onSendSmsDone(mPhone.getSubId(), messageId, success);
         }
     }
@@ -1866,7 +1865,7 @@ public class SmsDispatchersController extends Handler {
                 messageUri, persistMessage, priority, expectMore, validityPeriod, messageId,
                 skipShortCodeCheck, false);
 
-        if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
+        if (SatelliteController.getInstance().shouldSendSmsToDatagramDispatcher(mPhone)) {
             // Send P2P SMS using carrier roaming NB IOT NTN
             DatagramDispatcher.getInstance().sendSms(pendingRequest);
             return;
@@ -2031,7 +2030,7 @@ public class SmsDispatchersController extends Handler {
                 null, 0, parts, messageUri, persistMessage, priority, expectMore,
                 validityPeriod, messageId, false, false);
 
-        if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
+        if (SatelliteController.getInstance().shouldSendSmsToDatagramDispatcher(mPhone)) {
             // Send multipart P2P SMS using carrier roaming NB IOT NTN
             DatagramDispatcher.getInstance().sendSms(pendingRequest);
             return;
@@ -2241,7 +2240,7 @@ public class SmsDispatchersController extends Handler {
      * to trigger SMSC to send all pending SMS to the particular subscription.
      */
     public void sendMtSmsPollingMessage() {
-        if (!SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
+        if (!SatelliteController.getInstance().shouldSendSmsToDatagramDispatcher(mPhone)) {
             logd("sendMtSmsPollingMessage: not in roaming nb iot ntn");
             return;
         }
@@ -2268,7 +2267,9 @@ public class SmsDispatchersController extends Handler {
                 asArrayList(null), false, null, 0, asArrayList(mtSmsPollingText), null, false, 0,
                 false, 5, 0L, true, true);
 
-        DatagramDispatcher.getInstance().sendSms(pendingRequest);
+        if (SatelliteController.getInstance().shouldSendSmsToDatagramDispatcher(mPhone)) {
+            DatagramDispatcher.getInstance().sendSms(pendingRequest);
+        }
     }
 
     public interface SmsInjectionCallback {
