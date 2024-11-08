@@ -5891,5 +5891,80 @@ public class SatelliteControllerTest extends TelephonyTest {
         public boolean isAnyWaitForSatelliteEnablingResponseTimerStarted() {
             return hasMessages(EVENT_WAIT_FOR_SATELLITE_ENABLING_RESPONSE_TIMED_OUT);
         }
+
+        public int getResultReceiverTotalCount() {
+            synchronized (mResultReceiverTotalCountLock) {
+                return mResultReceiverTotalCount;
+            }
+        }
+
+        public HashMap<String, Integer> getResultReceiverCountPerMethodMap() {
+            synchronized (mResultReceiverTotalCountLock) {
+                return mResultReceiverCountPerMethodMap;
+            }
+        }
+    }
+
+    @Test
+    public void testLoggingCodeForResultReceiverCount() throws Exception {
+        final String callerSC =  "SC:ResultReceiver";
+        final String callerSAC =  "SAC:ResultReceiver";
+
+        doReturn(false).when(mFeatureFlags).geofenceEnhancementForBetterUx();
+
+        mSatelliteControllerUT.incrementResultReceiverCount(callerSC);
+        assertEquals(0, mSatelliteControllerUT.getResultReceiverTotalCount());
+        mSatelliteControllerUT.decrementResultReceiverCount(callerSC);
+        assertEquals(0, mSatelliteControllerUT.getResultReceiverTotalCount());
+
+        doReturn(true).when(mFeatureFlags).geofenceEnhancementForBetterUx();
+
+        mSatelliteControllerUT.incrementResultReceiverCount(callerSC);
+        assertEquals(1, mSatelliteControllerUT.getResultReceiverTotalCount());
+        assertEquals(1, mSatelliteControllerUT.getResultReceiverCountPerMethodMap().size());
+        assertEquals(1, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSC)).orElse(0));
+        assertEquals(0, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSAC)).orElse(0));
+
+        mSatelliteControllerUT.incrementResultReceiverCount(callerSC);
+        assertEquals(2, mSatelliteControllerUT.getResultReceiverTotalCount());
+        assertEquals(1, mSatelliteControllerUT.getResultReceiverCountPerMethodMap().size());
+        assertEquals(2, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSC)).orElse(0));
+        assertEquals(0, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSAC)).orElse(0));
+
+        mSatelliteControllerUT.incrementResultReceiverCount(callerSAC);
+        assertEquals(3, mSatelliteControllerUT.getResultReceiverTotalCount());
+        assertEquals(2, mSatelliteControllerUT.getResultReceiverCountPerMethodMap().size());
+        assertEquals(2, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSC)).orElse(0));
+        assertEquals(1, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSAC)).orElse(0));
+
+        mSatelliteControllerUT.decrementResultReceiverCount(callerSC);
+        assertEquals(2, mSatelliteControllerUT.getResultReceiverTotalCount());
+        assertEquals(2, mSatelliteControllerUT.getResultReceiverCountPerMethodMap().size());
+        assertEquals(1, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSC)).orElse(0));
+        assertEquals(1, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSAC)).orElse(0));
+
+        mSatelliteControllerUT.decrementResultReceiverCount(callerSC);
+        assertEquals(1, mSatelliteControllerUT.getResultReceiverTotalCount());
+        assertEquals(2, mSatelliteControllerUT.getResultReceiverCountPerMethodMap().size());
+        assertEquals(0, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSC)).orElse(0));
+        assertEquals(1, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSAC)).orElse(0));
+
+        mSatelliteControllerUT.decrementResultReceiverCount(callerSAC);
+        assertEquals(0, mSatelliteControllerUT.getResultReceiverTotalCount());
+        assertEquals(2, mSatelliteControllerUT.getResultReceiverCountPerMethodMap().size());
+        assertEquals(0, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSC)).orElse(0));
+        assertEquals(0, (int) Optional.ofNullable(mSatelliteControllerUT
+                .getResultReceiverCountPerMethodMap().get(callerSAC)).orElse(0));
     }
 }
