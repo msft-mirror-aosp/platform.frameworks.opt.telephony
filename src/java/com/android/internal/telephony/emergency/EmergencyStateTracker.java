@@ -1690,6 +1690,17 @@ public class EmergencyStateTracker {
             mRadioOnHelper.triggerRadioOnAndListen(new RadioOnStateListener.Callback() {
                 @Override
                 public void onComplete(RadioOnStateListener listener, boolean isRadioReady) {
+                    // Make sure the Call has not already been canceled by the user.
+                    if (expectedConnection.getState() == STATE_DISCONNECTED) {
+                        Rlog.i(TAG, "Call disconnected before the outgoing call was placed."
+                                + "Skipping call placement.");
+                        // If call is already canceled by the user, notify modem to exit emergency
+                        // call mode by sending radio on with forEmergencyCall=false.
+                        for (Phone phone : mPhoneFactoryProxy.getPhones()) {
+                            phone.setRadioPower(true, false, false, true);
+                        }
+                        return;
+                    }
                     if (!isRadioReady) {
                         if (satelliteController.isSatelliteEnabledOrBeingEnabled()) {
                             // Could not turn satellite off
