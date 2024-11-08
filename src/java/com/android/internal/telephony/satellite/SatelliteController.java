@@ -1810,7 +1810,7 @@ public class SatelliteController extends Handler {
                 onCompleted = obtainMessage(EVENT_UPDATE_PROVISION_SATELLITE_TOKEN_DONE, request);
                 boolean provisionChanged = updateSatelliteSubscriptionProvisionState(
                         argument.mSatelliteSubscriberInfoList, argument.mProvisioned);
-                selectBindingSatelliteSubscription();
+                selectBindingSatelliteSubscription(false);
                 int subId = getSelectedSatelliteSubId();
                 SubscriptionInfo subscriptionInfo =
                     mSubscriptionManagerService.getSubscriptionInfo(subId);
@@ -4202,7 +4202,7 @@ public class SatelliteController extends Handler {
         RequestSatelliteEnabledArgument argument =
                 (RequestSatelliteEnabledArgument) request.argument;
         handlePersistentLoggingOnSessionStart(argument);
-        selectBindingSatelliteSubscription();
+        selectBindingSatelliteSubscription(true);
         SatelliteModemEnableRequestAttributes enableRequestAttributes =
                     createModemEnableRequest(argument);
         if (enableRequestAttributes == null) {
@@ -4321,7 +4321,7 @@ public class SatelliteController extends Handler {
                     });
         }
         registerForSatelliteSupportedStateChanged();
-        selectBindingSatelliteSubscription();
+        selectBindingSatelliteSubscription(false);
     }
 
     private void updateSatelliteEnabledState(boolean enabled, String caller) {
@@ -4488,7 +4488,7 @@ public class SatelliteController extends Handler {
                     && mProvisionedSubscriberId.containsValue(Boolean.TRUE);
             mControllerMetricsStats.setIsProvisioned(isProvisioned);
         }
-        selectBindingSatelliteSubscription();
+        selectBindingSatelliteSubscription(false);
         handleStateChangedForCarrierRoamingNtnEligibility();
     }
 
@@ -4876,7 +4876,7 @@ public class SatelliteController extends Handler {
             updateSatelliteEnabledState(
                     false, "moveSatelliteToOffStateAndCleanUpResources");
         }
-        selectBindingSatelliteSubscription();
+        selectBindingSatelliteSubscription(false);
         synchronized (mSatellitePhoneLock) {
             updateLastNotifiedNtnModeAndNotify(mSatellitePhone);
         }
@@ -6700,7 +6700,7 @@ public class SatelliteController extends Handler {
                 mSubsInfoListPerPriority = newSubsInfoListPerPriority;
                 sendBroadCastForProvisionedESOSSubs();
                 mHasSentBroadcast = true;
-                selectBindingSatelliteSubscription();
+                selectBindingSatelliteSubscription(false);
             }
         }
     }
@@ -6869,8 +6869,8 @@ public class SatelliteController extends Handler {
         }
     }
 
-    private void selectBindingSatelliteSubscription() {
-        if (isSatelliteEnabled() || isSatelliteBeingEnabled()) {
+    private void selectBindingSatelliteSubscription(boolean shouldIgnoreEnabledState) {
+        if ((isSatelliteEnabled() || isSatelliteBeingEnabled()) && !shouldIgnoreEnabledState) {
             plogd("selectBindingSatelliteSubscription: satellite subscription will be selected "
                     + "once the satellite session ends");
             return;
