@@ -7591,15 +7591,7 @@ public class SatelliteController extends Handler {
 
     /** Return services that are supported on carrier roaming non-terrestrial network. */
     public int[] getSupportedServicesOnCarrierRoamingNtn(int subId) {
-        SatelliteManager satelliteManager = mContext.getSystemService(SatelliteManager.class);
-        if (satelliteManager == null) {
-            plogd("updateLastNotifiedNtnAvailableServicesAndNotify: satelliteManager is null");
-            return new int[0];
-        }
-
-        List<Integer> satelliteDisallowedReasons = satelliteManager.getSatelliteDisallowedReasons();
-        if (isSatelliteSupportedViaCarrier(subId)
-                && (satelliteDisallowedReasons != null && !satelliteDisallowedReasons.isEmpty())) {
+        if (isSatelliteSupportedViaCarrier(subId)) {
             // TODO: b/377367448 Cleanup get supported satellite services to align with starlink.
             int[] services = getSupportedSatelliteServicesForCarrier(subId);
             if (isP2PSmsDisallowedOnCarrierRoamingNtn(subId)) {
