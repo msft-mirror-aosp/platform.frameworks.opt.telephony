@@ -3930,14 +3930,25 @@ public class SatelliteController extends Handler {
             return false;
         }
 
-        if (!isCarrierRoamingNtnEligible(phone)) {
-            plogd("isInCarrierRoamingNbIotNtn: phone associated with subId "
-                      + phone.getSubId()
-                      + " is not carrier roaming ntn eligible.");
+        if (phone == null) {
+            plogd("isInCarrierRoamingNbIotNtn: phone is null");
             return false;
         }
 
         int subId = phone.getSubId();
+        if (!isSatelliteSupportedViaCarrier(subId)) {
+            plogd("isInCarrierRoamingNbIotNtn[phoneId=" + phone.getPhoneId()
+                    + "]: satellite is not supported via carrier");
+            return false;
+        }
+
+        int carrierRoamingNtnConnectType = getCarrierRoamingNtnConnectType(subId);
+        if (carrierRoamingNtnConnectType != CARRIER_ROAMING_NTN_CONNECT_MANUAL) {
+            plogd("isInCarrierRoamingNbIotNtn[phoneId=" + phone.getPhoneId() + "]: not manual "
+                    + "connect. carrierRoamingNtnConnectType = " + carrierRoamingNtnConnectType);
+            return false;
+        }
+
         if (subId != getSelectedSatelliteSubId()) {
             plogd("isInCarrierRoamingNbIotNtn: subId=" + subId
                     + " does not match satellite subId=" + getSelectedSatelliteSubId());
@@ -4292,7 +4303,7 @@ public class SatelliteController extends Handler {
         RequestSatelliteEnabledArgument argument =
                 (RequestSatelliteEnabledArgument) request.argument;
         handlePersistentLoggingOnSessionStart(argument);
-        selectBindingSatelliteSubscription(true);
+        selectBindingSatelliteSubscription(argument.enableSatellite);
         SatelliteModemEnableRequestAttributes enableRequestAttributes =
                     createModemEnableRequest(argument);
         if (enableRequestAttributes == null) {
@@ -7144,6 +7155,11 @@ public class SatelliteController extends Handler {
     public boolean isCarrierRoamingNtnEligible(@Nullable Phone phone) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             plogd("isCarrierRoamingNtnEligible: carrierRoamingNbIotNtn flag is disabled");
+            return false;
+        }
+
+        if (!mIsRadioOn) {
+            plogd("isCarrierRoamingNtnEligible: radio is off");
             return false;
         }
 
