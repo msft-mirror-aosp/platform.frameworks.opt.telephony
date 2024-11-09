@@ -74,6 +74,7 @@ import android.telephony.emergency.EmergencyNumber;
 import android.telephony.ims.RegistrationManager;
 import android.telephony.ims.feature.MmTelFeature;
 import android.telephony.ims.stub.ImsRegistrationImplBase;
+import android.telephony.satellite.NtnSignalStrength;
 import android.text.TextUtils;
 import android.util.LocalLog;
 import android.util.Log;
@@ -660,7 +661,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         mSmsStorageMonitor = mTelephonyComponentFactory.inject(SmsStorageMonitor.class.getName())
                 .makeSmsStorageMonitor(this, mFeatureFlags);
         mSmsUsageMonitor = mTelephonyComponentFactory.inject(SmsUsageMonitor.class.getName())
-                .makeSmsUsageMonitor(context);
+                .makeSmsUsageMonitor(context, mFeatureFlags);
         mUiccController = UiccController.getInstance();
         mUiccController.registerForIccChanged(this, EVENT_ICC_CHANGED, null);
         mSimActivationTracker = mTelephonyComponentFactory
@@ -1963,6 +1964,13 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         ServiceStateTracker sst = getServiceStateTracker();
         return sst != null && sst.getRadioPowerOffReasons()
                 .contains(TelephonyManager.RADIO_POWER_REASON_THERMAL);
+    }
+
+    /**
+     * @return true if this device supports calling, false otherwise.
+     */
+    public boolean hasCalling() {
+        return TelephonyCapabilities.supportsTelephonyCalling(mFeatureFlags, mContext);
     }
 
     /**
@@ -5378,6 +5386,18 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         logd("notifyCarrierRoamingNtnAvailableServicesChanged availableServices:"
                 + Arrays.toString(availableServices));
         mNotifier.notifyCarrierRoamingNtnAvailableServicesChanged(this, availableServices);
+    }
+
+    /**
+     * Notify external listeners that carrier roaming non-terrestrial network
+     * signal strength changed.
+     * @param ntnSignalStrength non-terrestrial network signal strength.
+     */
+    public void notifyCarrierRoamingNtnSignalStrengthChanged(
+            @NonNull NtnSignalStrength ntnSignalStrength) {
+        logd("notifyCarrierRoamingNtnSignalStrengthChanged: ntnSignalStrength="
+                + ntnSignalStrength.getLevel());
+        mNotifier.notifyCarrierRoamingNtnSignalStrengthChanged(this, ntnSignalStrength);
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
