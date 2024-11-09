@@ -747,6 +747,8 @@ public abstract class TelephonyTest {
         doReturn(mDataRetryManager).when(mDataNetworkController).getDataRetryManager();
         doReturn(mCarrierPrivilegesTracker).when(mPhone).getCarrierPrivilegesTracker();
         doReturn(0).when(mPhone).getPhoneId();
+        doReturn(true).when(mPhone).hasCalling();
+        doReturn(true).when(mPhone2).hasCalling();
 
         //mUiccController
         doReturn(mUiccCardApplication3gpp).when(mUiccController).getUiccCardApplication(anyInt(),
