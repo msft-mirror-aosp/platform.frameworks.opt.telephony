@@ -593,6 +593,17 @@ public class SatelliteSessionController extends StateMachine {
     }
 
     /**
+     * Get whether state machine is in connected state.
+     *
+     * @return {@code true} if state machine is in connected state and {@code false} otherwise.
+     */
+    public boolean isInConnectedState() {
+        if (DBG) plogd("isInConnectedState: getCurrentState=" + getCurrentState());
+        return getCurrentState() == mConnectedState;
+    }
+
+
+    /**
      * Release all resource.
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)

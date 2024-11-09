@@ -69,6 +69,7 @@ import android.telephony.TelephonyCallback;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
+import android.telephony.satellite.NtnSignalStrength;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.text.TextUtils;
@@ -131,6 +132,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private boolean mCarrierRoamingNtnMode;
     private boolean mCarrierRoamingNtnEligible;
     private List<Integer> mCarrierRoamingNtnAvailableServices;
+    private NtnSignalStrength mCarrierRoamingNtnSignalStrength;
     private boolean mIsSatelliteEnabled;
 
     // All events contribute to TelephonyRegistry#isPhoneStatePermissionRequired
@@ -342,6 +344,12 @@ public class TelephonyRegistryTest extends TelephonyTest {
         public void onCarrierRoamingNtnAvailableServicesChanged(List<Integer> services) {
             invocationCount.incrementAndGet();
             mCarrierRoamingNtnAvailableServices = services;
+        }
+
+        @Override
+        public void onCarrierRoamingNtnSignalStrengthChanged(NtnSignalStrength ntnSignalStrength) {
+            invocationCount.incrementAndGet();
+            mCarrierRoamingNtnSignalStrength = ntnSignalStrength;
         }
     }
 
@@ -1740,6 +1748,24 @@ public class TelephonyRegistryTest extends TelephonyTest {
         int[] carrierServices = mCarrierRoamingNtnAvailableServices.stream()
                 .mapToInt(Integer::intValue).toArray();
         assertTrue(Arrays.equals(carrierServices, services));
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_CARRIER_ROAMING_NB_IOT_NTN)
+    public void testNotifyCarrierRoamingNtnSignalStrengthChanged() {
+        int subId = INVALID_SUBSCRIPTION_ID;
+        doReturn(mMockSubInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
+        doReturn(0/*slotIndex*/).when(mMockSubInfo).getSimSlotIndex();
+        int[] events = {TelephonyCallback.EVENT_CARRIER_ROAMING_NTN_SIGNAL_STRENGTH_CHANGED};
+
+        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+                mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
+
+        mTelephonyRegistry.notifyCarrierRoamingNtnSignalStrengthChanged(subId,
+                new NtnSignalStrength(NtnSignalStrength.NTN_SIGNAL_STRENGTH_GOOD));
+        processAllMessages();
+        assertEquals(mCarrierRoamingNtnSignalStrength.getLevel(),
+                NtnSignalStrength.NTN_SIGNAL_STRENGTH_GOOD);
     }
 
     @Test

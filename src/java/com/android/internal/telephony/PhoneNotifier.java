@@ -38,6 +38,7 @@ import android.telephony.TelephonyManager.EmergencyCallbackModeType;
 import android.telephony.emergency.EmergencyNumber;
 import android.telephony.ims.ImsReasonInfo;
 import android.telephony.ims.MediaQualityStatus;
+import android.telephony.satellite.NtnSignalStrength;
 
 import java.util.List;
 import java.util.Set;
@@ -169,4 +170,8 @@ public interface PhoneNotifier {
     /** Notify carrier roaming non-terrestrial available services changed. */
     void notifyCarrierRoamingNtnAvailableServicesChanged(
             Phone sender, @NetworkRegistrationInfo.ServiceType int[] availableServices);
+
+    /** Notify carrier roaming non-terrestrial network signal strength changed. */
+    void notifyCarrierRoamingNtnSignalStrengthChanged(Phone sender,
+            @NonNull NtnSignalStrength ntnSignalStrength);
 }
