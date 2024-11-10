@@ -57,6 +57,7 @@ import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.WorkSource;
 import android.telephony.DropBoxManagerLoggerBackend;
+import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PersistentLogger;
 import android.telephony.ServiceState;
 import android.telephony.satellite.ISatelliteModemStateCallback;
@@ -76,6 +77,7 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.satellite.metrics.SessionMetricsStats;
+import com.android.internal.telephony.util.ArrayUtils;
 import com.android.internal.util.State;
 import com.android.internal.util.StateMachine;
 import com.android.telephony.Rlog;
@@ -589,6 +591,17 @@ public class SatelliteSessionController extends StateMachine {
         if (DBG) plogd("isInDisablingState: getCurrentState=" + getCurrentState());
         return getCurrentState() == mDisablingState;
     }
+
+    /**
+     * Get whether state machine is in connected state.
+     *
+     * @return {@code true} if state machine is in connected state and {@code false} otherwise.
+     */
+    public boolean isInConnectedState() {
+        if (DBG) plogd("isInConnectedState: getCurrentState=" + getCurrentState());
+        return getCurrentState() == mConnectedState;
+    }
+
 
     /**
      * Release all resource.
@@ -1680,6 +1693,12 @@ public class SatelliteSessionController extends StateMachine {
             return;
         }
 
+        int subId = getSubId();
+        if (!isP2pSmsSupportedOnCarrierRoamingNtn(subId)) {
+            if (DBG) plogd("handleEventScreenStateChanged: P2P_SMS is not supported");
+            return;
+        }
+
         if (!screenOn) {
             // Screen off, start timer
             int timeoutMillis = getScreenOffInactivityTimeoutDurationSec() * 1000;
@@ -1791,19 +1810,19 @@ public class SatelliteSessionController extends StateMachine {
         }
 
         if (isP2pSmsInActivityTimerStarted()) {
-            plogd("isEsosInActivityTimerStarted: "
+            plogd("isP2pSmsInActivityTimerStarted: "
                     + "P2P_SMS inactivity timer already started");
             return;
         }
 
         int subId = getSubId();
-        if (!mSatelliteController.isSatelliteRoamingP2pSmSSupported(subId)) {
-            plogd("evaluateStartingEsosInactivityTimer: P2P_SMS is not supported");
+        if (!isP2pSmsSupportedOnCarrierRoamingNtn(subId)) {
+            if (DBG) plogd("evaluateStartingP2pSmsInactivityTimer: P2P_SMS is not supported");
             return;
         }
 
         if (mIsDeviceAlignedWithSatellite) {
-            plogd("evaluateStartingEsosInactivityTimer: "
+            plogd("evaluateStartingP2pSmsInactivityTimer: "
                     + "can't start P2P_SMS inactivity timer due to device aligned satellite");
             return;
         }
@@ -1813,10 +1832,10 @@ public class SatelliteSessionController extends StateMachine {
         if (datagramController.isSendingInIdleState()
                 && datagramController.isPollingInIdleState()) {
             sendMessageDelayed(EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT, timeOutMillis);
-            plogd("evaluateStartingEsosInactivityTimer: start P2P_SMS inactivity timer "
+            plogd("evaluateStartingP2pSmsInactivityTimer: start P2P_SMS inactivity timer "
                     + timeOutMillis);
         } else {
-            plogd("evaluateStartingEsosInactivityTimer: "
+            plogd("evaluateStartingP2pSmsInactivityTimer: "
                     + "can't start P2P_SMS inactivity timer");
         }
     }
@@ -1935,6 +1954,25 @@ public class SatelliteSessionController extends StateMachine {
             return false;
         }
 
+        return true;
+    }
+
+    private boolean isP2pSmsSupportedOnCarrierRoamingNtn(int subId) {
+        if (!mSatelliteController.isSatelliteRoamingP2pSmSSupported(subId)) {
+            if (DBG) plogd("isP2pSmsSupportedOnCarrierRoamingNtn: P2P_SMS is not supported");
+            return false;
+        }
+
+        int[] services = mSatelliteController.getSupportedServicesOnCarrierRoamingNtn(subId);
+        if (!ArrayUtils.contains(services, NetworkRegistrationInfo.SERVICE_TYPE_SMS)) {
+            if (DBG) {
+                plogd("isP2pSmsSupportedOnCarrierRoamingNtn: P2P_SMS service is not supported "
+                        + "on carrier roaming ntn.");
+            }
+            return false;
+        }
+
+        if (DBG) plogd("isP2pSmsSupportedOnCarrierRoamingNtn: P2_SMS is supported");
         return true;
     }
 
