@@ -270,6 +270,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
     @Test
     @SmallTest
     public void startEmergencyCall_radioOff_turnOnRadioHangupCallTurnOffRadio() {
+        android.telecom.Connection testConnection = new android.telecom.Connection() {};
         EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
                 true /* isSuplDdsSwitchRequiredForEmergencyCall */);
         // Create test Phones and set radio off
@@ -285,7 +286,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 .build();
         doReturn(nri).when(ss).getNetworkRegistrationInfo(anyInt(), anyInt());
         CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(testPhone,
-                mTestConnection1, false);
+                testConnection, false);
 
         // startEmergencyCall should trigger radio on
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
@@ -294,7 +295,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
 
         // Hangup the call
-        emergencyStateTracker.endCall(mTestConnection1);
+        testConnection.setDisconnected(null);
+        emergencyStateTracker.endCall(testConnection);
 
         // onTimeout and isOkToCall should return true even in case radion is off
         assertTrue(callback.getValue()
@@ -305,6 +307,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         callback.getValue().onComplete(null, true);
 
         assertFalse(future.isDone());
+        verify(testPhone).setRadioPower(true, false, false, true);
     }
 
     /**

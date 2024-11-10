@@ -440,7 +440,13 @@ public class UiccPort {
      * removal or modem reset. The obsoleted records may trigger a redundant release of logical
      * channel that may have been assigned to other client.
      */
+    @SuppressWarnings("GuardedBy")
     private void cleanupOpenLogicalChannelRecordsIfNeeded() {
+        // This check may raise GuardedBy warning, but we need it as long as this method is called
+        // from finalize(). We can remove it from there once UiccPort is fully protected against
+        // resource leak (e.g. with CloseGuard) and all (direct and indirect) users are fixed.
+        if (mOpenChannelRecords == null) return;
+
         synchronized (mOpenChannelRecords) {
             for (OpenLogicalChannelRecord record : mOpenChannelRecords) {
                 if (DBG) log("Clean up " + record);
