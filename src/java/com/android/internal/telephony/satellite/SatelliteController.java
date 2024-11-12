@@ -221,6 +221,11 @@ public class SatelliteController extends Handler {
     /** Key used to read/write OEM-enabled satellite provision status in shared preferences. */
     private static final String OEM_ENABLED_SATELLITE_PROVISION_STATUS_KEY =
             "oem_enabled_satellite_provision_status_key";
+    /** Key used to read/write default messages application NTN SMS support
+     * in shared preferences. */
+    @VisibleForTesting(visibility =  VisibleForTesting.Visibility.PRIVATE)
+    public static final String NTN_SMS_SUPPORTED_BY_MESSAGES_APP_KEY =
+            "ntn_sms_supported_by_messages_app_key";
 
     public static final long DEFAULT_CARRIER_EMERGENCY_CALL_WAIT_FOR_CONNECTION_TIMEOUT_MILLIS =
             TimeUnit.SECONDS.toMillis(30);
@@ -621,6 +626,10 @@ public class SatelliteController extends Handler {
     private AtomicBoolean mOverrideNtnEligibility;
     private String mDefaultSmsPackageName = "";
     private String mSatelliteGatewayServicePackageName = "";
+
+    private final Object mNtnSmsSupportedByMessagesAppLock = new Object();
+    @GuardedBy("mNtnSmsSupportedByMessagesAppLock")
+    private Boolean mNtnSmsSupportedByMessagesApp = null;
     private BroadcastReceiver
             mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
                 @Override
@@ -865,7 +874,15 @@ public class SatelliteController extends Handler {
 
         mDSM.registerForSignalStrengthReportDecision(this, CMD_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING,
                 null);
+
         loadSatelliteSharedPreferences();
+        if (mSharedPreferences != null) {
+            synchronized (mNtnSmsSupportedByMessagesAppLock) {
+                mNtnSmsSupportedByMessagesApp = mSharedPreferences.getBoolean(
+                        NTN_SMS_SUPPORTED_BY_MESSAGES_APP_KEY, false);
+            }
+        }
+
         mWaitTimeForSatelliteEnablingResponse = getWaitForSatelliteEnablingResponseTimeoutMillis();
         mDemoPointingAlignedDurationMillis = getDemoPointingAlignedDurationMillisFromResources();
         mDemoPointingNotAlignedDurationMillis =
@@ -1955,7 +1972,7 @@ public class SatelliteController extends Handler {
                     plogd("EVENT_WIFI_CONNECTIVITY_STATE_CHANGED: mIsWifiConnected="
                             + mIsWifiConnected);
                 }
-                handleStateChangedForCarrierRoamingNtnEligibility();
+                evaluateCarrierRoamingNtnEligibilityChange();
                 break;
             }
             case EVENT_SATELLITE_ACCESS_RESTRICTION_CHECKING_RESULT: {
@@ -3918,7 +3935,7 @@ public class SatelliteController extends Handler {
      * @return {@code true} if phone is in carrier roaming nb iot ntn mode,
      * else {@return false}
      */
-    private boolean isInCarrierRoamingNbIotNtn(@NonNull Phone phone) {
+    private boolean isInCarrierRoamingNbIotNtn(@Nullable Phone phone) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             plogd("isInCarrierRoamingNbIotNtn: carrier roaming nb iot ntn "
                     + "feature flag is disabled");
@@ -4595,7 +4612,7 @@ public class SatelliteController extends Handler {
             mControllerMetricsStats.setIsProvisioned(isProvisioned);
         }
         selectBindingSatelliteSubscription(false);
-        handleStateChangedForCarrierRoamingNtnEligibility();
+        evaluateCarrierRoamingNtnEligibilityChange();
     }
 
     private void updateDeviceProvisionStatus() {
@@ -5212,7 +5229,7 @@ public class SatelliteController extends Handler {
         updateSupportedSatelliteServicesForActiveSubscriptions();
         processNewCarrierConfigData(subId);
         resetCarrierRoamingSatelliteModeParams(subId);
-        handleStateChangedForCarrierRoamingNtnEligibility();
+        evaluateCarrierRoamingNtnEligibilityChange();
         sendMessageDelayed(obtainMessage(CMD_EVALUATE_ESOS_PROFILES_PRIORITIZATION),
                 mEvaluateEsosProfilesPrioritizationDurationMillis);
     }
@@ -5710,7 +5727,7 @@ public class SatelliteController extends Handler {
     }
 
     private void handleEventServiceStateChanged() {
-        handleStateChangedForCarrierRoamingNtnEligibility();
+        evaluateCarrierRoamingNtnEligibilityChange();
         handleServiceStateForSatelliteConnectionViaCarrier();
     }
 
@@ -5824,15 +5841,15 @@ public class SatelliteController extends Handler {
         }
     }
 
-    private void handleStateChangedForCarrierRoamingNtnEligibility() {
+    private void evaluateCarrierRoamingNtnEligibilityChange() {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
-            plogd("handleStateChangedForCarrierRoamingNtnEligibility: "
+            plogd("evaluateCarrierRoamingNtnEligibilityChange: "
                     + "carrierRoamingNbIotNtn flag is disabled");
             return;
         }
 
         boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
-        plogd("handleStateChangedForCarrierRoamingNtnEligibility: "
+        plogd("evaluateCarrierRoamingNtnEligibilityChange: "
                 + "isCarrierRoamingNtnEligible=" + eligible);
 
         synchronized (mSatellitePhoneLock) {
@@ -7105,6 +7122,61 @@ public class SatelliteController extends Handler {
         incrementResultReceiverCount("SC:provisionSatellite");
     }
 
+    /**
+     * Inform whether application supports NTN SMS in satellite mode.
+     *
+     * This method is used by default messaging application to inform framework whether it supports
+     * NTN SMS or not.
+     *
+     * @param ntnSmsSupported {@code true} If application supports NTN SMS, else {@code false}.
+     */
+    public void setNtnSmsSupportedByMessagesApp(boolean ntnSmsSupported) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            return;
+        }
+        persistNtnSmsSupportedByMessagesApp(ntnSmsSupported);
+        handleCarrierRoamingNtnAvailableServicesChanged(getSelectedSatelliteSubId());
+    }
+
+    private void persistNtnSmsSupportedByMessagesApp(boolean ntnSmsSupported) {
+        plogd("persistNtnSmsSupportedByMessagesApp: ntnSmsSupported=" + ntnSmsSupported);
+        if (!loadSatelliteSharedPreferences()) return;
+
+        if (mSharedPreferences == null) {
+            ploge("persistNtnSmsSupportedByMessagesApp: mSharedPreferences is null");
+        } else {
+            mSharedPreferences.edit().putBoolean(
+                    NTN_SMS_SUPPORTED_BY_MESSAGES_APP_KEY, ntnSmsSupported).apply();
+            synchronized (mNtnSmsSupportedByMessagesAppLock) {
+                mNtnSmsSupportedByMessagesApp = ntnSmsSupported;
+            }
+        }
+    }
+
+    private boolean isNtnSmsSupportedByMessagesApp() {
+        synchronized (mNtnSmsSupportedByMessagesAppLock) {
+            if (mNtnSmsSupportedByMessagesApp != null) {
+                plogd("isNtnSmsSupportedByMessagesApp:" + mNtnSmsSupportedByMessagesApp);
+                return mNtnSmsSupportedByMessagesApp;
+            }
+        }
+
+        if (!loadSatelliteSharedPreferences()) return false;
+
+        if (mSharedPreferences == null) {
+            ploge("isNtnSmsSupportedByMessagesApp: mSharedPreferences is null");
+            return false;
+        } else {
+            boolean ntnSmsSupported = mSharedPreferences.getBoolean(
+                    NTN_SMS_SUPPORTED_BY_MESSAGES_APP_KEY, false);
+            synchronized (mNtnSmsSupportedByMessagesAppLock) {
+                mNtnSmsSupportedByMessagesApp = ntnSmsSupported;
+                plogd("isNtnSmsSupportedByMessagesApp:" + mNtnSmsSupportedByMessagesApp);
+            }
+            return ntnSmsSupported;
+        }
+    }
+
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected void setSatellitePhone(int subId) {
         synchronized (mSatellitePhoneLock) {
@@ -7595,6 +7667,7 @@ public class SatelliteController extends Handler {
             return;
         }
         updateLastNotifiedNtnAvailableServicesAndNotify(subId);
+        evaluateCarrierRoamingNtnEligibilityChange();
     }
 
     private void updateLastNotifiedNtnAvailableServicesAndNotify(int subId) {
@@ -7639,7 +7712,7 @@ public class SatelliteController extends Handler {
         if (carrierRoamingNtnConnectType == CARRIER_ROAMING_NTN_CONNECT_MANUAL) {
             // Manual Connected
             plogd("isP2PSmsDisallowedOnCarrierRoamingNtn: manual connect");
-            if (!isApplicationSupportsP2P(mDefaultSmsPackageName)
+            if (!isNtnSmsSupportedByMessagesApp()
                     || !isApplicationSupportsP2P(mSatelliteGatewayServicePackageName)) {
                 plogd("isP2PSmsDisallowedOnCarrierRoamingNtn: APKs do not supports P2P");
                 return true;
