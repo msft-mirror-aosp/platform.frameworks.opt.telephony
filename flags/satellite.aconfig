@@ -63,6 +63,15 @@ flag {
   }
 }
 
+# OWNER=amallampati TARGET=25Q2
+flag {
+    name: "satellite_system_apis"
+    is_exported: true
+    namespace: "telephony"
+    description: "Convert hidden SatelliteManager APIs to system APIs."
+    bug:"373436320"
+}
+
 # OWNER=rambowang TARGET=25Q2
 flag {
   name: "satellite_state_change_listener"
