@@ -1257,10 +1257,8 @@ public class DatagramDispatcher extends Handler {
     }
 
     private boolean shouldPollMtSms() {
-        SatelliteController satelliteController = SatelliteController.getInstance();
-        Phone satellitePhone = satelliteController.getSatellitePhone();
         return isEnabledMtSmsPolling()
-                && satelliteController.shouldSendSmsToDatagramDispatcher(satellitePhone);
+                && SatelliteController.getInstance().isInCarrierRoamingNbIotNtn();
     }
 
     @GuardedBy("mLock")

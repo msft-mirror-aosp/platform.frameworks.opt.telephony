@@ -692,10 +692,11 @@ public abstract class InboundSmsHandler extends StateMachine {
         if (mFeatureFlags.carrierRoamingNbIotNtn()) {
             if (result == Intents.RESULT_SMS_HANDLED) {
                 SatelliteController satelliteController = SatelliteController.getInstance();
-                if (satelliteController != null
-                        && satelliteController.shouldSendSmsToDatagramDispatcher(mPhone)) {
-                    satelliteController.onSmsReceived(mPhone.getSubId());
+                if (satelliteController == null) {
+                    log("SatelliteController is not initialized");
+                    return;
                 }
+                satelliteController.onSmsReceived(mPhone.getSubId());
             }
         }
 
