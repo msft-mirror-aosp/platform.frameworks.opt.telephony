@@ -218,7 +218,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
@@ -4721,7 +4720,7 @@ public class SatelliteControllerTest extends TelephonyTest {
                 any());
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
-        assertTrue(resultArray[0].getProvisionStatus());
+        assertTrue(resultArray[0].isProvisioned());
         assertEquals(mSubscriberId, resultArray[0].getSatelliteSubscriberInfo().getSubscriberId());
 
         // Request provisioning with SatelliteSubscriberInfo that has not been provisioned
@@ -4732,7 +4731,7 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
-        assertTrue(resultArray[1].getProvisionStatus());
+        assertTrue(resultArray[1].isProvisioned());
         assertEquals(mSubscriberId2, resultArray[1].getSatelliteSubscriberInfo().getSubscriberId());
 
         // Request provisioning with the same SatelliteSubscriberInfo that was previously
@@ -4747,9 +4746,9 @@ public class SatelliteControllerTest extends TelephonyTest {
         verifyDeprovisionSatellite(inputList);
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
-        assertFalse(resultArray[1].getProvisionStatus());
+        assertFalse(resultArray[1].isProvisioned());
         assertEquals(mSubscriberId2, resultArray[1].getSatelliteSubscriberInfo().getSubscriberId());
-        assertTrue(resultArray[0].getProvisionStatus());
+        assertTrue(resultArray[0].isProvisioned());
         assertEquals(mSubscriberId, resultArray[0].getSatelliteSubscriberInfo().getSubscriberId());
 
         // Request deprovision for subscriberID 1, verify that subscriberID 1 is set to deprovision.
@@ -4758,9 +4757,9 @@ public class SatelliteControllerTest extends TelephonyTest {
         verifyDeprovisionSatellite(inputList);
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
-        assertFalse(resultArray[1].getProvisionStatus());
+        assertFalse(resultArray[1].isProvisioned());
         assertEquals(mSubscriberId2, resultArray[1].getSatelliteSubscriberInfo().getSubscriberId());
-        assertFalse(resultArray[0].getProvisionStatus());
+        assertFalse(resultArray[0].isProvisioned());
         assertEquals(mSubscriberId, resultArray[0].getSatelliteSubscriberInfo().getSubscriberId());
 
         // Request provision for subscriberID 2, verify that subscriberID 2 is set to provision.
@@ -4770,9 +4769,9 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
-        assertTrue(resultArray[1].getProvisionStatus());
+        assertTrue(resultArray[1].isProvisioned());
         assertEquals(mSubscriberId2, resultArray[1].getSatelliteSubscriberInfo().getSubscriberId());
-        assertFalse(resultArray[0].getProvisionStatus());
+        assertFalse(resultArray[0].isProvisioned());
         assertEquals(mSubscriberId, resultArray[0].getSatelliteSubscriberInfo().getSubscriberId());
     }
 
@@ -5198,18 +5197,13 @@ public class SatelliteControllerTest extends TelephonyTest {
         SystemSelectionSpecifier systemSelectionSpecifier = capturedList.getFirst();
 
         assertEquals(mccmnc, systemSelectionSpecifier.getMccMnc());
-        int[] actualBandsArray = IntStream.range(0, systemSelectionSpecifier.getBands().size()).map(
-                systemSelectionSpecifier.getBands()::get).toArray();
+        int[] actualBandsArray = systemSelectionSpecifier.getBands();
         assertArrayEquals(bands1, actualBandsArray);
-        int[] actualEarfcnsArray = IntStream.range(0,
-                systemSelectionSpecifier.getEarfcns().size()).map(
-                systemSelectionSpecifier.getEarfcns()::get).toArray();
+        int[] actualEarfcnsArray = systemSelectionSpecifier.getEarfcns();
         assertArrayEquals(earfcns1, actualEarfcnsArray);
         assertArrayEquals(new SatelliteInfo[]{satelliteInfo1},
-                systemSelectionSpecifier.getSatelliteInfos());
-        int[] actualTagIdArray = IntStream.range(0,
-                systemSelectionSpecifier.getTagIds().size()).map(
-                systemSelectionSpecifier.getTagIds()::get).toArray();
+                systemSelectionSpecifier.getSatelliteInfos().toArray(new SatelliteInfo[0]));
+        int[] actualTagIdArray = systemSelectionSpecifier.getTagIds();
         assertArrayEquals(tagIds, actualTagIdArray);
 
         // Verify whether SatelliteModemInterface API was invoked and data is valid, when list
@@ -5251,36 +5245,26 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         // Verify first SystemSelectionSpecifier
         assertEquals(mccmnc, systemSelectionSpecifier.getMccMnc());
-        actualBandsArray = IntStream.range(0,
-                capturedSystemSelectionSpecifier1.getBands().size()).map(
-                capturedSystemSelectionSpecifier1.getBands()::get).toArray();
+        actualBandsArray = capturedSystemSelectionSpecifier1.getBands();
         assertArrayEquals(bands1, actualBandsArray);
-        actualEarfcnsArray = IntStream.range(0,
-                capturedSystemSelectionSpecifier1.getEarfcns().size()).map(
-                capturedSystemSelectionSpecifier1.getEarfcns()::get).toArray();
+        actualEarfcnsArray = capturedSystemSelectionSpecifier1.getEarfcns();
         assertArrayEquals(earfcns1, actualEarfcnsArray);
         assertArrayEquals(new SatelliteInfo[]{satelliteInfo1},
-                capturedSystemSelectionSpecifier1.getSatelliteInfos());
-        actualTagIdArray = IntStream.range(0,
-                capturedSystemSelectionSpecifier1.getTagIds().size()).map(
-                capturedSystemSelectionSpecifier1.getTagIds()::get).toArray();
+                capturedSystemSelectionSpecifier1.getSatelliteInfos().toArray(
+                        new SatelliteInfo[0]));
+        actualTagIdArray = capturedSystemSelectionSpecifier1.getTagIds();
         assertArrayEquals(tagIds, actualTagIdArray);
 
         // Verify second SystemSelectionSpecifier
         assertEquals(mccmnc, systemSelectionSpecifier.getMccMnc());
-        actualBandsArray = IntStream.range(0,
-                capturedSystemSelectionSpecifier2.getBands().size()).map(
-                capturedSystemSelectionSpecifier2.getBands()::get).toArray();
+        actualBandsArray = capturedSystemSelectionSpecifier2.getBands();
         assertArrayEquals(bands2, actualBandsArray);
-        actualEarfcnsArray = IntStream.range(0,
-                capturedSystemSelectionSpecifier2.getEarfcns().size()).map(
-                capturedSystemSelectionSpecifier2.getEarfcns()::get).toArray();
+        actualEarfcnsArray = capturedSystemSelectionSpecifier2.getEarfcns();
         assertArrayEquals(earfcns2, actualEarfcnsArray);
         assertArrayEquals(new SatelliteInfo[]{satelliteInfo2},
-                capturedSystemSelectionSpecifier2.getSatelliteInfos());
-        actualTagIdArray = IntStream.range(0,
-                capturedSystemSelectionSpecifier2.getTagIds().size()).map(
-                capturedSystemSelectionSpecifier2.getTagIds()::get).toArray();
+                capturedSystemSelectionSpecifier2.getSatelliteInfos().toArray(
+                        new SatelliteInfo[0]));
+        actualTagIdArray = capturedSystemSelectionSpecifier2.getTagIds();
         assertArrayEquals(tagIds, actualTagIdArray);
     }
 
@@ -5304,7 +5288,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertEquals(SATELLITE_RESULT_SUCCESS,
                 mRequestSatelliteSubscriberProvisionStatusResultCode);
         assertEquals(provision,
-                mRequestSatelliteSubscriberProvisionStatusResultList.get(0).getProvisionStatus());
+                mRequestSatelliteSubscriberProvisionStatusResultList.get(0).isProvisioned());
     }
 
     private void setComponentName() {

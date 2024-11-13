@@ -7212,7 +7212,7 @@ public class SatelliteController extends Handler {
                             + ", provisioned=" + provisioned);
                     list.add(new SatelliteSubscriberProvisionStatus.Builder()
                             .setSatelliteSubscriberInfo(satelliteSubscriberInfo)
-                            .setProvisionStatus(provisioned).build());
+                            .setProvisioned(provisioned).build());
                     mSubscriberIdPerSub.put(subscriberId, info.getSubscriptionId());
                 }
             }
@@ -7268,7 +7268,7 @@ public class SatelliteController extends Handler {
             // TODO: need to check if satellite is allowed at current location for the subscription
             int subId = getSubIdFromSubscriberId(
                     status.getSatelliteSubscriberInfo().getSubscriberId());
-            if (status.getProvisionStatus() && isActiveSubId(subId)) {
+            if (status.isProvisioned() && isActiveSubId(subId)) {
                 selectedSubId = subId;
                 break;
             }
