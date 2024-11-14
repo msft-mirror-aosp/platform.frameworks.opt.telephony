@@ -7835,7 +7835,7 @@ public class SatelliteController extends Handler {
     }
 
     /** Returns whether to send SMS to DatagramDispatcher or not. */
-    public boolean shouldSendSmsToDatagramDispatcher(@NonNull Phone phone) {
+    public boolean shouldSendSmsToDatagramDispatcher(@Nullable Phone phone) {
         if (!isInCarrierRoamingNbIotNtn(phone)) {
             return false;
         }
