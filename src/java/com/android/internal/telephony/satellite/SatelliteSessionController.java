@@ -1301,6 +1301,8 @@ public class SatelliteSessionController extends StateMachine {
             startNbIotInactivityTimer();
             evaluateStartingEsosInactivityTimer();
             evaluateStartingP2pSmsInactivityTimer();
+            mSatelliteController.updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(
+                    mSatelliteController.getSatellitePhone());
         }
 
         @Override

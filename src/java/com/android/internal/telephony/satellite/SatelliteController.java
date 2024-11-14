@@ -7866,7 +7866,8 @@ public class SatelliteController extends Handler {
         return carrierRoamingNtnSignalStrength;
     }
 
-    private void updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(@Nullable Phone phone) {
+    protected void updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(
+            @Nullable Phone phone) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) return;
         if (phone == null) {
             return;
