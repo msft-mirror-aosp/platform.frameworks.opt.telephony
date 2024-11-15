@@ -16,6 +16,7 @@
 package com.android.internal.telephony.imsphone;
 
 import static android.telephony.AccessNetworkConstants.AccessNetworkType.EUTRAN;
+import static android.telephony.AccessNetworkConstants.AccessNetworkType.IWLAN;
 
 import static junit.framework.Assert.assertNotNull;
 
@@ -385,6 +386,31 @@ public class ImsCallInfoTrackerTest extends TelephonyTest {
 
         assertNotNull(imsCallInfos);
         assertEquals(0, imsCallInfos.size());
+    }
+
+    @Test
+    public void testNetworkChanged() throws Exception {
+        ArgumentCaptor<List<ImsCallInfo>> captor = ArgumentCaptor.forClass(List.class);
+        ImsPhoneConnection c = getConnection(Call.State.ACTIVE, false);
+        mImsCallInfoTracker.addImsCallStatus(c);
+
+        verify(mImsPhone, times(1)).updateImsCallStatus(captor.capture(), any());
+
+        List<ImsCallInfo> imsCallInfos = captor.getValue();
+        assertNotNull(imsCallInfos);
+        assertEquals(1, imsCallInfos.size());
+
+        ImsCallInfo info = imsCallInfos.get(0);
+        assertNotNull(info);
+        assertEquals(1, info.getIndex());
+        assertEquals(EUTRAN, info.getCallRadioTech());
+
+        // The network type is changed from EUTRAN to IWLAN.
+        doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN).when(c).getCallRadioTech();
+        mImsCallInfoTracker.updateImsCallStatus(c);
+
+        verify(mImsPhone, times(2)).updateImsCallStatus(captor.capture(), any());
+        assertEquals(IWLAN, info.getCallRadioTech());
     }
 
     @Test

@@ -18,7 +18,8 @@ package com.android.internal.telephony.imsphone;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.telephony.AccessNetworkConstants;
+import android.telephony.AccessNetworkConstants.AccessNetworkType;
+import android.telephony.AccessNetworkConstants.RadioAccessNetworkType;
 import android.telephony.ServiceState;
 
 import com.android.internal.telephony.Call;
@@ -32,6 +33,7 @@ public class ImsCallInfo {
     private @Nullable ImsPhoneConnection mConnection = null;
     private Call.State mState = Call.State.IDLE;
     private boolean mIsHeldByRemote = false;
+    private @RadioAccessNetworkType int mCallRadioTech = AccessNetworkType.UNKNOWN;
 
     public ImsCallInfo(int index) {
         mIndex = index;
@@ -42,6 +44,7 @@ public class ImsCallInfo {
         mConnection = null;
         mState = Call.State.IDLE;
         mIsHeldByRemote = false;
+        mCallRadioTech = AccessNetworkType.UNKNOWN;
     }
 
     /**
@@ -52,6 +55,7 @@ public class ImsCallInfo {
     public void update(@NonNull ImsPhoneConnection c) {
         mConnection = c;
         mState = c.getState();
+        mCallRadioTech = getCallRadioTech(c);
     }
 
     /**
@@ -64,8 +68,10 @@ public class ImsCallInfo {
     public boolean update(@NonNull ImsPhoneConnection c,
             boolean holdReceived, boolean resumeReceived) {
         Call.State state = c.getState();
-        boolean changed = mState != state;
+        int callRadioTech = getCallRadioTech(c);
+        boolean changed = mState != state || mCallRadioTech != callRadioTech;
         mState = state;
+        mCallRadioTech = callRadioTech;
 
         if (holdReceived && !mIsHeldByRemote) {
             changed = true;
@@ -109,13 +115,18 @@ public class ImsCallInfo {
     }
 
     /** @return the radio technology used for current connection. */
-    public @AccessNetworkConstants.RadioAccessNetworkType int getCallRadioTech() {
-        return ServiceState.rilRadioTechnologyToAccessNetworkType(mConnection.getCallRadioTech());
+    public @RadioAccessNetworkType int getCallRadioTech() {
+        return mCallRadioTech;
     }
 
     @Override
     public String toString() {
         return "[ id=" + mIndex + ", state=" + mState
+                + ", callRadioTech=" + AccessNetworkType.toString(mCallRadioTech)
                 + ", isMT=" + isIncoming() + ", heldByRemote=" + mIsHeldByRemote + " ]";
+    }
+
+    private static @RadioAccessNetworkType int getCallRadioTech(ImsPhoneConnection c) {
+        return ServiceState.rilRadioTechnologyToAccessNetworkType(c.getCallRadioTech());
     }
 }
