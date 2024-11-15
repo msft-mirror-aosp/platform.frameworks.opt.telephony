@@ -22,6 +22,7 @@ import static android.provider.Settings.ACTION_SATELLITE_SETTING;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_TYPE;
+import static android.telephony.CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_ROAMING_SATELLITE_DEFAULT_SERVICES_INT_ARRAY;
@@ -567,6 +568,11 @@ public class SatelliteController extends Handler {
     @GuardedBy("mSatelliteTokenProvisionedLock")
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected TreeMap<Integer, List<SubscriptionInfo>> mSubsInfoListPerPriority = new TreeMap<>();
+    // List of subscriber information and status at the time of last evaluation
+    @GuardedBy("mSatelliteTokenProvisionedLock")
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    private List<SatelliteSubscriberProvisionStatus> mLastEvaluatedSubscriberProvisionStatus =
+            new ArrayList<>();
     // The ID of the satellite subscription that has highest priority and is provisioned.
     @GuardedBy("mSatelliteTokenProvisionedLock")
     private int mSelectedSatelliteSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
@@ -6788,6 +6794,11 @@ public class SatelliteController extends Handler {
                 if (!isActive && !isNtnOnly) {
                     continue;
                 }
+                if (!isNtnOnly && !isCarrierConfigLoaded(subId)) {
+                    // Skip to add priority list if the carrier config is not loaded properly
+                    // for the given carrier subscription.
+                    continue;
+                }
 
                 int keyPriority = (isESOSSupported && isActive && isDefaultSmsSubId) ? 0
                         : (isESOSSupported && isActive) ? 1
@@ -6828,14 +6839,28 @@ public class SatelliteController extends Handler {
 
         // If priority has changed, send broadcast for provisioned ESOS subs IDs
         synchronized (mSatelliteTokenProvisionedLock) {
+            List<SatelliteSubscriberProvisionStatus> newEvaluatedSubscriberProvisionStatus =
+                    getPrioritizedSatelliteSubscriberProvisionStatusList(
+                            newSubsInfoListPerPriority);
             if (isPriorityChanged(mSubsInfoListPerPriority, newSubsInfoListPerPriority)
+                    || isSubscriberContentChanged(mLastEvaluatedSubscriberProvisionStatus,
+                            newEvaluatedSubscriberProvisionStatus)
                     || isChanged) {
                 mSubsInfoListPerPriority = newSubsInfoListPerPriority;
+                mLastEvaluatedSubscriberProvisionStatus = newEvaluatedSubscriberProvisionStatus;
                 sendBroadCastForProvisionedESOSSubs();
                 mHasSentBroadcast = true;
                 selectBindingSatelliteSubscription(false);
             }
         }
+    }
+
+    // to check if the contents of carrier config is loaded properly
+    private Boolean isCarrierConfigLoaded(int subId) {
+        PersistableBundle carrierConfig = mCarrierConfigManager
+                .getConfigForSubId(subId, KEY_CARRIER_CONFIG_APPLIED_BOOL);
+        return carrierConfig != null ? carrierConfig.getBoolean(
+                CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL) : false;
     }
 
     // The subscriberId for ntnOnly SIMs is the Iccid, whereas for ESOS supported SIMs, the
@@ -6900,6 +6925,24 @@ public class SatelliteController extends Handler {
         return false;
     }
 
+    // Checks if there are any changes between subscriberInfos. return false if the same.
+    // Note that, Use lists with the same priority so we can compare contents properly.
+    private boolean isSubscriberContentChanged(List<SatelliteSubscriberProvisionStatus> currentList,
+            List<SatelliteSubscriberProvisionStatus> newList) {
+        if (currentList.size() != newList.size()) {
+            return true;
+        }
+        for (int i = 0; i < currentList.size(); i++) {
+            SatelliteSubscriberProvisionStatus curSub = currentList.get(i);
+            SatelliteSubscriberProvisionStatus newSub = newList.get(i);
+            if (!curSub.getSatelliteSubscriberInfo().equals(newSub.getSatelliteSubscriberInfo())) {
+                logd("isSubscriberContentChanged: cur=" + curSub + " , new=" + newSub);
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void sendBroadCastForProvisionedESOSSubs() {
         String packageName = getConfigSatelliteGatewayServicePackage();
         String className = getConfigSatelliteCarrierRoamingEsosProvisionedClass();
@@ -6953,10 +6996,18 @@ public class SatelliteController extends Handler {
 
     private List<SatelliteSubscriberProvisionStatus>
             getPrioritizedSatelliteSubscriberProvisionStatusList() {
+        synchronized (mSatelliteTokenProvisionedLock) {
+            return getPrioritizedSatelliteSubscriberProvisionStatusList(mSubsInfoListPerPriority);
+        }
+    }
+
+    private List<SatelliteSubscriberProvisionStatus>
+            getPrioritizedSatelliteSubscriberProvisionStatusList(
+                    Map<Integer, List<SubscriptionInfo>> subsInfoListPerPriority) {
         List<SatelliteSubscriberProvisionStatus> list = new ArrayList<>();
         synchronized (mSatelliteTokenProvisionedLock) {
-            for (int priority : mSubsInfoListPerPriority.keySet()) {
-                List<SubscriptionInfo> infoList = mSubsInfoListPerPriority.get(priority);
+            for (int priority : subsInfoListPerPriority.keySet()) {
+                List<SubscriptionInfo> infoList = subsInfoListPerPriority.get(priority);
                 if (infoList == null) {
                     logd("getPrioritySatelliteSubscriberProvisionStatusList: no exist this "
                             + "priority " + priority);

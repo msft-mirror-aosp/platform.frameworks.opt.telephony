@@ -625,6 +625,13 @@ public class DatagramDispatcher extends Handler {
                     pendingDatagram.iterator().next().getValue();
             if (mDatagramController.needsWaitingForSatelliteConnected(datagramArg.datagramType)) {
                 plogd("sendPendingDatagrams: wait for satellite connected");
+                mDatagramController.updateSendStatus(datagramArg.subId,
+                        datagramArg.datagramType,
+                        SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
+                        getPendingMessagesCount(),
+                        SatelliteManager.SATELLITE_RESULT_SUCCESS);
+                startDatagramWaitForConnectedStateTimer(
+                        datagramArg.datagramType);
                 return;
             }
 
@@ -1144,16 +1151,23 @@ public class DatagramDispatcher extends Handler {
         }
 
         if (pendingSms != null && pendingSms.iterator().hasNext()) {
+            PendingRequest pendingRequest = pendingSms.iterator().next().getValue();
+            int datagramType = pendingRequest.isMtSmsPolling
+                    ? DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS : DATAGRAM_TYPE_SMS;
             if (mDatagramController.needsWaitingForSatelliteConnected(DATAGRAM_TYPE_SMS)) {
                 plogd("sendPendingSms: wait for satellite connected");
+                mDatagramController.updateSendStatus(subId,
+                        datagramType,
+                        SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
+                        getPendingMessagesCount(),
+                        SatelliteManager.SATELLITE_RESULT_SUCCESS);
+                startDatagramWaitForConnectedStateTimer(datagramType);
                 return;
             }
 
             mSendingInProgress = true;
-            PendingRequest pendingRequest = pendingSms.iterator().next().getValue();
             mDatagramController.updateSendStatus(subId,
-                    pendingRequest.isMtSmsPolling ?
-                            DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS : DATAGRAM_TYPE_SMS,
+                    datagramType,
                     SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
                     getPendingMessagesCount(), SATELLITE_RESULT_SUCCESS);
             sendMessage(obtainMessage(CMD_SEND_SMS, pendingRequest));
