@@ -601,6 +601,11 @@ public class EmergencyStateTracker {
                     releaseWakeLock();
                     ((GsmCdmaPhone) mPhone).notifyEcbmTimerReset(Boolean.TRUE);
 
+                    if (mFeatureFlags.emergencyCallbackModeNotification()) {
+                        mPhone.stopEmergencyCallbackMode(EMERGENCY_CALLBACK_MODE_CALL,
+                                STOP_REASON_OUTGOING_EMERGENCY_CALL_INITIATED);
+                    }
+
                     mOngoingCallProperties = 0;
                     mCallEmergencyModeFuture = new CompletableFuture<>();
                     setEmergencyMode(mPhone, EMERGENCY_TYPE_CALL, MODE_EMERGENCY_WWAN,
