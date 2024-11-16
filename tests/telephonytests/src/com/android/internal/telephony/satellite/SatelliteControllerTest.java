@@ -4569,6 +4569,18 @@ public class SatelliteControllerTest extends TelephonyTest {
                 }
             }
         };
+
+        TestSubscriptionManager testSubscriptionManager = new TestSubscriptionManager();
+        doAnswer(invocation -> {
+            testSubscriptionManager.setIsSatelliteProvisionedForNonIpDatagram(
+                    invocation.getArgument(0), invocation.getArgument(1));
+            return null;
+        }).when(mMockSubscriptionManagerService).setIsSatelliteProvisionedForNonIpDatagram(anyInt(),
+                anyBoolean());
+        doAnswer(invocation -> testSubscriptionManager.isSatelliteProvisionedForNonIpDatagram(
+                invocation.getArgument(0))).when(
+                mMockSubscriptionManagerService).isSatelliteProvisionedForNonIpDatagram(anyInt());
+
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         int errorCode = mSatelliteControllerUT.registerForSatelliteProvisionStateChanged(callback);
@@ -6021,5 +6033,22 @@ public class SatelliteControllerTest extends TelephonyTest {
         mSatelliteControllerUT.setNtnSmsSupportedByMessagesApp(true);
         assertTrue(mSharedPreferences.getBoolean(
                 SatelliteController.NTN_SMS_SUPPORTED_BY_MESSAGES_APP_KEY, false));
+    }
+
+    private static class TestSubscriptionManager {
+        public Map<Integer, Boolean> mSatelliteProvisionedForNonIpDatagram = new HashMap<>();
+
+        public void resetProvisionMapForNonIpDatagram() {
+            mSatelliteProvisionedForNonIpDatagram.clear();
+        }
+
+        public void setIsSatelliteProvisionedForNonIpDatagram(int subId, boolean provisioned) {
+            mSatelliteProvisionedForNonIpDatagram.put(subId, provisioned);
+        }
+
+        public boolean isSatelliteProvisionedForNonIpDatagram(int subId) {
+            Boolean isProvisioned = mSatelliteProvisionedForNonIpDatagram.get(subId);
+            return isProvisioned != null ? isProvisioned : false;
+        }
     }
 }

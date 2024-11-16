@@ -4580,14 +4580,31 @@ public class SatelliteController extends Handler {
         boolean provisionChanged = false;
         synchronized (mSatelliteTokenProvisionedLock) {
             for (SatelliteSubscriberInfo subscriberInfo : newList) {
+
+                int subId = subscriberInfo.getSubId();
                 Boolean currentProvisioned =
                         mProvisionedSubscriberId.get(subscriberInfo.getSubscriberId());
-                if (currentProvisioned != null && currentProvisioned == provisioned) {
+                if (currentProvisioned == null) {
+                    currentProvisioned = false;
+                }
+
+                Boolean isProvisionedInPersistentDb = false;
+                try {
+                    isProvisionedInPersistentDb = mSubscriptionManagerService
+                         .isSatelliteProvisionedForNonIpDatagram(subId);
+                    if (isProvisionedInPersistentDb == null) {
+                        isProvisionedInPersistentDb = false;
+                    }
+                } catch (IllegalArgumentException | SecurityException ex) {
+                    ploge("isSatelliteProvisionedForNonIpDatagram: subId=" + subId + ", ex="
+                            + ex);
+                }
+                if (currentProvisioned == provisioned
+                        && isProvisionedInPersistentDb == provisioned) {
                     continue;
                 }
                 provisionChanged = true;
                 mProvisionedSubscriberId.put(subscriberInfo.getSubscriberId(), provisioned);
-                int subId = subscriberInfo.getSubId();
                 try {
                     mSubscriptionManagerService.setIsSatelliteProvisionedForNonIpDatagram(subId,
                             provisioned);
