@@ -1234,7 +1234,7 @@ public class SmsDispatchersController extends Handler {
             boolean isOverIms, boolean isLastSmsPart, boolean success) {
         notifySmsSentToEmergencyStateTracker(tracker.mDestAddress,
             tracker.mMessageId, isOverIms, isLastSmsPart, success);
-        notifySmsSentToDatagramDispatcher(tracker.mUniqueMessageId, success);
+        notifySmsSentToDatagramDispatcher(tracker.mUniqueMessageId, isLastSmsPart, success);
     }
 
     /**
@@ -1254,9 +1254,11 @@ public class SmsDispatchersController extends Handler {
         }
     }
 
-    private void notifySmsSentToDatagramDispatcher(long messageId, boolean success) {
+    private void notifySmsSentToDatagramDispatcher(
+            long messageId, boolean isLastSmsPart, boolean success) {
         if (SatelliteController.getInstance().shouldSendSmsToDatagramDispatcher(mPhone)) {
-            DatagramDispatcher.getInstance().onSendSmsDone(mPhone.getSubId(), messageId, success);
+            DatagramDispatcher.getInstance().onSendSmsDone(
+                    mPhone.getSubId(), messageId, isLastSmsPart, success);
         }
     }
 

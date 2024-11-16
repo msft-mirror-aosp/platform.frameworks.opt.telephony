@@ -406,9 +406,10 @@ public class DatagramDispatcher extends Handler {
                 SomeArgs args = (SomeArgs) msg.obj;
                 int subId = (int) args.arg1;
                 long messageId = (long) args.arg2;
-                boolean success = (boolean) args.arg3;
+                boolean isLastPartSms = (boolean) args.arg3;
+                boolean success = (boolean) args.arg4;
                 try {
-                    handleEventSendSmsDone(subId, messageId, success);
+                    handleEventSendSmsDone(subId, messageId, isLastPartSms, success);
                 } finally {
                     args.recycle();
                 }
@@ -1181,13 +1182,15 @@ public class DatagramDispatcher extends Handler {
      * Sending MO SMS is completed.
      * @param subId subscription ID
      * @param messageId message ID of MO SMS
+     * @param isLastSmsPart whether this is the last sms part of MO SMS
      * @param success boolean specifying whether MO SMS is successfully sent or not.
      */
-    public void onSendSmsDone(int subId, long messageId, boolean success) {
+    public void onSendSmsDone(int subId, long messageId, boolean isLastSmsPart, boolean success) {
         SomeArgs args = SomeArgs.obtain();
         args.arg1 = subId;
         args.arg2 = messageId;
-        args.arg3 = success;
+        args.arg3 = isLastSmsPart;
+        args.arg4 = success;
         sendMessage(obtainMessage(EVENT_SEND_SMS_DONE, args));
     }
 
@@ -1228,7 +1231,8 @@ public class DatagramDispatcher extends Handler {
         pendingSmsMap.clear();
     }
 
-    private void handleEventSendSmsDone(int subId, long messageId, boolean success) {
+    private void handleEventSendSmsDone(
+            int subId, long messageId, boolean isLastPartSms, boolean success) {
         synchronized (mLock) {
             mSendingInProgress = false;
             PendingRequest pendingSms = mPendingSmsMap.remove(messageId);
@@ -1236,12 +1240,16 @@ public class DatagramDispatcher extends Handler {
                     ? DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS  : DATAGRAM_TYPE_SMS;
 
             plogd("handleEventSendSmsDone subId=" + subId + " messageId=" + messageId
-                    + " success=" + success);
+                    + " isLastPartSms=" + isLastPartSms + " success=" + success
+                    + " datagramType=" + datagramType);
+
             if (success) {
-                // Update send status for current datagram
-                mDatagramController.updateSendStatus(subId, datagramType,
-                        SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS,
-                        getPendingMessagesCount(), SATELLITE_RESULT_SUCCESS);
+                if (isLastPartSms) {
+                    // Update send status only after all parts of the SMS are sent
+                    mDatagramController.updateSendStatus(subId, datagramType,
+                            SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS,
+                            getPendingMessagesCount(), SATELLITE_RESULT_SUCCESS);
+                }
                 if (datagramType == DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS) {
                     startMtSmsPollingThrottle();
                 }

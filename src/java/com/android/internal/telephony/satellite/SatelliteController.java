@@ -2754,11 +2754,6 @@ public class SatelliteController extends Handler {
      */
     @SatelliteManager.SatelliteResult public int registerForSatelliteProvisionStateChanged(
             @NonNull ISatelliteProvisionStateCallback callback) {
-        int error = evaluateOemSatelliteRequestAllowed(false);
-        if (error != SATELLITE_RESULT_SUCCESS) {
-            return error;
-        }
-
         mSatelliteProvisionStateChangedListeners.put(callback.asBinder(), callback);
 
         boolean isProvisioned = Boolean.TRUE.equals(isDeviceProvisioned());
@@ -4451,6 +4446,7 @@ public class SatelliteController extends Handler {
         }
         registerForSatelliteSupportedStateChanged();
         selectBindingSatelliteSubscription(false);
+        notifySatelliteSupportedStateChanged(supported);
     }
 
     private void updateSatelliteEnabledState(boolean enabled, String caller) {
@@ -4778,7 +4774,9 @@ public class SatelliteController extends Handler {
             }
             mIsSatelliteSupported = supported;
         }
+    }
 
+    private void notifySatelliteSupportedStateChanged(boolean supported) {
         List<ISatelliteSupportedStateCallback> deadCallersList = new ArrayList<>();
         mSatelliteSupportedStateChangedListeners.values().forEach(listener -> {
             try {
@@ -7866,7 +7864,8 @@ public class SatelliteController extends Handler {
         return carrierRoamingNtnSignalStrength;
     }
 
-    private void updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(@Nullable Phone phone) {
+    protected void updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(
+            @Nullable Phone phone) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) return;
         if (phone == null) {
             return;
