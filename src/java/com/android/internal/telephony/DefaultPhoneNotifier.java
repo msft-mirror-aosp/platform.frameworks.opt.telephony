@@ -25,12 +25,14 @@ import android.telephony.BarringInfo;
 import android.telephony.CallQuality;
 import android.telephony.CellIdentity;
 import android.telephony.CellInfo;
+import android.telephony.CellularIdentifierDisclosure;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneCapability;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseCallState;
 import android.telephony.PreciseDataConnectionState;
+import android.telephony.SecurityAlgorithmUpdate;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager.DataEnabledReason;
@@ -354,6 +356,23 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
             @NonNull NtnSignalStrength ntnSignalStrength) {
         mTelephonyRegistryMgr.notifyCarrierRoamingNtnSignalStrengthChanged(
                 sender.getSubId(), ntnSignalStrength);
+    }
+
+    @Override
+    public void notifySecurityAlgorithmsChanged(Phone sender, SecurityAlgorithmUpdate update) {
+        if (!mFeatureFlags.securityAlgorithmsUpdateIndications()) return;
+
+        mTelephonyRegistryMgr.notifySecurityAlgorithmsChanged(sender.getPhoneId(),
+                sender.getSubId(), update);
+    }
+
+    @Override
+    public void notifyCellularIdentifierDisclosedChanged(Phone sender,
+            CellularIdentifierDisclosure disclosure) {
+        if (!mFeatureFlags.cellularIdentifierDisclosureIndications()) return;
+
+        mTelephonyRegistryMgr.notifyCellularIdentifierDisclosedChanged(sender.getPhoneId(),
+                sender.getSubId(), disclosure);
     }
 
     /**
