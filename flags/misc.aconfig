@@ -220,3 +220,13 @@ flag {
     }
 }
 
+# OWNER=jackyu TARGET=25Q2
+flag {
+    name: "power_down_race_fix"
+    namespace: "telephony"
+    description: "Fixed race condition while powering down"
+    bug:"378616116"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}

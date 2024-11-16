@@ -824,7 +824,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId,
+                true, true);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -858,7 +859,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, false);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId,
+                true, false);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -1056,7 +1058,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId,
+                true, true);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -1107,7 +1110,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
         processAllMessages();
         verifyZeroInteractions(mMockSatelliteModemInterface);
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId,
+                true, true);
         processAllMessages();
         mInOrder.verify(mMockDatagramController)
                 .updateSendStatus(eq(SUB_ID), eq(datagramTypeSms),
