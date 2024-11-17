@@ -25,11 +25,13 @@ import android.telephony.BarringInfo;
 import android.telephony.CallQuality;
 import android.telephony.CellIdentity;
 import android.telephony.CellInfo;
+import android.telephony.CellularIdentifierDisclosure;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneCapability;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseDataConnectionState;
+import android.telephony.SecurityAlgorithmUpdate;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager.DataEnabledReason;
@@ -174,4 +176,11 @@ public interface PhoneNotifier {
     /** Notify carrier roaming non-terrestrial network signal strength changed. */
     void notifyCarrierRoamingNtnSignalStrengthChanged(Phone sender,
             @NonNull NtnSignalStrength ntnSignalStrength);
+
+    /** Notify of a cellular identifier disclosure change. */
+    void notifyCellularIdentifierDisclosedChanged(Phone sender,
+            CellularIdentifierDisclosure disclosure);
+
+    /** Notify of a security algorithm update change. */
+    void notifySecurityAlgorithmsChanged(Phone sender, SecurityAlgorithmUpdate update);
 }

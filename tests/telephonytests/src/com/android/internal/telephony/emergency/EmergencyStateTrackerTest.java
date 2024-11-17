@@ -1107,7 +1107,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         verify(phone0, never()).exitEmergencyMode(any(Message.class));
         verify(phone0, times(2)).startEmergencyCallbackMode(
                 eq(EMERGENCY_CALLBACK_MODE_CALL), anyLong());
-        verify(phone0, never()).stopEmergencyCallbackMode(
+        verify(phone0, times(1)).stopEmergencyCallbackMode(
                 eq(EMERGENCY_CALLBACK_MODE_CALL), anyInt());
     }
 

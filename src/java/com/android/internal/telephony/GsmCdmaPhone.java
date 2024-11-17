@@ -1893,8 +1893,15 @@ public class GsmCdmaPhone extends Phone {
     @Override
     public void setRadioPowerForReason(boolean power, boolean forEmergencyCall,
             boolean isSelectedPhoneForEmergencyCall, boolean forceApply, int reason) {
-        mSST.setRadioPowerForReason(power, forEmergencyCall, isSelectedPhoneForEmergencyCall,
-                forceApply, reason);
+        if (mFeatureFlags.powerDownRaceFix()) {
+            // setRadioPowerForReason can be called by the binder thread. We need to move that into
+            // the main thread to prevent race condition.
+            post(() -> mSST.setRadioPowerForReason(power, forEmergencyCall,
+                    isSelectedPhoneForEmergencyCall, forceApply, reason));
+        } else {
+            mSST.setRadioPowerForReason(power, forEmergencyCall, isSelectedPhoneForEmergencyCall,
+                    forceApply, reason);
+        }
     }
 
     @Override

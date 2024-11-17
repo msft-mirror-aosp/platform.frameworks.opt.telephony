@@ -67,6 +67,7 @@ import android.telephony.satellite.SatelliteManager;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
+import com.android.internal.R;
 import com.android.internal.telephony.IIntegerConsumer;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.flags.FeatureFlags;
@@ -146,6 +147,9 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         Resources resources = mContext.getResources();
         when(resources.getInteger(anyInt())).thenReturn(TEST_SATELLITE_TIMEOUT_MILLIS);
+        when(resources.getBoolean(
+                 R.bool.config_satellite_modem_support_concurrent_tn_scanning))
+            .thenReturn(false);
 
         when(mFeatureFlags.satellitePersistentLogging()).thenReturn(true);
         when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(false);
@@ -1526,23 +1530,6 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
                 SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
         assertEquals(STATE_IDLE, mTestSatelliteSessionController.getCurrentStateName());
 
-        // Set up error response for the request to disable cellular scanning
-        mSatelliteModemInterface.setErrorCode(SatelliteManager.SATELLITE_RESULT_MODEM_ERROR);
-
-        // Start sending datagrams
-        mTestSatelliteSessionController.onDatagramTransferStateChanged(
-                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
-                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
-                DATAGRAM_TYPE_UNKNOWN);
-        processAllMessages();
-
-        // SatelliteSessionController should stay at IDLE state because it failed to disable
-        // cellular scanning.
-        assertModemStateChangedCallbackNotCalled(mTestSatelliteModemStateCallback);
-        assertEquals(STATE_IDLE, mTestSatelliteSessionController.getCurrentStateName());
-
-        mSatelliteModemInterface.setErrorCode(SatelliteManager.SATELLITE_RESULT_SUCCESS);
-
         // Power off the modem.
         mTestSatelliteSessionController.onSatelliteEnabledStateChanged(false);
         processAllMessages();
@@ -1857,6 +1844,283 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         assertEmergencyModeChangedCallbackNotCalled(mTestSatelliteModemStateCallback);
     }
 
+    @Test
+    public void testNotConnectedToIdleToNotConnectedStateTransition() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
+        when(mContext.getResources().getBoolean(
+                 R.bool.config_satellite_modem_support_concurrent_tn_scanning)).thenReturn(true);
+
+        assertNotNull(mTestSatelliteSessionController);
+        assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
+        setupDatagramTransferringState(true);
+
+        powerOnSatelliteModem();
+
+        // SatelliteSessionController should move to NOT_CONNECTED state after the satellite modem
+        // is powered on.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        assertEquals(STATE_NOT_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
+        // The inactivity timer should be started.
+        assertTrue(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        clearInvocations(mMockDatagramController);
+
+        // Wait for timeout
+        moveTimeForward(TEST_SATELLITE_TIMEOUT_MILLIS);
+        processAllMessages();
+
+        // SatelliteSessionController should move to IDLE state, but the state transition will
+        // be hidden because device does not support satellite modem IDLE state.
+        assertModemStateChangedCallbackNotCalled(mTestSatelliteModemStateCallback);
+        assertEquals(STATE_IDLE, mTestSatelliteSessionController.getCurrentStateName());
+        // The inactivity timer should be stopped.
+        assertFalse(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        // The transition is hidden and thus DatagramController is not notified.
+        verify(mMockDatagramController, never()).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
+        clearInvocations(mMockDatagramController);
+
+        // Start sending datagrams
+        mTestSatelliteSessionController.onDatagramTransferStateChanged(
+                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
+        processAllMessages();
+
+        // SatelliteSessionController should move to NOT_CONNECTED state
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        assertEquals(STATE_NOT_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        clearInvocations(mMockDatagramController);
+    }
+
+    @Test
+    public void testNotConnectedToIdleToTransferringStateTransition() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
+        when(mContext.getResources().getBoolean(
+                 R.bool.config_satellite_modem_support_concurrent_tn_scanning)).thenReturn(true);
+
+        assertNotNull(mTestSatelliteSessionController);
+        assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
+        setupDatagramTransferringState(true);
+
+        powerOnSatelliteModem();
+
+        // SatelliteSessionController should move to NOT_CONNECTED state after the satellite modem
+        // is powered on.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        assertEquals(STATE_NOT_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
+        // The inactivity timer should be started.
+        assertTrue(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        clearInvocations(mMockDatagramController);
+
+        // Wait for timeout
+        moveTimeForward(TEST_SATELLITE_TIMEOUT_MILLIS);
+        processAllMessages();
+
+        // SatelliteSessionController should move to IDLE state, but the state transition will
+        // be hidden because device does not support satellite modem IDLE state.
+        assertModemStateChangedCallbackNotCalled(mTestSatelliteModemStateCallback);
+        assertEquals(STATE_IDLE, mTestSatelliteSessionController.getCurrentStateName());
+        // The inactivity timer should be stopped.
+        assertFalse(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        // The transition is hidden and thus DatagramController is not notified.
+        verify(mMockDatagramController, never()).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
+        clearInvocations(mMockDatagramController);
+
+        // Modem report CONNECTED state
+        mTestSatelliteSessionController.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        processAllMessages();
+
+        // SatelliteSessionController should stay in IDLE state, but clients should be
+        // notified that modem has moved to CONNECTED state.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        assertEquals(STATE_IDLE, mTestSatelliteSessionController.getCurrentStateName());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        clearInvocations(mMockDatagramController);
+
+        // Start sending datagrams
+        mTestSatelliteSessionController.onDatagramTransferStateChanged(
+                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
+        processAllMessages();
+
+        // SatelliteSessionController should move to TRANSFERRING state.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING);
+        assertEquals(STATE_TRANSFERRING, mTestSatelliteSessionController.getCurrentStateName());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING);
+        clearInvocations(mMockDatagramController);
+    }
+
+    @Test
+    public void testConnectedToIdleToTransferringStateTransition() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
+        when(mContext.getResources().getBoolean(
+                 R.bool.config_satellite_modem_support_concurrent_tn_scanning)).thenReturn(true);
+
+        assertNotNull(mTestSatelliteSessionController);
+        assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
+        setupDatagramTransferringState(false);
+
+        powerOnSatelliteModem();
+
+        // SatelliteSessionController should move to NOT_CONNECTED state after the satellite modem
+        // is powered on.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        assertEquals(STATE_NOT_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
+        assertFalse(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        clearInvocations(mMockDatagramController);
+
+        // Modem report CONNECTED state
+        setupDatagramTransferringState(true);
+        mTestSatelliteSessionController.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        processAllMessages();
+
+        // SatelliteSessionController should move to CONNECTED state.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        assertEquals(STATE_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
+        // The inactivity timer should be started.
+        assertTrue(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        clearInvocations(mMockDatagramController);
+
+        // Wait for timeout
+        moveTimeForward(TEST_SATELLITE_TIMEOUT_MILLIS);
+        processAllMessages();
+
+        // SatelliteSessionController should move to IDLE state, but the state transition will
+        // be hidden because device does not support satellite modem IDLE state.
+        assertModemStateChangedCallbackNotCalled(mTestSatelliteModemStateCallback);
+        assertEquals(STATE_IDLE, mTestSatelliteSessionController.getCurrentStateName());
+        // The inactivity timer should be stopped.
+        assertFalse(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        // The transition is hidden and thus DatagramController is not notified.
+        verify(mMockDatagramController, never()).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
+        clearInvocations(mMockDatagramController);
+
+        // Start sending datagrams
+        mTestSatelliteSessionController.onDatagramTransferStateChanged(
+                SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
+        processAllMessages();
+
+        // SatelliteSessionController should move to TRANSFERRING state.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING);
+        assertEquals(STATE_TRANSFERRING, mTestSatelliteSessionController.getCurrentStateName());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING);
+        clearInvocations(mMockDatagramController);
+    }
+
+    @Test
+    public void testConnectedToIdleToNotConnectedStateTransition() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
+        when(mContext.getResources().getBoolean(
+                 R.bool.config_satellite_modem_support_concurrent_tn_scanning)).thenReturn(true);
+
+        assertNotNull(mTestSatelliteSessionController);
+        assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
+        setupDatagramTransferringState(false);
+
+        powerOnSatelliteModem();
+
+        // SatelliteSessionController should move to NOT_CONNECTED state after the satellite modem
+        // is powered on.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        assertEquals(STATE_NOT_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
+        assertFalse(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        clearInvocations(mMockDatagramController);
+
+        // Modem report CONNECTED state
+        setupDatagramTransferringState(true);
+        mTestSatelliteSessionController.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        processAllMessages();
+
+        // SatelliteSessionController should move to CONNECTED state.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        assertEquals(STATE_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
+        // The inactivity timer should be started.
+        assertTrue(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        clearInvocations(mMockDatagramController);
+
+        // Wait for timeout
+        moveTimeForward(TEST_SATELLITE_TIMEOUT_MILLIS);
+        processAllMessages();
+
+        // SatelliteSessionController should move to IDLE state, but the state transition will
+        // be hidden because device does not support satellite modem IDLE state.
+        assertModemStateChangedCallbackNotCalled(mTestSatelliteModemStateCallback);
+        assertEquals(STATE_IDLE, mTestSatelliteSessionController.getCurrentStateName());
+        // The inactivity timer should be stopped.
+        assertFalse(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
+        // The transition is hidden and thus DatagramController is not notified.
+        verify(mMockDatagramController, never()).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
+        clearInvocations(mMockDatagramController);
+
+        // Modem report NOT_CONNECTED state
+        mTestSatelliteSessionController.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        processAllMessages();
+
+        // SatelliteSessionController should stay in IDLE state, but the clients
+        // should be notified that modem has moved to NOT_CONNECTED state.
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        assertEquals(STATE_IDLE, mTestSatelliteSessionController.getCurrentStateName());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        clearInvocations(mMockDatagramController);
+
+        // Start sending datagrams
+        mTestSatelliteSessionController.onDatagramTransferStateChanged(
+                SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
+                DATAGRAM_TYPE_UNKNOWN);
+        processAllMessages();
+
+        // SatelliteSessionController should move to NOT_CONNECTED state
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        assertEquals(STATE_NOT_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
+        verify(mMockDatagramController).onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+        clearInvocations(mMockDatagramController);
+    }
 
     private void verifyEsosP2pSmsInactivityTimer(boolean esosTimer, boolean p2pSmsTimer) {
         assertEquals(mTestSatelliteSessionController.isEsosInActivityTimerStarted(), esosTimer);
@@ -1878,9 +2142,9 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         processAllMessages();
     }
 
-    private void setupDatagramTransferringState(boolean isTransferring) {
-        when(mMockDatagramController.isSendingInIdleState()).thenReturn(isTransferring);
-        when(mMockDatagramController.isPollingInIdleState()).thenReturn(isTransferring);
+    private void setupDatagramTransferringState(boolean isIdle) {
+        when(mMockDatagramController.isSendingInIdleState()).thenReturn(isIdle);
+        when(mMockDatagramController.isPollingInIdleState()).thenReturn(isIdle);
     }
 
     private void powerOnSatelliteModem() {
