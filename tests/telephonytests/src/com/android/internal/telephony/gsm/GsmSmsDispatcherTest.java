@@ -70,6 +70,7 @@ import com.android.internal.telephony.SmsDispatchersController;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.TelephonyTestUtils;
 import com.android.internal.telephony.TestApplication;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.IsimUiccRecords;
 
@@ -377,23 +378,35 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
                 any(ICarrierMessagingCallback.class));
     }
 
-    @Test
-    @SmallTest
-    @Ignore("b/256282780")
-    public void testSendSmsByCarrierApp() throws Exception {
+    private int sendSmsWithCarrierAppResponse(int carrierAppResultCode) throws Exception {
         mockCarrierApp();
-        mockCarrierAppStubResults(CarrierMessagingService.SEND_STATUS_OK,
-                mICarrierAppMessagingService, true);
+        mockCarrierAppStubResults(carrierAppResultCode, mICarrierAppMessagingService, true);
         registerTestIntentReceiver();
 
-        PendingIntent pendingIntent = PendingIntent.getBroadcast(TestApplication.getAppContext(), 0,
-                new Intent(TEST_INTENT)
-                        .setPackage(TestApplication.getAppContext().getPackageName()),
-                PendingIntent.FLAG_MUTABLE);
+        PendingIntent pendingIntent =
+                PendingIntent.getBroadcast(
+                        TestApplication.getAppContext(),
+                        0,
+                        new Intent(TEST_INTENT)
+                                .setPackage(TestApplication.getAppContext().getPackageName()),
+                        PendingIntent.FLAG_MUTABLE);
         mReceivedTestIntent = false;
 
-        mGsmSmsDispatcher.sendText("6501002000", "121" /*scAddr*/, "test sms",
-                pendingIntent, null, null, null, mCallingUserId, false, -1, false, -1, false, 0L);
+        mGsmSmsDispatcher.sendText(
+                "6501002000",
+                "121" /*scAddr*/,
+                "test sms",
+                pendingIntent,
+                null,
+                null,
+                null,
+                mCallingUserId,
+                false,
+                -1,
+                false,
+                -1,
+                false,
+                0L);
         processAllMessages();
         synchronized (mLock) {
             if (!mReceivedTestIntent) {
@@ -402,11 +415,44 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
             }
             assertEquals(true, mReceivedTestIntent);
             int resultCode = mTestReceiver.getResultCode();
-            assertTrue("Unexpected result code: " + resultCode,
-                    resultCode == SmsManager.RESULT_ERROR_NONE || resultCode == Activity.RESULT_OK);
-            verify(mSimulatedCommandsVerifier, times(0)).sendSMS(anyString(), anyString(),
-                    any(Message.class));
+            verify(mSimulatedCommandsVerifier, times(0))
+                    .sendSMS(anyString(), anyString(), any(Message.class));
+            return resultCode;
         }
+    }
+
+    @Test
+    @SmallTest
+    @Ignore("b/256282780")
+    public void testSendSmsByCarrierApp() throws Exception {
+        int resultCode = sendSmsWithCarrierAppResponse(CarrierMessagingService.SEND_STATUS_OK);
+        assertTrue(
+                "Unexpected result code: " + resultCode,
+                resultCode == SmsManager.RESULT_ERROR_NONE || resultCode == Activity.RESULT_OK);
+    }
+
+    @Test
+    @SmallTest
+    public void testSendSmsByCarrierApp_PermanentFailure() throws Exception {
+        int resultCode = sendSmsWithCarrierAppResponse(CarrierMessagingService.SEND_STATUS_ERROR);
+        assertTrue(
+                "Unexpected result code: " + resultCode,
+                resultCode == SmsManager.RESULT_RIL_GENERIC_ERROR);
+    }
+
+    @Test
+    @SmallTest
+    public void testSendSmsByCarrierApp_FailureWithReason() throws Exception {
+        if (!Flags.temporaryFailuresInCarrierMessagingService()) {
+            return;
+        }
+        doReturn(true).when(mFeatureFlags).temporaryFailuresInCarrierMessagingService();
+        int resultCode =
+                sendSmsWithCarrierAppResponse(
+                        CarrierMessagingService.SEND_STATUS_RESULT_ERROR_NO_SERVICE);
+        assertTrue(
+                "Unexpected result code: " + resultCode,
+                resultCode == SmsManager.RESULT_ERROR_NO_SERVICE);
     }
 
     @Test
