@@ -41,6 +41,7 @@ import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteManager;
 import android.telephony.satellite.SatelliteManager.SatelliteException;
 import android.telephony.satellite.SatelliteModemEnableRequestAttributes;
+import android.telephony.satellite.SystemSelectionSpecifier;
 import android.telephony.satellite.stub.INtnSignalStrengthConsumer;
 import android.telephony.satellite.stub.ISatellite;
 import android.telephony.satellite.stub.ISatelliteCapabilitiesConsumer;
@@ -1381,6 +1382,42 @@ public class SatelliteModemInterface {
         mIsSatelliteServiceSupported = getSatelliteServiceSupport();
         bindService();
         mExponentialBackoff.start();
+    }
+
+    /**
+     * Request to update system selection channels
+     *
+     * @param systemSelectionSpecifier system selection specifiers
+     * @param message The Message to send to result of the operation to.
+     */
+    public void updateSystemSelectionChannels(
+            @NonNull SystemSelectionSpecifier systemSelectionSpecifier,
+            @Nullable Message message) {
+        plogd("updateSystemSelectionChannels: SystemSelectionSpecifier: "
+                + systemSelectionSpecifier.toString());
+        if (mSatelliteService != null) {
+            try {
+                mSatelliteService.updateSystemSelectionChannels(SatelliteServiceUtils
+                                .toSystemSelectionSpecifier(systemSelectionSpecifier),
+                        new IIntegerConsumer.Stub() {
+                            @Override
+                            public void accept(int result) {
+                                int error = SatelliteServiceUtils.fromSatelliteError(result);
+                                plogd("updateSystemSelectionChannels: " + error);
+                                Binder.withCleanCallingIdentity(() ->
+                                        sendMessageWithResult(message, null, error));
+                            }
+                        });
+            } catch (RemoteException e) {
+                ploge("updateSystemSelectionChannels: RemoteException " + e);
+                sendMessageWithResult(message, null,
+                        SatelliteManager.SATELLITE_RESULT_SERVICE_ERROR);
+            }
+        } else {
+            ploge("updateSystemSelectionChannels: Satellite service is unavailable.");
+            sendMessageWithResult(message, null,
+                    SatelliteManager.SATELLITE_RESULT_RADIO_NOT_AVAILABLE);
+        }
     }
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
