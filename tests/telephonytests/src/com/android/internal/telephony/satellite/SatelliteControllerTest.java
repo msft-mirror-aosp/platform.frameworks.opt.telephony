@@ -1702,6 +1702,7 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testRegisterForSatelliteProvisionStateChanged() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         Semaphore semaphore = new Semaphore(0);
         ISatelliteProvisionStateCallback callback =
                 new ISatelliteProvisionStateCallback.Stub() {
@@ -1753,7 +1754,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         processAllMessages();
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteProvisionStateChanged"));
-
         mSatelliteControllerUT.unregisterForSatelliteProvisionStateChanged(callback);
         semaphore.drainPermits();
         cancelRemote = mSatelliteControllerUT.provisionSatelliteService(
@@ -3650,7 +3650,10 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testHandleEventServiceStateChanged() {
+        mContextFixture.putBooleanResource(
+            R.bool.config_satellite_should_notify_availability, true);
         when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         mCarrierConfigBundle.putInt(KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT,
                 CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC);
         invokeCarrierConfigChanged();
@@ -4145,6 +4148,8 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testNotifyNtnEligibilityHysteresisTimedOut() {
+        mContextFixture.putBooleanResource(
+            R.bool.config_satellite_should_notify_availability, true);
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
         when(mServiceState2.getState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);

@@ -193,6 +193,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import com.android.internal.R;
 
 /**
  * Satellite controller is the backend service of
@@ -6395,6 +6396,13 @@ public class SatelliteController extends Handler {
      */
     private void updateSatelliteSystemNotification(int subId,
             @CARRIER_ROAMING_NTN_CONNECT_TYPE int carrierRoamingNtnConnectType, boolean visible) {
+        boolean notifySatelliteAvailabilityEnabled =
+            mContext.getResources().getBoolean(R.bool.config_satellite_should_notify_availability);
+        if (!mFeatureFlags.carrierRoamingNbIotNtn() || !notifySatelliteAvailabilityEnabled) {
+            plogd("updateSatelliteSystemNotification: satellite notifications are not enabled.");
+            return;
+        }
+
         plogd("updateSatelliteSystemNotification subId=" + subId + ", carrierRoamingNtnConnectType="
                 + SatelliteServiceUtils.carrierRoamingNtnConnectTypeToString(
                 carrierRoamingNtnConnectType) + ", visible=" + visible);

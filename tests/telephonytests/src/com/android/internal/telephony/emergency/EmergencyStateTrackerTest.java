@@ -27,7 +27,6 @@ import static android.telephony.TelephonyManager.EMERGENCY_CALLBACK_MODE_SMS;
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_CALLBACK;
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_WLAN;
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_WWAN;
-import static com.android.internal.telephony.emergency.EmergencyStateTracker.DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -106,6 +105,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
     private static final String TEST_SMS_ID = "1111";
     private static final String TEST_SMS_ID_2 = "2222";
     private static final int TEST_ECM_EXIT_TIMEOUT_MS = 500;
+    private static final int TEST_WAIT_FOR_IN_SERVICE_TIMEOUT_MS = 3000;
     private static final EmergencyRegistrationResult E_REG_RESULT = new EmergencyRegistrationResult(
             EUTRAN, REGISTRATION_STATE_HOME, DOMAIN_CS_PS, true, true, 0, 1, "001", "01", "US");
 
@@ -139,7 +139,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
             EmergencyStateTracker.getInstance();
         });
 
-        EmergencyStateTracker.make(mContext, true, mFeatureFlags);
+        EmergencyStateTracker
+                .make(mContext, true, TEST_WAIT_FOR_IN_SERVICE_TIMEOUT_MS, mFeatureFlags);
 
         assertNotNull(EmergencyStateTracker.getInstance());
     }
@@ -147,7 +148,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
     @Test
     @SmallTest
     public void getInstance_returnsSameInstance() {
-        EmergencyStateTracker.make(mContext, true, mFeatureFlags);
+        EmergencyStateTracker
+                .make(mContext, true, TEST_WAIT_FOR_IN_SERVICE_TIMEOUT_MS, mFeatureFlags);
         EmergencyStateTracker instance1 = EmergencyStateTracker.getInstance();
         EmergencyStateTracker instance2 = EmergencyStateTracker.getInstance();
 
@@ -184,7 +186,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
+                eq(false), eq(TEST_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
         // isOkToCall() should return true when IN_SERVICE state
         assertFalse(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_OUT_OF_SERVICE, false));
@@ -243,7 +245,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
+                eq(false), eq(TEST_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
         // onTimeout should return true when radion on
         assertFalse(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_OUT_OF_SERVICE, false));
@@ -292,7 +294,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
+                eq(false), eq(TEST_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
 
         // Hangup the call
         testConnection.setDisconnected(null);
@@ -330,7 +332,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         ArgumentCaptor<RadioOnStateListener.Callback> callback = ArgumentCaptor
                 .forClass(RadioOnStateListener.Callback.class);
         verify(mRadioOnHelper).triggerRadioOnAndListen(callback.capture(), eq(true), eq(testPhone),
-                eq(false), eq(DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
+                eq(false), eq(TEST_WAIT_FOR_IN_SERVICE_TIMEOUT_MS));
         // Verify future completes with DisconnectCause.POWER_OFF if radio not ready
         CompletableFuture<Void> unused = future.thenAccept((result) -> {
             assertEquals((Integer) result, (Integer) DisconnectCause.POWER_OFF);
@@ -3411,8 +3413,9 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         doNothing().when(mPhoneSwitcher).overrideDefaultDataForEmergency(
                 anyInt(), anyInt(), any());
         return new EmergencyStateTracker(mContext, mTestableLooper.getLooper(),
-                isSuplDdsSwitchRequiredForEmergencyCall, mPhoneFactoryProxy, mPhoneSwitcherProxy,
-                mTelephonyManagerProxy, mRadioOnHelper, TEST_ECM_EXIT_TIMEOUT_MS, mFeatureFlags);
+                isSuplDdsSwitchRequiredForEmergencyCall, TEST_WAIT_FOR_IN_SERVICE_TIMEOUT_MS,
+                mPhoneFactoryProxy, mPhoneSwitcherProxy, mTelephonyManagerProxy, mRadioOnHelper,
+                TEST_ECM_EXIT_TIMEOUT_MS, mFeatureFlags);
     }
 
     private Phone setupTestPhoneForEmergencyCall(boolean isRoaming, boolean isRadioOn) {
