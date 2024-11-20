@@ -193,7 +193,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
-import com.android.internal.R;
 
 /**
  * Satellite controller is the backend service of
@@ -8051,15 +8050,20 @@ public class SatelliteController extends Handler {
 
     /** Returns whether to send SMS to DatagramDispatcher or not. */
     public boolean shouldSendSmsToDatagramDispatcher(@Nullable Phone phone) {
-        if (!isInCarrierRoamingNbIotNtn(phone)) {
-            return false;
-        }
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            if (!isInCarrierRoamingNbIotNtn(phone)) {
+                return false;
+            }
 
-        if (isDemoModeEnabled()) {
-            return false;
-        }
+            if (isDemoModeEnabled()) {
+                return false;
+            }
 
-        int[] services = getSupportedServicesOnCarrierRoamingNtn(phone.getSubId());
-        return ArrayUtils.contains(services, NetworkRegistrationInfo.SERVICE_TYPE_SMS);
+            int[] services = getSupportedServicesOnCarrierRoamingNtn(phone.getSubId());
+            return ArrayUtils.contains(services, NetworkRegistrationInfo.SERVICE_TYPE_SMS);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
     }
 }
