@@ -577,6 +577,9 @@ public class SatelliteController extends Handler {
      * carrierPlmnList. */
     @GuardedBy("mSupportedSatelliteServicesLock")
     private final SparseArray<List<String>> mMergedPlmnListPerCarrier = new SparseArray<>();
+    /** Key Subscription ID, value : map to plmn info with related data plan. */
+    @GuardedBy("mSupportedSatelliteServicesLock")
+    SparseArray<Map<String, Integer>> mEntitlementDataPlanMapPerCarrier = new SparseArray<>();
     private static AtomicLong sNextSatelliteEnableRequestId = new AtomicLong(0);
     // key : subscriberId, value : provisioned or not.
     @GuardedBy("mSatelliteTokenProvisionedLock")
@@ -662,6 +665,10 @@ public class SatelliteController extends Handler {
     @GuardedBy("mSatelliteModemStateLock")
     @SatelliteManager.SatelliteModemState
     private int mSatelliteModemState = SatelliteManager.SATELLITE_MODEM_STATE_UNKNOWN;
+
+    // Data Plan types at entitlement for the plmn allowed
+    public static final int SATELLITE_DATA_PLAN_METERED = 0;
+    public static final int SATELLITE_DATA_PLAN_UNMETERED = 1;
     private BroadcastReceiver
             mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
                 @Override
@@ -4202,6 +4209,7 @@ public class SatelliteController extends Handler {
      */
     public void onSatelliteEntitlementStatusUpdated(int subId, boolean entitlementEnabled,
             @Nullable List<String> allowedPlmnList, @Nullable List<String> barredPlmnList,
+            @Nullable Map<String,Integer> plmnDataPlanMap,
             @Nullable IIntegerConsumer callback) {
         if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
             logd("onSatelliteEntitlementStatusUpdated: carrierEnabledSatelliteFlag is not enabled");
@@ -4221,6 +4229,9 @@ public class SatelliteController extends Handler {
         }
         if (barredPlmnList == null) {
             barredPlmnList = new ArrayList<>();
+        }
+        if (plmnDataPlanMap == null) {
+            plmnDataPlanMap = new HashMap<>();
         }
         logd("onSatelliteEntitlementStatusUpdated subId=" + subId + ", entitlementEnabled="
                 + entitlementEnabled + ", allowedPlmnList=["
@@ -4250,6 +4261,7 @@ public class SatelliteController extends Handler {
                 mMergedPlmnListPerCarrier.remove(subId);
                 mEntitlementPlmnListPerCarrier.put(subId, allowedPlmnList);
                 mEntitlementBarredPlmnListPerCarrier.put(subId, barredPlmnList);
+                mEntitlementDataPlanMapPerCarrier.put(subId, plmnDataPlanMap);
                 updatePlmnListPerCarrier(subId);
                 configureSatellitePlmnForCarrier(subId);
                 mSubscriptionManagerService.setSatelliteEntitlementPlmnList(subId, allowedPlmnList);
@@ -8262,5 +8274,29 @@ public class SatelliteController extends Handler {
         synchronized (mRadioStateLock) {
             return mWifiStateEnabled;
         }
+    }
+
+    /**
+     * Method to return the current data plan for the registered plmn based on entitlement
+     * provisioning information. Note: If no information at
+     * provisioning is supported this is overridden with operator carrier config information.
+     *
+     * @param subId current subscription id
+     * @param plmn current registered plmn information
+     *
+     * @return Data supported modes {@link SatelliteController#SATELLITE_DATA_PLAN_METERED}
+     */
+    public int getSatelliteDataPlanForPlmn(int subId, String plmn) {
+        if (plmn != null) {
+            synchronized (mSupportedSatelliteServicesLock) {
+                Map<String, Integer> dataplanMap = mEntitlementDataPlanMapPerCarrier.get(subId);
+                logd("data plan available for sub id:" + dataplanMap);
+                if (dataplanMap != null && dataplanMap.containsKey(plmn)) {
+                    return dataplanMap.get(plmn);
+                }
+            }
+        }
+        // TODO (Override with carrier config value when configuration defined)
+        return SATELLITE_DATA_PLAN_METERED;
     }
 }
