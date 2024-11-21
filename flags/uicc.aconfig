@@ -88,3 +88,11 @@ flag {
     description: "This flag controls the type of API that retrieves ISIM records, either hidden or system type."
     bug:"359721349"
 }
+
+# OWNER=jinjeong TARGET=25Q2
+flag {
+    name: "carrier_id_from_carrier_identifier"
+    namespace: "telephony"
+    description: "This flag controls to get a carrier id using a carrier identifier."
+    bug:"378778278"
+}
