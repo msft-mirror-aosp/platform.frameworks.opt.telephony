@@ -96,3 +96,14 @@ flag {
     description: "This flag controls to get a carrier id using a carrier identifier."
     bug:"378778278"
 }
+
+# OWNER=arunvoddu TARGET=25Q2
+flag {
+    name: "force_imsi_certificate_delete"
+    namespace: "telephony"
+    description: "This flag controls the IMSI certificate delete with out any condition."
+    bug:"235296888"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
