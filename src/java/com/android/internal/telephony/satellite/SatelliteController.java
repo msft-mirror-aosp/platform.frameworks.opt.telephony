@@ -33,6 +33,7 @@ import static android.telephony.CarrierConfigManager.KEY_EMERGENCY_MESSAGING_SUP
 import static android.telephony.CarrierConfigManager.KEY_REGIONAL_SATELLITE_EARFCN_BUNDLE;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_DATA_SUPPORT_MODE_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
@@ -580,6 +581,18 @@ public class SatelliteController extends Handler {
     /** Key Subscription ID, value : map to plmn info with related data plan. */
     @GuardedBy("mSupportedSatelliteServicesLock")
     SparseArray<Map<String, Integer>> mEntitlementDataPlanMapPerCarrier = new SparseArray<>();
+    /** Key Subscription ID, value : map to plmn info with related service type. */
+    @GuardedBy("mSupportedSatelliteServicesLock")
+    SparseArray<Map<String, List<Integer>>> mEntitlementServiceTypeMapPerCarrier =
+            new SparseArray<>();
+    /** Key Subscription ID, value : map to plmn info with related service policy for data service */
+    @GuardedBy("mSupportedSatelliteServicesLock")
+    SparseArray<Map<String, Integer>> mEntitlementDataServicePolicyMapPerCarrier =
+            new SparseArray<>();
+    /** Key Subscription ID, value : map to plmn info with related service policy for voice service */
+    @GuardedBy("mSupportedSatelliteServicesLock")
+    SparseArray<Map<String, Integer>> mEntitlementVoiceServicePolicyMapPerCarrier =
+            new SparseArray<>();
     private static AtomicLong sNextSatelliteEnableRequestId = new AtomicLong(0);
     // key : subscriberId, value : provisioned or not.
     @GuardedBy("mSatelliteTokenProvisionedLock")
@@ -3821,6 +3834,14 @@ public class SatelliteController extends Handler {
             return new ArrayList<>();
         }
         synchronized (mSupportedSatelliteServicesLock) {
+            Map<String, List<Integer>> allowedServicesList
+                    = mEntitlementServiceTypeMapPerCarrier.get(subId);
+            if (allowedServicesList != null && allowedServicesList.containsKey(plmn)) {
+                List<Integer> allowedServiceValues = allowedServicesList.get(plmn);
+                if (allowedServiceValues != null && !allowedServiceValues.isEmpty()) {
+                    return allowedServiceValues;
+                }
+            }
             if (mSatelliteServicesSupportedByCarriers.containsKey(subId)) {
                 Map<String, Set<Integer>> supportedServices =
                         mSatelliteServicesSupportedByCarriers.get(subId);
@@ -4205,11 +4226,18 @@ public class SatelliteController extends Handler {
      * @param entitlementEnabled {@code true} Satellite service enabled
      * @param allowedPlmnList    plmn allowed list to use the satellite service
      * @param barredPlmnList    plmn barred list to pass the modem
+     * @param plmnDataPlanMap   data plan map for the plmn
+     * @param plmnServiceTypeMap available services map for the plmn
+     * @param plmnDataServicePolicyMap data service policy map for the plmn
+     * @param plmnVoiceServicePolicyMap voice service policy map for the plmn
      * @param callback           callback for accept
      */
     public void onSatelliteEntitlementStatusUpdated(int subId, boolean entitlementEnabled,
             @Nullable List<String> allowedPlmnList, @Nullable List<String> barredPlmnList,
             @Nullable Map<String,Integer> plmnDataPlanMap,
+            @Nullable Map<String,List<Integer>> plmnServiceTypeMap,
+            @Nullable Map<String,Integer> plmnDataServicePolicyMap,
+            @Nullable Map<String,Integer> plmnVoiceServicePolicyMap,
             @Nullable IIntegerConsumer callback) {
         if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
             logd("onSatelliteEntitlementStatusUpdated: carrierEnabledSatelliteFlag is not enabled");
@@ -4232,6 +4260,15 @@ public class SatelliteController extends Handler {
         }
         if (plmnDataPlanMap == null) {
             plmnDataPlanMap = new HashMap<>();
+        }
+        if (plmnServiceTypeMap == null) {
+            plmnServiceTypeMap = new HashMap<>();
+        }
+        if (plmnDataServicePolicyMap == null) {
+            plmnDataServicePolicyMap = new HashMap<>();
+        }
+        if (plmnVoiceServicePolicyMap == null) {
+            plmnVoiceServicePolicyMap = new HashMap<>();
         }
         logd("onSatelliteEntitlementStatusUpdated subId=" + subId + ", entitlementEnabled="
                 + entitlementEnabled + ", allowedPlmnList=["
@@ -4262,6 +4299,9 @@ public class SatelliteController extends Handler {
                 mEntitlementPlmnListPerCarrier.put(subId, allowedPlmnList);
                 mEntitlementBarredPlmnListPerCarrier.put(subId, barredPlmnList);
                 mEntitlementDataPlanMapPerCarrier.put(subId, plmnDataPlanMap);
+                mEntitlementServiceTypeMapPerCarrier.put(subId, plmnServiceTypeMap);
+                mEntitlementDataServicePolicyMapPerCarrier.put(subId, plmnDataServicePolicyMap);
+                mEntitlementVoiceServicePolicyMapPerCarrier.put(subId, plmnVoiceServicePolicyMap);
                 updatePlmnListPerCarrier(subId);
                 configureSatellitePlmnForCarrier(subId);
                 mSubscriptionManagerService.setSatelliteEntitlementPlmnList(subId, allowedPlmnList);
@@ -5381,7 +5421,8 @@ public class SatelliteController extends Handler {
                         KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT,
                         KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE,
                         KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY,
-                        KEY_REGIONAL_SATELLITE_EARFCN_BUNDLE
+                        KEY_REGIONAL_SATELLITE_EARFCN_BUNDLE,
+                        KEY_SATELLITE_DATA_SUPPORT_MODE_INT
                 );
             } catch (Exception e) {
                 logw("getConfigForSubId: " + e);
@@ -5585,6 +5626,11 @@ public class SatelliteController extends Handler {
     protected int getCarrierRoamingNtnEmergencyCallToSatelliteHandoverType(int subId) {
         return getConfigForSubId(subId).getInt(
                 KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT);
+    }
+
+    @CarrierConfigManager.SATELLITE_DATA_SUPPORT_MODE
+    private int getCarrierSatelliteDataSupportedMode(int subId) {
+        return getConfigForSubId(subId).getInt(KEY_SATELLITE_DATA_SUPPORT_MODE_INT);
     }
 
     /**
@@ -8313,5 +8359,57 @@ public class SatelliteController extends Handler {
         }
         // TODO (Override with carrier config value when configuration defined)
         return SATELLITE_DATA_PLAN_METERED;
+    }
+
+    /**
+     * Method to return the current satellite data service policy supported mode for the registered
+     * plmn based on entitlement provisioning information. Note: If no information at
+     * provisioning is supported this is overridden with operator carrier config information.
+     *
+     * @param subId current subscription id
+     * @param plmn current registered plmn information
+     *
+     * @return Supported modes {@link CarrierConfigManager.SATELLITE_DATA_SUPPORT_MODE}
+     */
+    public int getSatelliteDataServicePolicyForPlmn(int subId, String plmn) {
+        if (plmn != null) {
+            synchronized (mSupportedSatelliteServicesLock) {
+                Map<String, Integer> dataServicePolicy =
+                        mEntitlementDataServicePolicyMapPerCarrier.get(
+                        subId);
+                logd("data policy available for sub id:" + dataServicePolicy);
+                if (dataServicePolicy != null && dataServicePolicy.containsKey(plmn)) {
+                    return dataServicePolicy.get(plmn);
+                }
+            }
+        }
+        return getCarrierSatelliteDataSupportedMode(subId);
+    }
+
+    /**
+     * Method to return the current satellite voice service policy supported mode for the registered
+     * plmn based on entitlement provisioning information. Note: If no information at
+     * provisioning is supported this is overridden with operator carrier config information.
+     *
+     * @param subId current subscription id
+     * @param plmn current registered plmn information
+     *
+     * @return Supported modes {@link CarrierConfigManager.SATELLITE_DATA_SUPPORT_MODE}
+     */
+    public int getSatelliteVoiceServicePolicyForPlmn(int subId, String plmn) {
+        if (plmn != null) {
+            synchronized (mSupportedSatelliteServicesLock) {
+                Map<String, Integer> voiceServicePolicy =
+                        mEntitlementVoiceServicePolicyMapPerCarrier.get(
+                                subId);
+                logd("voice policy available for sub id:" + voiceServicePolicy);
+                if (voiceServicePolicy != null && voiceServicePolicy.containsKey(plmn)) {
+                    return voiceServicePolicy.get(plmn);
+                }
+            }
+        }
+        // TODO (Replace below code with related enum value, when voice service policy support mode
+        // is added)
+        return 0; // Restricted
     }
 }
