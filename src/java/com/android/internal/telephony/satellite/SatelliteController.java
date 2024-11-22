@@ -35,7 +35,6 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPOR
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
-import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT;
@@ -43,6 +42,7 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_S
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY;
 import static android.telephony.SubscriptionManager.SATELLITE_ATTACH_ENABLED_FOR_CARRIER;
 import static android.telephony.SubscriptionManager.SATELLITE_ENTITLEMENT_STATUS;
 import static android.telephony.SubscriptionManager.isValidSubscriptionId;
@@ -1239,12 +1239,13 @@ public class SatelliteController extends Handler {
     }
 
     private static final class UpdateSystemSelectionChannelsArgument {
-        @NonNull SystemSelectionSpecifier mSelectionSpecifier;
+        @NonNull List<SystemSelectionSpecifier> mSystemSelectionSpecifiers;
         @NonNull ResultReceiver mResult;
 
-        UpdateSystemSelectionChannelsArgument(@NonNull SystemSelectionSpecifier selectionSpecifier,
+        UpdateSystemSelectionChannelsArgument(
+                @NonNull List<SystemSelectionSpecifier> systemSelectionSpecifiers,
                 @NonNull ResultReceiver result) {
-            this.mSelectionSpecifier = selectionSpecifier;
+            this.mSystemSelectionSpecifiers = systemSelectionSpecifiers;
             this.mResult = result;
         }
     }
@@ -2076,7 +2077,7 @@ public class SatelliteController extends Handler {
                 onCompleted = obtainMessage(EVENT_UPDATE_SYSTEM_SELECTION_CHANNELS_DONE, request);
                 mSatelliteModemInterface.updateSystemSelectionChannels(
                         ((UpdateSystemSelectionChannelsArgument) (request.argument))
-                                .mSelectionSpecifier,
+                                .mSystemSelectionSpecifiers,
                         onCompleted);
                 break;
             }
@@ -7344,7 +7345,8 @@ public class SatelliteController extends Handler {
      * @param result The result receiver that returns if the request is successful or
      *               an error code if the request failed.
      */
-    public void updateSystemSelectionChannels(@NonNull SystemSelectionSpecifier selectionSpecifier,
+    public void updateSystemSelectionChannels(
+            @NonNull List<SystemSelectionSpecifier> selectionSpecifiers,
             @NonNull ResultReceiver result) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             plogd("updateSystemSelectionChannels: "
@@ -7354,7 +7356,7 @@ public class SatelliteController extends Handler {
         }
 
         sendRequestAsync(CMD_UPDATE_SYSTEM_SELECTION_CHANNELS,
-                new UpdateSystemSelectionChannelsArgument(selectionSpecifier, result), null);
+                new UpdateSystemSelectionChannelsArgument(selectionSpecifiers, result), null);
     }
 
     /**
