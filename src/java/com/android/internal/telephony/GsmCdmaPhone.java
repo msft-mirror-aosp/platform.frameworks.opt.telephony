@@ -2189,7 +2189,12 @@ public class GsmCdmaPhone extends Phone {
 
     @Override
     public void resetCarrierKeysForImsiEncryption() {
-        mCIM.resetCarrierKeysForImsiEncryption(mContext, mPhoneId);
+        mCIM.resetCarrierKeysForImsiEncryption(mContext, mPhoneId, false);
+    }
+
+    @Override
+    public void resetCarrierKeysForImsiEncryption(boolean forceResetAll) {
+        mCIM.resetCarrierKeysForImsiEncryption(mContext, mPhoneId, forceResetAll);
     }
 
     @Override
