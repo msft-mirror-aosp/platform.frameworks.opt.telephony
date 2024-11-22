@@ -157,6 +157,7 @@ import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.ISatelliteProvisionStateCallback;
 import android.telephony.satellite.ISatelliteSupportedStateCallback;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
+import android.telephony.satellite.ISelectedNbIotSatelliteSubscriptionCallback;
 import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
@@ -3986,6 +3987,96 @@ public class SatelliteControllerTest extends TelephonyTest {
     }
 
     @Test
+    public void testRegisterForSelectedNbIotSatelliteSubscriptionChanged_WithFeatureFlagEnabled() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+
+        Semaphore semaphore = new Semaphore(0);
+        final int[] selectedSubIds = new int[1];
+        ISelectedNbIotSatelliteSubscriptionCallback callback =
+                new ISelectedNbIotSatelliteSubscriptionCallback.Stub() {
+                    @Override
+                    public void onSelectedNbIotSatelliteSubscriptionChanged(int selectedSubId) {
+                        logd("onSelectedNbIotSatelliteSubscriptionChanged: selectedSubId="
+                                + selectedSubId);
+                        try {
+                            selectedSubIds[0] = selectedSubId;
+                            semaphore.release();
+                        } catch (Exception ex) {
+                            loge("onSelectedNbIotSatelliteSubscriptionChanged: Got exception in "
+                                    + "releasing semaphore, ex=" + ex);
+                        }
+                    }
+                };
+
+        int errorCode = mSatelliteControllerUT.registerForSelectedNbIotSatelliteSubscriptionChanged(
+                callback);
+        assertEquals(SATELLITE_RESULT_INVALID_TELEPHONY_STATE, errorCode);
+
+        setUpResponseForRequestIsSatelliteSupported(false, SATELLITE_RESULT_SUCCESS);
+        verifySatelliteSupported(false, SATELLITE_RESULT_SUCCESS);
+        errorCode = mSatelliteControllerUT.registerForSelectedNbIotSatelliteSubscriptionChanged(
+                callback);
+        assertEquals(SATELLITE_RESULT_NOT_SUPPORTED, errorCode);
+
+        // Register the callback and verify that the event is reported.
+        resetSatelliteControllerUT();
+        setUpResponseForRequestIsSatelliteProvisioned(true,SATELLITE_RESULT_SUCCESS);
+        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        errorCode = mSatelliteControllerUT.registerForSelectedNbIotSatelliteSubscriptionChanged(
+                callback);
+        assertEquals(SATELLITE_RESULT_SUCCESS, errorCode);
+        int expectedSubId = 1;
+        sendSelectedNbIotSatelliteSubscriptionChangedEvent(expectedSubId, null);
+        processAllMessages();
+        assertTrue(waitForForEvents(
+                semaphore, 1, "testRegisterForSelectedNbIotSatelliteSubscriptionChanged"));
+        assertEquals(expectedSubId, selectedSubIds[0]);
+
+        // Unregister the callback and verify that the event is not reported.
+        mSatelliteControllerUT.unregisterForSelectedNbIotSatelliteSubscriptionChanged(callback);
+        sendSelectedNbIotSatelliteSubscriptionChangedEvent(2, null);
+        processAllMessages();
+        assertTrue(waitForForEvents(
+                semaphore, 0, "testRegisterForSelectedNbIotSatelliteSubscriptionChanged"));
+    }
+
+    @Test
+    public void testRegisterForSelectedNbIotSatelliteSubscriptionChanged_WithFeatureFlagDisabled() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(false);
+
+        Semaphore semaphore = new Semaphore(0);
+        final int[] selectedSubIds = new int[1];
+        ISelectedNbIotSatelliteSubscriptionCallback callback =
+                new ISelectedNbIotSatelliteSubscriptionCallback.Stub() {
+                    @Override
+                    public void onSelectedNbIotSatelliteSubscriptionChanged(int selectedSubId) {
+                        logd("onSelectedNbIotSatelliteSubscriptionChanged: selectedSubId="
+                                + selectedSubId);
+                        try {
+                            selectedSubIds[0] = selectedSubId;
+                            semaphore.release();
+                        } catch (Exception ex) {
+                            loge("onSelectedNbIotSatelliteSubscriptionChanged: Got exception in "
+                                    + "releasing semaphore, ex=" + ex);
+                        }
+                    }
+                };
+
+        int errorCode = mSatelliteControllerUT.registerForSelectedNbIotSatelliteSubscriptionChanged(
+                callback);
+        assertEquals(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, errorCode);
+
+        // Verify that the event is not reported.
+        sendSelectedNbIotSatelliteSubscriptionChangedEvent(1, null);
+        processAllMessages();
+        assertTrue(waitForForEvents(
+                semaphore, 0, "testRegisterForSelectedNbIotSatelliteSubscriptionChanged"));
+
+
+    }
+
+    @Test
     public void testIsSatelliteEmergencyMessagingSupportedViaCarrier() {
         // Carrier-enabled flag is off
         when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(false);
@@ -5588,6 +5679,14 @@ public class SatelliteControllerTest extends TelephonyTest {
         Message msg = mSatelliteControllerUT.obtainMessage(
                 55 /* EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED */);
         msg.obj = new AsyncResult(null, isAvailable, exception);
+        msg.sendToTarget();
+    }
+
+    private void sendSelectedNbIotSatelliteSubscriptionChangedEvent(int selectedSubId,
+            Throwable exception) {
+        Message msg = mSatelliteControllerUT.obtainMessage(
+                60 /* EVENT_SELECTED_NB_IOT_SATELLITE_SUBSCRIPTION_CHANGED */);
+        msg.obj = new AsyncResult(null, selectedSubId, exception);
         msg.sendToTarget();
     }
 
