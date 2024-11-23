@@ -22,6 +22,7 @@ import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_HARDWAR
 import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_OPEN;
 import static android.hardware.devicestate.feature.flags.Flags.FLAG_DEVICE_STATE_PROPERTY_MIGRATION;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC;
+import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT;
@@ -3687,6 +3688,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         // Do nothing when the satellite is not connected
         doReturn(false).when(mServiceState).isUsingNonTerrestrialNetwork();
         sendServiceStateChangedEvent();
+        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         processAllMessages();
         assertFalse(mSharedPreferences.getBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY, false));
         verify(mMockNotificationManager, never()).notifyAsUser(anyString(), anyInt(), any(), any());
@@ -4271,8 +4273,10 @@ public class SatelliteControllerTest extends TelephonyTest {
         when(mServiceState2.getState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);
         when(mServiceState.getState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);
         mSatelliteControllerUT.mIsApplicationSupportsP2P = true;
+        mSatelliteControllerUT.setIsSatelliteSupported(true);
         mCarrierConfigBundle.putBoolean(KEY_SATELLITE_ATTACH_SUPPORTED_BOOL, true);
-        mCarrierConfigBundle.putInt(KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT, 1);
+        mCarrierConfigBundle.putInt(KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT,
+            CARRIER_ROAMING_NTN_CONNECT_MANUAL);
         mCarrierConfigBundle.putInt(
                 KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT, 1 * 60);
         mCarrierConfigBundle.putBoolean(KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL, true);
@@ -4294,6 +4298,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         }
         mSatelliteControllerUT.setSatellitePhone(1);
         mSatelliteControllerUT.isSatelliteAllowedCallback = null;
+        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         processAllMessages();
         mSatelliteControllerUT.elapsedRealtime = 0;
         assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
@@ -6209,6 +6214,12 @@ public class SatelliteControllerTest extends TelephonyTest {
         void setSatelliteProvisioned(@Nullable Boolean isProvisioned) {
             synchronized (mDeviceProvisionLock) {
                 mIsDeviceProvisioned = isProvisioned;
+            }
+        }
+
+        void setIsSatelliteSupported(@Nullable Boolean isSatelliteSupported) {
+            synchronized (mIsSatelliteSupportedLock) {
+                mIsSatelliteSupported = isSatelliteSupported;
             }
         }
 
