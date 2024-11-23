@@ -2738,6 +2738,14 @@ public abstract class SMSDispatcher extends Handler {
         }
 
         /**
+         * Returns the flag specifying whether any part of this {@link SmsTracker} failed to send
+         * or not.
+         */
+        protected boolean isAnyPartFailed() {
+            return mAnyPartFailed != null && mAnyPartFailed.get();
+        }
+
+        /**
          * Persist a sent SMS if required:
          * 1. It is a text message
          * 2. SmsApplication tells us to persist: sent from apps that are not default-SMS app or
