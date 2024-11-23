@@ -35,7 +35,6 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPOR
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
-import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT;
@@ -43,6 +42,7 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_S
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY;
 import static android.telephony.SubscriptionManager.SATELLITE_ATTACH_ENABLED_FOR_CARRIER;
 import static android.telephony.SubscriptionManager.SATELLITE_ENTITLEMENT_STATUS;
 import static android.telephony.SubscriptionManager.isValidSubscriptionId;
@@ -134,6 +134,7 @@ import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.ISatelliteProvisionStateCallback;
 import android.telephony.satellite.ISatelliteSupportedStateCallback;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
+import android.telephony.satellite.ISelectedNbIotSatelliteSubscriptionCallback;
 import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
@@ -303,6 +304,7 @@ public class SatelliteController extends Handler {
     private static final int EVENT_SIGNAL_STRENGTH_CHANGED = 57;
     private static final int CMD_UPDATE_SYSTEM_SELECTION_CHANNELS = 58;
     private static final int EVENT_UPDATE_SYSTEM_SELECTION_CHANNELS_DONE = 59;
+    private static final int EVENT_SELECTED_NB_IOT_SATELLITE_SUBSCRIPTION_CHANGED = 60;
 
     @NonNull private static SatelliteController sInstance;
     @NonNull private final Context mContext;
@@ -427,6 +429,13 @@ public class SatelliteController extends Handler {
      */
     private final ConcurrentHashMap<IBinder, ISatelliteModemStateCallback>
             mTerrestrialNetworkAvailableChangedListeners = new ConcurrentHashMap<>();
+    /**
+     * Map key: binder of the callback, value: callback to receive selected NB IOT satellite
+     * subscription changed
+     */
+    private final ConcurrentHashMap<IBinder, ISelectedNbIotSatelliteSubscriptionCallback>
+            mSelectedNbIotSatelliteSubscriptionChangedListeners = new ConcurrentHashMap<>();
+
     private final Object mIsSatelliteSupportedLock = new Object();
     @GuardedBy("mIsSatelliteSupportedLock")
     private Boolean mIsSatelliteSupported = null;
@@ -1230,12 +1239,13 @@ public class SatelliteController extends Handler {
     }
 
     private static final class UpdateSystemSelectionChannelsArgument {
-        @NonNull SystemSelectionSpecifier mSelectionSpecifier;
+        @NonNull List<SystemSelectionSpecifier> mSystemSelectionSpecifiers;
         @NonNull ResultReceiver mResult;
 
-        UpdateSystemSelectionChannelsArgument(@NonNull SystemSelectionSpecifier selectionSpecifier,
+        UpdateSystemSelectionChannelsArgument(
+                @NonNull List<SystemSelectionSpecifier> systemSelectionSpecifiers,
                 @NonNull ResultReceiver result) {
-            this.mSelectionSpecifier = selectionSpecifier;
+            this.mSystemSelectionSpecifiers = systemSelectionSpecifiers;
             this.mResult = result;
         }
     }
@@ -2067,7 +2077,7 @@ public class SatelliteController extends Handler {
                 onCompleted = obtainMessage(EVENT_UPDATE_SYSTEM_SELECTION_CHANNELS_DONE, request);
                 mSatelliteModemInterface.updateSystemSelectionChannels(
                         ((UpdateSystemSelectionChannelsArgument) (request.argument))
-                                .mSelectionSpecifier,
+                                .mSystemSelectionSpecifiers,
                         onCompleted);
                 break;
             }
@@ -2080,6 +2090,16 @@ public class SatelliteController extends Handler {
                 plogd("EVENT_UPDATE_SYSTEM_SELECTION_CHANNELS_DONE = " + error);
                 ((UpdateSystemSelectionChannelsArgument) (request.argument)).mResult.send(error,
                         null);
+                break;
+            }
+
+            case EVENT_SELECTED_NB_IOT_SATELLITE_SUBSCRIPTION_CHANGED: {
+                ar = (AsyncResult) msg.obj;
+                if (ar.result == null) {
+                    loge("EVENT_SELECTED_NB_IOT_SATELLITE_SUBSCRIPTION_CHANGED: result is null");
+                } else {
+                    handleEventSelectedNbIotSatelliteSubscriptionChanged((int) ar.result);
+                }
                 break;
             }
 
@@ -3295,6 +3315,59 @@ public class SatelliteController extends Handler {
             return;
         }
         mSatelliteSupportedStateChangedListeners.remove(callback.asBinder());
+    }
+
+    /**
+     * Registers for selected satellite subscription changed event.
+     *
+     * @param callback The callback to handle the selected satellite subscription changed event.
+     *
+     * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
+     */
+    @SatelliteManager.SatelliteResult
+    public int registerForSelectedNbIotSatelliteSubscriptionChanged(
+            @NonNull ISelectedNbIotSatelliteSubscriptionCallback callback) {
+        if (DBG) plogd("registerForSelectedNbIotSatelliteSubscriptionChanged()");
+
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("carrierRoamingNbIotNtn flag is disabled");
+            return SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED;
+        }
+
+        int error = evaluateOemSatelliteRequestAllowed(false);
+        if (error != SATELLITE_RESULT_SUCCESS) return error;
+
+        mSelectedNbIotSatelliteSubscriptionChangedListeners.put(callback.asBinder(), callback);
+        try {
+            callback.onSelectedNbIotSatelliteSubscriptionChanged(getSelectedSatelliteSubId());
+        } catch (RemoteException ex) {
+            ploge("registerForSelectedNbIotSatelliteSubscriptionChanged: RemoteException ex="
+                    + ex);
+        }
+        return SATELLITE_RESULT_SUCCESS;
+    }
+
+    /**
+     * Unregisters for the selected satellite subscription changed event.
+     * If callback was not registered before, the request will be ignored.
+     *
+     * @param callback The callback that was passed to {@link
+     *     #registerForSelectedNbIotSatelliteSubscriptionChanged(
+     *     ISelectedNbIotSatelliteSubscriptionCallback)}.
+     */
+    public void unregisterForSelectedNbIotSatelliteSubscriptionChanged(
+            @NonNull ISelectedNbIotSatelliteSubscriptionCallback callback) {
+        if (DBG) plogd("unregisterForSelectedNbIotSatelliteSubscriptionChanged()");
+
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("carrierRoamingNbIotNtn flag is disabled");
+            return;
+        }
+
+        int error = evaluateOemSatelliteRequestAllowed(true);
+        if (error == SATELLITE_RESULT_SUCCESS) {
+            mSelectedNbIotSatelliteSubscriptionChangedListeners.remove(callback.asBinder());
+        }
     }
 
     /**
@@ -4827,6 +4900,29 @@ public class SatelliteController extends Handler {
         synchronized (mIsSatelliteSupportedLock) {
             mIsSatelliteSupported = supported;
         }
+    }
+
+    private void handleEventSelectedNbIotSatelliteSubscriptionChanged(int selectedSubId) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("handleEventSelectedNbIotSatelliteSubscriptionChanged: "
+                    + "carrierRoamingNbIotNtn flag is disabled");
+            return;
+        }
+
+        plogd("handleEventSelectedNbIotSatelliteSubscriptionChanged: " + selectedSubId);
+
+        List<ISelectedNbIotSatelliteSubscriptionCallback> deadCallersList = new ArrayList<>();
+        mSelectedNbIotSatelliteSubscriptionChangedListeners.values().forEach(listener -> {
+            try {
+                listener.onSelectedNbIotSatelliteSubscriptionChanged(selectedSubId);
+            } catch (RemoteException e) {
+                logd("handleEventSelectedNbIotSatelliteSubscriptionChanged RemoteException: " + e);
+                deadCallersList.add(listener);
+            }
+        });
+        deadCallersList.forEach(listener -> {
+            mSelectedNbIotSatelliteSubscriptionChangedListeners.remove(listener.asBinder());
+        });
     }
 
     private void notifySatelliteSupportedStateChanged(boolean supported) {
@@ -7178,6 +7274,7 @@ public class SatelliteController extends Handler {
         }
         setSatellitePhone(selectedSubId);
         plogd("selectBindingSatelliteSubscription: SelectedSatelliteSubId=" + selectedSubId);
+        handleEventSelectedNbIotSatelliteSubscriptionChanged(selectedSubId);
     }
 
     private int getSubIdFromSubscriberId(String subscriberId) {
@@ -7248,7 +7345,8 @@ public class SatelliteController extends Handler {
      * @param result The result receiver that returns if the request is successful or
      *               an error code if the request failed.
      */
-    public void updateSystemSelectionChannels(@NonNull SystemSelectionSpecifier selectionSpecifier,
+    public void updateSystemSelectionChannels(
+            @NonNull List<SystemSelectionSpecifier> selectionSpecifiers,
             @NonNull ResultReceiver result) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             plogd("updateSystemSelectionChannels: "
@@ -7258,7 +7356,7 @@ public class SatelliteController extends Handler {
         }
 
         sendRequestAsync(CMD_UPDATE_SYSTEM_SELECTION_CHANNELS,
-                new UpdateSystemSelectionChannelsArgument(selectionSpecifier, result), null);
+                new UpdateSystemSelectionChannelsArgument(selectionSpecifiers, result), null);
     }
 
     /**

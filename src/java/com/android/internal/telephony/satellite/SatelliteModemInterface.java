@@ -1387,18 +1387,18 @@ public class SatelliteModemInterface {
     /**
      * Request to update system selection channels
      *
-     * @param systemSelectionSpecifier system selection specifiers
+     * @param systemSelectionSpecifiers system selection specifiers
      * @param message The Message to send to result of the operation to.
      */
     public void updateSystemSelectionChannels(
-            @NonNull SystemSelectionSpecifier systemSelectionSpecifier,
+            @NonNull List<SystemSelectionSpecifier> systemSelectionSpecifiers,
             @Nullable Message message) {
         plogd("updateSystemSelectionChannels: SystemSelectionSpecifier: "
-                + systemSelectionSpecifier.toString());
+                + systemSelectionSpecifiers.toString());
         if (mSatelliteService != null) {
             try {
                 mSatelliteService.updateSystemSelectionChannels(SatelliteServiceUtils
-                                .toSystemSelectionSpecifier(systemSelectionSpecifier),
+                                .toSystemSelectionSpecifier(systemSelectionSpecifiers),
                         new IIntegerConsumer.Stub() {
                             @Override
                             public void accept(int result) {
