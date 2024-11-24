@@ -36,10 +36,12 @@ import android.telephony.ServiceState;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.satellite.AntennaPosition;
+import android.telephony.satellite.EarfcnRange;
 import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.PointingInfo;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
+import android.telephony.satellite.SatelliteInfo;
 import android.telephony.satellite.SatelliteManager;
 import android.telephony.satellite.SatelliteModemEnableRequestAttributes;
 import android.telephony.satellite.SatelliteSubscriptionInfo;
@@ -54,7 +56,6 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.util.TelephonyUtils;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -544,24 +545,57 @@ public class SatelliteServiceUtils {
         return mcc + mnc;
     }
 
-    /**
-     * Convert SystemSelectionSpecifier from framework definition to service definition
-     * @param systemSelectionSpecifier The SystemSelectionSpecifier from the framework.
-     * @return The converted SystemSelectionSpecifier for the satellite service.
-     */
-    @NonNull public static List<android.telephony.satellite.stub
-            .SystemSelectionSpecifier> toSystemSelectionSpecifier(
+    @NonNull
+    private static android.telephony.satellite.stub
+            .SystemSelectionSpecifier convertSystemSelectionSpecifierToHALFormat(
             @NonNull SystemSelectionSpecifier systemSelectionSpecifier) {
-        List<android.telephony.satellite.stub.SystemSelectionSpecifier> converted =
-                new ArrayList<>();
         android.telephony.satellite.stub.SystemSelectionSpecifier convertedSpecifier =
                 new android.telephony.satellite.stub.SystemSelectionSpecifier();
 
         convertedSpecifier.mMccMnc = systemSelectionSpecifier.getMccMnc();
         convertedSpecifier.mBands = systemSelectionSpecifier.getBands().toArray();
-        convertedSpecifier.mEarfcs = systemSelectionSpecifier.getEarfcs().toArray();
-        converted.add(convertedSpecifier);
-        return converted;
+        convertedSpecifier.mEarfcs = systemSelectionSpecifier.getEarfcns().toArray();
+        SatelliteInfo[] satelliteInfos = systemSelectionSpecifier.getSatelliteInfos();
+        android.telephony.satellite.stub.SatelliteInfo[] halSatelliteInfos =
+                new android.telephony.satellite.stub.SatelliteInfo[satelliteInfos.length];
+        for (int i = 0; i < satelliteInfos.length; i++) {
+            halSatelliteInfos[i].id.mostSigBits =
+                    satelliteInfos[i].getSatelliteId().getMostSignificantBits();
+            halSatelliteInfos[i].id.leastSigBits =
+                    satelliteInfos[i].getSatelliteId().getLeastSignificantBits();
+            halSatelliteInfos[i].position.longitudeDegree =
+                    satelliteInfos[i].getSatellitePosition().getLongitudeDegrees();
+            halSatelliteInfos[i].position.altitudeKm =
+                    satelliteInfos[i].getSatellitePosition().getAltitudeKm();
+            halSatelliteInfos[i].bands = satelliteInfos[i].getBands().stream().mapToInt(
+                    Integer::intValue).toArray();
+            List<EarfcnRange> earfcnRangeList = satelliteInfos[i].getEarfcnRanges();
+            halSatelliteInfos[i].earfcnRanges =
+                    new android.telephony.satellite.stub.EarfcnRange[earfcnRangeList.size()];
+            for (int j = 0; j < earfcnRangeList.size(); j++) {
+                halSatelliteInfos[i].earfcnRanges[j].startEarfcn = earfcnRangeList.get(
+                        j).getStartEarfcn();
+                halSatelliteInfos[i].earfcnRanges[j].endEarfcn = earfcnRangeList.get(
+                        j).getStartEarfcn();
+            }
+        }
+        convertedSpecifier.satelliteInfos = halSatelliteInfos;
+        convertedSpecifier.tagIds = systemSelectionSpecifier.getTagIds().toArray();
+        return convertedSpecifier;
+    }
+
+    /**
+     * Convert SystemSelectionSpecifier from framework definition to service definition
+     * @param systemSelectionSpecifier The SystemSelectionSpecifier from the framework.
+     * @return The converted SystemSelectionSpecifier for the satellite service.
+     */
+    @NonNull
+    public static List<android.telephony.satellite.stub
+            .SystemSelectionSpecifier> toSystemSelectionSpecifier(
+            @NonNull List<SystemSelectionSpecifier> systemSelectionSpecifier) {
+        return systemSelectionSpecifier.stream().map(
+                SatelliteServiceUtils::convertSystemSelectionSpecifierToHALFormat).collect(
+                Collectors.toList());
     }
 
     /**
