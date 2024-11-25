@@ -15,7 +15,12 @@
  */
 package com.android.internal.telephony;
 
+import static android.telephony.CellularIdentifierDisclosure.CELLULAR_IDENTIFIER_IMSI;
+import static android.telephony.CellularIdentifierDisclosure.NAS_PROTOCOL_MESSAGE_ATTACH_REQUEST;
 import static android.telephony.PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN;
+import static android.telephony.SecurityAlgorithmUpdate.CONNECTION_EVENT_VOLTE_SIP;
+import static android.telephony.SecurityAlgorithmUpdate.SECURITY_ALGORITHM_EEA2;
+import static android.telephony.SecurityAlgorithmUpdate.SECURITY_ALGORITHM_HMAC_SHA1_96;
 import static android.telephony.ServiceState.FREQUENCY_RANGE_LOW;
 import static android.telephony.SubscriptionManager.ACTION_DEFAULT_SUBSCRIPTION_CHANGED;
 import static android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID;
@@ -57,11 +62,13 @@ import android.telephony.CellIdentityLte;
 import android.telephony.CellInfo;
 import android.telephony.CellInfoLte;
 import android.telephony.CellLocation;
+import android.telephony.CellularIdentifierDisclosure;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneCapability;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseDataConnectionState;
+import android.telephony.SecurityAlgorithmUpdate;
 import android.telephony.ServiceState;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
@@ -69,6 +76,7 @@ import android.telephony.TelephonyCallback;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
+import android.telephony.satellite.NtnSignalStrength;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.text.TextUtils;
@@ -131,6 +139,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private boolean mCarrierRoamingNtnMode;
     private boolean mCarrierRoamingNtnEligible;
     private List<Integer> mCarrierRoamingNtnAvailableServices;
+    private NtnSignalStrength mCarrierRoamingNtnSignalStrength;
     private boolean mIsSatelliteEnabled;
 
     // All events contribute to TelephonyRegistry#isPhoneStatePermissionRequired
@@ -179,6 +188,10 @@ public class TelephonyRegistryTest extends TelephonyTest {
                 TelephonyCallback.EVENT_EMERGENCY_CALLBACK_MODE_CHANGED);
         READ_PRIVILEGED_PHONE_STATE_EVENTS.add(
                 TelephonyCallback.EVENT_SIMULTANEOUS_CELLULAR_CALLING_SUBSCRIPTIONS_CHANGED);
+        READ_PRIVILEGED_PHONE_STATE_EVENTS.add(
+                TelephonyCallback.EVENT_CELLULAR_IDENTIFIER_DISCLOSED_CHANGED);
+        READ_PRIVILEGED_PHONE_STATE_EVENTS.add(
+                TelephonyCallback.EVENT_SECURITY_ALGORITHMS_CHANGED);
     }
 
     // All events contribute to TelephonyRegistry#isActiveEmergencySessionPermissionRequired
@@ -209,7 +222,9 @@ public class TelephonyRegistryTest extends TelephonyTest {
             TelephonyCallback.DataActivityListener,
             TelephonyCallback.SimultaneousCellularCallingSupportListener,
             TelephonyCallback.EmergencyCallbackModeListener,
-            TelephonyCallback.CarrierRoamingNtnModeListener {
+            TelephonyCallback.CarrierRoamingNtnModeListener,
+            TelephonyCallback.SecurityAlgorithmsListener,
+            TelephonyCallback.CellularIdentifierDisclosedListener {
         // This class isn't mockable to get invocation counts because the IBinder is null and
         // crashes the TelephonyRegistry. Make a cheesy verify(times()) alternative.
         public AtomicInteger invocationCount = new AtomicInteger(0);
@@ -342,6 +357,22 @@ public class TelephonyRegistryTest extends TelephonyTest {
         public void onCarrierRoamingNtnAvailableServicesChanged(List<Integer> services) {
             invocationCount.incrementAndGet();
             mCarrierRoamingNtnAvailableServices = services;
+        }
+
+        @Override
+        public void onCarrierRoamingNtnSignalStrengthChanged(NtnSignalStrength ntnSignalStrength) {
+            invocationCount.incrementAndGet();
+            mCarrierRoamingNtnSignalStrength = ntnSignalStrength;
+        }
+
+        @Override
+        public void onSecurityAlgorithmsChanged(SecurityAlgorithmUpdate update) {
+            invocationCount.incrementAndGet();
+        }
+
+        @Override
+        public void onCellularIdentifierDisclosedChanged(CellularIdentifierDisclosure disclosure) {
+            invocationCount.incrementAndGet();
         }
     }
 
@@ -1743,6 +1774,24 @@ public class TelephonyRegistryTest extends TelephonyTest {
     }
 
     @Test
+    @EnableFlags(Flags.FLAG_CARRIER_ROAMING_NB_IOT_NTN)
+    public void testNotifyCarrierRoamingNtnSignalStrengthChanged() {
+        int subId = INVALID_SUBSCRIPTION_ID;
+        doReturn(mMockSubInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
+        doReturn(0/*slotIndex*/).when(mMockSubInfo).getSimSlotIndex();
+        int[] events = {TelephonyCallback.EVENT_CARRIER_ROAMING_NTN_SIGNAL_STRENGTH_CHANGED};
+
+        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+                mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
+
+        mTelephonyRegistry.notifyCarrierRoamingNtnSignalStrengthChanged(subId,
+                new NtnSignalStrength(NtnSignalStrength.NTN_SIGNAL_STRENGTH_GOOD));
+        processAllMessages();
+        assertEquals(mCarrierRoamingNtnSignalStrength.getLevel(),
+                NtnSignalStrength.NTN_SIGNAL_STRENGTH_GOOD);
+    }
+
+    @Test
     @EnableFlags(Flags.FLAG_SATELLITE_STATE_CHANGE_LISTENER)
     public void testNotifySatelliteStateChanged_onRegistration_getNotified() {
         MySatelliteStateChangeListener listener = new MySatelliteStateChangeListener();
@@ -1812,4 +1861,49 @@ public class TelephonyRegistryTest extends TelephonyTest {
         // We should not receive the new state change after monitoring end
         assertFalse(mIsSatelliteEnabled);
     }
+
+
+    @Test
+    @EnableFlags(Flags.FLAG_SECURITY_ALGORITHMS_UPDATE_INDICATIONS)
+    public void testNotifySecurityAlgorithmsChanged() {
+        int subId = 1;
+        int[] events = {TelephonyCallback.EVENT_SECURITY_ALGORITHMS_CHANGED};
+
+        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+                mContext.getAttributionTag(), mTelephonyCallback.callback, events, false);
+
+        SecurityAlgorithmUpdate update =
+                new SecurityAlgorithmUpdate(
+                        CONNECTION_EVENT_VOLTE_SIP, SECURITY_ALGORITHM_EEA2,
+                        SECURITY_ALGORITHM_HMAC_SHA1_96, false);
+
+        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+                mContext.getAttributionTag(), mTelephonyCallback.callback, events, false);
+        int invocationCount = mTelephonyCallback.invocationCount.get();
+        mTelephonyRegistry.notifySecurityAlgorithmsChanged(0, 1, update);
+        processAllMessages();
+        assertEquals(invocationCount + 1, mTelephonyCallback.invocationCount.get());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_CELLULAR_IDENTIFIER_DISCLOSURE_INDICATIONS)
+    public void testNotifyCellularIdentifierDisclosedChanged() {
+        int subId = 1;
+        int[] events = {TelephonyCallback.EVENT_CELLULAR_IDENTIFIER_DISCLOSED_CHANGED};
+
+        CellularIdentifierDisclosure disclosure =
+                new CellularIdentifierDisclosure(NAS_PROTOCOL_MESSAGE_ATTACH_REQUEST,
+                        CELLULAR_IDENTIFIER_IMSI,
+                        "001001",
+                        false);
+
+        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+                mContext.getAttributionTag(), mTelephonyCallback.callback, events, false);
+        int invocationCount = mTelephonyCallback.invocationCount.get();
+        mTelephonyRegistry.notifyCellularIdentifierDisclosedChanged(0, 1,
+                disclosure);
+        processAllMessages();
+        assertEquals(invocationCount + 1, mTelephonyCallback.invocationCount.get());
+    }
+
 }
