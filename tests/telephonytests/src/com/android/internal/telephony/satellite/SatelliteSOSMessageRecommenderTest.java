@@ -152,8 +152,10 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         mServiceState2 = Mockito.mock(ServiceState.class);
         when(mPhone.getServiceState()).thenReturn(mServiceState);
         when(mPhone.getPhoneId()).thenReturn(PHONE_ID);
+        when(mPhone.getSignalStrengthController()).thenReturn(mSignalStrengthController);
         when(mPhone2.getServiceState()).thenReturn(mServiceState2);
         when(mPhone2.getPhoneId()).thenReturn(PHONE_ID2);
+        when(mPhone2.getSignalStrengthController()).thenReturn(mSignalStrengthController);
         mTestSOSMessageRecommender = new TestSOSMessageRecommender(mContext, Looper.myLooper(),
                 mTestSatelliteController, mTestImsManager);
         when(mServiceState.getState()).thenReturn(STATE_OUT_OF_SERVICE);

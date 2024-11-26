@@ -42,7 +42,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.database.SQLException;
 import android.hardware.radio.modem.ImeiInfo;
 import android.net.Uri;
@@ -469,12 +468,6 @@ public class GsmCdmaPhone extends Phone {
             }
         }
     };
-
-    private boolean hasCalling() {
-        if (!TelephonyCapabilities.minimalTelephonyCdmCheck(mFeatureFlags)) return true;
-        return mContext.getPackageManager().hasSystemFeature(
-            PackageManager.FEATURE_TELEPHONY_CALLING);
-    }
 
     private void initOnce(CommandsInterface ci) {
         if (ci instanceof SimulatedRadioControl) {
@@ -1900,8 +1893,15 @@ public class GsmCdmaPhone extends Phone {
     @Override
     public void setRadioPowerForReason(boolean power, boolean forEmergencyCall,
             boolean isSelectedPhoneForEmergencyCall, boolean forceApply, int reason) {
-        mSST.setRadioPowerForReason(power, forEmergencyCall, isSelectedPhoneForEmergencyCall,
-                forceApply, reason);
+        if (mFeatureFlags.powerDownRaceFix()) {
+            // setRadioPowerForReason can be called by the binder thread. We need to move that into
+            // the main thread to prevent race condition.
+            post(() -> mSST.setRadioPowerForReason(power, forEmergencyCall,
+                    isSelectedPhoneForEmergencyCall, forceApply, reason));
+        } else {
+            mSST.setRadioPowerForReason(power, forEmergencyCall, isSelectedPhoneForEmergencyCall,
+                    forceApply, reason);
+        }
     }
 
     @Override
@@ -2189,7 +2189,12 @@ public class GsmCdmaPhone extends Phone {
 
     @Override
     public void resetCarrierKeysForImsiEncryption() {
-        mCIM.resetCarrierKeysForImsiEncryption(mContext, mPhoneId);
+        mCIM.resetCarrierKeysForImsiEncryption(mContext, mPhoneId, false);
+    }
+
+    @Override
+    public void resetCarrierKeysForImsiEncryption(boolean forceResetAll) {
+        mCIM.resetCarrierKeysForImsiEncryption(mContext, mPhoneId, forceResetAll);
     }
 
     @Override
