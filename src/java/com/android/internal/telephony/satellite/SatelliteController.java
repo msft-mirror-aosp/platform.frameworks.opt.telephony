@@ -8093,7 +8093,8 @@ public class SatelliteController extends Handler {
                 NTN_SIGNAL_STRENGTH_NONE);
 
         if (isInCarrierRoamingNbIotNtn(phone)) {
-            if (mSatelliteSessionController.isInConnectedState()) {
+            if (mSatelliteSessionController != null
+                    && mSatelliteSessionController.isInConnectedState()) {
                 synchronized (mNtnSignalsStrengthLock) {
                     carrierRoamingNtnSignalStrength = mNtnSignalStrength;
                 }
