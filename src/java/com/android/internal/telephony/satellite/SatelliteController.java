@@ -726,12 +726,13 @@ public class SatelliteController extends Handler {
      *               (e.g., class name and method name)
      */
     public void incrementResultReceiverCount(String caller) {
-        if (mFeatureFlags.geofenceEnhancementForBetterUx()) {
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
             synchronized (mResultReceiverTotalCountLock) {
                 mResultReceiverTotalCount++;
                 logd("[incrementResultReceiverCount] : " + caller
                         + " | ResultReceiver total count= " + mResultReceiverTotalCount);
-                mResultReceiverCountPerMethodMap.compute(caller, (k, v) -> v == null ? 1 : v + 1);
+                mResultReceiverCountPerMethodMap.compute(caller,
+                        (k, v) -> v == null ? 1 : v + 1);
 
                 if (mResultReceiverTotalCount > RESULT_RECEIVER_COUNT_ANOMALY_THRESHOLD) {
                     loge("[mResultReceiverTotalCount] is exceeds limits : "
@@ -745,7 +746,7 @@ public class SatelliteController extends Handler {
                 }
             }
         } else {
-            logd("[incrementResultReceiverCount]: geofenceEnhancementForBetterUx is not enabled");
+            logd("[incrementResultReceiverCount]: carrierRoamingNbIotNtn is not enabled");
         }
     }
 
@@ -757,7 +758,7 @@ public class SatelliteController extends Handler {
      *               (e.g., class name and method name)
      */
     public void decrementResultReceiverCount(String caller) {
-        if (mFeatureFlags.geofenceEnhancementForBetterUx()) {
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
             synchronized (mResultReceiverTotalCountLock) {
                 if (mResultReceiverTotalCount > 0) {
                     mResultReceiverTotalCount--;
@@ -768,7 +769,7 @@ public class SatelliteController extends Handler {
                         (k, v) -> v > 0 ? v - 1 : v);
             }
         } else {
-            logd("[decrementResultReceiverCount]: geofenceEnhancementForBetterUx is not enabled");
+            logd("[decrementResultReceiverCount]: carrierRoamingNbIotNtn is not enabled");
         }
     }
 

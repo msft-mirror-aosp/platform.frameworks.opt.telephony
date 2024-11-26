@@ -6270,14 +6270,14 @@ public class SatelliteControllerTest extends TelephonyTest {
         final String callerSC =  "SC:ResultReceiver";
         final String callerSAC =  "SAC:ResultReceiver";
 
-        doReturn(false).when(mFeatureFlags).geofenceEnhancementForBetterUx();
+        doReturn(false).when(mFeatureFlags).carrierRoamingNbIotNtn();
 
         mSatelliteControllerUT.incrementResultReceiverCount(callerSC);
         assertEquals(0, mSatelliteControllerUT.getResultReceiverTotalCount());
         mSatelliteControllerUT.decrementResultReceiverCount(callerSC);
         assertEquals(0, mSatelliteControllerUT.getResultReceiverTotalCount());
 
-        doReturn(true).when(mFeatureFlags).geofenceEnhancementForBetterUx();
+        doReturn(true).when(mFeatureFlags).carrierRoamingNbIotNtn();
 
         mSatelliteControllerUT.incrementResultReceiverCount(callerSC);
         assertEquals(1, mSatelliteControllerUT.getResultReceiverTotalCount());
