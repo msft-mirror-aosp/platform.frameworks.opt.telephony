@@ -983,6 +983,8 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         private ComponentName mSmsAppComponent = new ComponentName(
                 DEFAULT_SATELLITE_MESSAGING_PACKAGE, DEFAULT_SATELLITE_MESSAGING_CLASS);
         private boolean mIsDialerNotified;
+        private boolean mProvisionState = true;
+        private boolean mSatelliteAllowedByReasons = true;
 
         /**
          * Create an instance of SatelliteSOSMessageRecommender.
@@ -1015,6 +1017,16 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         protected void reportESosRecommenderDecision(boolean isDialerNotified) {
             super.reportESosRecommenderDecision(isDialerNotified);
             mIsDialerNotified = isDialerNotified;
+        }
+
+        @Override
+        protected boolean updateAndGetProvisionState() {
+            return mProvisionState;
+        }
+
+        @Override
+        protected boolean isSatelliteAllowedByReasons() {
+            return mSatelliteAllowedByReasons;
         }
 
         public boolean isTimerStarted() {
