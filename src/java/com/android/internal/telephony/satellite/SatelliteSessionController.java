@@ -68,7 +68,6 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.R;
-import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.DeviceStateMonitor;
 import com.android.internal.telephony.ExponentialBackoff;
@@ -586,13 +585,25 @@ public class SatelliteSessionController extends StateMachine {
     }
 
     /**
-     * Get whether state machine is in connected state.
+     * Get whether device is connected to satellite.
      *
-     * @return {@code true} if state machine is in connected state and {@code false} otherwise.
+     * @return {@code true} if device is connected to satellite else return {@code false}.
      */
     public boolean isInConnectedState() {
         if (DBG) plogd("isInConnectedState: getCurrentState=" + getCurrentState());
-        return getCurrentState() == mConnectedState;
+        if (getCurrentState() == null) {
+            return false;
+        }
+
+        switch (getCurrentState().getName()) {
+            case "ConnectedState":
+            case "TransferringState":
+                return true;
+            case "IdleState":
+                return isConcurrentTnScanningSupported();
+            default:
+                return false;
+        }
     }
 
 
