@@ -436,9 +436,9 @@ public class SatelliteController extends Handler {
     private final ConcurrentHashMap<IBinder, ISelectedNbIotSatelliteSubscriptionCallback>
             mSelectedNbIotSatelliteSubscriptionChangedListeners = new ConcurrentHashMap<>();
 
-    private final Object mIsSatelliteSupportedLock = new Object();
+    protected final Object mIsSatelliteSupportedLock = new Object();
     @GuardedBy("mIsSatelliteSupportedLock")
-    private Boolean mIsSatelliteSupported = null;
+    protected Boolean mIsSatelliteSupported = null;
     private boolean mIsDemoModeEnabled = false;
     private boolean mIsEmergency = false;
     private final Object mIsSatelliteEnabledLock = new Object();
@@ -5566,7 +5566,7 @@ public class SatelliteController extends Handler {
                 KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL);
     }
 
-    private int getCarrierRoamingNtnConnectType(int subId) {
+    public int getCarrierRoamingNtnConnectType(int subId) {
         return getConfigForSubId(subId).getInt(KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT);
     }
 
@@ -6479,6 +6479,23 @@ public class SatelliteController extends Handler {
         updateSatelliteSystemNotification(-1, -1,/*visible*/ false);
     }
 
+    public boolean isSatelliteSystemNotificationsEnabled(int carrierRoamingNtnConnectType) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            return false;
+        }
+        if (carrierRoamingNtnConnectType
+            != CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL) {
+            return true;
+        }
+        boolean notifySatelliteAvailabilityEnabled =
+            mContext.getResources().getBoolean(R.bool.config_satellite_should_notify_availability);
+        Boolean isSatelliteSupported = getIsSatelliteSupported();
+        if(isSatelliteSupported == null) {
+            return false;
+        }
+        return notifySatelliteAvailabilityEnabled && isSatelliteSupported;
+    }
+
     /**
      * Update the system notification to reflect the current satellite status, that's either already
      * connected OR needs to be manually enabled. The device should only display one notification
@@ -6492,9 +6509,7 @@ public class SatelliteController extends Handler {
      */
     private void updateSatelliteSystemNotification(int subId,
             @CARRIER_ROAMING_NTN_CONNECT_TYPE int carrierRoamingNtnConnectType, boolean visible) {
-        boolean notifySatelliteAvailabilityEnabled =
-            mContext.getResources().getBoolean(R.bool.config_satellite_should_notify_availability);
-        if (!mFeatureFlags.carrierRoamingNbIotNtn() || !notifySatelliteAvailabilityEnabled) {
+        if (!isSatelliteSystemNotificationsEnabled(carrierRoamingNtnConnectType)) {
             plogd("updateSatelliteSystemNotification: satellite notifications are not enabled.");
             return;
         }
