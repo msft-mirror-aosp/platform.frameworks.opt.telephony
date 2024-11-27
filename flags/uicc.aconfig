@@ -107,3 +107,11 @@ flag {
         purpose: PURPOSE_BUGFIX
     }
 }
+
+# OWNER=jinjeong TARGET=25Q2
+flag {
+    name: "get_group_id_level2"
+    namespace: "telephony"
+    description: "This flag controls to get a group id level2."
+    bug:"381171540"
+}
