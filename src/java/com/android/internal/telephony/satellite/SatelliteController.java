@@ -5488,7 +5488,7 @@ public class SatelliteController extends Handler {
 
     /** If the provision state per subscriberId for the cached is not exist, check the database for
      * the corresponding value and use it. */
-    private void updateSatelliteProvisionedStatePerSubscriberId() {
+    protected void updateSatelliteProvisionedStatePerSubscriberId() {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             return;
         }

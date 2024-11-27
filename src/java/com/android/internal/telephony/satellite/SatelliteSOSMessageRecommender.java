@@ -24,6 +24,9 @@ import static android.telephony.TelephonyManager.EXTRA_EMERGENCY_CALL_TO_SATELLI
 import static android.telephony.TelephonyManager.EXTRA_EMERGENCY_CALL_TO_SATELLITE_LAUNCH_INTENT;
 import static android.telephony.satellite.SatelliteManager.EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
 import static android.telephony.satellite.SatelliteManager.EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_DISALLOWED_REASON_NOT_PROVISIONED;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_DISALLOWED_REASON_NOT_SUPPORTED;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_DISALLOWED_REASON_UNSUPPORTED_DEFAULT_MSG_APP;
 
 import static com.android.internal.telephony.flags.Flags.satellitePersistentLogging;
 import static com.android.internal.telephony.satellite.SatelliteController.INVALID_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE;
@@ -262,8 +265,32 @@ public class SatelliteSOSMessageRecommender extends Handler {
         return SmsApplication.getDefaultSendToApplication(mContext, false);
     }
 
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected boolean updateAndGetProvisionState() {
+        mSatelliteController.updateSatelliteProvisionedStatePerSubscriberId();
+        return isDeviceProvisioned();
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected boolean isSatelliteAllowedByReasons() {
+        SatelliteManager satelliteManager = mContext.getSystemService(SatelliteManager.class);
+        List<Integer> disallowedReasons = satelliteManager.getSatelliteDisallowedReasons();
+        if (disallowedReasons.stream().anyMatch(r ->
+                (r == SATELLITE_DISALLOWED_REASON_UNSUPPORTED_DEFAULT_MSG_APP
+                        || r == SATELLITE_DISALLOWED_REASON_NOT_PROVISIONED
+                        || r == SATELLITE_DISALLOWED_REASON_NOT_SUPPORTED))) {
+            plogd("isAllowedForDefaultMessageApp:false, disallowedReasons=" + disallowedReasons);
+            return false;
+        }
+        return true;
+    }
+
     private void handleEmergencyCallStartedEvent(@NonNull Connection connection) {
         plogd("handleEmergencyCallStartedEvent: connection=" + connection);
+        if (!updateAndGetProvisionState() || !isSatelliteAllowedByReasons()) {
+            plogd("handleEmergencyCallStartedEvent: not ready to handle emergency call start");
+            return;
+        }
         mSatelliteController.setLastEmergencyCallTime();
 
         if (sendEventDisplayEmergencyMessageForcefully(connection)) {
@@ -307,6 +334,12 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 plogd("mIsTimerTimedOut=" + mIsTimerTimedOut
                         + ", mCheckingAccessRestrictionInProgress="
                         + mCheckingAccessRestrictionInProgress);
+                return;
+            }
+
+            if (!updateAndGetProvisionState() || !isSatelliteAllowedByReasons()) {
+                plogd("evaluateSendingConnectionEventDisplayEmergencyMessage: "
+                        + "not ready to use satellite.");
                 return;
             }
 
@@ -373,6 +406,12 @@ public class SatelliteSOSMessageRecommender extends Handler {
         mSatelliteController.setLastEmergencyCallTime();
         if (mEmergencyConnection == null) {
             // Either the call was not created or the timer already timed out.
+            return;
+        }
+
+        if (!updateAndGetProvisionState() || !isSatelliteAllowedByReasons()) {
+            plogd("handleEmergencyCallConnectionStateChangedEvent: not ready to use satellite.");
+            cleanUpResources(false);
             return;
         }
 
