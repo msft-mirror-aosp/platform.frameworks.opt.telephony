@@ -41,7 +41,6 @@ flag {
     namespace: "telephony"
     description: "This flag enables satellite carrier roaming to nb iot ntn."
     bug:"348253735"
-    is_exported: true
 }
 
 # OWNER=tnd TARGET=24Q4
@@ -79,5 +78,4 @@ flag {
   namespace: "telephony"
   description: "Introduce SatelliteManager APIs for carrier apps to monitor satellite state change"
   bug: "357638490"
-  is_exported: true
 }
