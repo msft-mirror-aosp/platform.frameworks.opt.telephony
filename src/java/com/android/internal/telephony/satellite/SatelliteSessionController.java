@@ -585,29 +585,6 @@ public class SatelliteSessionController extends StateMachine {
     }
 
     /**
-     * Get whether device is connected to satellite.
-     *
-     * @return {@code true} if device is connected to satellite else return {@code false}.
-     */
-    public boolean isInConnectedState() {
-        if (DBG) plogd("isInConnectedState: getCurrentState=" + getCurrentState());
-        if (getCurrentState() == null) {
-            return false;
-        }
-
-        switch (getCurrentState().getName()) {
-            case "ConnectedState":
-            case "TransferringState":
-                return true;
-            case "IdleState":
-                return isConcurrentTnScanningSupported();
-            default:
-                return false;
-        }
-    }
-
-
-    /**
      * Release all resource.
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
