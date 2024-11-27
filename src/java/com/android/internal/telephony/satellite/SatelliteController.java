@@ -657,6 +657,11 @@ public class SatelliteController extends Handler {
     private final Object mNtnSmsSupportedByMessagesAppLock = new Object();
     @GuardedBy("mNtnSmsSupportedByMessagesAppLock")
     private Boolean mNtnSmsSupportedByMessagesApp = null;
+
+    private final Object mSatelliteModemStateLock = new Object();
+    @GuardedBy("mSatelliteModemStateLock")
+    @SatelliteManager.SatelliteModemState
+    private int mSatelliteModemState = SatelliteManager.SATELLITE_MODEM_STATE_UNKNOWN;
     private BroadcastReceiver
             mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
                 @Override
@@ -4771,6 +4776,11 @@ public class SatelliteController extends Handler {
     private void handleEventSatelliteModemStateChanged(
             @SatelliteManager.SatelliteModemState int state) {
         plogd("handleEventSatelliteModemStateChanged: state=" + state);
+
+        synchronized (mSatelliteModemStateLock) {
+            mSatelliteModemState = state;
+        }
+
         if (state == SatelliteManager.SATELLITE_MODEM_STATE_UNAVAILABLE
                 || state == SatelliteManager.SATELLITE_MODEM_STATE_OFF) {
             if (!isWaitingForDisableSatelliteModemResponse()) {
@@ -8093,8 +8103,7 @@ public class SatelliteController extends Handler {
                 NTN_SIGNAL_STRENGTH_NONE);
 
         if (isInCarrierRoamingNbIotNtn(phone)) {
-            if (mSatelliteSessionController != null
-                    && mSatelliteSessionController.isInConnectedState()) {
+            if (isInConnectedState()) {
                 synchronized (mNtnSignalsStrengthLock) {
                     carrierRoamingNtnSignalStrength = mNtnSignalStrength;
                 }
@@ -8112,6 +8121,20 @@ public class SatelliteController extends Handler {
         }
 
         return carrierRoamingNtnSignalStrength;
+    }
+
+    private boolean isInConnectedState() {
+        synchronized (mSatelliteModemStateLock) {
+            switch (mSatelliteModemState) {
+                case SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED:
+                case SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING:
+                    plogd("isInConnectedState: return true");
+                    return true;
+                default:
+                    plogd("isInConnectedState: return false");
+                    return false;
+            }
+        }
     }
 
     protected void updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(
