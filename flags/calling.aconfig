@@ -69,5 +69,4 @@ flag {
     namespace: "telephony"
     description: "Used to notify the emergency callback mode for call/SMS to other applications."
     bug:"359064059"
-    is_exported: true
 }

@@ -49,7 +49,6 @@ flag {
     namespace: "telephony"
     description: "This flag controls the visibility of the setCarrierRestrictionStatus API in carrierRestrictionRules class."
     bug:"342411308"
-    is_exported: true
 }
 
 # OWNER=arunvoddu TARGET=24Q4
@@ -88,7 +87,6 @@ flag {
     namespace: "telephony"
     description: "This flag controls the type of API that retrieves ISIM records, either hidden or system type."
     bug:"359721349"
-    is_exported: true
 }
 
 # OWNER=jinjeong TARGET=25Q2
@@ -97,7 +95,6 @@ flag {
     namespace: "telephony"
     description: "This flag controls to get a carrier id using a carrier identifier."
     bug:"378778278"
-    is_exported: true
 }
 
 # OWNER=arunvoddu TARGET=25Q2
