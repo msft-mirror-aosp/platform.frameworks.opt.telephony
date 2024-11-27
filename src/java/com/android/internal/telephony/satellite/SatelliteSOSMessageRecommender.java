@@ -287,10 +287,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private void handleEmergencyCallStartedEvent(@NonNull Connection connection) {
         plogd("handleEmergencyCallStartedEvent: connection=" + connection);
-        if (!updateAndGetProvisionState() || !isSatelliteAllowedByReasons()) {
-            plogd("handleEmergencyCallStartedEvent: not ready to handle emergency call start");
-            return;
-        }
         mSatelliteController.setLastEmergencyCallTime();
 
         if (sendEventDisplayEmergencyMessageForcefully(connection)) {
@@ -337,11 +333,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 return;
             }
 
-            if (!updateAndGetProvisionState() || !isSatelliteAllowedByReasons()) {
-                plogd("evaluateSendingConnectionEventDisplayEmergencyMessage: "
-                        + "not ready to use satellite.");
-                return;
-            }
+            updateAndGetProvisionState();
 
             /*
              * The device might be connected to satellite after the emergency call started. Thus, we
@@ -354,7 +346,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             boolean isCellularAvailable = SatelliteServiceUtils.isCellularAvailable();
             if (!isCellularAvailable
                     && isSatelliteAllowed()
-                    && (isDeviceProvisioned()
+                    && ((isDeviceProvisioned() && isSatelliteAllowedByReasons())
                     || isSatelliteConnectedViaCarrierWithinHysteresisTime())
                     && shouldTrackCall(mEmergencyConnection.getState())) {
                 plogd("handleTimeoutEvent: Sent EVENT_DISPLAY_EMERGENCY_MESSAGE to Dialer");
@@ -406,12 +398,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
         mSatelliteController.setLastEmergencyCallTime();
         if (mEmergencyConnection == null) {
             // Either the call was not created or the timer already timed out.
-            return;
-        }
-
-        if (!updateAndGetProvisionState() || !isSatelliteAllowedByReasons()) {
-            plogd("handleEmergencyCallConnectionStateChangedEvent: not ready to use satellite.");
-            cleanUpResources(false);
             return;
         }
 
@@ -776,7 +762,9 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public int getEmergencyCallToSatelliteHandoverType() {
-        if (Flags.carrierRoamingNbIotNtn() && isDeviceProvisioned()
+        if (Flags.carrierRoamingNbIotNtn()
+                && isDeviceProvisioned()
+                && isSatelliteAllowedByReasons()
                 && isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
             int satelliteSubId = mSatelliteController.getSelectedSatelliteSubId();
             return mSatelliteController.getCarrierRoamingNtnEmergencyCallToSatelliteHandoverType(
