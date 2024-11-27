@@ -3775,6 +3775,13 @@ public class GsmCdmaPhone extends Phone {
                         && disclosure != null) {
                     mIdentifierDisclosureNotifier.addDisclosure(mContext, getSubId(), disclosure);
                 }
+                if (mFeatureFlags.cellularIdentifierDisclosureIndications()
+                        && mIdentifierDisclosureNotifier != null
+                        && disclosure != null) {
+                    logd("EVENT_CELL_IDENTIFIER_DISCLOSURE for non-Safety Center listeners "
+                            + "phoneId = " + getPhoneId());
+                    mNotifier.notifyCellularIdentifierDisclosedChanged(this, disclosure);
+                }
                 break;
 
             case EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE:
@@ -3785,12 +3792,20 @@ public class GsmCdmaPhone extends Phone {
 
             case EVENT_SECURITY_ALGORITHM_UPDATE:
                 logd("EVENT_SECURITY_ALGORITHM_UPDATE phoneId = " + getPhoneId());
+
+                ar = (AsyncResult) msg.obj;
+                SecurityAlgorithmUpdate update = (SecurityAlgorithmUpdate) ar.result;
+
                 if (mFeatureFlags.enableModemCipherTransparencyUnsolEvents()
                         && mNullCipherNotifier != null) {
-                    ar = (AsyncResult) msg.obj;
-                    SecurityAlgorithmUpdate update = (SecurityAlgorithmUpdate) ar.result;
                     mNullCipherNotifier.onSecurityAlgorithmUpdate(mContext, getPhoneId(),
                             getSubId(), update);
+                }
+                if (mFeatureFlags.securityAlgorithmsUpdateIndications()
+                        && mNullCipherNotifier != null) {
+                    logd("EVENT_SECURITY_ALGORITHM_UPDATE for non-Safety Center listeners "
+                              + "phoneId = " + getPhoneId());
+                    mNotifier.notifySecurityAlgorithmsChanged(this, update);
                 }
                 break;
 
