@@ -115,3 +115,11 @@ flag {
     description: "This flag controls to get a group id level2."
     bug:"381171540"
 }
+
+# OWNER=jinjeong TARGET=25Q2
+flag {
+    name: "action_sim_preference_settings"
+    namespace: "telephony"
+    description: "This flag controls to launch sim preference page in Setting"
+    bug:"381319469"
+}
