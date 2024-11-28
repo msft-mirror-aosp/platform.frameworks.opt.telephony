@@ -373,6 +373,7 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
 
     @Test
     public void testSatelliteProvisionStateChangedBeforeTimeout() {
+        mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(false);
         mTestSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         processAllMessages();
 
@@ -393,6 +394,7 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         assertFalse(mTestSOSMessageRecommender.isDialerNotified());
         reset(mMockSatelliteStats);
 
+        mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(true);
         mTestSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         processAllMessages();
         assertTrue(mTestSOSMessageRecommender.isTimerStarted());
