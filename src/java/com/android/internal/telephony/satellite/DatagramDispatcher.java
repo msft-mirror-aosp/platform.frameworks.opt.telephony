@@ -753,6 +753,8 @@ public class DatagramDispatcher extends Handler {
 
     private void reportSendDatagramCompleted(@NonNull SendSatelliteDatagramArgument argument,
             @NonNull @SatelliteManager.SatelliteResult int resultCode) {
+        long datagramTransmissionTime = argument.datagramStartTime > 0
+                ? (System.currentTimeMillis() - argument.datagramStartTime) : 0;
         SatelliteStats.getInstance().onSatelliteOutgoingDatagramMetrics(
                 new SatelliteStats.SatelliteOutgoingDatagramParams.Builder()
                         .setDatagramType(argument.datagramType)
@@ -760,15 +762,15 @@ public class DatagramDispatcher extends Handler {
                         .setDatagramSizeBytes(argument.getDatagramRoundedSizeBytes())
                         /* In case pending datagram has not been attempted to send to modem
                         interface. transfer time will be 0. */
-                        .setDatagramTransferTimeMillis(argument.datagramStartTime > 0
-                                ? (System.currentTimeMillis() - argument.datagramStartTime) : 0)
+                        .setDatagramTransferTimeMillis(datagramTransmissionTime)
                         .setIsDemoMode(mIsDemoMode)
                         .setCarrierId(SatelliteController.getInstance().getSatelliteCarrierId())
                         .build());
         if (resultCode == SatelliteManager.SATELLITE_RESULT_SUCCESS) {
             mControllerMetricsStats.reportOutgoingDatagramSuccessCount(argument.datagramType,
                     mIsDemoMode);
-            mSessionMetricsStats.addCountOfSuccessfulOutgoingDatagram(argument.datagramType);
+            mSessionMetricsStats.addCountOfSuccessfulOutgoingDatagram(argument.datagramType,
+                    datagramTransmissionTime);
         } else {
             mControllerMetricsStats.reportOutgoingDatagramFailCount(argument.datagramType,
                     mIsDemoMode);
