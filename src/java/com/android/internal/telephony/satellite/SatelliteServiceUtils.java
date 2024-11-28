@@ -553,10 +553,10 @@ public class SatelliteServiceUtils {
                 new android.telephony.satellite.stub.SystemSelectionSpecifier();
 
         convertedSpecifier.mMccMnc = systemSelectionSpecifier.getMccMnc();
-        convertedSpecifier.mBands = systemSelectionSpecifier.getBands().toArray();
-        convertedSpecifier.mEarfcs = systemSelectionSpecifier.getEarfcns().toArray();
-
-        SatelliteInfo[] satelliteInfos = systemSelectionSpecifier.getSatelliteInfos();
+        convertedSpecifier.mBands = systemSelectionSpecifier.getBands();
+        convertedSpecifier.mEarfcs = systemSelectionSpecifier.getEarfcns();
+        SatelliteInfo[] satelliteInfos = systemSelectionSpecifier.getSatelliteInfos()
+                .toArray(new SatelliteInfo[0]);
         android.telephony.satellite.stub.SatelliteInfo[] halSatelliteInfos =
                 new android.telephony.satellite.stub.SatelliteInfo[satelliteInfos.length];
         for (int i = 0; i < satelliteInfos.length; i++) {
@@ -591,8 +591,7 @@ public class SatelliteServiceUtils {
             }
         }
         convertedSpecifier.satelliteInfos = halSatelliteInfos;
-
-        convertedSpecifier.tagIds = systemSelectionSpecifier.getTagIds().toArray();
+        convertedSpecifier.tagIds = systemSelectionSpecifier.getTagIds();
         return convertedSpecifier;
     }
 
