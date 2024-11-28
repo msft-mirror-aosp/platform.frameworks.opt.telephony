@@ -138,7 +138,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private long mCallbackModeDurationMillis;
     private boolean mCarrierRoamingNtnMode;
     private boolean mCarrierRoamingNtnEligible;
-    private List<Integer> mCarrierRoamingNtnAvailableServices;
+    private int[] mCarrierRoamingNtnAvailableServices;
     private NtnSignalStrength mCarrierRoamingNtnSignalStrength;
     private boolean mIsSatelliteEnabled;
 
@@ -354,7 +354,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
         }
 
         @Override
-        public void onCarrierRoamingNtnAvailableServicesChanged(List<Integer> services) {
+        public void onCarrierRoamingNtnAvailableServicesChanged(int[] services) {
             invocationCount.incrementAndGet();
             mCarrierRoamingNtnAvailableServices = services;
         }
@@ -1768,9 +1768,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
         int[] services = {3, 6};
         mTelephonyRegistry.notifyCarrierRoamingNtnAvailableServicesChanged(subId, services);
         processAllMessages();
-        int[] carrierServices = mCarrierRoamingNtnAvailableServices.stream()
-                .mapToInt(Integer::intValue).toArray();
-        assertTrue(Arrays.equals(carrierServices, services));
+        assertTrue(Arrays.equals(mCarrierRoamingNtnAvailableServices, services));
     }
 
     @Test
