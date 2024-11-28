@@ -1235,7 +1235,7 @@ public class SmsDispatchersController extends Handler {
         notifySmsSentToEmergencyStateTracker(tracker.mDestAddress,
             tracker.mMessageId, isOverIms, isLastSmsPart, success);
         notifySmsSentToDatagramDispatcher(tracker.mUniqueMessageId,
-                tracker.isSinglePartOrLastPart(), !tracker.isAnyPartFailed());
+                tracker.isSinglePartOrLastPart(), success && !tracker.isAnyPartFailed());
     }
 
     /**
