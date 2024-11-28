@@ -127,4 +127,5 @@ flag {
   namespace: "telephony"
   description: "Support OEM_PAID and OEM_PRIVATE networks"
   bug: "366194627"
+  is_exported: true
 }
