@@ -307,7 +307,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private void handleSatelliteProvisionStateChangedEvent(boolean provisioned) {
-        if (!provisioned) {
+        if (!provisioned
+                && !isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
             cleanUpResources(false);
         }
     }
