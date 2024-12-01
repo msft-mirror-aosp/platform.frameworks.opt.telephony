@@ -553,34 +553,45 @@ public class SatelliteServiceUtils {
                 new android.telephony.satellite.stub.SystemSelectionSpecifier();
 
         convertedSpecifier.mMccMnc = systemSelectionSpecifier.getMccMnc();
-        convertedSpecifier.mBands = systemSelectionSpecifier.getBands().toArray();
-        convertedSpecifier.mEarfcs = systemSelectionSpecifier.getEarfcns().toArray();
-        SatelliteInfo[] satelliteInfos = systemSelectionSpecifier.getSatelliteInfos();
+        convertedSpecifier.mBands = systemSelectionSpecifier.getBands();
+        convertedSpecifier.mEarfcs = systemSelectionSpecifier.getEarfcns();
+        SatelliteInfo[] satelliteInfos = systemSelectionSpecifier.getSatelliteInfos()
+                .toArray(new SatelliteInfo[0]);
         android.telephony.satellite.stub.SatelliteInfo[] halSatelliteInfos =
                 new android.telephony.satellite.stub.SatelliteInfo[satelliteInfos.length];
         for (int i = 0; i < satelliteInfos.length; i++) {
+            halSatelliteInfos[i] = new android.telephony.satellite.stub.SatelliteInfo();
+
+            halSatelliteInfos[i].id = new android.telephony.satellite.stub.UUID();
             halSatelliteInfos[i].id.mostSigBits =
                     satelliteInfos[i].getSatelliteId().getMostSignificantBits();
             halSatelliteInfos[i].id.leastSigBits =
                     satelliteInfos[i].getSatelliteId().getLeastSignificantBits();
+
+            halSatelliteInfos[i].position =
+                    new android.telephony.satellite.stub.SatellitePosition();
             halSatelliteInfos[i].position.longitudeDegree =
                     satelliteInfos[i].getSatellitePosition().getLongitudeDegrees();
             halSatelliteInfos[i].position.altitudeKm =
                     satelliteInfos[i].getSatellitePosition().getAltitudeKm();
+
             halSatelliteInfos[i].bands = satelliteInfos[i].getBands().stream().mapToInt(
                     Integer::intValue).toArray();
+
             List<EarfcnRange> earfcnRangeList = satelliteInfos[i].getEarfcnRanges();
             halSatelliteInfos[i].earfcnRanges =
                     new android.telephony.satellite.stub.EarfcnRange[earfcnRangeList.size()];
             for (int j = 0; j < earfcnRangeList.size(); j++) {
+                halSatelliteInfos[i].earfcnRanges[j] =
+                        new android.telephony.satellite.stub.EarfcnRange();
                 halSatelliteInfos[i].earfcnRanges[j].startEarfcn = earfcnRangeList.get(
                         j).getStartEarfcn();
                 halSatelliteInfos[i].earfcnRanges[j].endEarfcn = earfcnRangeList.get(
-                        j).getStartEarfcn();
+                        j).getEndEarfcn();
             }
         }
         convertedSpecifier.satelliteInfos = halSatelliteInfos;
-        convertedSpecifier.tagIds = systemSelectionSpecifier.getTagIds().toArray();
+        convertedSpecifier.tagIds = systemSelectionSpecifier.getTagIds();
         return convertedSpecifier;
     }
 
