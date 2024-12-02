@@ -877,6 +877,11 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         }
 
         @Override
+        protected void registerForSatelliteCommunicationAllowedStateChanged() {
+            logd("registerForSatelliteCommunicationAllowedStateChanged");
+        }
+
+        @Override
         @SatelliteManager.SatelliteResult public int registerForSatelliteProvisionStateChanged(
                 @NonNull ISatelliteProvisionStateCallback callback) {
             mRegisterForSatelliteProvisionStateChangedCalls++;
@@ -996,6 +1001,11 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         protected List<DeviceState> getSupportedDeviceStates() {
             return List.of(new DeviceState(new DeviceState.Configuration.Builder(0 /* identifier */,
                     "DEFAULT" /* name */).build()));
+        }
+
+        @Override
+        protected void registerForSatelliteCommunicationAllowedStateChanged() {
+            logd("registerForSatelliteCommunicationAllowedStateChanged");
         }
     }
 
