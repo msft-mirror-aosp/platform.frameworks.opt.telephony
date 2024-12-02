@@ -376,6 +376,10 @@ public class DatagramReceiver extends Handler {
                         });
                     }
 
+                    // Send the captured data about incoming datagram to metric
+                    sInstance.reportMetrics(satelliteDatagram,
+                            SatelliteManager.SATELLITE_RESULT_SUCCESS);
+
                     if (pendingCount <= 0) {
                         sInstance.mDatagramController.updateReceiveStatus(mSubId,
                                 SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
@@ -393,10 +397,6 @@ public class DatagramReceiver extends Handler {
                                 internalCallback::accept);
                         sInstance.pollPendingSatelliteDatagramsInternal(mSubId, callback);
                     }
-
-                    // Send the captured data about incoming datagram to metric
-                    sInstance.reportMetrics(satelliteDatagram,
-                            SatelliteManager.SATELLITE_RESULT_SUCCESS);
                     break;
                 }
 
@@ -748,8 +748,8 @@ public class DatagramReceiver extends Handler {
                         (int) (Math.round((double) sizeBytes / ROUNDING_UNIT) * ROUNDING_UNIT);
             }
             datagramTransferTime = (System.currentTimeMillis() - mDatagramTransferStartTime);
-            mDatagramTransferStartTime = 0;
         }
+        mDatagramTransferStartTime = 0;
 
         SatelliteStats.getInstance().onSatelliteIncomingDatagramMetrics(
                 new SatelliteStats.SatelliteIncomingDatagramParams.Builder()
