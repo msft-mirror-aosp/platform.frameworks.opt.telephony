@@ -43,7 +43,7 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_S
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL;
-import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE_BYTES_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY;
 import static android.telephony.SubscriptionManager.SATELLITE_ATTACH_ENABLED_FOR_CARRIER;
 import static android.telephony.SubscriptionManager.SATELLITE_ENTITLEMENT_STATUS;
@@ -5425,7 +5425,7 @@ public class SatelliteController extends Handler {
                         KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
                         KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
                         KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT,
-                        KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE,
+                        KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE_BYTES_INT,
                         KEY_SATELLITE_SUPPORTED_MSG_APPS_STRING_ARRAY,
                         KEY_REGIONAL_SATELLITE_EARFCN_BUNDLE,
                         KEY_SATELLITE_DATA_SUPPORT_MODE_INT
@@ -7998,8 +7998,8 @@ public class SatelliteController extends Handler {
     private void overrideSatelliteCapabilitiesIfApplicable() {
         int subId = getSelectedSatelliteSubId();
         PersistableBundle config = getPersistableBundle(subId);
-        if (config.containsKey(KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE)) {
-            int datagramSize = config.getInt(KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE);
+        if (config.containsKey(KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE_BYTES_INT)) {
+            int datagramSize = config.getInt(KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE_BYTES_INT);
             SubscriptionInfo subInfo = mSubscriptionManagerService.getSubscriptionInfo(subId);
             if (!(subInfo == null || subInfo.isOnlyNonTerrestrialNetwork())) {
                 synchronized (mSatelliteCapabilitiesLock) {
