@@ -34,6 +34,7 @@ import static android.telephony.CarrierConfigManager.KEY_REGIONAL_SATELLITE_EARF
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_DATA_SUPPORT_MODE_INT;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_DISPLAY_NAME_STRING;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
@@ -4273,7 +4274,11 @@ public class SatelliteController extends Handler {
         logd("onSatelliteEntitlementStatusUpdated subId=" + subId + ", entitlementEnabled="
                 + entitlementEnabled + ", allowedPlmnList=["
                 + String.join(",", allowedPlmnList) + "]" + ", barredPlmnList=["
-                + String.join(",", barredPlmnList) + "]");
+                + String.join(",", barredPlmnList) + "]"
+                + ", plmnDataPlanMap =" + plmnDataPlanMap.toString()
+                + ", plmnServiceTypeMap =" + plmnServiceTypeMap.toString()
+                + ", plmnDataServicePolicyMap=" + plmnDataServicePolicyMap.toString()
+                + ", plmnVoiceServicePolicyMap=" + plmnVoiceServicePolicyMap.toString());
 
         synchronized (mSupportedSatelliteServicesLock) {
             if (mSatelliteEntitlementStatusPerCarrier.get(subId, false) != entitlementEnabled) {
@@ -5404,6 +5409,7 @@ public class SatelliteController extends Handler {
                 config = mCarrierConfigManager.getConfigForSubId(subId,
                         KEY_CARRIER_SUPPORTED_SATELLITE_SERVICES_PER_PROVIDER_BUNDLE,
                         KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
+                        KEY_SATELLITE_DISPLAY_NAME_STRING,
                         KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL,
                         KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT,
                         KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL,
@@ -7220,6 +7226,29 @@ public class SatelliteController extends Handler {
             name = null;
         }
         return name;
+    }
+
+    /**
+     * Request to get the name to display for Satellite.
+     *
+     * @param result The result receiver that returns the name to display for the satellite
+     *               or an error code if the request failed.
+     */
+    public void requestSatelliteDisplayName(@NonNull ResultReceiver result) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("requestSatelliteDisplayName: carrierRoamingNbIotNtn flag is disabled");
+            result.send(SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED, null);
+            return;
+        }
+
+        int subId = getSelectedSatelliteSubId();
+        String displayName = getConfigForSubId(subId).getString(
+                KEY_SATELLITE_DISPLAY_NAME_STRING, "Satellite");
+
+        plogd("requestSatelliteDisplayName: " + displayName);
+        Bundle bundle = new Bundle();
+        bundle.putString(SatelliteManager.KEY_SATELLITE_DISPLAY_NAME, displayName);
+        result.send(SATELLITE_RESULT_SUCCESS, bundle);
     }
 
     /**
