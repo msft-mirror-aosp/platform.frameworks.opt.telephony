@@ -397,6 +397,7 @@ import com.android.internal.telephony.uicc.IccSlotStatus;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.PortUtils;
 import com.android.internal.telephony.uicc.SimPhonebookRecord;
+import com.android.internal.telephony.uicc.SimTypeInfo;
 import com.android.telephony.Rlog;
 
 import java.io.ByteArrayInputStream;
@@ -5877,6 +5878,23 @@ public class RILUtils {
                 securityAlgorithmUpdate.encryption,
                 securityAlgorithmUpdate.integrity,
                 securityAlgorithmUpdate.isUnprotectedEmergency);
+    }
+
+    /** Convert an AIDL-based SimTypeInfo to its Java wrapper. */
+    public static ArrayList<SimTypeInfo> convertAidlSimTypeInfo(
+            android.hardware.radio.config.SimTypeInfo[] simTypeInfos) {
+        ArrayList<SimTypeInfo> response = new ArrayList<>();
+        if (simTypeInfos == null) {
+            loge("convertAidlSimTypeInfo received NULL simTypeInfos");
+            return response;
+        }
+        for (android.hardware.radio.config.SimTypeInfo simTypeInfo : simTypeInfos) {
+            SimTypeInfo info = new SimTypeInfo();
+            info.mSupportedSimTypes = simTypeInfo.supportedSimTypes;
+            info.setCurrentSimType(simTypeInfo.currentSimType);
+            response.add(info);
+        }
+        return response;
     }
 
     private static void logd(String log) {
