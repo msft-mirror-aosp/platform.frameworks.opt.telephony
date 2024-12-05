@@ -110,7 +110,7 @@ public class DisplayInfoController extends Handler {
         mTelephonyDisplayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_UNKNOWN,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE,
-                false);
+                false, false, false);
         mNetworkTypeController = new NetworkTypeController(phone, this, featureFlags);
         // EVENT_UPDATE will transition from DefaultState to the current state
         // and update the TelephonyDisplayInfo based on the current state.
@@ -132,7 +132,9 @@ public class DisplayInfoController extends Handler {
         TelephonyDisplayInfo newDisplayInfo = new TelephonyDisplayInfo(
                 mNetworkTypeController.getDataNetworkType(),
                 mNetworkTypeController.getOverrideNetworkType(),
-                isRoaming());
+                isRoaming(),
+                mPhone.getServiceStateTracker().getServiceState().isUsingNonTerrestrialNetwork(),
+                mNetworkTypeController.getSatelliteConstrainedData());
         if (!newDisplayInfo.equals(mTelephonyDisplayInfo)) {
             logl("TelephonyDisplayInfo changed from " + mTelephonyDisplayInfo + " to "
                     + newDisplayInfo);
