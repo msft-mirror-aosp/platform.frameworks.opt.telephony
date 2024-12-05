@@ -4274,7 +4274,11 @@ public class SatelliteController extends Handler {
         logd("onSatelliteEntitlementStatusUpdated subId=" + subId + ", entitlementEnabled="
                 + entitlementEnabled + ", allowedPlmnList=["
                 + String.join(",", allowedPlmnList) + "]" + ", barredPlmnList=["
-                + String.join(",", barredPlmnList) + "]");
+                + String.join(",", barredPlmnList) + "]"
+                + ", plmnDataPlanMap =" + plmnDataPlanMap.toString()
+                + ", plmnServiceTypeMap =" + plmnServiceTypeMap.toString()
+                + ", plmnDataServicePolicyMap=" + plmnDataServicePolicyMap.toString()
+                + ", plmnVoiceServicePolicyMap=" + plmnVoiceServicePolicyMap.toString());
 
         synchronized (mSupportedSatelliteServicesLock) {
             if (mSatelliteEntitlementStatusPerCarrier.get(subId, false) != entitlementEnabled) {
