@@ -121,7 +121,7 @@ flag {
   }
 }
 
-# OWNER=TBD TARGET=TBD
+# OWNER=jackyu TARGET=25Q2
 flag {
   name: "oem_paid_private"
   namespace: "telephony"
