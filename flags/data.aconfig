@@ -129,3 +129,14 @@ flag {
   bug: "366194627"
   is_exported: true
 }
+
+# OWNER=gwenlin TARGET=25Q2
+flag {
+  name: "incall_handover_policy"
+  namespace: "telephony"
+  description: "Support IWLAN handover policy based on incall."
+  bug:"376765521"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}

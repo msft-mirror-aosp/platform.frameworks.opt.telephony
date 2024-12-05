@@ -1269,7 +1269,7 @@ public class DataConfigManager extends Handler {
             if (handoverRulesStrings != null) {
                 for (String ruleString : handoverRulesStrings) {
                     try {
-                        mHandoverRuleList.add(new HandoverRule(ruleString));
+                        mHandoverRuleList.add(new HandoverRule(ruleString, mFeatureFlags));
                     } catch (IllegalArgumentException e) {
                         loge("updateHandoverRules: " + e.getMessage());
                     }
