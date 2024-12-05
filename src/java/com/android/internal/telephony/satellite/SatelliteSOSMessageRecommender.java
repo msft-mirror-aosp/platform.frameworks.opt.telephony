@@ -673,7 +673,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     @NonNull private Bundle createExtraBundleForEventDisplayEmergencyMessage(
             boolean isTestEmergencyNumber) {
-        int handoverType = EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
+        int handoverType = getEmergencyCallToSatelliteHandoverType();
         Pair<String, String> oemSatelliteMessagingApp =
                 getOemEnabledSatelliteHandoverAppFromOverlayConfig(mContext);
         String packageName = oemSatelliteMessagingApp.first;
@@ -681,10 +681,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
         String action = getSatelliteEmergencyHandoverIntentActionFromOverlayConfig(mContext,
                 isTestEmergencyNumber);
 
-        if (isSatelliteConnectedViaCarrierWithinHysteresisTime()
-                || isEmergencyCallToSatelliteHandoverTypeT911Enforced()) {
+        if (handoverType == EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911) {
             ComponentName defaultSmsAppComponent = getDefaultSmsApp();
-            handoverType = EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
             packageName = defaultSmsAppComponent.getPackageName();
             className = defaultSmsAppComponent.getClassName();
         }
