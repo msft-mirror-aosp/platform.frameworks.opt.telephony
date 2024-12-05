@@ -28,6 +28,8 @@ import android.telephony.RadioAccessSpecifier;
 import android.telephony.Rlog;
 import android.telephony.SignalThresholdInfo;
 
+import com.android.internal.telephony.flags.Flags;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -172,12 +174,6 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void getCdmaRoamingPreference(int serial) throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            mNetworkProxy.getCdmaRoamingPreference(serial);
-        } else {
-            mRadioProxy.getCdmaRoamingPreference(serial);
-        }
     }
 
     /**
@@ -431,12 +427,6 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void setCdmaRoamingPreference(int serial, int cdmaRoamingType) throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            mNetworkProxy.setCdmaRoamingPreference(serial, cdmaRoamingType);
-        } else {
-            mRadioProxy.setCdmaRoamingPreference(serial, cdmaRoamingType);
-        }
     }
 
     /**

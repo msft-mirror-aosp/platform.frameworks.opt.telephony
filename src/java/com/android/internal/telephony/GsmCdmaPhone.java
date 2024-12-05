@@ -782,11 +782,7 @@ public class GsmCdmaPhone extends Phone {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @Override
     public int getPhoneType() {
-        if (mPrecisePhoneType == PhoneConstants.PHONE_TYPE_GSM) {
-            return PhoneConstants.PHONE_TYPE_GSM;
-        } else {
-            return PhoneConstants.PHONE_TYPE_CDMA;
-        }
+        return PhoneConstants.PHONE_TYPE_GSM;
     }
 
     @Override
