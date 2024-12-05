@@ -4232,7 +4232,8 @@ public class RILUtils {
             iccCardStatus.setCardState(cardStatus10.cardState);
             iccCardStatus.setUniversalPinState(cardStatus10.universalPinState);
             iccCardStatus.mGsmUmtsSubscriptionAppIndex = cardStatus10.gsmUmtsSubscriptionAppIndex;
-            iccCardStatus.mCdmaSubscriptionAppIndex = cardStatus10.cdmaSubscriptionAppIndex;
+            iccCardStatus.mCdmaSubscriptionAppIndex =
+                    Flags.cleanupCdma() ? -1 : cardStatus10.cdmaSubscriptionAppIndex;
             iccCardStatus.mImsSubscriptionAppIndex = cardStatus10.imsSubscriptionAppIndex;
             int numApplications = cardStatus10.applications.size();
 
@@ -4302,7 +4303,8 @@ public class RILUtils {
         iccCardStatus.setMultipleEnabledProfilesMode(cardStatus.supportedMepMode);
         iccCardStatus.setUniversalPinState(cardStatus.universalPinState);
         iccCardStatus.mGsmUmtsSubscriptionAppIndex = cardStatus.gsmUmtsSubscriptionAppIndex;
-        iccCardStatus.mCdmaSubscriptionAppIndex = cardStatus.cdmaSubscriptionAppIndex;
+        iccCardStatus.mCdmaSubscriptionAppIndex =
+                Flags.cleanupCdma() ? -1 : cardStatus.cdmaSubscriptionAppIndex;
         iccCardStatus.mImsSubscriptionAppIndex = cardStatus.imsSubscriptionAppIndex;
         iccCardStatus.atr = cardStatus.atr;
         iccCardStatus.iccid = cardStatus.iccid;
