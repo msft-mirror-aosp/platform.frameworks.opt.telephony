@@ -1344,7 +1344,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
         TelephonyDisplayInfo displayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED,
-                false);
+                false, false, false);
 
         // Notify with invalid subId on default phone. Should NOT trigger callback.
         mTelephonyRegistry.notifyDisplayInfoChanged(0, INVALID_SUBSCRIPTION_ID, displayInfo);
@@ -1371,11 +1371,11 @@ public class TelephonyRegistryTest extends TelephonyTest {
         TelephonyDisplayInfo displayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED,
-                false);
+                false, false, false);
         TelephonyDisplayInfo expectDisplayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE,
-                false);
+                false, false, false);
 
         // Notify with invalid subId on default phone. Should NOT trigger callback.
         mTelephonyRegistry.notifyDisplayInfoChanged(0, INVALID_SUBSCRIPTION_ID, displayInfo);
@@ -1398,11 +1398,11 @@ public class TelephonyRegistryTest extends TelephonyTest {
         TelephonyDisplayInfo displayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED,
-                false);
+                false, false, false);
         TelephonyDisplayInfo expectDisplayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE,
-                false);
+                false, false, false);
         TelephonyCallback telephonyCallback2 = new TelephonyCallbackWrapper() {
             @Override
             public void onDisplayInfoChanged(TelephonyDisplayInfo displayInfoNotify) {
