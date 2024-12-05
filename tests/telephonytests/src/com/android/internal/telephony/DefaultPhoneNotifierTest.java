@@ -15,6 +15,12 @@
  */
 package com.android.internal.telephony;
 
+import static android.telephony.CellularIdentifierDisclosure.CELLULAR_IDENTIFIER_IMSI;
+import static android.telephony.CellularIdentifierDisclosure.NAS_PROTOCOL_MESSAGE_ATTACH_REQUEST;
+import static android.telephony.SecurityAlgorithmUpdate.CONNECTION_EVENT_VOLTE_SIP;
+import static android.telephony.SecurityAlgorithmUpdate.SECURITY_ALGORITHM_EEA2;
+import static android.telephony.SecurityAlgorithmUpdate.SECURITY_ALGORITHM_HMAC_SHA1_96;
+
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Matchers.eq;
@@ -26,9 +32,11 @@ import static org.mockito.Mockito.verify;
 
 import android.telephony.CellIdentityGsm;
 import android.telephony.CellInfo;
+import android.telephony.CellularIdentifierDisclosure;
 import android.telephony.DisconnectCause;
 import android.telephony.PreciseCallState;
 import android.telephony.PreciseDisconnectCause;
+import android.telephony.SecurityAlgorithmUpdate;
 import android.telephony.SignalStrength;
 import android.telephony.TelephonyManager;
 import android.telephony.ims.ImsCallProfile;
@@ -448,5 +456,36 @@ public class DefaultPhoneNotifierTest extends TelephonyTest {
                 mPhone, testServices);
         verify(mTelephonyRegistryManager).notifyCarrierRoamingNtnAvailableServicesChanged(
                 eq(subId), eq(testServices));
+    }
+
+    @Test
+    @SmallTest
+    public void testSecurityAlgorithmsChanged() {
+        doReturn(true).when(mFeatureFlags).securityAlgorithmsUpdateIndications();
+        int phoneId = mPhone.getPhoneId();
+        int subId = mPhone.getSubId();
+        SecurityAlgorithmUpdate update =
+                new SecurityAlgorithmUpdate(
+                        CONNECTION_EVENT_VOLTE_SIP, SECURITY_ALGORITHM_EEA2,
+                        SECURITY_ALGORITHM_HMAC_SHA1_96, false);
+        mDefaultPhoneNotifierUT.notifySecurityAlgorithmsChanged(mPhone, update);
+        verify(mTelephonyRegistryManager).notifySecurityAlgorithmsChanged(
+                eq(phoneId), eq(subId), eq(update));
+    }
+
+    @Test
+    @SmallTest
+    public void testCellularIdentifierDisclosedChanged() {
+        doReturn(true).when(mFeatureFlags).cellularIdentifierDisclosureIndications();
+        int phoneId = mPhone.getPhoneId();
+        int subId = mPhone.getSubId();
+        CellularIdentifierDisclosure disclosure =
+                new CellularIdentifierDisclosure(NAS_PROTOCOL_MESSAGE_ATTACH_REQUEST,
+                        CELLULAR_IDENTIFIER_IMSI,
+                        "001001",
+                        false);
+        mDefaultPhoneNotifierUT.notifyCellularIdentifierDisclosedChanged(mPhone, disclosure);
+        verify(mTelephonyRegistryManager).notifyCellularIdentifierDisclosedChanged(
+                eq(phoneId), eq(subId), eq(disclosure));
     }
 }

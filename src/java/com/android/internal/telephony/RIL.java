@@ -181,6 +181,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
     /** @hide */
     public static final HalVersion RADIO_HAL_VERSION_2_3 = new HalVersion(2, 3);
 
+    /** @hide */
+    public static final HalVersion RADIO_HAL_VERSION_2_4 = new HalVersion(2, 4);
+
     // Hal version
     private final Map<Integer, HalVersion> mHalVersion = new HashMap<>();
 
@@ -5352,6 +5355,102 @@ public class RIL extends BaseCommands implements CommandsInterface {
             });
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void setSatellitePlmn(int simSlot, @NonNull List<String> carrierPlmnList,
+            @NonNull List<String> allSatellitePlmnList, Message result) {
+        RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class);
+        if (!canMakeRequest(
+                "setSatellitePlmn",
+                networkProxy,
+                result,
+                RADIO_HAL_VERSION_2_4)) {
+            return;
+        }
+
+        RILRequest rr = obtainRequest(RIL_REQUEST_SET_SATELLITE_PLMN, result,
+                mRILDefaultWorkSource);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
+                    + " simSlot=" + simSlot + " carrierPlmnList=" + carrierPlmnList
+                    + " allSatellitePlmnList=" + allSatellitePlmnList);
+        }
+
+        radioServiceInvokeHelper(
+                HAL_SERVICE_NETWORK,
+                rr,
+                "setSatellitePlmn",
+                () -> {
+                    networkProxy.setSatellitePlmn(rr.mSerial, simSlot, carrierPlmnList,
+                            allSatellitePlmnList);
+                });
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void setSatelliteEnabledForCarrier(int simSlot, boolean satelliteEnabled,
+            Message result) {
+        RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class);
+        if (!canMakeRequest(
+                "setSatelliteEnabledForCarrier",
+                networkProxy,
+                result,
+                RADIO_HAL_VERSION_2_4)) {
+            return;
+        }
+
+        RILRequest rr = obtainRequest(RIL_REQUEST_SET_SATELLITE_ENABLED_FOR_CARRIER, result,
+                mRILDefaultWorkSource);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
+                    + " simSlot=" + simSlot + " satelliteEnabled=" + satelliteEnabled);
+        }
+
+        radioServiceInvokeHelper(
+                HAL_SERVICE_NETWORK,
+                rr,
+                "setSatelliteEnabledForCarrier",
+                () -> {
+                    networkProxy.setSatelliteEnabledForCarrier(rr.mSerial, simSlot,
+                            satelliteEnabled);
+                });
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void isSatelliteEnabledForCarrier(int simSlot, Message result) {
+        RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class);
+        if (!canMakeRequest(
+                "isSatelliteEnabledForCarrier",
+                networkProxy,
+                result,
+                RADIO_HAL_VERSION_2_4)) {
+            return;
+        }
+
+        RILRequest rr = obtainRequest(RIL_REQUEST_IS_SATELLITE_ENABLED_FOR_CARRIER, result,
+                mRILDefaultWorkSource);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
+                    + " simSlot=" + simSlot);
+        }
+
+        radioServiceInvokeHelper(
+                HAL_SERVICE_NETWORK, rr, "isSatelliteEnabledForCarrier", () -> {
+                    networkProxy.isSatelliteEnabledForCarrier(rr.mSerial, simSlot);
+                });
+    }
+
+
     //***** Private Methods
     /**
      * This is a helper function to be called when an indication callback is called for any radio
@@ -6216,6 +6315,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case 2: return RADIO_HAL_VERSION_2_1;
             case 3: return RADIO_HAL_VERSION_2_2;
             case 4: return RADIO_HAL_VERSION_2_3;
+            case 5: return RADIO_HAL_VERSION_2_4;
             default: return RADIO_HAL_VERSION_UNKNOWN;
         }
     }

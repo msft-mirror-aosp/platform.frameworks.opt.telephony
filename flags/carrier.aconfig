@@ -21,3 +21,12 @@ flag {
       purpose: PURPOSE_BUGFIX
     }
 }
+
+# OWNER=melhuishj TARGET=25Q2
+flag {
+    name: "temporary_failures_in_carrier_messaging_service"
+    is_exported: true
+    namespace: "telephony"
+    description: "Enable temporary failures in CarrierMessagingService"
+    bug:"326610112"
+}
