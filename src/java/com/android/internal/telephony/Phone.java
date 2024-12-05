@@ -2812,7 +2812,6 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      * @param response Callback message.
      */
     public void resetModemConfig(Message response) {
-        mCi.nvResetConfig(3 /* factory NV reset */, response);
     }
 
     /**
@@ -2821,7 +2820,6 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      * @param response Callback message.
      */
     public void eraseModemConfig(Message response) {
-        mCi.nvResetConfig(2 /* erase NV */, response);
     }
 
     /**

@@ -384,6 +384,7 @@ import com.android.internal.telephony.cdma.sms.CdmaSmsSubaddress;
 import com.android.internal.telephony.cdma.sms.SmsEnvelope;
 import com.android.internal.telephony.data.KeepaliveStatus;
 import com.android.internal.telephony.data.KeepaliveStatus.KeepaliveStatusCode;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.imsphone.ImsCallInfo;
 import com.android.internal.telephony.uicc.AdnCapacity;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus;
@@ -1163,17 +1164,9 @@ public class RILUtils {
      * @return The converted reset type in integer or -1 if param is invalid
      */
     public static int convertToHalResetNvType(int resetType) {
-        /**
-         * resetType values
-         * 1 - reload all NV items
-         * 2 - erase NV reset (SCRTN)
-         * 3 - factory reset (RTN)
-         */
-        switch (resetType) {
-            case 1: return android.hardware.radio.V1_0.ResetNvType.RELOAD;
-            case 2: return android.hardware.radio.V1_0.ResetNvType.ERASE;
-            case 3: return android.hardware.radio.V1_0.ResetNvType.FACTORY_RESET;
-        }
+        // resetType values
+        // 1 - reload all NV items
+        if (resetType == 1) return android.hardware.radio.V1_0.ResetNvType.RELOAD;
         return -1;
     }
 
@@ -1183,17 +1176,9 @@ public class RILUtils {
      * @return The converted reset type in integer or -1 if param is invalid
      */
     public static int convertToHalResetNvTypeAidl(int resetType) {
-        /**
-         * resetType values
-         * 1 - reload all NV items
-         * 2 - erase NV reset (SCRTN)
-         * 3 - factory reset (RTN)
-         */
-        switch (resetType) {
-            case 1: return android.hardware.radio.modem.ResetNvType.RELOAD;
-            case 2: return android.hardware.radio.modem.ResetNvType.ERASE;
-            case 3: return android.hardware.radio.modem.ResetNvType.FACTORY_RESET;
-        }
+        // resetType values
+        // 1 - reload all NV items
+        if (resetType == 1) return android.hardware.radio.modem.ResetNvType.RELOAD;
         return -1;
     }
 
