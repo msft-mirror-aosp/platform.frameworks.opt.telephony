@@ -16,6 +16,7 @@
 
 package com.android.internal.telephony.satellite;
 
+import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS;
 import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE;
 import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_UNKNOWN;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE;
@@ -417,6 +418,15 @@ public class DatagramController {
             }
             if (datagramType == DATAGRAM_TYPE_KEEP_ALIVE
                     && mSatelltieModemState == SATELLITE_MODEM_STATE_NOT_CONNECTED) {
+                return false;
+            }
+            boolean allowCheckMessageInNotConnected =
+                    mContext.getResources().getBoolean(
+                            R.bool.config_satellite_allow_check_message_in_not_connected);
+            if (datagramType == DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS
+                    && mSatelltieModemState == SATELLITE_MODEM_STATE_NOT_CONNECTED
+                    && allowCheckMessageInNotConnected
+                    && mFeatureFlags.carrierRoamingNbIotNtn()) {
                 return false;
             }
             if (mSatelltieModemState != SATELLITE_MODEM_STATE_CONNECTED

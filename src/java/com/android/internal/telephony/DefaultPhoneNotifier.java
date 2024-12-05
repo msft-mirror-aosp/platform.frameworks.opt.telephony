@@ -25,12 +25,14 @@ import android.telephony.BarringInfo;
 import android.telephony.CallQuality;
 import android.telephony.CellIdentity;
 import android.telephony.CellInfo;
+import android.telephony.CellularIdentifierDisclosure;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneCapability;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseCallState;
 import android.telephony.PreciseDataConnectionState;
+import android.telephony.SecurityAlgorithmUpdate;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager.DataEnabledReason;
@@ -41,6 +43,7 @@ import android.telephony.emergency.EmergencyNumber;
 import android.telephony.ims.ImsCallSession;
 import android.telephony.ims.ImsReasonInfo;
 import android.telephony.ims.MediaQualityStatus;
+import android.telephony.satellite.NtnSignalStrength;
 
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.telephony.Rlog;
@@ -346,6 +349,30 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
             Phone sender, @NetworkRegistrationInfo.ServiceType int[] availableServices) {
         mTelephonyRegistryMgr.notifyCarrierRoamingNtnAvailableServicesChanged(
                 sender.getSubId(), availableServices);
+    }
+
+    @Override
+    public void notifyCarrierRoamingNtnSignalStrengthChanged(Phone sender,
+            @NonNull NtnSignalStrength ntnSignalStrength) {
+        mTelephonyRegistryMgr.notifyCarrierRoamingNtnSignalStrengthChanged(
+                sender.getSubId(), ntnSignalStrength);
+    }
+
+    @Override
+    public void notifySecurityAlgorithmsChanged(Phone sender, SecurityAlgorithmUpdate update) {
+        if (!mFeatureFlags.securityAlgorithmsUpdateIndications()) return;
+
+        mTelephonyRegistryMgr.notifySecurityAlgorithmsChanged(sender.getPhoneId(),
+                sender.getSubId(), update);
+    }
+
+    @Override
+    public void notifyCellularIdentifierDisclosedChanged(Phone sender,
+            CellularIdentifierDisclosure disclosure) {
+        if (!mFeatureFlags.cellularIdentifierDisclosureIndications()) return;
+
+        mTelephonyRegistryMgr.notifyCellularIdentifierDisclosedChanged(sender.getPhoneId(),
+                sender.getSubId(), disclosure);
     }
 
     /**
