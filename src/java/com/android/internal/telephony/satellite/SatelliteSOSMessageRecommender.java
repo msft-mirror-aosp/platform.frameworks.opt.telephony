@@ -76,6 +76,7 @@ import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.metrics.SatelliteStats;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -274,12 +275,13 @@ public class SatelliteSOSMessageRecommender extends Handler {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected boolean isSatelliteAllowedByReasons() {
         SatelliteManager satelliteManager = mContext.getSystemService(SatelliteManager.class);
-        List<Integer> disallowedReasons = satelliteManager.getSatelliteDisallowedReasons();
-        if (disallowedReasons.stream().anyMatch(r ->
+        int[] disallowedReasons = satelliteManager.getSatelliteDisallowedReasons();
+        if (Arrays.stream(disallowedReasons).anyMatch(r ->
                 (r == SATELLITE_DISALLOWED_REASON_UNSUPPORTED_DEFAULT_MSG_APP
                         || r == SATELLITE_DISALLOWED_REASON_NOT_PROVISIONED
                         || r == SATELLITE_DISALLOWED_REASON_NOT_SUPPORTED))) {
-            plogd("isAllowedForDefaultMessageApp:false, disallowedReasons=" + disallowedReasons);
+            plogd("isAllowedForDefaultMessageApp:false, disallowedReasons="
+                    + Arrays.toString(disallowedReasons));
             return false;
         }
         return true;
@@ -671,7 +673,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     @NonNull private Bundle createExtraBundleForEventDisplayEmergencyMessage(
             boolean isTestEmergencyNumber) {
-        int handoverType = EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
+        int handoverType = getEmergencyCallToSatelliteHandoverType();
         Pair<String, String> oemSatelliteMessagingApp =
                 getOemEnabledSatelliteHandoverAppFromOverlayConfig(mContext);
         String packageName = oemSatelliteMessagingApp.first;
@@ -679,10 +681,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
         String action = getSatelliteEmergencyHandoverIntentActionFromOverlayConfig(mContext,
                 isTestEmergencyNumber);
 
-        if (isSatelliteConnectedViaCarrierWithinHysteresisTime()
-                || isEmergencyCallToSatelliteHandoverTypeT911Enforced()) {
+        if (handoverType == EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911) {
             ComponentName defaultSmsAppComponent = getDefaultSmsApp();
-            handoverType = EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
             packageName = defaultSmsAppComponent.getPackageName();
             className = defaultSmsAppComponent.getClassName();
         }

@@ -230,3 +230,19 @@ flag {
         purpose: PURPOSE_BUGFIX
     }
 }
+
+# OWNER=jackyu TARGET=25Q2
+flag {
+    name: "deprecate_cdma"
+    namespace: "telephony"
+    description: "Deprecate CDMA and NV APIS"
+    bug: "379356026"
+}
+
+# OWNER=jackyu TARGET=25Q2
+flag {
+    name: "cleanup_cdma"
+    namespace: "telephony"
+    description: "Disable CDMA and NV backing code"
+    bug: "379356026"
+}
