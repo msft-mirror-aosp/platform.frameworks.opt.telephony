@@ -68,7 +68,6 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.R;
-import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.DeviceStateMonitor;
 import com.android.internal.telephony.ExponentialBackoff;
@@ -586,17 +585,6 @@ public class SatelliteSessionController extends StateMachine {
     }
 
     /**
-     * Get whether state machine is in connected state.
-     *
-     * @return {@code true} if state machine is in connected state and {@code false} otherwise.
-     */
-    public boolean isInConnectedState() {
-        if (DBG) plogd("isInConnectedState: getCurrentState=" + getCurrentState());
-        return getCurrentState() == mConnectedState;
-    }
-
-
-    /**
      * Release all resource.
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
@@ -886,10 +874,19 @@ public class SatelliteSessionController extends StateMachine {
             stopNbIotInactivityTimer();
 
             //Enable Cellular Modem scanning
-            Message onCompleted =
+            boolean configSatelliteAllowTnScanningDuringSatelliteSession =
+                    mContext.getResources().getBoolean(
+                        R.bool.config_satellite_allow_tn_scanning_during_satellite_session);
+            if (configSatelliteAllowTnScanningDuringSatelliteSession) {
+                Message onCompleted =
                     obtainMessage(EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE);
-            mSatelliteModemInterface.enableCellularModemWhileSatelliteModeIsOn(true, onCompleted);
-            if (isConcurrentTnScanningSupported()) {
+                mSatelliteModemInterface
+                    .enableCellularModemWhileSatelliteModeIsOn(true, onCompleted);
+            } else {
+                plogd("Device does not allow cellular modem scanning");
+            }
+            if (isConcurrentTnScanningSupported()
+                    || !configSatelliteAllowTnScanningDuringSatelliteSession) {
                 plogd("IDLE state is hidden from clients");
             } else {
                 notifyStateChangedEvent(SatelliteManager.SATELLITE_MODEM_STATE_IDLE);

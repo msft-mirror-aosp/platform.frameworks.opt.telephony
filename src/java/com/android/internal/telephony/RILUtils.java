@@ -121,6 +121,7 @@ import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_CELLULA
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_N1_MODE_ENABLED;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_NR_DUAL_CONNECTIVITY_ENABLED;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_NULL_CIPHER_AND_INTEGRITY_ENABLED;
+import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_SATELLITE_ENABLED_FOR_CARRIER;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_SECURITY_ALGORITHMS_UPDATED_ENABLED;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_VONR_ENABLED;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_LAST_CALL_FAIL_CAUSE;
@@ -180,6 +181,8 @@ import static com.android.internal.telephony.RILConstants.RIL_REQUEST_SET_NULL_C
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_SET_PREFERRED_DATA_MODEM;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_SET_PREFERRED_NETWORK_TYPE;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_SET_RADIO_CAPABILITY;
+import static com.android.internal.telephony.RILConstants.RIL_REQUEST_SET_SATELLITE_ENABLED_FOR_CARRIER;
+import static com.android.internal.telephony.RILConstants.RIL_REQUEST_SET_SATELLITE_PLMN;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_SET_SIGNAL_STRENGTH_REPORTING_CRITERIA;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_SET_SIM_CARD_POWER;
@@ -394,6 +397,7 @@ import com.android.internal.telephony.uicc.IccSlotStatus;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.PortUtils;
 import com.android.internal.telephony.uicc.SimPhonebookRecord;
+import com.android.internal.telephony.uicc.SimTypeInfo;
 import com.android.telephony.Rlog;
 
 import java.io.ByteArrayInputStream;
@@ -1684,6 +1688,9 @@ public class RILUtils {
         }
         if ((networkTypeBitmask & TelephonyManager.NETWORK_TYPE_BITMASK_NR) != 0) {
             raf |= android.hardware.radio.RadioAccessFamily.NR;
+        }
+        if ((networkTypeBitmask & TelephonyManager.NETWORK_TYPE_BITMASK_NB_IOT_NTN) != 0) {
+            raf |= android.hardware.radio.RadioAccessFamily.NB_IOT_NTN;
         }
         return (raf == 0) ? android.hardware.radio.RadioAccessFamily.UNKNOWN : raf;
     }
@@ -5288,6 +5295,12 @@ public class RILUtils {
                 return "IS_SECURITY_ALGORITHMS_UPDATED_ENABLED";
             case RIL_REQUEST_GET_SIMULTANEOUS_CALLING_SUPPORT:
                 return "GET_SIMULTANEOUS_CALLING_SUPPORT";
+            case RIL_REQUEST_SET_SATELLITE_PLMN:
+                return "SET_SATELLITE_PLMN";
+            case RIL_REQUEST_SET_SATELLITE_ENABLED_FOR_CARRIER:
+                return "SET_SATELLITE_ENABLED_FOR_CARRIER";
+            case RIL_REQUEST_IS_SATELLITE_ENABLED_FOR_CARRIER:
+                return "IS_SATELLITE_ENABLED_FOR_CARRIER";
             default:
                 return "<unknown request " + request + ">";
         }
@@ -5868,6 +5881,23 @@ public class RILUtils {
                 securityAlgorithmUpdate.encryption,
                 securityAlgorithmUpdate.integrity,
                 securityAlgorithmUpdate.isUnprotectedEmergency);
+    }
+
+    /** Convert an AIDL-based SimTypeInfo to its Java wrapper. */
+    public static ArrayList<SimTypeInfo> convertAidlSimTypeInfo(
+            android.hardware.radio.config.SimTypeInfo[] simTypeInfos) {
+        ArrayList<SimTypeInfo> response = new ArrayList<>();
+        if (simTypeInfos == null) {
+            loge("convertAidlSimTypeInfo received NULL simTypeInfos");
+            return response;
+        }
+        for (android.hardware.radio.config.SimTypeInfo simTypeInfo : simTypeInfos) {
+            SimTypeInfo info = new SimTypeInfo();
+            info.mSupportedSimTypes = simTypeInfo.supportedSimTypes;
+            info.setCurrentSimType(simTypeInfo.currentSimType);
+            response.add(info);
+        }
+        return response;
     }
 
     private static void logd(String log) {
