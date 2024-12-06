@@ -874,10 +874,19 @@ public class SatelliteSessionController extends StateMachine {
             stopNbIotInactivityTimer();
 
             //Enable Cellular Modem scanning
-            Message onCompleted =
+            boolean configSatelliteAllowTnScanningDuringSatelliteSession =
+                    mContext.getResources().getBoolean(
+                        R.bool.config_satellite_allow_tn_scanning_during_satellite_session);
+            if (configSatelliteAllowTnScanningDuringSatelliteSession) {
+                Message onCompleted =
                     obtainMessage(EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE);
-            mSatelliteModemInterface.enableCellularModemWhileSatelliteModeIsOn(true, onCompleted);
-            if (isConcurrentTnScanningSupported()) {
+                mSatelliteModemInterface
+                    .enableCellularModemWhileSatelliteModeIsOn(true, onCompleted);
+            } else {
+                plogd("Device does not allow cellular modem scanning");
+            }
+            if (isConcurrentTnScanningSupported()
+                    || !configSatelliteAllowTnScanningDuringSatelliteSession) {
                 plogd("IDLE state is hidden from clients");
             } else {
                 notifyStateChangedEvent(SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
