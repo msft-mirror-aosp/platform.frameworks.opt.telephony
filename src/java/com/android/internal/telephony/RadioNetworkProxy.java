@@ -132,12 +132,6 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void getAvailableBandModes(int serial) throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            mNetworkProxy.getAvailableBandModes(serial);
-        } else {
-            mRadioProxy.getAvailableBandModes(serial);
-        }
     }
 
     /**
@@ -394,12 +388,6 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void setBandMode(int serial, int bandMode) throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            mNetworkProxy.setBandMode(serial, bandMode);
-        } else {
-            mRadioProxy.setBandMode(serial, bandMode);
-        }
     }
 
     /**
@@ -511,12 +499,6 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void setLocationUpdates(int serial, boolean enable) throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            mNetworkProxy.setLocationUpdates(serial, enable);
-        } else {
-            mRadioProxy.setLocationUpdates(serial, enable);
-        }
     }
 
     /**
@@ -615,12 +597,6 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void setSuppServiceNotifications(int serial, boolean enable) throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            mNetworkProxy.setSuppServiceNotifications(serial, enable);
-        } else {
-            mRadioProxy.setSuppServiceNotifications(serial, enable);
-        }
     }
 
     /**
