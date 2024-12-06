@@ -32,6 +32,7 @@ import android.content.Intent;
 import android.content.res.Resources;
 import android.os.Looper;
 import android.os.Message;
+import android.os.UserHandle;
 import android.telephony.TelephonyManager;
 
 import androidx.test.filters.SmallTest;
@@ -49,6 +50,8 @@ import org.mockito.ArgumentCaptor;
 public class UiccStateChangedLauncherTest extends TelephonyTest {
     private static final int CARD_COUNT = 1;
     private static final String PROVISIONING_PACKAGE_NAME = "test.provisioning.package";
+
+    private UiccCard mUiccCardToDispose;
 
     // Mocked classes
     private Resources mResources;
@@ -76,6 +79,9 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         super.tearDown();
+
+        if (mUiccCardToDispose != null) mUiccCardToDispose.dispose();
+        mUiccCardToDispose = null;
     }
 
     @Test @SmallTest
@@ -89,7 +95,7 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
         }
 
         UiccStateChangedLauncher uiccLauncher =
-                new UiccStateChangedLauncher(mContext, UiccController.getInstance());
+                new UiccStateChangedLauncher(mContext, UiccController.getInstance(), mFeatureFlags);
         ArgumentCaptor<Integer> integerArgumentCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(UiccController.getInstance(), times(1)).registerForIccChanged(eq(uiccLauncher),
                 integerArgumentCaptor.capture(),
@@ -98,7 +104,7 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
         msg.what = integerArgumentCaptor.getValue();
 
         // The first broadcast should be sent after initialization.
-        UiccCard card = new UiccCard(mContext, mSimulatedCommands,
+        UiccCard card = mUiccCardToDispose = new UiccCard(mContext, mSimulatedCommands,
                 makeCardStatus(CardState.CARDSTATE_PRESENT), 0 /* phoneId */, new Object(),
                 IccSlotStatus.MultipleEnabledProfilesMode.NONE);
         when(UiccController.getInstance().getUiccCardForPhone(0)).thenReturn(card);
@@ -108,7 +114,8 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
 
         // Amount of sent broadcasts to the device provisioning package.
         int broadcast_count = 1;
-        verify(mContext, times(broadcast_count)).sendBroadcast(intentArgumentCaptor.capture());
+        verify(mContext, times(broadcast_count)).sendBroadcastAsUser(intentArgumentCaptor.capture(),
+                eq(UserHandle.ALL));
         assertEquals(PROVISIONING_PACKAGE_NAME, intentArgumentCaptor.getValue().getPackage());
         assertEquals(TelephonyIntents.ACTION_SIM_STATE_CHANGED,
                 intentArgumentCaptor.getValue().getAction());
@@ -119,14 +126,16 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
         uiccLauncher.handleMessage(msg);
 
         broadcast_count++;
-        verify(mContext, times(broadcast_count)).sendBroadcast(intentArgumentCaptor.capture());
+        verify(mContext, times(broadcast_count)).sendBroadcastAsUser(intentArgumentCaptor.capture(),
+                eq(UserHandle.ALL));
         assertEquals(PROVISIONING_PACKAGE_NAME, intentArgumentCaptor.getValue().getPackage());
         assertEquals(TelephonyIntents.ACTION_SIM_STATE_CHANGED,
                 intentArgumentCaptor.getValue().getAction());
 
         // Nothing's changed. Broadcast should not be sent.
         uiccLauncher.handleMessage(msg);
-        verify(mContext, times(broadcast_count)).sendBroadcast(any(Intent.class));
+        verify(mContext, times(broadcast_count)).sendBroadcastAsUser(any(Intent.class),
+                eq(UserHandle.ALL));
 
         // Card state's changed from restricted. Broadcast should be sent.
         card.update(mContext, mSimulatedCommands,
@@ -134,7 +143,8 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
         uiccLauncher.handleMessage(msg);
 
         broadcast_count++;
-        verify(mContext, times(broadcast_count)).sendBroadcast(intentArgumentCaptor.capture());
+        verify(mContext, times(broadcast_count)).sendBroadcastAsUser(any(Intent.class),
+                eq(UserHandle.ALL));
         assertEquals(PROVISIONING_PACKAGE_NAME, intentArgumentCaptor.getValue().getPackage());
         assertEquals(TelephonyIntents.ACTION_SIM_STATE_CHANGED,
                 intentArgumentCaptor.getValue().getAction());
@@ -151,7 +161,7 @@ public class UiccStateChangedLauncherTest extends TelephonyTest {
         }
 
         UiccStateChangedLauncher uiccLauncher =
-                new UiccStateChangedLauncher(mContext, UiccController.getInstance());
+                new UiccStateChangedLauncher(mContext, UiccController.getInstance(), mFeatureFlags);
         verify(UiccController.getInstance(), never()).registerForIccChanged(eq(uiccLauncher),
                 anyInt(), anyObject());
     }
