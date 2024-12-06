@@ -2929,6 +2929,7 @@ public class RILUtils {
      */
     public static CellSignalStrengthGsm convertHalGsmSignalStrength(
             android.hardware.radio.V1_0.GsmSignalStrength ss) {
+        if (ss == null) return new CellSignalStrengthGsm();
         CellSignalStrengthGsm ret = new CellSignalStrengthGsm(
                 CellSignalStrength.getRssiDbmFromAsu(ss.signalStrength), ss.bitErrorRate,
                 ss.timingAdvance);
@@ -2946,6 +2947,7 @@ public class RILUtils {
      */
     public static CellSignalStrengthGsm convertHalGsmSignalStrength(
             android.hardware.radio.network.GsmSignalStrength ss) {
+        if (ss == null) return new CellSignalStrengthGsm();
         CellSignalStrengthGsm ret = new CellSignalStrengthGsm(
                 CellSignalStrength.getRssiDbmFromAsu(ss.signalStrength), ss.bitErrorRate,
                 ss.timingAdvance);
@@ -2966,6 +2968,7 @@ public class RILUtils {
     public static CellSignalStrengthCdma convertHalCdmaSignalStrength(
             android.hardware.radio.V1_0.CdmaSignalStrength cdma,
             android.hardware.radio.V1_0.EvdoSignalStrength evdo) {
+        if (cdma == null || evdo == null) return new CellSignalStrengthCdma();
         return new CellSignalStrengthCdma(-cdma.dbm, -cdma.ecio, -evdo.dbm, -evdo.ecio,
                 evdo.signalNoiseRatio);
     }
@@ -2980,6 +2983,7 @@ public class RILUtils {
     public static CellSignalStrengthCdma convertHalCdmaSignalStrength(
             android.hardware.radio.network.CdmaSignalStrength cdma,
             android.hardware.radio.network.EvdoSignalStrength evdo) {
+        if (cdma == null || evdo == null) return new CellSignalStrengthCdma();
         return new CellSignalStrengthCdma(-cdma.dbm, -cdma.ecio, -evdo.dbm, -evdo.ecio,
                 evdo.signalNoiseRatio);
     }
@@ -3443,9 +3447,11 @@ public class RILUtils {
             android.hardware.radio.data.SetupDataCallResult result) {
         if (result == null) return null;
         List<LinkAddress> laList = new ArrayList<>();
-        for (android.hardware.radio.data.LinkAddress la : result.addresses) {
-            laList.add(convertToLinkAddress(la.address, la.addressProperties,
-                    la.deprecationTime, la.expirationTime));
+        if (result.addresses != null) {
+            for (android.hardware.radio.data.LinkAddress la : result.addresses) {
+                laList.add(convertToLinkAddress(la.address, la.addressProperties,
+                        la.deprecationTime, la.expirationTime));
+            }
         }
         List<InetAddress> dnsList = new ArrayList<>();
         if (result.dnses != null) {
@@ -3487,15 +3493,19 @@ public class RILUtils {
             }
         }
         List<QosBearerSession> qosSessions = new ArrayList<>();
-        for (android.hardware.radio.data.QosSession session : result.qosSessions) {
-            qosSessions.add(convertHalQosBearerSession(session));
+        if (result.qosSessions != null) {
+            for (android.hardware.radio.data.QosSession session : result.qosSessions) {
+                qosSessions.add(convertHalQosBearerSession(session));
+            }
         }
         List<TrafficDescriptor> trafficDescriptors = new ArrayList<>();
-        for (android.hardware.radio.data.TrafficDescriptor td : result.trafficDescriptors) {
-            try {
-                trafficDescriptors.add(convertHalTrafficDescriptor(td));
-            } catch (IllegalArgumentException e) {
-                loge("convertHalDataCallResult: Failed to convert traffic descriptor. e=" + e);
+        if (result.trafficDescriptors != null) {
+            for (android.hardware.radio.data.TrafficDescriptor td : result.trafficDescriptors) {
+                try {
+                    trafficDescriptors.add(convertHalTrafficDescriptor(td));
+                } catch (IllegalArgumentException e) {
+                    loge("convertHalDataCallResult: Failed to convert traffic descriptor. e=" + e);
+                }
             }
         }
 
@@ -3675,6 +3685,7 @@ public class RILUtils {
     }
 
     private static Qos convertHalQos(android.hardware.radio.V1_6.Qos qos) {
+        if (qos == null) return null;
         switch (qos.getDiscriminator()) {
             case android.hardware.radio.V1_6.Qos.hidl_discriminator.eps:
                 android.hardware.radio.V1_6.EpsQos eps = qos.eps();
@@ -3690,6 +3701,7 @@ public class RILUtils {
     }
 
     private static Qos convertHalQos(android.hardware.radio.data.Qos qos) {
+        if (qos == null) return null;
         switch (qos.getTag()) {
             case android.hardware.radio.data.Qos.eps:
                 android.hardware.radio.data.EpsQos eps = qos.getEps();
