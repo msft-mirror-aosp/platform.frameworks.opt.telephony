@@ -42,7 +42,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.database.SQLException;
 import android.hardware.radio.modem.ImeiInfo;
 import android.net.Uri;
@@ -469,12 +468,6 @@ public class GsmCdmaPhone extends Phone {
             }
         }
     };
-
-    private boolean hasCalling() {
-        if (!TelephonyCapabilities.minimalTelephonyCdmCheck(mFeatureFlags)) return true;
-        return mContext.getPackageManager().hasSystemFeature(
-            PackageManager.FEATURE_TELEPHONY_CALLING);
-    }
 
     private void initOnce(CommandsInterface ci) {
         if (ci instanceof SimulatedRadioControl) {
@@ -1900,8 +1893,15 @@ public class GsmCdmaPhone extends Phone {
     @Override
     public void setRadioPowerForReason(boolean power, boolean forEmergencyCall,
             boolean isSelectedPhoneForEmergencyCall, boolean forceApply, int reason) {
-        mSST.setRadioPowerForReason(power, forEmergencyCall, isSelectedPhoneForEmergencyCall,
-                forceApply, reason);
+        if (mFeatureFlags.powerDownRaceFix()) {
+            // setRadioPowerForReason can be called by the binder thread. We need to move that into
+            // the main thread to prevent race condition.
+            post(() -> mSST.setRadioPowerForReason(power, forEmergencyCall,
+                    isSelectedPhoneForEmergencyCall, forceApply, reason));
+        } else {
+            mSST.setRadioPowerForReason(power, forEmergencyCall, isSelectedPhoneForEmergencyCall,
+                    forceApply, reason);
+        }
     }
 
     @Override
@@ -2189,7 +2189,12 @@ public class GsmCdmaPhone extends Phone {
 
     @Override
     public void resetCarrierKeysForImsiEncryption() {
-        mCIM.resetCarrierKeysForImsiEncryption(mContext, mPhoneId);
+        mCIM.resetCarrierKeysForImsiEncryption(mContext, mPhoneId, false);
+    }
+
+    @Override
+    public void resetCarrierKeysForImsiEncryption(boolean forceResetAll) {
+        mCIM.resetCarrierKeysForImsiEncryption(mContext, mPhoneId, forceResetAll);
     }
 
     @Override
@@ -3770,6 +3775,13 @@ public class GsmCdmaPhone extends Phone {
                         && disclosure != null) {
                     mIdentifierDisclosureNotifier.addDisclosure(mContext, getSubId(), disclosure);
                 }
+                if (mFeatureFlags.cellularIdentifierDisclosureIndications()
+                        && mIdentifierDisclosureNotifier != null
+                        && disclosure != null) {
+                    logd("EVENT_CELL_IDENTIFIER_DISCLOSURE for non-Safety Center listeners "
+                            + "phoneId = " + getPhoneId());
+                    mNotifier.notifyCellularIdentifierDisclosedChanged(this, disclosure);
+                }
                 break;
 
             case EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE:
@@ -3780,12 +3792,20 @@ public class GsmCdmaPhone extends Phone {
 
             case EVENT_SECURITY_ALGORITHM_UPDATE:
                 logd("EVENT_SECURITY_ALGORITHM_UPDATE phoneId = " + getPhoneId());
+
+                ar = (AsyncResult) msg.obj;
+                SecurityAlgorithmUpdate update = (SecurityAlgorithmUpdate) ar.result;
+
                 if (mFeatureFlags.enableModemCipherTransparencyUnsolEvents()
                         && mNullCipherNotifier != null) {
-                    ar = (AsyncResult) msg.obj;
-                    SecurityAlgorithmUpdate update = (SecurityAlgorithmUpdate) ar.result;
                     mNullCipherNotifier.onSecurityAlgorithmUpdate(mContext, getPhoneId(),
                             getSubId(), update);
+                }
+                if (mFeatureFlags.securityAlgorithmsUpdateIndications()
+                        && mNullCipherNotifier != null) {
+                    logd("EVENT_SECURITY_ALGORITHM_UPDATE for non-Safety Center listeners "
+                              + "phoneId = " + getPhoneId());
+                    mNotifier.notifySecurityAlgorithmsChanged(this, update);
                 }
                 break;
 

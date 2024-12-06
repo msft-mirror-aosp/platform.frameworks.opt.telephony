@@ -152,8 +152,10 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         mServiceState2 = Mockito.mock(ServiceState.class);
         when(mPhone.getServiceState()).thenReturn(mServiceState);
         when(mPhone.getPhoneId()).thenReturn(PHONE_ID);
+        when(mPhone.getSignalStrengthController()).thenReturn(mSignalStrengthController);
         when(mPhone2.getServiceState()).thenReturn(mServiceState2);
         when(mPhone2.getPhoneId()).thenReturn(PHONE_ID2);
+        when(mPhone2.getSignalStrengthController()).thenReturn(mSignalStrengthController);
         mTestSOSMessageRecommender = new TestSOSMessageRecommender(mContext, Looper.myLooper(),
                 mTestSatelliteController, mTestImsManager);
         when(mServiceState.getState()).thenReturn(STATE_OUT_OF_SERVICE);
@@ -371,6 +373,7 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
 
     @Test
     public void testSatelliteProvisionStateChangedBeforeTimeout() {
+        mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(false);
         mTestSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         processAllMessages();
 
@@ -391,6 +394,7 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         assertFalse(mTestSOSMessageRecommender.isDialerNotified());
         reset(mMockSatelliteStats);
 
+        mTestSatelliteController.setSatelliteConnectedViaCarrierWithinHysteresisTime(true);
         mTestSOSMessageRecommender.onEmergencyCallStarted(mTestConnection, false);
         processAllMessages();
         assertTrue(mTestSOSMessageRecommender.isTimerStarted());
@@ -981,6 +985,8 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         private ComponentName mSmsAppComponent = new ComponentName(
                 DEFAULT_SATELLITE_MESSAGING_PACKAGE, DEFAULT_SATELLITE_MESSAGING_CLASS);
         private boolean mIsDialerNotified;
+        private boolean mProvisionState = true;
+        private boolean mSatelliteAllowedByReasons = true;
 
         /**
          * Create an instance of SatelliteSOSMessageRecommender.
@@ -1013,6 +1019,16 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         protected void reportESosRecommenderDecision(boolean isDialerNotified) {
             super.reportESosRecommenderDecision(isDialerNotified);
             mIsDialerNotified = isDialerNotified;
+        }
+
+        @Override
+        protected boolean updateAndGetProvisionState() {
+            return mProvisionState;
+        }
+
+        @Override
+        protected boolean isSatelliteAllowedByReasons() {
+            return mSatelliteAllowedByReasons;
         }
 
         public boolean isTimerStarted() {
