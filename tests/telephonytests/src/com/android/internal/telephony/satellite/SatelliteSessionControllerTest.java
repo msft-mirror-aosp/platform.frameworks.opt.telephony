@@ -150,7 +150,9 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         when(resources.getBoolean(
                  R.bool.config_satellite_modem_support_concurrent_tn_scanning))
             .thenReturn(false);
-
+        when(resources.getBoolean(
+                 R.bool.config_satellite_allow_tn_scanning_during_satellite_session))
+            .thenReturn(true);
         when(mFeatureFlags.satellitePersistentLogging()).thenReturn(true);
         when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(false);
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
