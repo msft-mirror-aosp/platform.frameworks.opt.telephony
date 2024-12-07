@@ -8279,6 +8279,21 @@ public class SatelliteController extends Handler {
         }
     }
 
+    /** Returns whether to drop SMS or not. */
+    public boolean shouldDropSms(@Nullable Phone phone) {
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            if (!isInCarrierRoamingNbIotNtn(phone)) {
+                return false;
+            }
+
+            int[] services = getSupportedServicesOnCarrierRoamingNtn(phone.getSubId());
+            return !ArrayUtils.contains(services, NetworkRegistrationInfo.SERVICE_TYPE_SMS);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
     private boolean isWaitingForSatelliteModemOff() {
         synchronized (mSatelliteEnabledRequestLock) {
             return mWaitingForSatelliteModemOff;
