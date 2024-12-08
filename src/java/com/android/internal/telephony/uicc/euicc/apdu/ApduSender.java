@@ -233,9 +233,17 @@ public class ApduSender {
                         if (channel == IccOpenLogicalChannelResponse.INVALID_CHANNEL
                                 || status != IccOpenLogicalChannelResponse.STATUS_NO_ERROR) {
                             mChannelOpened = false;
-                            resultCallback.onException(
-                                    new ApduException("Failed to open logical channel for AID: "
-                                            + mAid + ", with status: " + status));
+                            returnRespnseOrException(
+                                    channel,
+                                    /* closeChannelImmediately= */ false,
+                                    /* response= */ null,
+                                    new ApduException(
+                                            "Failed to open logical channel for AID: "
+                                                    + mAid
+                                                    + ", with status: "
+                                                    + status),
+                                    resultCallback,
+                                    handler);
                             return;
                         }
                         PreferenceManager.getDefaultSharedPreferences(mContext)
