@@ -764,15 +764,6 @@ public abstract class InboundSmsHandler extends StateMachine {
             return Intents.RESULT_SMS_HANDLED;
         }
 
-        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
-            SatelliteController satelliteController = SatelliteController.getInstance();
-            if (satelliteController != null
-                    && satelliteController.shouldDropSms(mPhone)) {
-                log("SMS not supported during satellite session.");
-                return Intents.RESULT_SMS_HANDLED;
-            }
-        }
-
         int result = dispatchMessageRadioSpecific(smsb, smsSource, token);
 
         // In case of error, add to metrics. This is not required in case of success, as the

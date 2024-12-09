@@ -139,12 +139,12 @@ public class SmsDispatchersController extends Handler {
     /** Time at which the current PARTIAL_SEGMENT_WAIT_DURATION timer was started */
     private long mCurrentWaitStartTime = INVALID_TIME;
 
-    private SMSDispatcher mCdmaDispatcher = null;
+    private SMSDispatcher mCdmaDispatcher;
     private SMSDispatcher mGsmDispatcher;
     private ImsSmsDispatcher mImsSmsDispatcher;
 
     private GsmInboundSmsHandler mGsmInboundSmsHandler;
-    private CdmaInboundSmsHandler mCdmaInboundSmsHandler = null;
+    private CdmaInboundSmsHandler mCdmaInboundSmsHandler;
 
     private Phone mPhone;
     /** Outgoing message counter. Shared by all dispatchers. */
@@ -409,14 +409,11 @@ public class SmsDispatchersController extends Handler {
         // Create dispatchers, inbound SMS handlers and
         // broadcast undelivered messages in raw table.
         mImsSmsDispatcher = new ImsSmsDispatcher(phone, this, ImsManager::getConnector);
+        mCdmaDispatcher = new CdmaSMSDispatcher(phone, this);
         mGsmInboundSmsHandler = GsmInboundSmsHandler.makeInboundSmsHandler(phone.getContext(),
                 storageMonitor, phone, looper, mFeatureFlags);
-        if (!mFeatureFlags.cleanupCdma()) {
-            mCdmaDispatcher = new CdmaSMSDispatcher(phone, this);
-            mCdmaInboundSmsHandler = CdmaInboundSmsHandler.makeInboundSmsHandler(phone.getContext(),
-                    storageMonitor, phone, (CdmaSMSDispatcher) mCdmaDispatcher, looper,
-                    mFeatureFlags);
-        }
+        mCdmaInboundSmsHandler = CdmaInboundSmsHandler.makeInboundSmsHandler(phone.getContext(),
+                storageMonitor, phone, (CdmaSMSDispatcher) mCdmaDispatcher, looper, mFeatureFlags);
         mGsmDispatcher = new GsmSMSDispatcher(phone, this, mGsmInboundSmsHandler);
         SmsBroadcastUndelivered.initialize(phone.getContext(),
                 mGsmInboundSmsHandler, mCdmaInboundSmsHandler, mFeatureFlags);
@@ -458,9 +455,9 @@ public class SmsDispatchersController extends Handler {
         mCi.unregisterForImsNetworkStateChanged(this);
         mPhone.unregisterForServiceStateChanged(this);
         mGsmDispatcher.dispose();
-        if (mCdmaDispatcher != null) mCdmaDispatcher.dispose();
+        mCdmaDispatcher.dispose();
         mGsmInboundSmsHandler.dispose();
-        if (mCdmaInboundSmsHandler != null) mCdmaInboundSmsHandler.dispose();
+        mCdmaInboundSmsHandler.dispose();
         // Cancels the domain selection request if it's still in progress.
         finishDomainSelection(mDscHolder);
         finishDomainSelection(mEmergencyDscHolder);
@@ -580,7 +577,7 @@ public class SmsDispatchersController extends Handler {
 
             default:
                 if (isCdmaMo()) {
-                    if (mCdmaDispatcher != null) mCdmaDispatcher.handleMessage(msg);
+                    mCdmaDispatcher.handleMessage(msg);
                 } else {
                     mGsmDispatcher.handleMessage(msg);
                 }
@@ -662,8 +659,7 @@ public class SmsDispatchersController extends Handler {
 
     private void handlePartialSegmentTimerExpiry(long waitTimerStart) {
         if (mGsmInboundSmsHandler.getCurrentState().getName().equals("WaitingState")
-                || (mCdmaInboundSmsHandler != null
-                && mCdmaInboundSmsHandler.getCurrentState().getName().equals("WaitingState"))) {
+                || mCdmaInboundSmsHandler.getCurrentState().getName().equals("WaitingState")) {
             logd("handlePartialSegmentTimerExpiry: ignoring timer expiry as InboundSmsHandler is"
                     + " in WaitingState");
             return;
@@ -794,7 +790,7 @@ public class SmsDispatchersController extends Handler {
                         + ", format=" + format + "to mGsmInboundSmsHandler");
                 mGsmInboundSmsHandler.sendMessage(
                         InboundSmsHandler.EVENT_INJECT_SMS, isOverIms ? 1 : 0, token, ar);
-            } else if (format.equals(SmsConstants.FORMAT_3GPP2) && mCdmaInboundSmsHandler != null) {
+            } else if (format.equals(SmsConstants.FORMAT_3GPP2)) {
                 Rlog.i(TAG, "SmsDispatchersController:injectSmsText Sending msg=" + msg
                         + ", format=" + format + "to mCdmaInboundSmsHandler");
                 mCdmaInboundSmsHandler.sendMessage(
@@ -1002,7 +998,6 @@ public class SmsDispatchersController extends Handler {
      * @return true if Cdma format should be used for MO SMS, false otherwise.
      */
     protected boolean isCdmaMo() {
-        if (mFeatureFlags.cleanupCdma()) return false;
         if (!isIms()) {
             // IMS is not registered, use Voice technology to determine SMS format.
             return (PhoneConstants.PHONE_TYPE_CDMA == mPhone.getPhoneType());
@@ -1018,7 +1013,6 @@ public class SmsDispatchersController extends Handler {
      * @return true if format given is CDMA format, false otherwise.
      */
     public boolean isCdmaFormat(String format) {
-        if (mFeatureFlags.cleanupCdma()) return false;
         return (mCdmaDispatcher.getFormat().equals(format));
     }
 
@@ -2292,9 +2286,9 @@ public class SmsDispatchersController extends Handler {
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         mGsmInboundSmsHandler.dump(fd, pw, args);
-        if (mCdmaInboundSmsHandler != null) mCdmaInboundSmsHandler.dump(fd, pw, args);
+        mCdmaInboundSmsHandler.dump(fd, pw, args);
         mGsmDispatcher.dump(fd, pw, args);
-        if (mCdmaDispatcher != null) mCdmaDispatcher.dump(fd, pw, args);
+        mCdmaDispatcher.dump(fd, pw, args);
         mImsSmsDispatcher.dump(fd, pw, args);
     }
 

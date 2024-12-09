@@ -21,8 +21,6 @@ import android.telephony.PhoneNumberUtils;
 import android.telephony.Rlog;
 import android.telephony.emergency.EmergencyNumber;
 
-import com.android.internal.telephony.flags.Flags;
-
 import java.util.ArrayList;
 
 /**
@@ -490,7 +488,6 @@ public class RadioVoiceProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void sendCdmaFeatureCode(int serial, String featureCode) throws RemoteException {
-        if (Flags.cleanupCdma()) return;
         if (isEmpty()) return;
         if (isAidl()) {
             mVoiceProxy.sendCdmaFeatureCode(serial, featureCode);
