@@ -3861,6 +3861,24 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     @Override
     public void nvResetConfig(int resetType, Message result) {
+        // Disable all NV reset functions except modem restart.
+        if (resetType != 1) return;
+
+        RadioModemProxy modemProxy = getRadioServiceProxy(RadioModemProxy.class);
+        if (!canMakeRequest("nvResetConfig", modemProxy, result, RADIO_HAL_VERSION_1_4)) {
+            return;
+        }
+
+        RILRequest rr = obtainRequest(RIL_REQUEST_NV_RESET_CONFIG, result, mRILDefaultWorkSource);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
+                    + " resetType = " + resetType);
+        }
+
+        radioServiceInvokeHelper(HAL_SERVICE_MODEM, rr, "nvResetConfig", () -> {
+            modemProxy.nvResetConfig(rr.mSerial, resetType);
+        });
     }
 
     @Override
