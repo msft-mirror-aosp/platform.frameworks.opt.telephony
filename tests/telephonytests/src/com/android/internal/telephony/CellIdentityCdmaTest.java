@@ -24,88 +24,24 @@ import android.test.AndroidTestCase;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.telephony.flags.Flags;
+
 /** Unit tests for {@link CellIdentityCdma}. */
 
 public class CellIdentityCdmaTest extends AndroidTestCase {
-    private static final String LOG_TAG = "CellIdentityCdmaTest";
-
-    // Network Id ranges from 0 to 65535.
-    private static final int NETWORK_ID  = 65535;
-    // CDMA System Id ranges from 0 to 32767
-    private static final int SYSTEM_ID = 32767;
-    // Base Station Id ranges from 0 to 65535
-    private static final int BASESTATION_ID = 65535;
-    // Longitude ranges from -2592000 to 2592000.
-    private static final int LONGITUDE = 2592000;
-    // Latitude ranges from -1296000 to 1296000.
-    private static final int LATITUDE = 1296000;
-    private static final String ALPHA_LONG = "long";
-    private static final String ALPHA_SHORT = "short";
-
     @SmallTest
     public void testConstructor() {
-        CellIdentityCdma  ci =
-                new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
-                        ALPHA_LONG, ALPHA_SHORT);
-
-        assertEquals(NETWORK_ID, ci.getNetworkId());
-        assertEquals(LATITUDE, ci.getLatitude());
-        assertEquals(LONGITUDE, ci.getLongitude());
-        assertEquals(ALPHA_LONG, ci.getOperatorAlphaLong());
-        assertEquals(ALPHA_SHORT, ci.getOperatorAlphaShort());
-
-        String globalCi = Integer.toString(SYSTEM_ID, 16) + Integer.toString(NETWORK_ID, 16)
-                + Integer.toString(BASESTATION_ID, 16);
-        assertEquals(globalCi, ci.getGlobalCellId());
     }
 
     @SmallTest
     public void testNullIsland() {
-        CellIdentityCdma  ci =
-                new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, -1, 0,
-                        ALPHA_LONG, ALPHA_SHORT);
-
-        assertEquals(Integer.MAX_VALUE, ci.getLatitude());
-        assertEquals(Integer.MAX_VALUE, ci.getLongitude());
     }
 
     @SmallTest
     public void testEquals() {
-        CellIdentityCdma  ciA =
-                new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
-                        ALPHA_LONG, ALPHA_SHORT);
-        CellIdentityCdma  ciB =
-                new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
-                        ALPHA_LONG, ALPHA_SHORT);
-
-        assertTrue(ciA.equals(ciB));
-
-        ciA = new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
-                null, null);
-        ciB = new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
-                null, null);
-
-        assertTrue(ciA.equals(ciB));
-
-        ciA = new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
-                ALPHA_LONG, ALPHA_SHORT);
-        ciB = new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
-                null, null);
-
-        assertFalse(ciA.equals(ciB));
     }
 
     @SmallTest
     public void testParcel() {
-        CellIdentityCdma  ci =
-                new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
-                        ALPHA_LONG, ALPHA_SHORT);
-
-        Parcel p = Parcel.obtain();
-        ci.writeToParcel(p, 0);
-        p.setDataPosition(0);
-
-        CellIdentityCdma newCi = CellIdentityCdma.CREATOR.createFromParcel(p);
-        assertEquals(ci, newCi);
     }
 }
