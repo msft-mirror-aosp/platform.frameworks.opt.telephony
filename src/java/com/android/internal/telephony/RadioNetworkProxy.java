@@ -132,6 +132,7 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void getAvailableBandModes(int serial) throws RemoteException {
+        if (Flags.cleanupCdma()) return;
         if (isEmpty()) return;
         if (isAidl()) {
             mNetworkProxy.getAvailableBandModes(serial);
@@ -401,6 +402,7 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void setBandMode(int serial, int bandMode) throws RemoteException {
+        if (Flags.cleanupCdma()) return;
         if (isEmpty()) return;
         if (isAidl()) {
             mNetworkProxy.setBandMode(serial, bandMode);
@@ -525,6 +527,7 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void setLocationUpdates(int serial, boolean enable) throws RemoteException {
+        if (Flags.cleanupCdma()) return;
         if (isEmpty()) return;
         if (isAidl()) {
             mNetworkProxy.setLocationUpdates(serial, enable);
@@ -629,6 +632,7 @@ public class RadioNetworkProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void setSuppServiceNotifications(int serial, boolean enable) throws RemoteException {
+        if (Flags.cleanupCdma()) return;
         if (isEmpty()) return;
         if (isAidl()) {
             mNetworkProxy.setSuppServiceNotifications(serial, enable);

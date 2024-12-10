@@ -4170,7 +4170,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     @Override
     public void nvResetConfig(int resetType, Message result) {
-        if (mFeatureFlags.cleanupCdma()) return;
+        // Disable all NV reset functions except modem restart.
+        if (mFeatureFlags.cleanupCdma() && resetType != 1) return;
 
         RadioModemProxy modemProxy = getRadioServiceProxy(RadioModemProxy.class);
         if (!canMakeRequest("nvResetConfig", modemProxy, result, RADIO_HAL_VERSION_1_4)) {
