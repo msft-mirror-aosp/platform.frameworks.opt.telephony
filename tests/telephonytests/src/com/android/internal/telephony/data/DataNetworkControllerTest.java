@@ -1988,6 +1988,194 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     @Test
+    public void testIgnoreDataRoamingSettingForSatellite() throws Exception {
+        // set up satellite network and register data roaming
+        mIsNonTerrestrialNetwork = true;
+        doReturn(true).when(mServiceState).getDataRoaming();
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+
+        // Enable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
+
+        // Set network request transport with Internet capability
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(true,
+                        NetworkCapabilities.NET_CAPABILITY_INTERNET,
+                        NetworkCapabilities.NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED));
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Disable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(false);
+        processAllMessages();
+
+        // Verify internet is not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup carrier to bypass data roaming off setting for satellite network
+        mCarrierConfig.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_IGNORE_DATA_ROAMING_SETTING_BOOL, true);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // reset satellite network and roaming registration
+        mIsNonTerrestrialNetwork = false;
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+    }
+
+    @Test
+    public void testIgnoreDataRoamingSettingForSatelliteWithBandwithConstrained() throws Exception {
+        // set up satellite network and register data roaming
+        mIsNonTerrestrialNetwork = true;
+        doReturn(true).when(mServiceState).getDataRoaming();
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+
+        // Enable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
+
+        // Set network request transport with Internet capability
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(true, NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Disable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(false);
+        processAllMessages();
+
+        // Verify internet is not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup carrier to bypass data roaming off setting for satellite network
+        mCarrierConfig.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_IGNORE_DATA_ROAMING_SETTING_BOOL, true);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // reset satellite network and roaming registration
+        mIsNonTerrestrialNetwork = false;
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+    }
+
+    @Test
+    public void testIgnoreDataRoamingSettingForSatelliteForUnrestrictedNetwork() throws Exception {
+        // set up satellite network and register data roaming
+        mIsNonTerrestrialNetwork = true;
+        doReturn(true).when(mServiceState).getDataRoaming();
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+
+        // Disable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(false);
+
+        // Set network request transport with Internet capability
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify internet is not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup carrier to bypass data roaming off setting for satellite network
+        mCarrierConfig.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_IGNORE_DATA_ROAMING_SETTING_BOOL, true);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is still not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup satellite data support mode serve all network requests
+        mCarrierConfig.putInt(
+                CarrierConfigManager.KEY_SATELLITE_DATA_SUPPORT_MODE_INT,
+                CarrierConfigManager.SATELLITE_DATA_SUPPORT_ALL);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // reset satellite network and roaming registration
+        mIsNonTerrestrialNetwork = false;
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+    }
+
+    @Test
+    public void testIgnoreDataRoamingSettingForSatelliteConfigForTerrestialNetwork() throws Exception {
+        // set up terrestrial network and roaming registration
+        mIsNonTerrestrialNetwork = false;
+        doReturn(true).when(mServiceState).getDataRoaming();
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+
+        // Enable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
+
+        // Set network request transport with Internet capability
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Disable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(false);
+        processAllMessages();
+
+        // Verify internet is not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup carrier to bypass data roaming off setting for satellite network
+        mCarrierConfig.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_IGNORE_DATA_ROAMING_SETTING_BOOL, true);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is still not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Enable data roaming again
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
+        processAllMessages();
+
+        // Verify internet is connected again
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // reset roaming registration
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+    }
+
+    @Test
     public void testDataEnabledChanged() throws Exception {
         mDataNetworkControllerUT.getDataSettingsManager().setDataEnabled(
                 TelephonyManager.DATA_ENABLED_REASON_USER, false, mContext.getOpPackageName());
