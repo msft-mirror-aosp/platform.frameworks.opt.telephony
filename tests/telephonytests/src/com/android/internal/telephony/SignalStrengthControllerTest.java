@@ -64,7 +64,6 @@ import android.testing.TestableLooper;
 
 import androidx.test.filters.MediumTest;
 
-import com.android.internal.telephony.flags.Flags;
 import com.android.internal.util.ArrayUtils;
 
 import org.junit.After;
@@ -471,21 +470,19 @@ public class SignalStrengthControllerTest extends TelephonyTest {
         assertEquals(mSsc.getSignalStrength(), ss);
         assertEquals(mSsc.getSignalStrength().isGsm(), true);
 
-        if (!Flags.cleanupCdma()) {
-            // Send in CDMA-only Signal Strength Info and expect isGsm == false
-            ss = new SignalStrength(
-                    new CellSignalStrengthCdma(-90, -12,
-                            SignalStrength.INVALID, SignalStrength.INVALID, SignalStrength.INVALID),
-                    new CellSignalStrengthGsm(),
-                    new CellSignalStrengthWcdma(),
-                    new CellSignalStrengthTdscdma(),
-                    new CellSignalStrengthLte(),
-                    new CellSignalStrengthNr());
+        // Send in CDMA-only Signal Strength Info and expect isGsm == false
+        ss = new SignalStrength(
+                new CellSignalStrengthCdma(-90, -12,
+                        SignalStrength.INVALID, SignalStrength.INVALID, SignalStrength.INVALID),
+                new CellSignalStrengthGsm(),
+                new CellSignalStrengthWcdma(),
+                new CellSignalStrengthTdscdma(),
+                new CellSignalStrengthLte(),
+                new CellSignalStrengthNr());
 
-            sendSignalStrength(ss);
-            assertEquals(mSsc.getSignalStrength(), ss);
-            assertEquals(mSsc.getSignalStrength().isGsm(), false);
-        }
+        sendSignalStrength(ss);
+        assertEquals(mSsc.getSignalStrength(), ss);
+        assertEquals(mSsc.getSignalStrength().isGsm(), false);
     }
 
     @Test
