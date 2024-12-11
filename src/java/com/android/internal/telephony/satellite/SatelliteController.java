@@ -725,7 +725,7 @@ public class SatelliteController extends Handler {
     // device.
     private List<DeviceState> mDeviceStates = new ArrayList();
 
-    public static final int RESULT_RECEIVER_COUNT_ANOMALY_THRESHOLD = 100;
+    public static final int RESULT_RECEIVER_COUNT_ANOMALY_THRESHOLD = 500;
     protected final Object mResultReceiverTotalCountLock = new Object();
     @GuardedBy("mResultReceiverTotalCountLock")
     protected int mResultReceiverTotalCount;
