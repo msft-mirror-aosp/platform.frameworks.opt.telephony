@@ -3961,28 +3961,30 @@ public class SatelliteController extends Handler {
     }
 
     /**
-     * @return {@code true} if the device is connected to satellite via any carrier within the
+     * @return {@code true} and the corresponding subId if the device is connected to
+     * satellite via any carrier within the
      * {@link CarrierConfigManager#KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT}
-     * duration, {@code false} otherwise.
+     * duration, {@code false} and null otherwise.
      */
-    public boolean isSatelliteConnectedViaCarrierWithinHysteresisTime() {
+    public Pair<Boolean, Integer> isSatelliteConnectedViaCarrierWithinHysteresisTime() {
         if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
             logd("isSatelliteConnectedViaCarrierWithinHysteresisTime: carrierEnabledSatelliteFlag"
                     + " is disabled");
-            return false;
+            return new Pair<>(false, null);
         }
-        if (isUsingNonTerrestrialNetworkViaCarrier().first) {
-            return true;
+        Pair<Boolean, Integer> ntnConnectedState = isUsingNonTerrestrialNetworkViaCarrier();
+        if (ntnConnectedState.first) {
+            return ntnConnectedState;
         }
         for (Phone phone : PhoneFactory.getPhones()) {
             if (isInSatelliteModeForCarrierRoaming(phone)) {
                 logd("isSatelliteConnectedViaCarrierWithinHysteresisTime: "
                         + "subId:" + phone.getSubId()
                         + " is connected to satellite within hysteresis time");
-                return true;
+                return new Pair<>(true, phone.getSubId());
             }
         }
-        return false;
+        return new Pair<>(false, null);
     }
 
     /**
@@ -4185,7 +4187,7 @@ public class SatelliteController extends Handler {
         return DEFAULT_CARRIER_EMERGENCY_CALL_WAIT_FOR_CONNECTION_TIMEOUT_MILLIS;
     }
 
-    private int getCarrierEmergencyCallWaitForConnectionTimeoutMillis(int subId) {
+    public int getCarrierEmergencyCallWaitForConnectionTimeoutMillis(int subId) {
         PersistableBundle config = getPersistableBundle(subId);
         return config.getInt(KEY_EMERGENCY_CALL_TO_SATELLITE_T911_HANDOVER_TIMEOUT_MILLIS_INT);
     }
@@ -4546,10 +4548,20 @@ public class SatelliteController extends Handler {
             return null;
         }
         String iccid = subInfo.getIccId();
-        String apn = getConfigForSubId(subId).getString(KEY_SATELLITE_NIDD_APN_NAME_STRING, "");
+        String apn = getNiddApnName(subId);
         return new SatelliteModemEnableRequestAttributes(
                 arg.enableSatellite, arg.enableDemoMode, arg.isEmergency,
                 new SatelliteSubscriptionInfo(iccid, apn));
+    }
+
+    @NonNull private String getNiddApnName(int subId) {
+        if (SatelliteServiceUtils.isNtnOnlySubscriptionId(subId)) {
+            String apn = mContext.getResources().getString(R.string.config_satellite_nidd_apn_name);
+            if (!TextUtils.isEmpty(apn)) {
+                return apn;
+            }
+        }
+        return getConfigForSubId(subId).getString(KEY_SATELLITE_NIDD_APN_NAME_STRING, "");
     }
 
     private void handleRequestSatelliteAttachRestrictionForCarrierCmd(
@@ -6532,7 +6544,7 @@ public class SatelliteController extends Handler {
                         /*visible*/ true);
             }
         } else if (mIsNotificationShowing
-                && !isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
+                && !isSatelliteConnectedViaCarrierWithinHysteresisTime().first) {
             // Dismiss the notification if it is still displaying.
             dismissSatelliteNotification();
         }
