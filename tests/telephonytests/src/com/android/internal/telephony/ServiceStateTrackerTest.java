@@ -89,6 +89,8 @@ import android.telephony.TelephonyManager;
 import android.telephony.cdma.CdmaCellLocation;
 import android.telephony.gsm.GsmCellLocation;
 import android.telephony.ims.stub.ImsRegistrationImplBase;
+import android.telephony.satellite.ISatelliteModemStateCallback;
+import android.telephony.satellite.SatelliteManager;
 import android.text.TextUtils;
 import android.util.Pair;
 
@@ -185,6 +187,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
     private static final String[] CARRIER_CONFIG_PNN = new String[] {
             String.format("%s,%s", HOME_PNN, "short"), "f2,s2"
     };
+    private static final String SATELLITE_DISPLAY_NAME = "SatelliteTest";
 
     private class ServiceStateTrackerTestHandler extends HandlerThread {
 
@@ -390,6 +393,11 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                     15, /* SIGNAL_STRENGTH_GOOD */
                     30  /* SIGNAL_STRENGTH_GREAT */
                 });
+
+        // satellite display name
+        mBundle.putString(
+                CarrierConfigManager.KEY_SATELLITE_DISPLAY_NAME_STRING,
+                SATELLITE_DISPLAY_NAME);
 
         sendCarrierConfigUpdate(PHONE_ID);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
@@ -3546,4 +3554,42 @@ public class ServiceStateTrackerTest extends TelephonyTest {
             }
         }
     }
+
+    @Test
+    public void testSatelliteModemStateCallback() throws Exception {
+        ArgumentCaptor<ISatelliteModemStateCallback> captor =
+                ArgumentCaptor.forClass(ISatelliteModemStateCallback.class);
+        verify(mSatelliteController, times(1)).registerForSatelliteModemStateChanged(
+                captor.capture());
+        ISatelliteModemStateCallback callback = captor.getValue();
+
+        doReturn(1).when(mSatelliteController).getSelectedSatelliteSubId();
+        doReturn(1).when(mPhone).getSubId();
+
+        mSimulatedCommands.setVoiceRegState(
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING);
+        mSimulatedCommands.setVoiceRadioTech(ServiceState.RIL_RADIO_TECHNOLOGY_UNKNOWN);
+        mSimulatedCommands.setDataRegState(
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING);
+        mSimulatedCommands.setDataRadioTech(ServiceState.RIL_RADIO_TECHNOLOGY_UNKNOWN);
+        doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getState();
+        doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getDataRegistrationState();
+        sst.mSS = mServiceState;
+
+        mBundle.putBoolean(
+                CarrierConfigManager.KEY_ENABLE_CARRIER_DISPLAY_NAME_RESOLVER_BOOL, false);
+        sendCarrierConfigUpdate(PHONE_ID);
+
+        doReturn(true).when(mSatelliteController).isInConnectedState();
+        callback.onSatelliteModemStateChanged(SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+
+        // update the spn
+        sst.updateCarrierDisplayName();
+
+        Bundle b = getExtrasFromLastSpnUpdateIntent();
+        assertThat(b.getString(TelephonyManager.EXTRA_PLMN)).isEqualTo(SATELLITE_DISPLAY_NAME);
+        assertThat(b.getBoolean(TelephonyManager.EXTRA_SHOW_PLMN)).isTrue();
+    }
+
 }
