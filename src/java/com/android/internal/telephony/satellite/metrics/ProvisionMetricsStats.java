@@ -29,7 +29,6 @@ import com.android.internal.telephony.metrics.SatelliteStats;
  */
 public class ProvisionMetricsStats {
     private static final String TAG = ProvisionMetricsStats.class.getSimpleName();
-    private static final boolean DBG = false;
 
     private static ProvisionMetricsStats sInstance = null;
 
@@ -114,8 +113,6 @@ public class ProvisionMetricsStats {
     }
 
     private static void logd(@NonNull String log) {
-        if (DBG) {
-            Log.d(TAG, log);
-        }
+        Log.d(TAG, log);
     }
 }

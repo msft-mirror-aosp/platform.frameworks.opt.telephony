@@ -37,7 +37,6 @@ import com.android.internal.telephony.satellite.DatagramDispatcher;
  */
 public class SessionMetricsStats {
     private static final String TAG = SessionMetricsStats.class.getSimpleName();
-    private static final boolean DBG = true;
 
     private static SessionMetricsStats sInstance = null;
     private @SatelliteManager.SatelliteResult int mInitializationResult;
@@ -62,6 +61,7 @@ public class SessionMetricsStats {
     private int mCountOfSatelliteNotificationDisplayed;
     private int mCountOfAutoExitDueToScreenOff;
     private int mCountOfAutoExitDueToTnNetwork;
+    private boolean mIsEmergency;
     private SatelliteSessionStats mDatagramStats;
 
     private SessionMetricsStats() {
@@ -260,6 +260,13 @@ public class SessionMetricsStats {
         return this;
     }
 
+    /** Sets whether the session is enabled for emergency or not. */
+    public SessionMetricsStats setIsEmergency(boolean isEmergency) {
+        mIsEmergency = isEmergency;
+        logd("setIsEmergency(" + mIsEmergency + ")");
+        return this;
+    }
+
     /** Report the session metrics atoms to PersistAtomsStorage in telephony. */
     public void reportSessionMetrics() {
         SatelliteStats.SatelliteSessionParams sessionParams =
@@ -281,6 +288,7 @@ public class SessionMetricsStats {
                                 mCountOfSatelliteNotificationDisplayed)
                         .setCountOfAutoExitDueToScreenOff(mCountOfAutoExitDueToScreenOff)
                         .setCountOfAutoExitDueToTnNetwork(mCountOfAutoExitDueToTnNetwork)
+                        .setIsEmergency(mIsEmergency)
                         .build();
         logd("reportSessionMetrics: " + sessionParams.toString());
         SatelliteStats.getInstance().onSatelliteSessionMetrics(sessionParams);
@@ -305,7 +313,7 @@ public class SessionMetricsStats {
 
         DatagramDispatcher.getInstance().updateSessionStatsWithPendingUserMsgCount(mDatagramStats);
         bundle.putParcelable(KEY_SESSION_STATS_V2, mDatagramStats);
-        Log.i(TAG, "[END] DatagramStats = " +mDatagramStats);
+        Log.i(TAG, "[END] DatagramStats = " + mDatagramStats);
         result.send(SATELLITE_RESULT_SUCCESS, bundle);
     }
 
@@ -338,6 +346,7 @@ public class SessionMetricsStats {
         mCountOfSatelliteNotificationDisplayed = 0;
         mCountOfAutoExitDueToScreenOff = 0;
         mCountOfAutoExitDueToTnNetwork = 0;
+        mIsEmergency = false;
     }
 
     public void resetSessionStatsShadowCounters() {
@@ -350,9 +359,7 @@ public class SessionMetricsStats {
     }
 
     private static void logd(@NonNull String log) {
-        if (DBG) {
-            Log.d(TAG, log);
-        }
+        Log.d(TAG, log);
     }
 
     private static void loge(@NonNull String log) {
