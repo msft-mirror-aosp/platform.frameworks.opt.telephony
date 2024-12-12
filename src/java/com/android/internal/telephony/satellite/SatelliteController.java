@@ -138,6 +138,7 @@ import android.telephony.satellite.ISatelliteSupportedStateCallback;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
 import android.telephony.satellite.ISelectedNbIotSatelliteSubscriptionCallback;
 import android.telephony.satellite.NtnSignalStrength;
+import android.telephony.satellite.SatelliteAccessConfiguration;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteCommunicationAllowedStateCallback;
 import android.telephony.satellite.SatelliteDatagram;
@@ -147,7 +148,6 @@ import android.telephony.satellite.SatelliteSubscriberInfo;
 import android.telephony.satellite.SatelliteSubscriberProvisionStatus;
 import android.telephony.satellite.SatelliteSubscriptionInfo;
 import android.telephony.satellite.SystemSelectionSpecifier;
-import android.telephony.satellite.SatelliteAccessConfiguration;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.Pair;
@@ -1478,7 +1478,8 @@ public class SatelliteController extends Handler {
                             .setInitializationProcessingTime(
                                     System.currentTimeMillis() - mSessionProcessingTimeStamp)
                             .setIsDemoMode(mIsDemoModeEnabled)
-                            .setCarrierId(getSatelliteCarrierId());
+                            .setCarrierId(getSatelliteCarrierId())
+                            .setIsEmergency(argument.isEmergency);
                     mSessionProcessingTimeStamp = 0;
 
                     if (error == SATELLITE_RESULT_SUCCESS) {
@@ -2037,6 +2038,15 @@ public class SatelliteController extends Handler {
                     synchronized (mSatelliteTokenProvisionedLock) {
                         mLastConfiguredIccId = argument.getIccId();
                     }
+                }
+                mProvisionMetricsStats.setResultCode(error)
+                        .setIsProvisionRequest(argument.mProvisioned)
+                        .setCarrierId(getSatelliteCarrierId())
+                        .reportProvisionMetrics();
+                if (argument.mProvisioned) {
+                    mControllerMetricsStats.reportProvisionCount(error);
+                } else {
+                    mControllerMetricsStats.reportDeprovisionCount(error);
                 }
                 logd("updateSatelliteSubscription result=" + error);
                 break;
@@ -6184,6 +6194,8 @@ public class SatelliteController extends Handler {
 
         if (mOverrideNtnEligibility != null) {
             satellitePhone.notifyCarrierRoamingNtnEligibleStateChanged(currentNtnEligibility);
+            mControllerMetricsStats.reportP2PSmsEligibilityNotificationsCount(
+                    currentNtnEligibility);
             return;
         }
 
@@ -7424,6 +7436,18 @@ public class SatelliteController extends Handler {
             mSelectedSatelliteSubId = selectedSubId;
         }
         setSatellitePhone(selectedSubId);
+        if (selectedSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            int carrierId = getSatelliteCarrierId();
+            if (carrierId != UNKNOWN_CARRIER_ID) {
+                mControllerMetricsStats.setCarrierId(carrierId);
+            } else {
+                logd("selectBindingSatelliteSubscription: Carrier ID is UNKNOWN_CARRIER_ID");
+            }
+            synchronized (mSatelliteTokenProvisionedLock) {
+                mControllerMetricsStats.setIsNtnOnlyCarrier(
+                        mSelectedSatelliteSubId == getNtnOnlySubscriptionId());
+            }
+        }
         plogd("selectBindingSatelliteSubscription: SelectedSatelliteSubId=" + selectedSubId);
         handleEventSelectedNbIotSatelliteSubscriptionChanged(selectedSubId);
     }
@@ -7694,22 +7718,12 @@ public class SatelliteController extends Handler {
     protected void setSatellitePhone(int subId) {
         synchronized (mSatellitePhoneLock) {
             mSatellitePhone = SatelliteServiceUtils.getPhone(subId);
-            if (mSatellitePhone == null) {
-                mSatellitePhone = SatelliteServiceUtils.getPhone();
-            }
             plogd("mSatellitePhone: phoneId=" + (mSatellitePhone != null
                       ? mSatellitePhone.getPhoneId() : "null") + ", subId=" + subId);
-            int carrierId = mSatellitePhone.getCarrierId();
-            if (carrierId != UNKNOWN_CARRIER_ID) {
-                mControllerMetricsStats.setCarrierId(carrierId);
-            } else {
-                logd("setSatellitePhone: Carrier ID is UNKNOWN_CARRIER_ID");
-            }
         }
     }
 
     /** Return the carrier ID of the binding satellite subscription. */
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
     public int getSatelliteCarrierId() {
         synchronized (mSatelliteTokenProvisionedLock) {
             SubscriptionInfo subInfo = mSubscriptionManagerService.getSubscriptionInfo(
@@ -7755,7 +7769,7 @@ public class SatelliteController extends Handler {
 
         int subId = phone.getSubId();
         if (!isSatelliteRoamingP2pSmSSupported(subId)) {
-            plogd("isCarrierRoamingNtnEligible: doesn't support P2P SMS");
+            plogd("isCarrierRoamingNtnEligible(" + subId + "): doesn't support P2P SMS");
             return false;
         }
 

@@ -100,6 +100,9 @@ public class SatelliteStats {
         private final int mCountOfSatelliteAllowedStateChangedEvents;
         private final int mCountOfSuccessfulLocationQueries;
         private final int mCountOfFailedLocationQueries;
+        private final int mCountOfP2PSmsAvailableNotificationShown;
+        private final int mCountOfP2PSmsAvailableNotificationRemoved;
+        private static boolean sIsNtnOnlyCarrier;
 
         private SatelliteControllerParams(Builder builder) {
             this.mCountOfSatelliteServiceEnablementsSuccess =
@@ -162,6 +165,15 @@ public class SatelliteStats {
                     builder.mCountOfSuccessfulLocationQueries;
             this.mCountOfFailedLocationQueries =
                     builder.mCountOfFailedLocationQueries;
+            this.mCountOfP2PSmsAvailableNotificationShown =
+                    builder.mCountOfP2PSmsAvailableNotificationShown;
+            this.mCountOfP2PSmsAvailableNotificationRemoved =
+                    builder.mCountOfP2PSmsAvailableNotificationRemoved;
+
+            // Carrier ID value should be updated only when it is meaningful.
+            if (builder.mIsNtnOnlyCarrier.isPresent()) {
+                this.sIsNtnOnlyCarrier = builder.mIsNtnOnlyCarrier.get();
+            }
         }
 
         public int getCountOfSatelliteServiceEnablementsSuccess() {
@@ -276,11 +288,11 @@ public class SatelliteStats {
             return mCountOfSatelliteAccessCheckFail;
         }
 
-        public boolean isProvisioned() {
+        public static boolean isProvisioned() {
             return sIsProvisioned;
         }
 
-        public int getCarrierId() {
+        public static int getCarrierId() {
             return sCarrierId;
         }
 
@@ -294,6 +306,18 @@ public class SatelliteStats {
 
         public int getCountOfFailedLocationQueries() {
             return mCountOfFailedLocationQueries;
+        }
+
+        public int getCountOfP2PSmsAvailableNotificationShown() {
+            return mCountOfP2PSmsAvailableNotificationShown;
+        }
+
+        public int getCountOfP2PSmsAvailableNotificationRemoved() {
+            return mCountOfP2PSmsAvailableNotificationRemoved;
+        }
+
+        public static boolean isNtnOnlyCarrier() {
+            return sIsNtnOnlyCarrier;
         }
 
         /**
@@ -333,6 +357,9 @@ public class SatelliteStats {
             private int mCountOfSatelliteAllowedStateChangedEvents = 0;
             private int mCountOfSuccessfulLocationQueries = 0;
             private int mCountOfFailedLocationQueries = 0;
+            private int mCountOfP2PSmsAvailableNotificationShown = 0;
+            private int mCountOfP2PSmsAvailableNotificationRemoved = 0;
+            private Optional<Boolean> mIsNtnOnlyCarrier = Optional.empty();
 
             /**
              * Sets countOfSatelliteServiceEnablementsSuccess value of {@link SatelliteController}
@@ -661,6 +688,37 @@ public class SatelliteStats {
             }
 
             /**
+             * Sets countOfP2PSmsAvailableNotificationShown value of {@link SatelliteController}
+             * atom then returns Builder class
+             */
+            public Builder setCountOfP2PSmsAvailableNotificationShown(
+                    int countOfP2PSmsAvailableNotificationShown) {
+                this.mCountOfP2PSmsAvailableNotificationShown =
+                        countOfP2PSmsAvailableNotificationShown;
+                return this;
+            }
+
+            /**
+             * Sets countOfP2PSmsAvailableNotificationRemoved value of {@link SatelliteController}
+             * atom then returns Builder class
+             */
+            public Builder setCountOfP2PSmsAvailableNotificationRemoved(
+                    int countOfP2PSmsAvailableNotificationRemoved) {
+                this.mCountOfP2PSmsAvailableNotificationRemoved =
+                        countOfP2PSmsAvailableNotificationRemoved;
+                return this;
+            }
+
+            /**
+             * Sets isNtnOnlyCarrier value of {@link SatelliteController} atom
+             * then returns Builder class
+             */
+            public Builder setIsNtnOnlyCarrier(boolean isNtnOnlyCarrier) {
+                this.mIsNtnOnlyCarrier = Optional.of(isNtnOnlyCarrier);
+                return this;
+            }
+
+            /**
              * Returns ControllerParams, which contains whole component of
              * {@link SatelliteController} atom
              */
@@ -715,6 +773,11 @@ public class SatelliteStats {
                     + mCountOfSatelliteAllowedStateChangedEvents
                     + ", countOfSuccessfulLocationQueries=" + mCountOfSuccessfulLocationQueries
                     + ", countOfFailedLocationQueries=" + mCountOfFailedLocationQueries
+                    + ", countOfP2PSmsAvailableNotificationShown="
+                    + mCountOfP2PSmsAvailableNotificationShown
+                    + ", countOfP2PSmsAvailableNotificationRemoved="
+                    + mCountOfP2PSmsAvailableNotificationRemoved
+                    + ", isNtnOnlyCarrier=" + sIsNtnOnlyCarrier
                     + ")";
         }
     }
@@ -740,6 +803,7 @@ public class SatelliteStats {
         private final int mCountOfSatelliteNotificationDisplayed;
         private final int mCountOfAutoExitDueToScreenOff;
         private final int mCountOfAutoExitDueToTnNetwork;
+        private final boolean mIsEmergency;
 
 
         private SatelliteSessionParams(Builder builder) {
@@ -762,6 +826,7 @@ public class SatelliteStats {
                     builder.mCountOfSatelliteNotificationDisplayed;
             this.mCountOfAutoExitDueToScreenOff = builder.mCountOfAutoExitDueToScreenOff;
             this.mCountOfAutoExitDueToTnNetwork = builder.mCountOfAutoExitDueToTnNetwork;
+            this.mIsEmergency = builder.mIsEmergency;
         }
 
         public int getSatelliteServiceInitializationResult() {
@@ -828,6 +893,10 @@ public class SatelliteStats {
             return mCountOfAutoExitDueToTnNetwork;
         }
 
+        public boolean getIsEmergency() {
+            return mIsEmergency;
+        }
+
         /**
          * A builder class to create {@link SatelliteSessionParams} data structure class
          */
@@ -849,6 +918,7 @@ public class SatelliteStats {
             private int mCountOfSatelliteNotificationDisplayed = -1;
             private int mCountOfAutoExitDueToScreenOff = -1;
             private int mCountOfAutoExitDueToTnNetwork = -1;
+            private boolean mIsEmergency = false;
 
             /**
              * Sets satelliteServiceInitializationResult value of {@link SatelliteSession}
@@ -967,6 +1037,12 @@ public class SatelliteStats {
                 return this;
             }
 
+            /** Sets whether enabled satellite session is for emergency or not. */
+            public Builder setIsEmergency(boolean isEmergency) {
+                this.mIsEmergency = isEmergency;
+                return this;
+            }
+
             /**
              * Returns SessionParams, which contains whole component of
              * {@link SatelliteSession} atom
@@ -997,6 +1073,7 @@ public class SatelliteStats {
                     + mCountOfSatelliteNotificationDisplayed
                     + ", CountOfAutoExitDueToScreenOff" + mCountOfAutoExitDueToScreenOff
                     + ", CountOfAutoExitDueToTnNetwork" + mCountOfAutoExitDueToTnNetwork
+                    + ", IsEmergency=" + mIsEmergency
                     + ")";
         }
     }
@@ -2505,6 +2582,11 @@ public class SatelliteStats {
                 param.getCountOfSatelliteAllowedStateChangedEvents();
         proto.countOfSuccessfulLocationQueries = param.getCountOfSuccessfulLocationQueries();
         proto.countOfFailedLocationQueries = param.getCountOfFailedLocationQueries();
+        proto.countOfP2PSmsAvailableNotificationShown =
+                param.getCountOfP2PSmsAvailableNotificationShown();
+        proto.countOfP2PSmsAvailableNotificationRemoved =
+                param.getCountOfP2PSmsAvailableNotificationRemoved();
+        proto.isNtnOnlyCarrier = param.isNtnOnlyCarrier();
 
         mAtomsStorage.addSatelliteControllerStats(proto);
     }
@@ -2531,6 +2613,7 @@ public class SatelliteStats {
                 param.getCountOfSatelliteNotificationDisplayed();
         proto.countOfAutoExitDueToScreenOff = param.getCountOfAutoExitDueToScreenOff();
         proto.countOfAutoExitDueToTnNetwork = param.getCountOfAutoExitDueToTnNetwork();
+        proto.isEmergency = param.getIsEmergency();
         mAtomsStorage.addSatelliteSessionStats(proto);
     }
 
