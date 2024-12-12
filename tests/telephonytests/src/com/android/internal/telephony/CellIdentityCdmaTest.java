@@ -24,6 +24,8 @@ import android.test.AndroidTestCase;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.telephony.flags.Flags;
+
 /** Unit tests for {@link CellIdentityCdma}. */
 
 public class CellIdentityCdmaTest extends AndroidTestCase {
@@ -44,6 +46,7 @@ public class CellIdentityCdmaTest extends AndroidTestCase {
 
     @SmallTest
     public void testConstructor() {
+        if (Flags.cleanupCdma()) return;
         CellIdentityCdma  ci =
                 new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
                         ALPHA_LONG, ALPHA_SHORT);
@@ -61,6 +64,7 @@ public class CellIdentityCdmaTest extends AndroidTestCase {
 
     @SmallTest
     public void testNullIsland() {
+        if (Flags.cleanupCdma()) return;
         CellIdentityCdma  ci =
                 new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, -1, 0,
                         ALPHA_LONG, ALPHA_SHORT);
@@ -71,6 +75,7 @@ public class CellIdentityCdmaTest extends AndroidTestCase {
 
     @SmallTest
     public void testEquals() {
+        if (Flags.cleanupCdma()) return;
         CellIdentityCdma  ciA =
                 new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
                         ALPHA_LONG, ALPHA_SHORT);
@@ -97,6 +102,7 @@ public class CellIdentityCdmaTest extends AndroidTestCase {
 
     @SmallTest
     public void testParcel() {
+        if (Flags.cleanupCdma()) return;
         CellIdentityCdma  ci =
                 new CellIdentityCdma(NETWORK_ID, SYSTEM_ID, BASESTATION_ID, LONGITUDE, LATITUDE,
                         ALPHA_LONG, ALPHA_SHORT);
