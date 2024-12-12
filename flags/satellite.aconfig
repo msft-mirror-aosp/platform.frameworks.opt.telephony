@@ -81,3 +81,13 @@ flag {
   bug: "357638490"
   is_exported: true
 }
+
+# OWNER=karthickmj TARGET=25Q4
+flag {
+
+  name: "satellite_25q4_apis"
+  namespace: "telephony"
+  description: "This flag controls the changes for the new satellite APIs"
+  bug: "383254935"
+  is_exported: true
+}

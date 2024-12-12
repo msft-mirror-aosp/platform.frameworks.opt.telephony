@@ -366,6 +366,29 @@ public class SatelliteServiceUtils {
     }
 
     /**
+     * Check if the subscription ID is a NTN only subscription ID.
+     *
+     * @return {@code true} if the subscription ID is a NTN only subscription ID,
+     * {@code false} otherwise.
+    */
+    public static boolean isNtnOnlySubscriptionId(int subId) {
+        SubscriptionManagerService subscriptionManagerService =
+            SubscriptionManagerService.getInstance();
+        if (subscriptionManagerService == null) {
+            logd("isNtnOnlySubscriptionId: subscriptionManagerService is null");
+            return false;
+        }
+
+        SubscriptionInfo subInfo = subscriptionManagerService.getSubscriptionInfo(subId);
+        if (subInfo == null) {
+            logd("isNtnOnlySubscriptionId: subInfo is null for subId=" + subId);
+            return false;
+        }
+
+        return subInfo.isOnlyNonTerrestrialNetwork();
+    }
+
+    /**
      * Expected format of the input dictionary bundle is:
      * <ul>
      *     <li>Key: PLMN string.</li>
