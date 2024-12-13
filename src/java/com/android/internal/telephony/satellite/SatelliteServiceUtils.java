@@ -290,8 +290,8 @@ public class SatelliteServiceUtils {
         android.telephony.satellite.stub.SatelliteModemEnableRequestAttributes converted =
                 new android.telephony.satellite.stub.SatelliteModemEnableRequestAttributes();
         converted.isEnabled = attributes.isEnabled();
-        converted.isDemoMode = attributes.isDemoMode();
-        converted.isEmergencyMode = attributes.isEmergencyMode();
+        converted.isDemoMode = attributes.isForDemoMode();
+        converted.isEmergencyMode = attributes.isForEmergencyMode();
         converted.satelliteSubscriptionInfo = toSatelliteSubscriptionInfo(
                 attributes.getSatelliteSubscriptionInfo());
         return converted;
