@@ -207,6 +207,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -6174,6 +6175,8 @@ public class SatelliteControllerTest extends TelephonyTest {
         public boolean mIsApplicationSupportsP2P = false;
         public int selectedSatelliteSubId = -1;
 
+        private boolean callOnlySuperMethod = false;
+
         TestSatelliteController(
                 Context context, Looper looper, @NonNull FeatureFlags featureFlags) {
             super(context, looper, featureFlags);
@@ -6262,7 +6265,11 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         @Override
         protected void handleCarrierRoamingNtnAvailableServicesChanged(int subId) {
-            isApplicationUpdated = true;
+            if (callOnlySuperMethod) {
+                super.handleCarrierRoamingNtnAvailableServicesChanged(subId);
+            } else {
+                isApplicationUpdated = true;
+            }
         }
 
         @Override
@@ -6272,6 +6279,9 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         @Override
         public int[] getSupportedServicesOnCarrierRoamingNtn(int subId) {
+            if (callOnlySuperMethod) {
+                return super.getSupportedServicesOnCarrierRoamingNtn(subId);
+            }
             return new int[]{3, 5};
         }
 
@@ -6352,6 +6362,10 @@ public class SatelliteControllerTest extends TelephonyTest {
             synchronized(mSatelliteAccessConfigLock) {
                 mSatelliteAccessAllowed = isAllowed;
             }
+        }
+
+        public void setCallOnlySuperMethod() {
+            callOnlySuperMethod = true;
         }
     }
 
@@ -6663,5 +6677,143 @@ public class SatelliteControllerTest extends TelephonyTest {
         int dataSupportModeForPlmn = mSatelliteControllerUT
                 .getSatelliteDataServicePolicyForPlmn(SUB_ID, "00101");
         assertEquals(SATELLITE_DATA_SUPPORT_BANDWIDTH_CONSTRAINED, dataSupportModeForPlmn);
+    }
+
+    @Test
+    public void testNotifyCarrierRoamingNtnAvailableServicesChanged_noServices() throws Exception {
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mSatelliteControllerUT.setCallOnlySuperMethod();
+        List<String> overlayConfigPlmnList = new ArrayList<>();
+        replaceInstance(SatelliteController.class, "mSatellitePlmnListFromOverlayConfig",
+                mSatelliteControllerUT, overlayConfigPlmnList);
+        mCarrierConfigBundle.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL, true);
+        mCarrierConfigBundle.putBoolean(CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
+                true);
+        List<String> entitlementPlmnList = Arrays.stream(
+                new String[]{"00101", "00102", "00103", "00104"}).toList();
+        mSatelliteControllerUT.onSatelliteEntitlementStatusUpdated(SUB_ID, false,
+                entitlementPlmnList, new ArrayList<>(), new HashMap<>(),
+                new HashMap<>() /*serviceTypeListMap*/, new HashMap<>(), new HashMap<>(),
+                mIIntegerConsumer);
+        verify(mPhone, times(1)).notifyCarrierRoamingNtnAvailableServicesChanged(
+                (int[]) ArgumentMatchers.any());
+    }
+
+    @Test
+    public void testNotifyCarrierRoamingNtnAvailableServicesChanged() throws Exception {
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mSatelliteControllerUT.setCallOnlySuperMethod();
+        List<String> overlayConfigPlmnList = new ArrayList<>();
+        replaceInstance(SatelliteController.class, "mSatellitePlmnListFromOverlayConfig",
+                mSatelliteControllerUT, overlayConfigPlmnList);
+        mCarrierConfigBundle.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL, true);
+        mCarrierConfigBundle.putBoolean(CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
+                true);
+
+        List<String> entitlementPlmnList = Arrays.stream(
+                new String[]{"00101", "00102", "00103", "00104"}).toList();
+        List<String> barredPlmnList = new ArrayList<>();
+        Map<String, List<Integer>> serviceTypeListMap = Map.of("00101",
+                List.of(SERVICE_TYPE_DATA, SERVICE_TYPE_SMS), "00102",
+                List.of(SERVICE_TYPE_VOICE, SERVICE_TYPE_SMS), "00103",
+                List.of(SERVICE_TYPE_DATA, SERVICE_TYPE_VOICE, SERVICE_TYPE_SMS));
+        mSatelliteControllerUT.onSatelliteEntitlementStatusUpdated(SUB_ID, false,
+                entitlementPlmnList, barredPlmnList, new HashMap<>(), serviceTypeListMap,
+                new HashMap<>(), new HashMap<>(), mIIntegerConsumer);
+        int[] expectedServices = new int[]{1, 2, 3};
+        int[] supportedServices = mSatelliteControllerUT.getSupportedServicesOnCarrierRoamingNtn(
+                SUB_ID);
+        assertArrayEquals(expectedServices, supportedServices);
+        verify(mPhone, times(1)).notifyCarrierRoamingNtnAvailableServicesChanged(
+                (int[]) ArgumentMatchers.any());
+    }
+
+    @Test
+    public void testNotifyCarrierRoamingNtnAvailableServicesChange_duplicateUpdates()
+            throws Exception {
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mSatelliteControllerUT.setCallOnlySuperMethod();
+        List<String> overlayConfigPlmnList = new ArrayList<>();
+        replaceInstance(SatelliteController.class, "mSatellitePlmnListFromOverlayConfig",
+                mSatelliteControllerUT, overlayConfigPlmnList);
+        mCarrierConfigBundle.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL, true);
+        mCarrierConfigBundle.putBoolean(CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
+                true);
+
+        List<String> entitlementPlmnList = Arrays.stream(
+                new String[]{"00101", "00102", "00103", "00104"}).toList();
+        List<String> barredPlmnList = new ArrayList<>();
+        Map<String, List<Integer>> serviceTypeListMap = Map.of("00101",
+                List.of(SERVICE_TYPE_DATA, SERVICE_TYPE_SMS), "00102",
+                List.of(SERVICE_TYPE_VOICE, SERVICE_TYPE_SMS), "00103",
+                List.of(SERVICE_TYPE_DATA, SERVICE_TYPE_VOICE, SERVICE_TYPE_SMS));
+        mSatelliteControllerUT.onSatelliteEntitlementStatusUpdated(SUB_ID, false,
+                entitlementPlmnList, barredPlmnList, new HashMap<>(), serviceTypeListMap,
+                new HashMap<>(), new HashMap<>(), mIIntegerConsumer);
+        int[] expectedServices = new int[]{1, 2, 3};
+        int[] supportedServices = mSatelliteControllerUT.getSupportedServicesOnCarrierRoamingNtn(
+                SUB_ID);
+        assertArrayEquals(expectedServices, supportedServices);
+        verify(mPhone, times(1)).notifyCarrierRoamingNtnAvailableServicesChanged(
+                (int[]) ArgumentMatchers.any());
+
+        mSatelliteControllerUT.onSatelliteEntitlementStatusUpdated(SUB_ID, false,
+                entitlementPlmnList, barredPlmnList, new HashMap<>(), serviceTypeListMap,
+                new HashMap<>(), new HashMap<>(), mIIntegerConsumer);
+        // There is no change in services between 2 calls, so notify should not invoke again.
+        supportedServices = mSatelliteControllerUT.getSupportedServicesOnCarrierRoamingNtn(SUB_ID);
+        assertArrayEquals(expectedServices, supportedServices);
+        verify(mPhone, times(1)).notifyCarrierRoamingNtnAvailableServicesChanged(
+                (int[]) ArgumentMatchers.any());
+    }
+
+    @Test
+    public void testNotifyCarrierRoamingNtnAvailableServicesChange_multipleUpdates()
+            throws Exception {
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mSatelliteControllerUT.setCallOnlySuperMethod();
+        List<String> overlayConfigPlmnList = new ArrayList<>();
+        replaceInstance(SatelliteController.class, "mSatellitePlmnListFromOverlayConfig",
+                mSatelliteControllerUT, overlayConfigPlmnList);
+        mCarrierConfigBundle.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL, true);
+        mCarrierConfigBundle.putBoolean(CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
+                true);
+
+        List<String> entitlementPlmnList = Arrays.stream(
+                new String[]{"00101", "00102", "00103", "00104"}).toList();
+        List<String> barredPlmnList = new ArrayList<>();
+        Map<String, List<Integer>> serviceTypeListMap = Map.of("00101",
+                List.of(SERVICE_TYPE_DATA, SERVICE_TYPE_SMS), "00102",
+                List.of(SERVICE_TYPE_VOICE, SERVICE_TYPE_SMS), "00103",
+                List.of(SERVICE_TYPE_DATA, SERVICE_TYPE_VOICE, SERVICE_TYPE_SMS));
+        mSatelliteControllerUT.onSatelliteEntitlementStatusUpdated(SUB_ID, false,
+                entitlementPlmnList, barredPlmnList, new HashMap<>(), serviceTypeListMap,
+                new HashMap<>(), new HashMap<>(), mIIntegerConsumer);
+        int[] expectedServices = new int[]{1, 2, 3};
+        int[] supportedServices = mSatelliteControllerUT.getSupportedServicesOnCarrierRoamingNtn(
+                SUB_ID);
+        assertArrayEquals(expectedServices, supportedServices);
+        verify(mPhone, times(1)).notifyCarrierRoamingNtnAvailableServicesChanged(
+                (int[]) ArgumentMatchers.any());
+
+        serviceTypeListMap = Map.of("00101", List.of(SERVICE_TYPE_VOICE, SERVICE_TYPE_SMS), "00102",
+                List.of(SERVICE_TYPE_SMS), "00103", List.of(SERVICE_TYPE_VOICE, SERVICE_TYPE_SMS));
+        mSatelliteControllerUT.onSatelliteEntitlementStatusUpdated(SUB_ID, false,
+                entitlementPlmnList, barredPlmnList, new HashMap<>(), serviceTypeListMap,
+                new HashMap<>(), new HashMap<>(), mIIntegerConsumer);
+        expectedServices = new int[]{1, 3};
+        supportedServices = mSatelliteControllerUT.getSupportedServicesOnCarrierRoamingNtn(SUB_ID);
+        assertArrayEquals(expectedServices, supportedServices);
+        // 2 times notify called due to previous and current changes
+        verify(mPhone, times(2)).notifyCarrierRoamingNtnAvailableServicesChanged(
+                (int[]) ArgumentMatchers.any());
     }
 }
