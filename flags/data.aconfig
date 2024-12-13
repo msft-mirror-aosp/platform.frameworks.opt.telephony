@@ -110,17 +110,6 @@ flag {
   bug:"353723350"
 }
 
-# OWNER=jackyu TARGET=25Q1
-flag {
-  name: "support_network_provider"
-  namespace: "telephony"
-  description: "Deprecate network factory and adapt the new network provider model from connectivity service"
-  bug: "343370895"
-  metadata {
-    purpose: PURPOSE_BUGFIX
-  }
-}
-
 # OWNER=jackyu TARGET=25Q2
 flag {
   name: "oem_paid_private"
