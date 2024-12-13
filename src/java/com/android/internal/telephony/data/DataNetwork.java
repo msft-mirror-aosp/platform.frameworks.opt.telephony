@@ -29,7 +29,6 @@ import android.net.LinkProperties;
 import android.net.NetworkAgent;
 import android.net.NetworkAgentConfig;
 import android.net.NetworkCapabilities;
-import android.net.NetworkFactory;
 import android.net.NetworkProvider;
 import android.net.NetworkRequest;
 import android.net.NetworkScore;
@@ -1180,21 +1179,13 @@ public class DataNetwork extends StateMachine {
         }
 
         NetworkProvider provider;
-        if (mFlags.supportNetworkProvider()) {
-            provider = PhoneFactory.getNetworkProvider();
-        } else {
-            final NetworkFactory factory = PhoneFactory.getNetworkFactory(
-                    mPhone.getPhoneId());
-            provider = (null == factory) ? null : factory.getProvider();
-        }
+        provider = PhoneFactory.getNetworkProvider();
 
         NetworkScore.Builder builder = new NetworkScore.Builder()
                 .setKeepConnectedReason(isHandoverInProgress()
                         ? NetworkScore.KEEP_CONNECTED_FOR_HANDOVER
                         : NetworkScore.KEEP_CONNECTED_NONE);
-        if (mFlags.supportNetworkProvider()) {
-            builder.setTransportPrimary(mOnPreferredDataPhone);
-        }
+        builder.setTransportPrimary(mOnPreferredDataPhone);
         mNetworkScore = builder.build();
         logl("mNetworkScore: isPrimary=" + mNetworkScore.isTransportPrimary()
                 + ", keepConnectedReason=" + mNetworkScore.getKeepConnectedReason());
@@ -1259,15 +1250,13 @@ public class DataNetwork extends StateMachine {
             mDataNetworkController.getDataSettingsManager()
                     .registerCallback(mDataSettingsManagerCallback);
 
-            if (mFlags.supportNetworkProvider()) {
-                mPhoneSwitcherCallback = new PhoneSwitcherCallback(Runnable::run) {
-                    @Override
-                    public void onPreferredDataPhoneIdChanged(int phoneId) {
-                        sendMessage(EVENT_PREFERRED_DATA_SUBSCRIPTION_CHANGED, phoneId, 0);
-                    }
-                };
-                mPhoneSwitcher.registerCallback(mPhoneSwitcherCallback);
-            }
+            mPhoneSwitcherCallback = new PhoneSwitcherCallback(Runnable::run) {
+                @Override
+                public void onPreferredDataPhoneIdChanged(int phoneId) {
+                    sendMessage(EVENT_PREFERRED_DATA_SUBSCRIPTION_CHANGED, phoneId, 0);
+                }
+            };
+            mPhoneSwitcher.registerCallback(mPhoneSwitcherCallback);
 
             mPhone.getDisplayInfoController().registerForTelephonyDisplayInfoChanged(
                     getHandler(), EVENT_DISPLAY_INFO_CHANGED, null);
@@ -1360,9 +1349,7 @@ public class DataNetwork extends StateMachine {
             mPhone.getServiceStateTracker().unregisterForServiceStateChanged(getHandler());
             mPhone.getDisplayInfoController().unregisterForTelephonyDisplayInfoChanged(
                     getHandler());
-            if (mFlags.supportNetworkProvider()) {
-                mPhoneSwitcher.unregisterCallback(mPhoneSwitcherCallback);
-            }
+            mPhoneSwitcher.unregisterCallback(mPhoneSwitcherCallback);
             mDataNetworkController.getDataSettingsManager()
                     .unregisterCallback(mDataSettingsManagerCallback);
             mRil.unregisterForPcoData(getHandler());
@@ -3373,13 +3360,10 @@ public class DataNetwork extends StateMachine {
         int connectedReason = keepConnectedForHandover
                 ? NetworkScore.KEEP_CONNECTED_FOR_HANDOVER : NetworkScore.KEEP_CONNECTED_NONE;
         if (mNetworkScore.getKeepConnectedReason() != connectedReason
-                || (mFlags.supportNetworkProvider()
-                && mNetworkScore.isTransportPrimary() != mOnPreferredDataPhone)) {
+                || mNetworkScore.isTransportPrimary() != mOnPreferredDataPhone) {
             NetworkScore.Builder builder = new NetworkScore.Builder()
                     .setKeepConnectedReason(connectedReason);
-            if (mFlags.supportNetworkProvider()) {
-                builder.setTransportPrimary(mOnPreferredDataPhone);
-            }
+            builder.setTransportPrimary(mOnPreferredDataPhone);
             mNetworkScore = builder.build();
             mNetworkAgent.sendNetworkScore(mNetworkScore);
             logl("updateNetworkScore: isPrimary=" + mNetworkScore.isTransportPrimary()
