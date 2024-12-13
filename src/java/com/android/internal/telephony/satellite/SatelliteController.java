@@ -642,6 +642,7 @@ public class SatelliteController extends Handler {
     private static final String NOTIFICATION_CHANNEL_ID = "satellite";
 
     private final RegistrantList mSatelliteConfigUpdateChangedRegistrants = new RegistrantList();
+    private final RegistrantList mSatelliteSubIdChangedRegistrants = new RegistrantList();
     private final BTWifiNFCStateReceiver mBTWifiNFCSateReceiver;
     private final UwbAdapterStateCallback mUwbAdapterStateCallback;
 
@@ -1004,6 +1005,24 @@ public class SatelliteController extends Handler {
         mSatelliteConfigUpdateChangedRegistrants.remove(h);
     }
 
+    /**
+     * Register a callback to change the satelliteSubId.
+     * @param h Handler to notify
+     * @param what msg.what when the message is delivered
+     * @param obj AsyncResult.userObj when the message is delivered
+     */
+    public void registerForSatelliteSubIdChanged(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mSatelliteSubIdChangedRegistrants.add(r);
+    }
+
+    /**
+     * Unregister a callback to get a updated satellite config data.
+     * @param h Handler to notify
+     */
+    public void unregisterForSatelliteSubIdChanged(Handler h) {
+        mSatelliteSubIdChangedRegistrants.remove(h);
+    }
     /**
      * Get satelliteConfig from SatelliteConfigParser
      */
@@ -6255,6 +6274,12 @@ public class SatelliteController extends Handler {
                     if (info.isSatelliteESOSSupported()) {
                         if (mSubscriptionManagerService.isSatelliteProvisionedForNonIpDatagram(
                                 info.getSubscriptionId())) {
+                            Pair<String, Integer> subscriberIdPair = getSubscriberIdAndType(
+                                    mSubscriptionManagerService.getSubscriptionInfo(subId));
+                            String subscriberId = subscriberIdPair.first;
+                            synchronized (mSatelliteTokenProvisionedLock) {
+                                mProvisionedSubscriberId.put(subscriberId, true);
+                            }
                             return true;
                         }
                     }
@@ -6578,7 +6603,16 @@ public class SatelliteController extends Handler {
         if(isSatelliteSupported == null) {
             return false;
         }
-        return notifySatelliteAvailabilityEnabled && isSatelliteSupported;
+        int subId = getSelectedSatelliteSubId();
+        SubscriptionInfo subInfo = mSubscriptionManagerService.getSubscriptionInfo(subId);
+        logd("isSatelliteSystemNotificationsEnabled: SatelliteSubId = " + subId);
+        return notifySatelliteAvailabilityEnabled
+                && isSatelliteSupported
+                && isValidSubscriptionId(subId)
+                && ((isSatelliteSupportedViaCarrier(subId)
+                && (getCarrierRoamingNtnConnectType(subId)
+                == CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL))
+                || subInfo.isOnlyNonTerrestrialNetwork());
     }
 
     /**
@@ -7413,7 +7447,12 @@ public class SatelliteController extends Handler {
         }
 
         synchronized (mSatelliteTokenProvisionedLock) {
+            int preSelectedSatelliteSubId = mSelectedSatelliteSubId;
             mSelectedSatelliteSubId = selectedSubId;
+            if (preSelectedSatelliteSubId != mSelectedSatelliteSubId) {
+                plogd("selectBindingSatelliteSubscription: SelectedSatelliteSubId changed");
+                mSatelliteSubIdChangedRegistrants.notifyRegistrants();
+            }
         }
         setSatellitePhone(selectedSubId);
         if (selectedSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {

@@ -4336,6 +4336,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         // 2 minutes later and hysteresis timeout is 1 minute
         mSatelliteControllerUT.elapsedRealtime = 2 * 60 * 1000;
         moveTimeForward(2 * 60 * 1000);
+        mSatelliteControllerUT.selectedSatelliteSubId = SUB_ID1;
         processAllMessages();
         assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
         verify(mPhone, times(1)).notifyCarrierRoamingNtnEligibleStateChanged(eq(true));
@@ -5044,6 +5045,7 @@ public class SatelliteControllerTest extends TelephonyTest {
                         getKeyPriority(testSubscriptionInfo2), k -> new ArrayList<>())
                 .add(testSubscriptionInfo2);
 
+        mSatelliteControllerUT.selectedSatelliteSubId = SUB_ID1;
         mSatelliteControllerUT.evaluateESOSProfilesPrioritizationTest();
         processAllMessages();
         assertEquals(oemSubId, mSatelliteControllerUT.getSelectedSatelliteSubId());
@@ -5060,6 +5062,7 @@ public class SatelliteControllerTest extends TelephonyTest {
                         getKeyPriority(testSubscriptionInfo2), k -> new ArrayList<>())
                 .add(testSubscriptionInfo2);
 
+        mSatelliteControllerUT.selectedSatelliteSubId = SUB_ID;
         mSatelliteControllerUT.evaluateESOSProfilesPrioritizationTest();
         processAllMessages();
         assertEquals(carrierSubId, mSatelliteControllerUT.getSelectedSatelliteSubId());
@@ -6165,6 +6168,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         public String packageName = "com.example.app";
         public boolean isSatelliteBeingDisabled = false;
         public boolean mIsApplicationSupportsP2P = false;
+        public int selectedSatelliteSubId = -1;
 
         TestSatelliteController(
                 Context context, Looper looper, @NonNull FeatureFlags featureFlags) {
@@ -6267,6 +6271,10 @@ public class SatelliteControllerTest extends TelephonyTest {
             return new int[]{3, 5};
         }
 
+        @Override
+        public int getSelectedSatelliteSubId() {
+            return selectedSatelliteSubId;
+        }
 
         void setSatelliteProvisioned(@Nullable Boolean isProvisioned) {
             synchronized (mDeviceProvisionLock) {
