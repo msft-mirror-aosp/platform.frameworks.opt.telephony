@@ -18,6 +18,7 @@ package com.android.internal.telephony.satellite.metrics;
 
 import static android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID;
 import static android.telephony.satellite.NtnSignalStrength.NTN_SIGNAL_STRENGTH_NONE;
+import static android.telephony.satellite.SatelliteManager.KEY_SESSION_STATS_V2;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
 import android.annotation.NonNull;
@@ -36,7 +37,7 @@ import com.android.internal.telephony.satellite.DatagramDispatcher;
  */
 public class SessionMetricsStats {
     private static final String TAG = SessionMetricsStats.class.getSimpleName();
-    private static final boolean DBG = false;
+    private static final boolean DBG = true;
 
     private static SessionMetricsStats sInstance = null;
     private @SatelliteManager.SatelliteResult int mInitializationResult;
@@ -61,9 +62,11 @@ public class SessionMetricsStats {
     private int mCountOfSatelliteNotificationDisplayed;
     private int mCountOfAutoExitDueToScreenOff;
     private int mCountOfAutoExitDueToTnNetwork;
+    private SatelliteSessionStats mDatagramStats;
 
     private SessionMetricsStats() {
         initializeSessionMetricsParam();
+        mDatagramStats = new SatelliteSessionStats();
     }
 
     /**
@@ -128,7 +131,11 @@ public class SessionMetricsStats {
 
     /** Increase the count of successful outgoing datagram transmission. */
     public SessionMetricsStats addCountOfSuccessfulOutgoingDatagram(
-            @NonNull @SatelliteManager.DatagramType int datagramType) {
+            @NonNull @SatelliteManager.DatagramType int datagramType,
+            long datagramTransmissionTime) {
+        logd("addCountOfSuccessfulOutgoingDatagram: datagramType=" + datagramType);
+        mDatagramStats.recordSuccessfulOutgoingDatagramStats(datagramType,
+                datagramTransmissionTime);
         if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
             // Ignore KEEP_ALIVE messages
             return this;
@@ -136,8 +143,6 @@ public class SessionMetricsStats {
 
         mCountOfSuccessfulOutgoingDatagram++;
         mShadowCountOfSuccessfulOutgoingDatagram++;
-        logd("addCountOfSuccessfulOutgoingDatagram: current count="
-                + mCountOfSuccessfulOutgoingDatagram);
         return this;
     }
 
@@ -145,6 +150,9 @@ public class SessionMetricsStats {
     public SessionMetricsStats addCountOfFailedOutgoingDatagram(
             @NonNull @SatelliteManager.DatagramType int datagramType,
             @NonNull @SatelliteManager.SatelliteResult int resultCode) {
+        logd("addCountOfFailedOutgoingDatagram: datagramType=" + datagramType + "  resultCode = "
+                + resultCode);
+        mDatagramStats.addCountOfUnsuccessfulUserMessages(datagramType, resultCode);
         if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
             // Ignore KEEP_ALIVE messages
             return this;
@@ -152,14 +160,11 @@ public class SessionMetricsStats {
 
         mCountOfFailedOutgoingDatagram++;
         mShadowCountOfFailedOutgoingDatagram++;
-        logd("addCountOfFailedOutgoingDatagram: current count=" + mCountOfFailedOutgoingDatagram);
-
         if (resultCode == SatelliteManager.SATELLITE_RESULT_NOT_REACHABLE) {
             addCountOfTimedOutUserMessagesWaitingForConnection(datagramType);
         } else if (resultCode == SatelliteManager.SATELLITE_RESULT_MODEM_TIMEOUT) {
             addCountOfTimedOutUserMessagesWaitingForAck(datagramType);
         }
-
         return this;
     }
 
@@ -284,6 +289,7 @@ public class SessionMetricsStats {
 
     /** Returns {@link SatelliteSessionStats} of the satellite service. */
     public void requestSatelliteSessionStats(int subId, @NonNull ResultReceiver result) {
+        Log.i(TAG, "requestSatelliteSessionStats called");
         Bundle bundle = new Bundle();
         SatelliteSessionStats sessionStats = new SatelliteSessionStats.Builder()
                 .setCountOfSuccessfulUserMessages(mShadowCountOfSuccessfulOutgoingDatagram)
@@ -296,6 +302,10 @@ public class SessionMetricsStats {
                         DatagramDispatcher.getInstance().getPendingUserMessagesCount())
                 .build();
         bundle.putParcelable(SatelliteManager.KEY_SESSION_STATS, sessionStats);
+
+        DatagramDispatcher.getInstance().updateSessionStatsWithPendingUserMsgCount(mDatagramStats);
+        bundle.putParcelable(KEY_SESSION_STATS_V2, mDatagramStats);
+        Log.i(TAG, "[END] DatagramStats = " +mDatagramStats);
         result.send(SATELLITE_RESULT_SUCCESS, bundle);
     }
 
@@ -310,9 +320,9 @@ public class SessionMetricsStats {
     }
 
     private void initializeSessionMetricsParam() {
-        mInitializationResult = SatelliteManager.SATELLITE_RESULT_SUCCESS;
+        mInitializationResult = SATELLITE_RESULT_SUCCESS;
         mRadioTechnology = SatelliteManager.NT_RADIO_TECHNOLOGY_UNKNOWN;
-        mTerminationResult = SatelliteManager.SATELLITE_RESULT_SUCCESS;
+        mTerminationResult = SATELLITE_RESULT_SUCCESS;
         mInitializationProcessingTimeMillis = 0;
         mTerminationProcessingTimeMillis = 0;
         mSessionDurationSec = 0;
@@ -336,6 +346,7 @@ public class SessionMetricsStats {
         mShadowCountOfFailedOutgoingDatagram = 0;
         mShadowCountOfTimedOutUserMessagesWaitingForConnection = 0;
         mShadowCountOfTimedOutUserMessagesWaitingForAck = 0;
+        mDatagramStats.clear();
     }
 
     private static void logd(@NonNull String log) {

@@ -26,6 +26,8 @@ import android.test.AndroidTestCase;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.telephony.flags.Flags;
+
 /** Unit tests for {@link CellSignalStrengthCdma}. */
 
 public class CellSignalStrengthCdmaTest extends AndroidTestCase {
@@ -38,6 +40,7 @@ public class CellSignalStrengthCdmaTest extends AndroidTestCase {
 
     @SmallTest
     public void testConstructor() {
+        if (Flags.cleanupCdma()) return;
         CellSignalStrengthCdma css = new CellSignalStrengthCdma(
                 CDMA_DBM, CDMA_ECIO, EVDO_DBM, EVDO_ECIO, EVDO_SNR);
         assertEquals(CDMA_DBM, css.getCdmaDbm());
@@ -49,6 +52,7 @@ public class CellSignalStrengthCdmaTest extends AndroidTestCase {
 
     @SmallTest
     public void testInvalidConstructor() {
+        if (Flags.cleanupCdma()) return;
         CellSignalStrengthCdma css = new CellSignalStrengthCdma(200, 2000, 20, 400, 200);
         assertEquals(Integer.MAX_VALUE, css.getCdmaDbm());
         assertEquals(Integer.MAX_VALUE, css.getCdmaEcio());
@@ -59,6 +63,7 @@ public class CellSignalStrengthCdmaTest extends AndroidTestCase {
 
     @SmallTest
     public void testDefaultConstructor() {
+        if (Flags.cleanupCdma()) return;
         CellSignalStrengthCdma css = new CellSignalStrengthCdma();
         assertEquals(Integer.MAX_VALUE, css.getCdmaDbm());
         assertEquals(Integer.MAX_VALUE, css.getCdmaEcio());
@@ -69,6 +74,7 @@ public class CellSignalStrengthCdmaTest extends AndroidTestCase {
 
     @SmallTest
     public void testEquals() {
+        if (Flags.cleanupCdma()) return;
         assertTrue(new CellSignalStrengthCdma(
                 CDMA_DBM, CDMA_ECIO, EVDO_DBM, EVDO_ECIO, EVDO_SNR).equals(
                         new CellSignalStrengthCdma(
@@ -80,6 +86,7 @@ public class CellSignalStrengthCdmaTest extends AndroidTestCase {
 
     @SmallTest
     public void testParcel() {
+        if (Flags.cleanupCdma()) return;
         CellSignalStrengthCdma css = new CellSignalStrengthCdma(
                 CDMA_DBM, CDMA_ECIO, EVDO_DBM, EVDO_ECIO, EVDO_SNR);
 

@@ -580,7 +580,6 @@ public abstract class TelephonyTest {
         mNullCipherNotifier = Mockito.mock(NullCipherNotifier.class);
 
         doReturn(true).when(mFeatureFlags).minimalTelephonyCdmCheck();
-        doReturn(true).when(mFeatureFlags).supportNetworkProvider();
         doReturn(true).when(mFeatureFlags).hsumBroadcast();
         doReturn(true).when(mFeatureFlags).hsumPackageManager();
 
@@ -811,7 +810,7 @@ public abstract class TelephonyTest {
         doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_LTE).when(mServiceState)
                 .getRilDataRadioTechnology();
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
-                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false))
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false, false, false))
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         doReturn(mPhone).when(mCT).getPhone();
         doReturn(mImsEcbm).when(mImsManager).getEcbmInterface();

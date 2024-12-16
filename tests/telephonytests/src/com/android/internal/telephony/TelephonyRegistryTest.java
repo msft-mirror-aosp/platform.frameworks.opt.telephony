@@ -56,6 +56,7 @@ import android.platform.test.flag.junit.SetFlagsRule;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.Annotation;
 import android.telephony.BarringInfo;
+import android.telephony.CallState;
 import android.telephony.CellIdentity;
 import android.telephony.CellIdentityGsm;
 import android.telephony.CellIdentityLte;
@@ -138,9 +139,10 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private long mCallbackModeDurationMillis;
     private boolean mCarrierRoamingNtnMode;
     private boolean mCarrierRoamingNtnEligible;
-    private List<Integer> mCarrierRoamingNtnAvailableServices;
+    private int[] mCarrierRoamingNtnAvailableServices;
     private NtnSignalStrength mCarrierRoamingNtnSignalStrength;
     private boolean mIsSatelliteEnabled;
+    private final List<List<CallState>> mCallStateList = new ArrayList<>();
 
     // All events contribute to TelephonyRegistry#isPhoneStatePermissionRequired
     private static final Set<Integer> READ_PHONE_STATE_EVENTS;
@@ -224,7 +226,8 @@ public class TelephonyRegistryTest extends TelephonyTest {
             TelephonyCallback.EmergencyCallbackModeListener,
             TelephonyCallback.CarrierRoamingNtnModeListener,
             TelephonyCallback.SecurityAlgorithmsListener,
-            TelephonyCallback.CellularIdentifierDisclosedListener {
+            TelephonyCallback.CellularIdentifierDisclosedListener,
+            TelephonyCallback.CallAttributesListener {
         // This class isn't mockable to get invocation counts because the IBinder is null and
         // crashes the TelephonyRegistry. Make a cheesy verify(times()) alternative.
         public AtomicInteger invocationCount = new AtomicInteger(0);
@@ -354,7 +357,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
         }
 
         @Override
-        public void onCarrierRoamingNtnAvailableServicesChanged(List<Integer> services) {
+        public void onCarrierRoamingNtnAvailableServicesChanged(int[] services) {
             invocationCount.incrementAndGet();
             mCarrierRoamingNtnAvailableServices = services;
         }
@@ -373,6 +376,12 @@ public class TelephonyRegistryTest extends TelephonyTest {
         @Override
         public void onCellularIdentifierDisclosedChanged(CellularIdentifierDisclosure disclosure) {
             invocationCount.incrementAndGet();
+        }
+
+        @Override
+        public void onCallStatesChanged(List<CallState> callStateList) {
+            invocationCount.incrementAndGet();
+            mCallStateList.add(callStateList);
         }
     }
 
@@ -448,6 +457,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
             mPhysicalChannelConfigs = null;
         }
         mCellLocation = null;
+        mCallStateList.clear();
         super.tearDown();
     }
 
@@ -1344,7 +1354,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
         TelephonyDisplayInfo displayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED,
-                false);
+                false, false, false);
 
         // Notify with invalid subId on default phone. Should NOT trigger callback.
         mTelephonyRegistry.notifyDisplayInfoChanged(0, INVALID_SUBSCRIPTION_ID, displayInfo);
@@ -1371,11 +1381,11 @@ public class TelephonyRegistryTest extends TelephonyTest {
         TelephonyDisplayInfo displayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED,
-                false);
+                false, false, false);
         TelephonyDisplayInfo expectDisplayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE,
-                false);
+                false, false, false);
 
         // Notify with invalid subId on default phone. Should NOT trigger callback.
         mTelephonyRegistry.notifyDisplayInfoChanged(0, INVALID_SUBSCRIPTION_ID, displayInfo);
@@ -1398,11 +1408,11 @@ public class TelephonyRegistryTest extends TelephonyTest {
         TelephonyDisplayInfo displayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED,
-                false);
+                false, false, false);
         TelephonyDisplayInfo expectDisplayInfo = new TelephonyDisplayInfo(
                 TelephonyManager.NETWORK_TYPE_LTE,
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE,
-                false);
+                false, false, false);
         TelephonyCallback telephonyCallback2 = new TelephonyCallbackWrapper() {
             @Override
             public void onDisplayInfoChanged(TelephonyDisplayInfo displayInfoNotify) {
@@ -1768,9 +1778,38 @@ public class TelephonyRegistryTest extends TelephonyTest {
         int[] services = {3, 6};
         mTelephonyRegistry.notifyCarrierRoamingNtnAvailableServicesChanged(subId, services);
         processAllMessages();
-        int[] carrierServices = mCarrierRoamingNtnAvailableServices.stream()
-                .mapToInt(Integer::intValue).toArray();
-        assertTrue(Arrays.equals(carrierServices, services));
+        assertTrue(Arrays.equals(mCarrierRoamingNtnAvailableServices, services));
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_PASS_COPIED_CALL_STATE_LIST)
+    public void testNotifyPreciseCallStateChangedInProcess() {
+        doReturn(mMockSubInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
+        doReturn(0/*slotIndex*/).when(mMockSubInfo).getSimSlotIndex();
+
+        final int subId = 1;
+        int[] events = {TelephonyCallback.EVENT_CALL_ATTRIBUTES_CHANGED};
+
+        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+                mContext.getAttributionTag(), mTelephonyCallback.callback, events, false);
+        processAllMessages();
+
+        int[] callState = {0, 5, 0};
+        String[] imsCallId = {"0", "1", "0"};
+        int[] imsServiceType = {0, 1, 0};
+        int[] imsCallType = {0, 1, 0};
+        int[] callState2 = {0, 1, 0};
+        mTelephonyRegistry.notifyPreciseCallState(
+                /*phoneId*/ 0, subId, callState, imsCallId, imsServiceType, imsCallType);
+        mTelephonyRegistry.notifyPreciseCallState(
+                /*phoneId*/ 0, subId, callState2, imsCallId, imsServiceType, imsCallType);
+        processAllMessages();
+
+        assertEquals(2, mCallStateList.size());
+        //make sure the call state is from the first report(callState).
+        assertEquals(5, mCallStateList.get(0).getFirst().getCallState());
+        //make sure the call state is from the second report(callState2).
+        assertEquals(1, mCallStateList.get(1).getFirst().getCallState());
     }
 
     @Test

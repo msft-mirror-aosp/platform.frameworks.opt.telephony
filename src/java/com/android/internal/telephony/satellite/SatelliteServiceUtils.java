@@ -366,6 +366,29 @@ public class SatelliteServiceUtils {
     }
 
     /**
+     * Check if the subscription ID is a NTN only subscription ID.
+     *
+     * @return {@code true} if the subscription ID is a NTN only subscription ID,
+     * {@code false} otherwise.
+    */
+    public static boolean isNtnOnlySubscriptionId(int subId) {
+        SubscriptionManagerService subscriptionManagerService =
+            SubscriptionManagerService.getInstance();
+        if (subscriptionManagerService == null) {
+            logd("isNtnOnlySubscriptionId: subscriptionManagerService is null");
+            return false;
+        }
+
+        SubscriptionInfo subInfo = subscriptionManagerService.getSubscriptionInfo(subId);
+        if (subInfo == null) {
+            logd("isNtnOnlySubscriptionId: subInfo is null for subId=" + subId);
+            return false;
+        }
+
+        return subInfo.isOnlyNonTerrestrialNetwork();
+    }
+
+    /**
      * Expected format of the input dictionary bundle is:
      * <ul>
      *     <li>Key: PLMN string.</li>
@@ -553,10 +576,10 @@ public class SatelliteServiceUtils {
                 new android.telephony.satellite.stub.SystemSelectionSpecifier();
 
         convertedSpecifier.mMccMnc = systemSelectionSpecifier.getMccMnc();
-        convertedSpecifier.mBands = systemSelectionSpecifier.getBands().toArray();
-        convertedSpecifier.mEarfcs = systemSelectionSpecifier.getEarfcns().toArray();
-
-        SatelliteInfo[] satelliteInfos = systemSelectionSpecifier.getSatelliteInfos();
+        convertedSpecifier.mBands = systemSelectionSpecifier.getBands();
+        convertedSpecifier.mEarfcs = systemSelectionSpecifier.getEarfcns();
+        SatelliteInfo[] satelliteInfos = systemSelectionSpecifier.getSatelliteInfos()
+                .toArray(new SatelliteInfo[0]);
         android.telephony.satellite.stub.SatelliteInfo[] halSatelliteInfos =
                 new android.telephony.satellite.stub.SatelliteInfo[satelliteInfos.length];
         for (int i = 0; i < satelliteInfos.length; i++) {
@@ -591,8 +614,7 @@ public class SatelliteServiceUtils {
             }
         }
         convertedSpecifier.satelliteInfos = halSatelliteInfos;
-
-        convertedSpecifier.tagIds = systemSelectionSpecifier.getTagIds().toArray();
+        convertedSpecifier.tagIds = systemSelectionSpecifier.getTagIds();
         return convertedSpecifier;
     }
 

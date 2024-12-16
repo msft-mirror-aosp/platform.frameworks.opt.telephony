@@ -24,6 +24,9 @@ import static android.telephony.TelephonyManager.EXTRA_EMERGENCY_CALL_TO_SATELLI
 import static android.telephony.TelephonyManager.EXTRA_EMERGENCY_CALL_TO_SATELLITE_LAUNCH_INTENT;
 import static android.telephony.satellite.SatelliteManager.EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
 import static android.telephony.satellite.SatelliteManager.EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_DISALLOWED_REASON_NOT_PROVISIONED;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_DISALLOWED_REASON_NOT_SUPPORTED;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_DISALLOWED_REASON_UNSUPPORTED_DEFAULT_MSG_APP;
 
 import static com.android.internal.telephony.flags.Flags.satellitePersistentLogging;
 import static com.android.internal.telephony.satellite.SatelliteController.INVALID_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE;
@@ -49,6 +52,7 @@ import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
+import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.ims.ImsReasonInfo;
 import android.telephony.ims.ImsRegistrationAttributes;
@@ -73,8 +77,10 @@ import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.metrics.SatelliteStats;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 
 /**
@@ -115,8 +121,10 @@ public class SatelliteSOSMessageRecommender extends Handler {
     private boolean mCheckingAccessRestrictionInProgress = false;
     protected long mTimeoutMillis = 0;
     private final long mOemEnabledTimeoutMillis;
-    private final AtomicBoolean mIsSatelliteConnectedViaCarrierWithinHysteresisTime =
+    protected final AtomicBoolean mIsSatelliteConnectedViaCarrierWithinHysteresisTime =
             new AtomicBoolean(false);
+    protected final AtomicInteger mSubIdOfSatelliteConnectedViaCarrierWithinHysteresisTime =
+            new AtomicInteger(SubscriptionManager.INVALID_SUBSCRIPTION_ID);
     @GuardedBy("mLock")
     private boolean mIsTimerTimedOut = false;
     protected int mCountOfTimerStarted = 0;
@@ -234,8 +242,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
          * should do this check now so that we have higher chance of sending the event
          * EVENT_DISPLAY_EMERGENCY_MESSAGE to Dialer.
          */
-        mIsSatelliteConnectedViaCarrierWithinHysteresisTime.set(
-                mSatelliteController.isSatelliteConnectedViaCarrierWithinHysteresisTime());
+        updateSatelliteConnectedViaCarrierWithinHysteresisTimeState();
         sendMessage(obtainMessage(EVENT_EMERGENCY_CALL_STARTED, connection));
     }
 
@@ -262,6 +269,27 @@ public class SatelliteSOSMessageRecommender extends Handler {
         return SmsApplication.getDefaultSendToApplication(mContext, false);
     }
 
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected boolean updateAndGetProvisionState() {
+        mSatelliteController.updateSatelliteProvisionedStatePerSubscriberId();
+        return isDeviceProvisioned();
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected boolean isSatelliteAllowedByReasons() {
+        SatelliteManager satelliteManager = mContext.getSystemService(SatelliteManager.class);
+        int[] disallowedReasons = satelliteManager.getSatelliteDisallowedReasons();
+        if (Arrays.stream(disallowedReasons).anyMatch(r ->
+                (r == SATELLITE_DISALLOWED_REASON_UNSUPPORTED_DEFAULT_MSG_APP
+                        || r == SATELLITE_DISALLOWED_REASON_NOT_PROVISIONED
+                        || r == SATELLITE_DISALLOWED_REASON_NOT_SUPPORTED))) {
+            plogd("isAllowedForDefaultMessageApp:false, disallowedReasons="
+                    + Arrays.toString(disallowedReasons));
+            return false;
+        }
+        return true;
+    }
+
     private void handleEmergencyCallStartedEvent(@NonNull Connection connection) {
         plogd("handleEmergencyCallStartedEvent: connection=" + connection);
         mSatelliteController.setLastEmergencyCallTime();
@@ -284,7 +312,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private void handleSatelliteProvisionStateChangedEvent(boolean provisioned) {
-        if (!provisioned) {
+        if (!provisioned
+                && !isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
             cleanUpResources(false);
         }
     }
@@ -310,6 +339,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 return;
             }
 
+            updateAndGetProvisionState();
+
             /*
              * The device might be connected to satellite after the emergency call started. Thus, we
              * need to do this check again so that we will have higher chance of sending the event
@@ -321,7 +352,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             boolean isCellularAvailable = SatelliteServiceUtils.isCellularAvailable();
             if (!isCellularAvailable
                     && isSatelliteAllowed()
-                    && (isDeviceProvisioned()
+                    && ((isDeviceProvisioned() && isSatelliteAllowedByReasons())
                     || isSatelliteConnectedViaCarrierWithinHysteresisTime())
                     && shouldTrackCall(mEmergencyConnection.getState())) {
                 plogd("handleTimeoutEvent: Sent EVENT_DISPLAY_EMERGENCY_MESSAGE to Dialer");
@@ -349,8 +380,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private void updateSatelliteViaCarrierAvailability() {
         if (!mIsSatelliteConnectedViaCarrierWithinHysteresisTime.get()) {
-            mIsSatelliteConnectedViaCarrierWithinHysteresisTime.set(
-                    mSatelliteController.isSatelliteConnectedViaCarrierWithinHysteresisTime());
+            updateSatelliteConnectedViaCarrierWithinHysteresisTimeState();
         }
     }
 
@@ -543,10 +573,19 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private void selectEmergencyCallWaitForConnectionTimeoutDuration() {
         if (isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
+            int satelliteSubId = mSubIdOfSatelliteConnectedViaCarrierWithinHysteresisTime.get();
             mTimeoutMillis =
-                    mSatelliteController.getCarrierEmergencyCallWaitForConnectionTimeoutMillis();
+                    mSatelliteController.getCarrierEmergencyCallWaitForConnectionTimeoutMillis(
+                            satelliteSubId);
         } else {
-            mTimeoutMillis = mOemEnabledTimeoutMillis;
+            int satelliteSubId = mSatelliteController.getSelectedSatelliteSubId();
+            if (!SatelliteServiceUtils.isNtnOnlySubscriptionId(satelliteSubId)) {
+                mTimeoutMillis =
+                    mSatelliteController.getCarrierEmergencyCallWaitForConnectionTimeoutMillis(
+                        satelliteSubId);
+            } else {
+                mTimeoutMillis = mOemEnabledTimeoutMillis;
+            }
         }
         plogd("mTimeoutMillis = " + mTimeoutMillis);
     }
@@ -645,7 +684,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     @NonNull private Bundle createExtraBundleForEventDisplayEmergencyMessage(
             boolean isTestEmergencyNumber) {
-        int handoverType = EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
+        int handoverType = getEmergencyCallToSatelliteHandoverType();
         Pair<String, String> oemSatelliteMessagingApp =
                 getOemEnabledSatelliteHandoverAppFromOverlayConfig(mContext);
         String packageName = oemSatelliteMessagingApp.first;
@@ -653,10 +692,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
         String action = getSatelliteEmergencyHandoverIntentActionFromOverlayConfig(mContext,
                 isTestEmergencyNumber);
 
-        if (isSatelliteConnectedViaCarrierWithinHysteresisTime()
-                || isEmergencyCallToSatelliteHandoverTypeT911Enforced()) {
+        if (handoverType == EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911) {
             ComponentName defaultSmsAppComponent = getDefaultSmsApp();
-            handoverType = EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
             packageName = defaultSmsAppComponent.getPackageName();
             className = defaultSmsAppComponent.getClassName();
         }
@@ -737,15 +774,18 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public int getEmergencyCallToSatelliteHandoverType() {
-        if (Flags.carrierRoamingNbIotNtn() && isDeviceProvisioned()
-                && isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
-            int satelliteSubId = mSatelliteController.getSelectedSatelliteSubId();
+        if (isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
+            int satelliteSubId = mSubIdOfSatelliteConnectedViaCarrierWithinHysteresisTime.get();
             return mSatelliteController.getCarrierRoamingNtnEmergencyCallToSatelliteHandoverType(
                     satelliteSubId);
-        } else if (isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
-            return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
         } else {
-            return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
+            int satelliteSubId = mSatelliteController.getSelectedSatelliteSubId();
+            if (!SatelliteServiceUtils.isNtnOnlySubscriptionId(satelliteSubId)) {
+                return mSatelliteController
+                    .getCarrierRoamingNtnEmergencyCallToSatelliteHandoverType(satelliteSubId);
+            } else {
+                return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
+            }
         }
     }
 
@@ -801,6 +841,19 @@ public class SatelliteSOSMessageRecommender extends Handler {
     private boolean isSatelliteViaOemProvisioned() {
         Boolean provisioned = mSatelliteController.isDeviceProvisioned();
         return (provisioned != null) && provisioned;
+    }
+
+    private void updateSatelliteConnectedViaCarrierWithinHysteresisTimeState() {
+        Pair<Boolean, Integer> satelliteConnectedState =
+                mSatelliteController.isSatelliteConnectedViaCarrierWithinHysteresisTime();
+        mIsSatelliteConnectedViaCarrierWithinHysteresisTime.set(satelliteConnectedState.first);
+        if (satelliteConnectedState.first) {
+            mSubIdOfSatelliteConnectedViaCarrierWithinHysteresisTime.set(
+                    satelliteConnectedState.second);
+        } else {
+            mSubIdOfSatelliteConnectedViaCarrierWithinHysteresisTime.set(
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+        }
     }
 
     private static void logv(@NonNull String log) {
