@@ -636,6 +636,11 @@ public class SatelliteController extends Handler {
     /** Key used to read/write satellite system notification done in shared preferences. */
     private static final String SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY =
             "satellite_system_notification_done_key";
+    private static final String SATELLITE_SYSTEM_NOTIFICATION_TIME =
+            "satellite_system_notification_time";
+    // 30 days in milliseconds
+    private static final long THIRTY_DAYS_IN_MILLIS = 30L * 24L * 60L * 60L * 1000L;
+
     // The notification tag used when showing a notification. The combination of notification tag
     // and notification id should be unique within the phone app.
     private static final String NOTIFICATION_TAG = "SatelliteController";
@@ -6593,15 +6598,30 @@ public class SatelliteController extends Handler {
         }
 
         Pair<Boolean, Integer> isNtn = isUsingNonTerrestrialNetworkViaCarrier();
-        boolean notificationKeyStatus = mSharedPreferences.getBoolean(
+        boolean suppressSatelliteNotification = mSharedPreferences.getBoolean(
                 SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY, false);
+        if (suppressSatelliteNotification) {
+            // System already displayed the notification and user interacted with it.
+            // System will show notification again after 30 days.
+            long lastSetTimestamp = mSharedPreferences.getLong(
+                    SATELLITE_SYSTEM_NOTIFICATION_TIME, 0L);
+            logv("determineAutoConnectSystemNotification lastSetTimestamp = " + lastSetTimestamp);
+            long currentTime = System.currentTimeMillis();
+            if (lastSetTimestamp == 0L || currentTime - lastSetTimestamp >= THIRTY_DAYS_IN_MILLIS) {
+                // Reset the flag and update the timestamp
+                logd("determineAutoConnectSystemNotification: reset preference data");
+                suppressSatelliteNotification = false;
+                mSharedPreferences.edit().putBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY,
+                        false).remove(SATELLITE_SYSTEM_NOTIFICATION_TIME).apply();
+            }
+        }
         if (DEBUG) {
             logd("determineAutoConnectSystemNotification: isNtn.first = " + isNtn.first
-                    + " IsNotiToShow = " + !notificationKeyStatus + " mIsNotificationShowing = "
-                    + mIsNotificationShowing);
+                    + " IsNotiToShow = " + !suppressSatelliteNotification
+                    + " mIsNotificationShowing = " + mIsNotificationShowing);
         }
         if (isNtn.first) {
-            if (!notificationKeyStatus && getCarrierRoamingNtnConnectType(isNtn.second)
+            if (!suppressSatelliteNotification && getCarrierRoamingNtnConnectType(isNtn.second)
                     == CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC) {
                 updateSatelliteSystemNotification(isNtn.second,
                         CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC,
@@ -6645,6 +6665,11 @@ public class SatelliteController extends Handler {
                 || subInfo.isOnlyNonTerrestrialNetwork());
     }
 
+    private boolean isDataServiceSupported(int subId) {
+        int[] services = getSupportedServicesOnCarrierRoamingNtn(subId);
+        return ArrayUtils.contains(services, NetworkRegistrationInfo.SERVICE_TYPE_DATA);
+    }
+
     /**
      * Update the system notification to reflect the current satellite status, that's either already
      * connected OR needs to be manually enabled. The device should only display one notification
@@ -6683,13 +6708,17 @@ public class SatelliteController extends Handler {
         }
         notificationManager.createNotificationChannel(notificationChannel);
 
-        // if carrierRoamingNtnConnectType is CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC
         int title = R.string.satellite_notification_title;
         int summary = R.string.satellite_notification_summary;
         if (carrierRoamingNtnConnectType
                 == CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL) {
             title = R.string.satellite_notification_manual_title;
             summary = R.string.satellite_notification_manual_summary;
+        } else if (carrierRoamingNtnConnectType
+                == CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC
+                && isDataServiceSupported(subId)) {
+            // In Auto Connected mode, if data services supported, show data supported summary
+            summary = R.string.satellite_notification_summary_with_data;
         }
 
         Notification.Builder notificationBuilder = new Notification.Builder(mContext,
@@ -6823,6 +6852,8 @@ public class SatelliteController extends Handler {
         }
         // update the sharedpref only when user interacted with the notification.
         mSharedPreferences.edit().putBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY, true).apply();
+        mSharedPreferences.edit().putLong(SATELLITE_SYSTEM_NOTIFICATION_TIME,
+                System.currentTimeMillis()).apply();
         mContext.unregisterReceiver(mNotificationInteractionBroadcastReceiver);
     }
 
