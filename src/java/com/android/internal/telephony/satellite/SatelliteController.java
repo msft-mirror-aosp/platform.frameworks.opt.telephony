@@ -8237,7 +8237,8 @@ public class SatelliteController extends Handler {
             switch (mSatelliteModemState) {
                 case SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED: //fallthrough
                 case SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING: //fallthrough
-                case SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_RETRYING:
+                case SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_RETRYING: //fallthrough
+                case SatelliteManager.SATELLITE_MODEM_STATE_IDLE:
                     plogd("isInConnectedState: return true");
                     return true;
                 default:
