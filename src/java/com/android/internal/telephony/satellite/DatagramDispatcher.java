@@ -44,6 +44,8 @@ import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
 import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteManager;
+import android.telephony.satellite.SatelliteSessionStats;
+import android.util.Log;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
@@ -1402,6 +1404,25 @@ public class DatagramDispatcher extends Handler {
         Rlog.e(TAG, log);
         if (mPersistentLogger != null) {
             mPersistentLogger.error(TAG, log);
+        }
+    }
+
+    public void updateSessionStatsWithPendingUserMsgCount(SatelliteSessionStats datagramStats) {
+        Log.d("SessionMetricsStats1",
+                " mPendingEmergencyDatagramsMap size = " + mPendingEmergencyDatagramsMap.size());
+        Log.d("SessionMetricsStats1", " mPendingNonEmergencyDatagramsMap size = "
+                + mPendingNonEmergencyDatagramsMap.size());
+        for (Entry<Long, SendSatelliteDatagramArgument> entry :
+                mPendingEmergencyDatagramsMap.entrySet()) {
+            SendSatelliteDatagramArgument argument = entry.getValue();
+            Log.d("SessionMetricsStats1", "DataGramType1 =  " + argument.datagramType);
+            datagramStats.updateCountOfUserMessagesInQueueToBeSent(argument.datagramType);
+        }
+        for (Entry<Long, SendSatelliteDatagramArgument> entry :
+                mPendingNonEmergencyDatagramsMap.entrySet()) {
+            SendSatelliteDatagramArgument argument = entry.getValue();
+            Log.d("SessionMetricsStats1", "DataGramType2 =  " + argument.datagramType);
+            datagramStats.updateCountOfUserMessagesInQueueToBeSent(argument.datagramType);
         }
     }
 }
