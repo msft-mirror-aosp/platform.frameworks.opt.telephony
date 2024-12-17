@@ -268,7 +268,7 @@ public class PhoneFactory {
                             SimultaneousCallingTracker.init(sContext, featureFlags);
                 }
 
-                sCellularNetworkValidator = CellularNetworkValidator.make(sContext);
+                sCellularNetworkValidator = CellularNetworkValidator.make(sContext, sFeatureFlags);
 
                 int maxActivePhones = sPhoneConfigurationManager
                         .getNumberOfModemsWithSimultaneousDataConnections();

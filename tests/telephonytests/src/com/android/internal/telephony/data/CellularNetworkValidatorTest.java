@@ -77,7 +77,7 @@ public class CellularNetworkValidatorTest extends TelephonyTest {
 
         doReturn(CAPABILITY_WITH_VALIDATION_SUPPORTED).when(mPhoneConfigurationManager)
                 .getCurrentPhoneCapability();
-        mValidatorUT = new CellularNetworkValidator(mContext);
+        mValidatorUT = new CellularNetworkValidator(mContext, mFeatureFlags);
         doReturn(new SubscriptionInfoInternal.Builder().setSimSlotIndex(0).setId(1).build())
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
         processAllMessages();
