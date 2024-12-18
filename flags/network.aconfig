@@ -110,3 +110,14 @@ flag {
   description: "guard system API onCellularIdentifierDisclosedChanged"
   bug: "355062720"
 }
+
+# OWNER=jackyu TARGET=25Q3
+flag {
+    name: "ignore_mcc_mnc_from_operator_for_locale"
+    namespace: "telephony"
+    description: "Ignoring mcc/mnc from RIL indication OPERATOR but only relying MCC/MNC from registered or nearby cells."
+    bug:"374589521"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
