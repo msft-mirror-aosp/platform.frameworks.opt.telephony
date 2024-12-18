@@ -8173,7 +8173,10 @@ public class SatelliteController extends Handler {
         }
     }
 
-    private int getNtnOnlySubscriptionId() {
+    /**
+     * This method returns subscription id for supporting Ntn Only
+     */
+    public int getNtnOnlySubscriptionId() {
         List<SubscriptionInfo> infoList = mSubscriptionManagerService.getAllSubInfoList(
                         mContext.getOpPackageName(), mContext.getAttributionTag());
         int subId = infoList.stream()
@@ -8390,11 +8393,15 @@ public class SatelliteController extends Handler {
         return carrierRoamingNtnSignalStrength;
     }
 
-    private boolean isInConnectedState() {
+    /**
+     * Returns satellite connected state from modem, return true if connected.
+     */
+    public boolean isInConnectedState() {
         synchronized (mSatelliteModemStateLock) {
             switch (mSatelliteModemState) {
-                case SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED:
-                case SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING:
+                case SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED: //fallthrough
+                case SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING: //fallthrough
+                case SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_RETRYING:
                     plogd("isInConnectedState: return true");
                     return true;
                 default:
