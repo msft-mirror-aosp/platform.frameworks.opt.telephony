@@ -227,7 +227,6 @@ public class ServiceStateTracker extends Handler {
     private final RegistrantList mAreaCodeChangedRegistrants = new RegistrantList();
 
     /* Radio power off pending flag */
-    // @GuardedBy("this")
     private volatile boolean mPendingRadioPowerOffAfterDataOff = false;
 
     /** Waiting period before recheck gprs and voice registration. */
@@ -667,7 +666,9 @@ public class ServiceStateTracker extends Handler {
         mCarrierConfig = getCarrierConfig();
         CarrierConfigManager ccm = mPhone.getContext().getSystemService(CarrierConfigManager.class);
         // Callback which directly handle config change should be executed in handler thread
-        ccm.registerCarrierConfigChangeListener(this::post, mCarrierConfigChangeListener);
+        if (ccm != null) {
+            ccm.registerCarrierConfigChangeListener(this::post, mCarrierConfigChangeListener);
+        }
 
         mAccessNetworksManager = mPhone.getAccessNetworksManager();
         mOutOfServiceSS = new ServiceState();
@@ -1163,6 +1164,9 @@ public class ServiceStateTracker extends Handler {
 
         mDesiredPowerState = power;
         setPowerStateToDesired(forEmergencyCall, isSelectedPhoneForEmergencyCall, forceApply);
+        if (mDesiredPowerState) {
+            SatelliteController.getInstance().onSetCellularRadioPowerStateRequested(true);
+        }
     }
 
     /**
@@ -1323,6 +1327,12 @@ public class ServiceStateTracker extends Handler {
                     // as a result of radio power request
                     // Hence, issuing shut down regardless of radio power response
                     mCi.requestShutdown(null);
+                }
+
+                ar = (AsyncResult) msg.obj;
+                if (ar.exception != null) {
+                    loge("EVENT_RADIO_POWER_OFF_DONE: exception=" + ar.exception);
+                    SatelliteController.getInstance().onPowerOffCellularRadioFailed();
                 }
                 break;
 
@@ -2802,8 +2812,10 @@ public class ServiceStateTracker extends Handler {
         if (showPlmn) {
             carrierName = plmn;
             if (showSpn) {
-                // Need to show both plmn and spn if both are not same.
-                if (!Objects.equals(spn, plmn)) {
+                if (TextUtils.isEmpty(carrierName)) {
+                    carrierName = spn;
+                } else if (!TextUtils.isEmpty(spn) && !Objects.equals(spn, carrierName)) {
+                    // Need to show both plmn and spn if both are not same.
                     String separator = mPhone.getContext().getString(
                             com.android.internal.R.string.kg_text_message_separator).toString();
                     carrierName = new StringBuilder().append(carrierName).append(separator)
@@ -2896,10 +2908,8 @@ public class ServiceStateTracker extends Handler {
         }
 
         String crossSimSpnFormat = null;
-        if (mPhone.getImsPhone() != null
-                && (mPhone.getImsPhone() != null)
-                && (mPhone.getImsPhone().getImsRegistrationTech()
-                == ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM)) {
+        if ((getImsRegistrationTech() == ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM)
+                && mPhone.isImsRegistered()) {
             // In Cross SIM Calling mode show SPN or PLMN + Cross SIM Calling
             //
             // 1) Show SPN + Cross SIM Calling If SIM has SPN and SPN display condition
@@ -3728,10 +3738,18 @@ public class ServiceStateTracker extends Handler {
             // because operatorNumeric would be SIM's mcc/mnc when device is on IWLAN), but if the
             // device has camped on a cell either to attempt registration or for emergency services,
             // then for purposes of setting the locale, we don't care if registration fails or is
-            // incomplete.
+            // incomplete. Additionally, if there is no cellular service and ims is registered over
+            // the IWLAN, the locale will not be updated.
             // CellIdentity can return a null MCC and MNC in CDMA
             String localeOperator = operatorNumeric;
-            if (mSS.getDataNetworkType() == TelephonyManager.NETWORK_TYPE_IWLAN) {
+            int dataNetworkType = mSS.getDataNetworkType();
+            if (dataNetworkType == TelephonyManager.NETWORK_TYPE_IWLAN
+                    || (dataNetworkType == TelephonyManager.NETWORK_TYPE_UNKNOWN
+                            && getImsRegistrationTech()
+                                    == ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN)) {
+                // TODO(b/333346537#comment10): Complete solution would be ignore mcc/mnc reported
+                //  by the unsolicited indication OPERATOR from RIL, but only relies on MCC/MNC from
+                //  data registration or voice registration.
                 localeOperator = null;
             }
             if (isInvalidOperatorNumeric(localeOperator)) {
@@ -4970,7 +4988,7 @@ public class ServiceStateTracker extends Handler {
      */
     public void powerOffRadioSafely() {
         synchronized (this) {
-            SatelliteController.getInstance().onCellularRadioPowerOffRequested();
+            SatelliteController.getInstance().onSetCellularRadioPowerStateRequested(false);
             if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
                 EmergencyStateTracker.getInstance().onCellularRadioPowerOffRequested();
             }
@@ -5008,20 +5026,10 @@ public class ServiceStateTracker extends Handler {
     }
 
     /**
-     * process the pending request to turn radio off after data is disconnected
-     *
-     * return true if there is pending request to process; false otherwise.
+     * return true if there is pending disconnect data request to process; false otherwise.
      */
-    public boolean processPendingRadioPowerOffAfterDataOff() {
-        synchronized(this) {
-            if (mPendingRadioPowerOffAfterDataOff) {
-                if (DBG) log("Process pending request to turn radio off.");
-                hangupAndPowerOff();
-                mPendingRadioPowerOffAfterDataOff = false;
-                return true;
-            }
-            return false;
-        }
+    public boolean isPendingRadioPowerOffAfterDataOff() {
+        return mPendingRadioPowerOffAfterDataOff;
     }
 
     private void onCarrierConfigurationChanged(int slotIndex) {
@@ -5910,5 +5918,18 @@ public class ServiceStateTracker extends Handler {
      */
     public @Nullable CellIdentity getLastKnownCellIdentity() {
         return mLastKnownCellIdentity;
+    }
+
+    /**
+     * Get the tech where ims is currently registered.
+     * @return Returns the tech of ims registered. if not registered or no phome for ims, returns
+     *   {@link ImsRegistrationImplBase#REGISTRATION_TECH_NONE}.
+     */
+    private @ImsRegistrationImplBase.ImsRegistrationTech int getImsRegistrationTech() {
+        ImsPhone imsPhone = (ImsPhone) mPhone.getImsPhone();
+        if (imsPhone != null) {
+            return imsPhone.getImsRegistrationTech();
+        }
+        return ImsRegistrationImplBase.REGISTRATION_TECH_NONE;
     }
 }

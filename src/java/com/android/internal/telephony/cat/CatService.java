@@ -40,6 +40,7 @@ import android.os.LocaleList;
 import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
+import android.os.UserHandle;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
@@ -283,6 +284,14 @@ public class CatService extends Handler implements AppInterface {
         synchronized (sInstanceLock) {
             CatLog.d(this, "Disposing CatService object");
             mIccRecords.unregisterForRecordsLoaded(this);
+
+            if (sFlags.unregisterSmsBroadcastReceiverFromCatService()) {
+                try {
+                    mContext.unregisterReceiver(mSmsBroadcastReceiver);
+                } catch (IllegalArgumentException e) {
+                    CatLog.e(this, "mSmsBroadcastReceiver: was not registered" + e);
+                }
+            }
 
             // Clean up stk icon if dispose is called
             broadcastCardStateAndIccRefreshResp(CardState.CARDSTATE_ABSENT, null);
@@ -704,7 +713,12 @@ public class CatService extends Handler implements AppInterface {
         intent.putExtra("SLOT_ID", mSlotId);
         intent.setComponent(AppInterface.getDefaultSTKApplication());
         CatLog.d(this, "Sending CmdMsg: " + cmdMsg+ " on slotid:" + mSlotId);
-        mContext.sendBroadcast(intent, AppInterface.STK_PERMISSION);
+
+        if (sFlags.hsumBroadcast()) {
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL, AppInterface.STK_PERMISSION);
+        } else {
+            mContext.sendBroadcast(intent, AppInterface.STK_PERMISSION);
+        }
     }
 
     /**
@@ -718,7 +732,11 @@ public class CatService extends Handler implements AppInterface {
         Intent intent = new Intent(AppInterface.CAT_SESSION_END_ACTION);
         intent.putExtra("SLOT_ID", mSlotId);
         intent.setComponent(AppInterface.getDefaultSTKApplication());
-        mContext.sendBroadcast(intent, AppInterface.STK_PERMISSION);
+        if (sFlags.hsumBroadcast()) {
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL, AppInterface.STK_PERMISSION);
+        } else {
+            mContext.sendBroadcast(intent, AppInterface.STK_PERMISSION);
+        }
     }
 
 
@@ -1082,7 +1100,11 @@ public class CatService extends Handler implements AppInterface {
         intent.putExtra("SLOT_ID", mSlotId);
         CatLog.d(this, "Sending Card Status: "
                 + cardState + " " + "cardPresent: " + cardPresent +  "SLOT_ID: " +  mSlotId);
-        mContext.sendBroadcast(intent, AppInterface.STK_PERMISSION);
+        if (sFlags.hsumBroadcast()) {
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL, AppInterface.STK_PERMISSION);
+        } else {
+            mContext.sendBroadcast(intent, AppInterface.STK_PERMISSION);
+        }
     }
 
     private void broadcastAlphaMessage(String alphaString) {
@@ -1092,7 +1114,11 @@ public class CatService extends Handler implements AppInterface {
         intent.putExtra(AppInterface.ALPHA_STRING, alphaString);
         intent.putExtra("SLOT_ID", mSlotId);
         intent.setComponent(AppInterface.getDefaultSTKApplication());
-        mContext.sendBroadcast(intent, AppInterface.STK_PERMISSION);
+        if (sFlags.hsumBroadcast()) {
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL, AppInterface.STK_PERMISSION);
+        } else {
+            mContext.sendBroadcast(intent, AppInterface.STK_PERMISSION);
+        }
     }
 
     @Override

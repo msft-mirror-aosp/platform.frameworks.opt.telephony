@@ -172,7 +172,7 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
     }
 
     private void setAndVerifyStaticCapability(PhoneCapability capability) {
-        mPcm.getCurrentPhoneCapability();
+        mPcm.updateRadioCapability();
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(mMockRadioConfig).getPhoneCapability(captor.capture());
         Message msg = captor.getValue();
@@ -185,7 +185,8 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
 
     }
 
-    private void setAndVerifySlotsSupportingSimultaneousCellularCalling(int[] enabledLogicalSlots) {
+    private void setAndVerifySlotsSupportingSimultaneousCellularCalling(
+            List<Integer> enabledLogicalSlots) {
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(mMockRadioConfig).updateSimultaneousCallingSupport(captor.capture());
         Message msg = captor.getValue();
@@ -241,7 +242,7 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
         init(2);
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
 
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         setAndVerifySlotsSupportingSimultaneousCellularCalling(enabledLogicalSlots);
 
         // Trigger onSubscriptionsChanged by updating the subscription ID of a phone slot:
@@ -253,7 +254,7 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
 
     /**
      * Test that simultaneous calling is not supported when IMS is not registered and cellular
-     * simultaneous calling is only supported for one SIM subscription.
+     * simultaneous calling is not supported for any SIM subscriptions.
      */
     @Test
     @SmallTest
@@ -263,8 +264,8 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
         init(2);
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
 
-        // Have the modem inform telephony that only phone slot 0 supports DSDA:
-        int[] enabledLogicalSlots = {0};
+        // Have the modem inform telephony that no phone slots currently support DSDA:
+        List<Integer> enabledLogicalSlots = List.of();
         setAndVerifySlotsSupportingSimultaneousCellularCalling(enabledLogicalSlots);
 
         // Trigger onSubscriptionsChanged by updating the subscription ID of a phone slot:
@@ -286,7 +287,7 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
         init(2);
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
 
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         setAndVerifySlotsSupportingSimultaneousCellularCalling(enabledLogicalSlots);
 
         // Trigger onSubscriptionsChanged by updating the subscription ID of a phone slot:
@@ -309,7 +310,7 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
         init(2);
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
 
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         setAndVerifySlotsSupportingSimultaneousCellularCalling(enabledLogicalSlots);
 
         // Trigger onSubscriptionsChanged by updating the subscription ID of a phone slot:
@@ -356,7 +357,7 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
         init(2);
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
 
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         setAndVerifySlotsSupportingSimultaneousCellularCalling(enabledLogicalSlots);
 
         // Trigger onSubscriptionsChanged by updating the subscription ID of a phone slot:
@@ -384,7 +385,7 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
         init(2);
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
 
-        int[] enabledLogicalSlots = {0};
+        List<Integer> enabledLogicalSlots = List.of(0);
         setAndVerifySlotsSupportingSimultaneousCellularCalling(enabledLogicalSlots);
 
         // Trigger onSubscriptionsChanged by updating the subscription ID of a phone slot:
@@ -416,7 +417,7 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
         init(2);
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
 
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         setAndVerifySlotsSupportingSimultaneousCellularCalling(enabledLogicalSlots);
 
         // Trigger onSubscriptionsChanged by updating the subscription ID of a phone slot:
@@ -449,7 +450,7 @@ public class SimultaneousCallingTrackerTest extends TelephonyTest {
         init(3);
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
 
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         setAndVerifySlotsSupportingSimultaneousCellularCalling(enabledLogicalSlots);
 
         // Trigger onSubscriptionsChanged by updating the subscription ID of a phone slot:

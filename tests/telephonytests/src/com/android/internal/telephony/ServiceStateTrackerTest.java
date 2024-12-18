@@ -26,6 +26,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyLong;
 import static org.mockito.Matchers.nullable;
@@ -594,7 +595,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         sst.setRadioPowerForReason(false, false, false, false, reason);
         assertTrue(sst.getRadioPowerOffReasons().contains(reason));
         assertTrue(sst.getRadioPowerOffReasons().size() == 1);
-        verify(mSatelliteController).onCellularRadioPowerOffRequested();
+        verify(mSatelliteController).onSetCellularRadioPowerStateRequested(eq(false));
         clearInvocations(mSatelliteController);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertTrue(mSimulatedCommands.getRadioState() == TelephonyManager.RADIO_POWER_OFF);
@@ -602,7 +603,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                 TelephonyManager.RADIO_POWER_REASON_USER);
         assertTrue(sst.getRadioPowerOffReasons().contains(reason));
         assertTrue(sst.getRadioPowerOffReasons().size() == 1);
-        verify(mSatelliteController, never()).onCellularRadioPowerOffRequested();
+        verify(mSatelliteController, never()).onSetCellularRadioPowerStateRequested(anyBoolean());
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertTrue(mSimulatedCommands.getRadioState() == TelephonyManager.RADIO_POWER_OFF);
 
@@ -610,7 +611,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         // had been turned off for.
         sst.setRadioPowerForReason(true, false, false, false, reason);
         assertTrue(sst.getRadioPowerOffReasons().isEmpty());
-        verify(mSatelliteController, never()).onCellularRadioPowerOffRequested();
+        verify(mSatelliteController).onSetCellularRadioPowerStateRequested(eq(true));
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertTrue(mSimulatedCommands.getRadioState() == TelephonyManager.RADIO_POWER_ON);
 
@@ -1928,6 +1929,8 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         sst.setRadioPower(false);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertTrue(mSimulatedCommands.getRadioState() == TelephonyManager.RADIO_POWER_ON);
+        verify(mSatelliteController).onSetCellularRadioPowerStateRequested(eq(false));
+        verify(mSatelliteController).onPowerOffCellularRadioFailed();
         sst.requestShutdown();
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertFalse(mSimulatedCommands.getRadioState()
@@ -2605,10 +2608,15 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
 
         // PS WLAN
+        int wlanRat = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+        if (wlanState == NetworkRegistrationInfo.REGISTRATION_STATE_HOME
+                || wlanState == NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING) {
+            wlanRat = TelephonyManager.NETWORK_TYPE_IWLAN;
+        }
         NetworkRegistrationInfo dataIwlanResult = new NetworkRegistrationInfo(
                 NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WLAN,
-                wlanState, TelephonyManager.NETWORK_TYPE_IWLAN, 0, false,
-                null, null, "", 1, false, false, false, lteVopsSupportInfo);
+                wlanState, wlanRat, 0, false, null, null,
+                "", 1, false, false, false, lteVopsSupportInfo);
         sst.sendMessage(sst.obtainMessage(
                 ServiceStateTracker.EVENT_POLL_STATE_PS_IWLAN_REGISTRATION,
                 new AsyncResult(sst.mPollingContext, dataIwlanResult, null)));
@@ -2645,6 +2653,47 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         verify(mLocaleTracker).updateOperatorNumeric(eq(""));
     }
 
+    /**
+     * Ensure that LocaleTracker is not updated with mcc when only IWLAN is not in-service and the
+     * ims registration status is connected over iwlan,
+     */
+    @Test
+    public void testLocaleTrackerUpdateWithImsRegistrationTechIwlan() {
+        // Start state: Cell data only LTE + IWLAN
+        final String[] OpNamesResult = new String[] { "carrier long", "carrier", "310310" };
+        // Clear invocations for mLocaleTracker as precondition before test case execution & as part
+        // test setup
+        Mockito.clearInvocations(mLocaleTracker);
+
+        // Both Cellular abd Iwlan is in-service.
+        changeRegStateWithIwlanOperatorNumeric(
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME,
+                TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, OpNamesResult, true);
+        verify(mLocaleTracker).updateOperatorNumeric(eq(OpNamesResult[2]));
+
+        // Test with Cellular as NOT_REG
+        changeRegStateWithIwlanOperatorNumeric(
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING,
+                TelephonyManager.NETWORK_TYPE_UNKNOWN,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME, OpNamesResult, true);
+        /* cellId based mccmnc */
+        verify(mLocaleTracker).updateOperatorNumeric(eq("00101"));
+
+        // IMS over Iwlan is registered.
+        doReturn(mImsPhone)
+                .when(mPhone).getImsPhone();
+        doReturn(ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN)
+                .when(mImsPhone).getImsRegistrationTech();
+
+        // Test with Iwlan as NOT_REG
+        changeRegStateWithIwlanOperatorNumeric(
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING,
+                TelephonyManager.NETWORK_TYPE_UNKNOWN,
+                NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING,
+                OpNamesResult, false);
+        verify(mLocaleTracker).updateOperatorNumeric(eq(""));
+    }
     @Test
     public void testGetServiceProviderNameWithBrandOverride() {
         String brandOverride = "spn from brand override";
@@ -3036,6 +3085,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(mImsPhone).when(mPhone).getImsPhone();
         doReturn(ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM).when(mImsPhone)
                 .getImsRegistrationTech();
+        doReturn(true).when(mPhone).isImsRegistered();
         String[] formats = {CROSS_SIM_CALLING_VOICE_FORMAT, "%s"};
         Resources r = mContext.getResources();
         doReturn(formats).when(r).getStringArray(anyInt());
@@ -3188,6 +3238,69 @@ public class ServiceStateTrackerTest extends TelephonyTest {
 
         // wifi-calling is disable
         doReturn(false).when(mPhone).isWifiCallingEnabled();
+
+        // update the spn
+        sst.updateSpnDisplay();
+
+        // Plmn should be shown, and the string is "No service"
+        Bundle b = getExtrasFromLastSpnUpdateIntent();
+        assertThat(b.getString(TelephonyManager.EXTRA_PLMN))
+                .isEqualTo(CARRIER_NAME_DISPLAY_NO_SERVICE);
+        assertThat(b.getBoolean(TelephonyManager.EXTRA_SHOW_PLMN)).isTrue();
+    }
+
+    @Test
+    public void testUpdateSpnDisplayLegacy_CrossSimCallingDataOOS_displayOOS() {
+        mBundle.putBoolean(
+                CarrierConfigManager.KEY_ENABLE_CARRIER_DISPLAY_NAME_RESOLVER_BOOL, false);
+        sendCarrierConfigUpdate(PHONE_ID);
+
+        // GSM phone
+        doReturn(true).when(mPhone).isPhoneTypeGsm();
+
+        // Reg tech is Cross Sim but both data and voice are OOS
+        doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getState();
+        doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getDataRegistrationState();
+        doReturn(TelephonyManager.NETWORK_TYPE_IWLAN).when(mServiceState).getDataNetworkType();
+        doReturn(mImsPhone).when(mPhone).getImsPhone();
+        doReturn(ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM).when(
+                mImsPhone).getImsRegistrationTech();
+        sst.mSS = mServiceState;
+
+        // wifi-calling is enabled
+        doReturn(true).when(mPhone).isWifiCallingEnabled();
+
+        // update the spn
+        sst.updateSpnDisplay();
+
+        // Plmn should be shown, and the string is "No service"
+        Bundle b = getExtrasFromLastSpnUpdateIntent();
+        assertThat(b.getString(TelephonyManager.EXTRA_PLMN))
+                .isEqualTo(CARRIER_NAME_DISPLAY_NO_SERVICE);
+        assertThat(b.getBoolean(TelephonyManager.EXTRA_SHOW_PLMN)).isTrue();
+    }
+
+    @Test
+    public void testUpdateSpnDisplayLegacy_CrossSimCallingVoiceOOS_displayOOS() {
+        mBundle.putBoolean(
+                CarrierConfigManager.KEY_ENABLE_CARRIER_DISPLAY_NAME_RESOLVER_BOOL, false);
+        sendCarrierConfigUpdate(PHONE_ID);
+
+        // GSM phone
+        doReturn(true).when(mPhone).isPhoneTypeGsm();
+
+        // voice out of service but data in service (connected to Cross Sim IWLAN)
+        doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(mServiceState).getState();
+        doReturn(ServiceState.STATE_IN_SERVICE).when(mServiceState).getDataRegistrationState();
+        doReturn(TelephonyManager.NETWORK_TYPE_IWLAN).when(mServiceState).getDataNetworkType();
+        doReturn(mImsPhone).when(mPhone).getImsPhone();
+        doReturn(ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM).when(
+                mImsPhone).getImsRegistrationTech();
+        doReturn(false).when(mPhone).isImsRegistered();
+        sst.mSS = mServiceState;
+
+        // wifi-calling is enabled
+        doReturn(true).when(mPhone).isWifiCallingEnabled();
 
         // update the spn
         sst.updateSpnDisplay();
@@ -3425,9 +3538,12 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                         AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
         assertEquals(2, nriList.size());
         for (NetworkRegistrationInfo nri : nriList) {
-            assertTrue(Arrays.equals(satelliteSupportedServices, nri.getAvailableServices().stream()
-                    .mapToInt(Integer::intValue)
-                    .toArray()));
+            if (nri.isInService()) {
+                assertTrue(Arrays.equals(satelliteSupportedServices,
+                        nri.getAvailableServices().stream()
+                        .mapToInt(Integer::intValue)
+                        .toArray()));
+            }
         }
     }
 }

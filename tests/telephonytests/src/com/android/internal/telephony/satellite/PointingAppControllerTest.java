@@ -39,6 +39,7 @@ import android.os.AsyncResult;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.os.UserHandle;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
 import android.telephony.satellite.PointingInfo;
 import android.telephony.satellite.SatelliteManager;
@@ -76,6 +77,8 @@ public class PointingAppControllerTest extends TelephonyTest {
     private static final String KEY_POINTING_UI_PACKAGE_NAME = "default_pointing_ui_package";
     private static final String KEY_POINTING_UI_CLASS_NAME = "default_pointing_ui_class";
     private static final String KEY_NEED_FULL_SCREEN = "needFullScreen";
+    private static final String KEY_IS_DEMO_MODE = "isDemoMode";
+    private static final String KEY_IS_EMERGENCY = "isEmergency";
 
     private PointingAppController mPointingAppController;
     InOrder mInOrder;
@@ -98,12 +101,13 @@ public class PointingAppControllerTest extends TelephonyTest {
         super.setUp(getClass().getSimpleName());
         MockitoAnnotations.initMocks(this);
         logd(TAG + " Setup!");
+        when(mFeatureFlags.satellitePersistentLogging()).thenReturn(true);
         mInOrderForPointingUi = inOrder(mContext);
         replaceInstance(SatelliteModemInterface.class, "sInstance", null,
                 mMockSatelliteModemInterface);
         replaceInstance(SatelliteController.class, "sInstance", null,
                 mMockSatelliteController);
-        mPointingAppController = new PointingAppController(mContext);
+        mPointingAppController = new PointingAppController(mContext, mFeatureFlags);
         mContextFixture.putResource(R.string.config_pointing_ui_package,
                 KEY_POINTING_UI_PACKAGE_NAME);
         mContextFixture.putResource(R.string.config_pointing_ui_class,
@@ -150,6 +154,7 @@ public class PointingAppControllerTest extends TelephonyTest {
     }
     private class TestSatelliteTransmissionUpdateCallback
                                 extends ISatelliteTransmissionUpdateCallback.Stub {
+        int mDatagramType;
         int mState;
         int mSendPendingCount;
         int mReceivePendingCount;
@@ -163,8 +168,9 @@ public class PointingAppControllerTest extends TelephonyTest {
         }
 
         @Override
-        public void onSendDatagramStateChanged(int state, int sendPendingCount,
+        public void onSendDatagramStateChanged(int datagramType, int state, int sendPendingCount,
                                     int errorCode) {
+            mDatagramType = datagramType;
             mState = state;
             mSendPendingCount = sendPendingCount;
             mErrorCode = errorCode;
@@ -191,6 +197,15 @@ public class PointingAppControllerTest extends TelephonyTest {
             }
         }
 
+        @Override
+        public void onSendDatagramRequested(int datagramType) {
+            logd("onSendDatagramRequested: datagramType=" + datagramType);
+        }
+
+        public int getDatagramType() {
+            return mDatagramType;
+        }
+
         public int getState() {
             return mState;
         }
@@ -208,7 +223,7 @@ public class PointingAppControllerTest extends TelephonyTest {
         }
     }
 
-    private boolean waitForReceiveDatagramStateChangedRessult(
+    private boolean waitForReceiveDatagramStateChangedResult(
             int expectedNumberOfEvents) {
         for (int i = 0; i < expectedNumberOfEvents; i++) {
             try {
@@ -218,7 +233,7 @@ public class PointingAppControllerTest extends TelephonyTest {
                     return false;
                 }
             } catch (Exception ex) {
-                loge("waitForReceiveDatagramStateChangedRessult: Got exception=" + ex);
+                loge("waitForReceiveDatagramStateChangedResult: Got exception=" + ex);
                 return false;
             }
         }
@@ -306,33 +321,41 @@ public class PointingAppControllerTest extends TelephonyTest {
     @Test
     public void testStartPointingUI() throws Exception {
         ArgumentCaptor<Intent> startedIntentCaptor = ArgumentCaptor.forClass(Intent.class);
-        mPointingAppController.startPointingUI(true);
-        verify(mContext).startActivity(startedIntentCaptor.capture());
+        mPointingAppController.startPointingUI(true, true, true);
+        verify(mContext).startActivityAsUser(startedIntentCaptor.capture(), eq(UserHandle.CURRENT));
         Intent intent = startedIntentCaptor.getValue();
         assertEquals(KEY_POINTING_UI_PACKAGE_NAME, intent.getComponent().getPackageName());
         assertEquals(KEY_POINTING_UI_CLASS_NAME, intent.getComponent().getClassName());
         Bundle b = intent.getExtras();
         assertTrue(b.containsKey(KEY_NEED_FULL_SCREEN));
         assertTrue(b.getBoolean(KEY_NEED_FULL_SCREEN));
+        assertTrue(b.containsKey(KEY_IS_DEMO_MODE));
+        assertTrue(b.getBoolean(KEY_IS_DEMO_MODE));
+        assertTrue(b.containsKey(KEY_IS_EMERGENCY));
+        assertTrue(b.getBoolean(KEY_IS_EMERGENCY));
     }
 
     @Test
     public void testRestartPointingUi() throws Exception {
-        mPointingAppController.startPointingUI(true);
-        mInOrderForPointingUi.verify(mContext).startActivity(any(Intent.class));
-        testRestartPointingUi(true);
-        mPointingAppController.startPointingUI(false);
-        mInOrderForPointingUi.verify(mContext).startActivity(any(Intent.class));
-        testRestartPointingUi(false);
+        mPointingAppController.startPointingUI(true, false, true);
+        mInOrderForPointingUi.verify(mContext).startActivityAsUser(any(Intent.class),
+                eq(UserHandle.CURRENT));
+        testRestartPointingUi(true, false, true);
+        mPointingAppController.startPointingUI(false, true, false);
+        mInOrderForPointingUi.verify(mContext).startActivityAsUser(any(Intent.class),
+                eq(UserHandle.CURRENT));
+        testRestartPointingUi(false, true, false);
     }
 
-    private void testRestartPointingUi(boolean expectedFullScreen) {
+    private void testRestartPointingUi(boolean expectedFullScreen, boolean expectedDemoMode,
+            boolean expectedEmergency) {
         when(mContext.getPackageManager()).thenReturn(mPackageManager);
         doReturn(new String[]{KEY_POINTING_UI_PACKAGE_NAME}).when(mPackageManager)
             .getPackagesForUid(anyInt());
         mPointingAppController.mUidImportanceListener.onUidImportance(1, IMPORTANCE_GONE);
         ArgumentCaptor<Intent> restartedIntentCaptor = ArgumentCaptor.forClass(Intent.class);
-        mInOrderForPointingUi.verify(mContext).startActivity(restartedIntentCaptor.capture());
+        mInOrderForPointingUi.verify(mContext).startActivityAsUser(restartedIntentCaptor.capture(),
+                eq(UserHandle.CURRENT));
         Intent restartIntent = restartedIntentCaptor.getValue();
         assertEquals(KEY_POINTING_UI_PACKAGE_NAME, restartIntent.getComponent().getPackageName());
         assertEquals(KEY_POINTING_UI_CLASS_NAME, restartIntent.getComponent().getClassName());
@@ -340,6 +363,12 @@ public class PointingAppControllerTest extends TelephonyTest {
         assertTrue(b.containsKey(KEY_NEED_FULL_SCREEN));
         // Checking if last value of KEY_NEED_FULL_SCREEN is taken or not
         assertEquals(expectedFullScreen, b.getBoolean(KEY_NEED_FULL_SCREEN));
+        assertTrue(b.containsKey(KEY_IS_DEMO_MODE));
+        // Checking if last value of KEY_IS_DEMO_MODE is taken or not
+        assertEquals(expectedDemoMode, b.getBoolean(KEY_IS_DEMO_MODE));
+        assertTrue(b.containsKey(KEY_IS_EMERGENCY));
+        // Checking if last value of KEY_IS_EMERGENCY is taken or not
+        assertEquals(expectedEmergency, b.getBoolean(KEY_IS_EMERGENCY));
     }
 
     @Test
@@ -347,9 +376,12 @@ public class PointingAppControllerTest extends TelephonyTest {
         mPointingAppController.registerForSatelliteTransmissionUpdates(SUB_ID,
                 mSatelliteTransmissionUpdateCallback);
         mPointingAppController.updateSendDatagramTransferState(SUB_ID,
+                SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE,
                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS, 1,
                 SatelliteManager.SATELLITE_RESULT_SUCCESS);
         assertTrue(waitForSendDatagramStateChangedRessult(1));
+        assertEquals(SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE,
+                mSatelliteTransmissionUpdateCallback.getDatagramType());
         assertEquals(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS,
                 mSatelliteTransmissionUpdateCallback.getState());
         assertEquals(1, mSatelliteTransmissionUpdateCallback.getSendPendingCount());
@@ -368,7 +400,7 @@ public class PointingAppControllerTest extends TelephonyTest {
         mPointingAppController.updateReceiveDatagramTransferState(SUB_ID,
                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS, 2,
                 SatelliteManager.SATELLITE_RESULT_SUCCESS);
-        assertTrue(waitForReceiveDatagramStateChangedRessult(1));
+        assertTrue(waitForReceiveDatagramStateChangedResult(1));
         assertEquals(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS,
                 mSatelliteTransmissionUpdateCallback.getState());
         assertEquals(2, mSatelliteTransmissionUpdateCallback.getReceivePendingCount());
@@ -390,23 +422,12 @@ public class PointingAppControllerTest extends TelephonyTest {
         TestSatelliteTransmissionUpdateCallback callback2 = new
                 TestSatelliteTransmissionUpdateCallback();
         int subId1 = 3;
-        int subId2 = 4;
         mPointingAppController.registerForSatelliteTransmissionUpdates(subId1, callback1);
         mInOrder.verify(mMockSatelliteModemInterface).registerForSatellitePositionInfoChanged(any(),
                 eq(1), eq(null));
         mInOrder.verify(mMockSatelliteModemInterface).registerForDatagramTransferStateChanged(any(),
                 eq(4), eq(null));
         mPointingAppController.registerForSatelliteTransmissionUpdates(subId1, callback2);
-        mInOrder.verify(mMockSatelliteModemInterface, never())
-                .registerForSatellitePositionInfoChanged(any(), eq(1), eq(null));
-        mInOrder.verify(mMockSatelliteModemInterface, never())
-                .registerForDatagramTransferStateChanged(any(), eq(4), eq(null));
-        mPointingAppController.registerForSatelliteTransmissionUpdates(subId2, callback1);
-        mInOrder.verify(mMockSatelliteModemInterface).registerForSatellitePositionInfoChanged(any(),
-                eq(1), eq(null));
-        mInOrder.verify(mMockSatelliteModemInterface).registerForDatagramTransferStateChanged(any(),
-                eq(4), eq(null));
-        mPointingAppController.registerForSatelliteTransmissionUpdates(subId2, callback2);
         mInOrder.verify(mMockSatelliteModemInterface, never())
                 .registerForSatellitePositionInfoChanged(any(), eq(1), eq(null));
         mInOrder.verify(mMockSatelliteModemInterface, never())
@@ -419,22 +440,6 @@ public class PointingAppControllerTest extends TelephonyTest {
         mResultListener.remove();
         mPointingAppController.unregisterForSatelliteTransmissionUpdates(subId1,
                 mResultListener::offer, callback2);
-        mInOrder.verify(mMockSatelliteModemInterface).unregisterForSatellitePositionInfoChanged(
-                any(Handler.class));
-        mInOrder.verify(mMockSatelliteModemInterface).unregisterForDatagramTransferStateChanged(
-                any(Handler.class));
-        mPointingAppController.unregisterForSatelliteTransmissionUpdates(subId2,
-                mResultListener::offer, callback1);
-        processAllMessages();
-        assertThat(mResultListener.peek()).isEqualTo(SatelliteManager.SATELLITE_RESULT_SUCCESS);
-        mResultListener.remove();
-        mInOrder.verify(mMockSatelliteModemInterface, never())
-                .unregisterForSatellitePositionInfoChanged(any(Handler.class));
-        mInOrder.verify(mMockSatelliteModemInterface, never())
-                .unregisterForDatagramTransferStateChanged(any(Handler.class));
-        mPointingAppController.unregisterForSatelliteTransmissionUpdates(subId2,
-                mResultListener::offer, callback2);
-        processAllMessages();
         mInOrder.verify(mMockSatelliteModemInterface).unregisterForSatellitePositionInfoChanged(
                 any(Handler.class));
         mInOrder.verify(mMockSatelliteModemInterface).unregisterForDatagramTransferStateChanged(

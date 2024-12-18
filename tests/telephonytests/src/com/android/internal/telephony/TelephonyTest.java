@@ -35,6 +35,7 @@ import android.app.AppOpsManager;
 import android.app.IActivityManager;
 import android.app.KeyguardManager;
 import android.app.PropertyInvalidatedCache;
+import android.app.admin.DevicePolicyManager;
 import android.app.usage.NetworkStatsManager;
 import android.content.ContentProvider;
 import android.content.ContentResolver;
@@ -304,6 +305,7 @@ public abstract class TelephonyTest {
     protected AppOpsManager mAppOpsManager;
     protected CarrierConfigManager mCarrierConfigManager;
     protected UserManager mUserManager;
+    protected DevicePolicyManager mDevicePolicyManager;
     protected KeyguardManager mKeyguardManager;
     protected VcnManager mVcnManager;
     protected NetworkPolicyManager mNetworkPolicyManager;
@@ -578,6 +580,9 @@ public abstract class TelephonyTest {
         mNullCipherNotifier = Mockito.mock(NullCipherNotifier.class);
 
         doReturn(true).when(mFeatureFlags).minimalTelephonyCdmCheck();
+        doReturn(true).when(mFeatureFlags).supportNetworkProvider();
+        doReturn(true).when(mFeatureFlags).hsumBroadcast();
+        doReturn(true).when(mFeatureFlags).hsumPackageManager();
 
         TelephonyManager.disableServiceHandleCaching();
         PropertyInvalidatedCache.disableForTestMode();
@@ -630,6 +635,8 @@ public abstract class TelephonyTest {
         mCarrierConfigManager =
                 (CarrierConfigManager) mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
         mUserManager = (UserManager) mContext.getSystemService(Context.USER_SERVICE);
+        mDevicePolicyManager = (DevicePolicyManager) mContext.getSystemService(
+                Context.DEVICE_POLICY_SERVICE);
         mKeyguardManager = (KeyguardManager) mContext.getSystemService(Context.KEYGUARD_SERVICE);
         mVcnManager = mContext.getSystemService(VcnManager.class);
         mNetworkPolicyManager = mContext.getSystemService(NetworkPolicyManager.class);
@@ -685,7 +692,7 @@ public abstract class TelephonyTest {
         doReturn(mEriManager).when(mTelephonyComponentFactory)
                 .makeEriManager(nullable(Phone.class), anyInt());
         doReturn(mLinkBandwidthEstimator).when(mTelephonyComponentFactory)
-                .makeLinkBandwidthEstimator(nullable(Phone.class));
+                .makeLinkBandwidthEstimator(nullable(Phone.class), any(Looper.class));
         doReturn(mDataProfileManager).when(mTelephonyComponentFactory)
                 .makeDataProfileManager(any(Phone.class), any(DataNetworkController.class),
                         any(DataServiceManager.class), any(Looper.class),

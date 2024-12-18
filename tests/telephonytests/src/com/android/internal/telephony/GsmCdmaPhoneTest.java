@@ -2018,6 +2018,42 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testUsageSettingUpdate_ResetToDefault() {
+        setupUsageSettingResources();
+        mPhoneUT.mCi = mMockCi;
+
+        SubscriptionInfoInternal si = makeSubscriptionInfoInternal(
+                false, SubscriptionManager.USAGE_SETTING_DATA_CENTRIC);
+        doReturn(si).when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
+
+        mPhoneUT.updateUsageSetting();
+        processAllMessages();
+
+        verify(mMockCi).getUsageSetting(any());
+        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(GsmCdmaPhone.EVENT_GET_USAGE_SETTING_DONE,
+                new AsyncResult(null,
+                        new int[]{SubscriptionManager.USAGE_SETTING_VOICE_CENTRIC}, null)));
+        processAllMessages();
+
+        // Grab the message to ensure it returns the preferred value for updating the cache
+        ArgumentCaptor<Message> messageCaptor = ArgumentCaptor.forClass(Message.class);
+        verify(mMockCi).setUsageSetting(
+                messageCaptor.capture(), eq(SubscriptionManager.USAGE_SETTING_DATA_CENTRIC));
+        AsyncResult.forMessage(messageCaptor.getValue());
+        messageCaptor.getValue().sendToTarget();
+        processAllMessages();
+
+        si = makeSubscriptionInfoInternal(false, SubscriptionManager.USAGE_SETTING_VOICE_CENTRIC);
+        doReturn(si).when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
+
+        mPhoneUT.updateUsageSetting();
+        processAllMessages();
+
+        verify(mMockCi).setUsageSetting(any(), eq(SubscriptionManager.USAGE_SETTING_VOICE_CENTRIC));
+    }
+
+    @Test
+    @SmallTest
     public void testUsageSettingUpdate_DefaultOpportunistic() {
         setupUsageSettingResources();
         mPhoneUT.mCi = mMockCi;
@@ -2712,6 +2748,9 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         doReturn(true).when(dsResolver).isDomainSelectionSupported();
         DomainSelectionResolver.setDomainSelectionResolver(dsResolver);
 
+        EmergencyStateTracker est = Mockito.mock(EmergencyStateTracker.class);
+        replaceInstance(EmergencyStateTracker.class, "INSTANCE", null, est);
+
         mPhoneUT.handleMessage(mPhoneUT.obtainMessage(
                 GsmCdmaPhone.EVENT_EMERGENCY_CALLBACK_MODE_ENTER));
 
@@ -2721,7 +2760,8 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         mPhoneUT.exitEmergencyCallbackMode();
         processAllMessages();
 
-        verify(mContext, never()).sendStickyBroadcastAsUser(any(), any());
+        // Verify that the request is routed to EmergencyStateTracker.
+        verify(est).exitEmergencyCallbackMode();
     }
 
     @Test
@@ -3015,7 +3055,63 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         processAllMessages();
 
         verify(mNullCipherNotifier, times(1))
-                .onSecurityAlgorithmUpdate(eq(mContext), eq(0), eq(update));
+                .onSecurityAlgorithmUpdate(eq(mContext), eq(0), eq(0), eq(update));
+    }
+
+    @Test
+    public void testUpdateNullCipherNotifier_flagDisabled() {
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(false);
+        Phone phoneUT = makeNewPhoneUT();
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_SUBSCRIPTIONS_CHANGED,
+                        new AsyncResult(null, null, null)));
+        processAllMessages();
+
+        verify(mNullCipherNotifier, never()).setSubscriptionMapping(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    public void testUpdateNullCipherNotifier_activeSubscription() {
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
+
+        int subId = 10;
+        SubscriptionInfoInternal subInfo = new SubscriptionInfoInternal.Builder().setSimSlotIndex(
+                0).setId(subId).build();
+        when(mSubscriptionManagerService.getSubscriptionInfoInternal(subId)).thenReturn(
+                subInfo);
+        doReturn(subId).when(mSubscriptionManagerService)
+                .getSubId(anyInt());
+        Phone phoneUT = makeNewPhoneUT();
+
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_SUBSCRIPTIONS_CHANGED,
+                        new AsyncResult(null, null, null)));
+        processAllMessages();
+
+        verify(mNullCipherNotifier, times(1)).setSubscriptionMapping(eq(mContext), eq(0), eq(10));
+    }
+
+    @Test
+    public void testUpdateNullCipherNotifier_inactiveSubscription() {
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
+        int subId = 1;
+        SubscriptionInfoInternal subInfo = new SubscriptionInfoInternal.Builder().setSimSlotIndex(
+                -1).setId(subId).build();
+        when(mSubscriptionManagerService.getSubscriptionInfoInternal(subId)).thenReturn(
+                subInfo);
+        doReturn(subId).when(mSubscriptionManagerService)
+                .getSubId(anyInt());
+        Phone phoneUT = makeNewPhoneUT();
+
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_SUBSCRIPTIONS_CHANGED,
+                        new AsyncResult(null, null, null)));
+        processAllMessages();
+
+        verify(mNullCipherNotifier, times(1)).setSubscriptionMapping(eq(mContext), eq(0), eq(-1));
     }
 
     @Test

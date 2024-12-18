@@ -20,8 +20,12 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import android.os.Binder;
@@ -142,6 +146,20 @@ public class UiccPortTest extends TelephonyTest {
         record = mUiccPort.getOpenLogicalChannelRecord(CHANNEL_ID);
         assertThat(record).isNull();
         verify(mUiccProfile).iccCloseLogicalChannel(eq(CHANNEL_ID), eq(false), eq(null));
+    }
+
+    @Test
+    @SmallTest
+    public void testOnOpenLogicalChannel_withPortDisposed_noRecordLeft() {
+        IccLogicalChannelRequest request = getIccLogicalChannelRequest();
+
+        mUiccPort.onLogicalChannelOpened(request);
+        mUiccPort.dispose();
+
+        UiccPort.OpenLogicalChannelRecord record = mUiccPort.getOpenLogicalChannelRecord(
+                CHANNEL_ID);
+        assertThat(record).isNull();
+        verify(mUiccProfile, never()).iccCloseLogicalChannel(anyInt(), anyBoolean(), any());
     }
 
     private IccLogicalChannelRequest getIccLogicalChannelRequest() {
