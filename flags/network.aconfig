@@ -1,6 +1,7 @@
 package: "com.android.internal.telephony.flags"
 container: "system"
 
+# OWNER=nharold TARGET=24Q1
 flag {
     name: "enable_carrier_config_n1_control_attempt2"
     namespace: "telephony"
@@ -12,20 +13,25 @@ flag {
     }
 }
 
+# OWNER=sarahchin TARGET=24Q1
 flag {
   name: "hide_roaming_icon"
+  is_exported: true
   namespace: "telephony"
   description: "Allow carriers to hide the roaming (R) icon when roaming."
   bug: "301467052"
 }
 
+# OWNER=cukie TARGET=24Q3
 flag {
   name: "enable_identifier_disclosure_transparency"
+  is_exported: true
   namespace: "telephony"
   description: "Guards APIs for enabling and disabling identifier disclosure transparency"
   bug: "276752426"
 }
 
+# OWNER=cukie TARGET=24Q3
 flag {
   name: "enable_identifier_disclosure_transparency_unsol_events"
   namespace: "telephony"
@@ -33,13 +39,16 @@ flag {
   bug: "276752426"
 }
 
+# OWNER=cukie TARGET=24Q3
 flag {
   name: "enable_modem_cipher_transparency"
+  is_exported: true
   namespace: "telephony"
   description: "Guards APIs for enabling and disabling modem cipher transparency."
   bug: "283336425"
 }
 
+# OWNER=cukie TARGET=24Q3
 flag {
   name: "enable_modem_cipher_transparency_unsol_events"
   namespace: "telephony"
@@ -47,13 +56,16 @@ flag {
   bug: "283336425"
 }
 
+# OWNER=songferngwang TARGET=24Q3
 flag {
   name: "hide_prefer_3g_item"
+  is_exported: true
   namespace: "telephony"
   description: "Used in the Preferred Network Types menu to determine if the 3G option is displayed."
   bug: "310639009"
 }
 
+# OWNER=sarahchin TARGET=24Q2
 flag {
   name: "support_nr_sa_rrc_idle"
   namespace: "telephony"
@@ -61,9 +73,23 @@ flag {
   bug: "298233308"
 }
 
+# OWNER=nharold TARGET=24Q3
 flag {
   name: "network_registration_info_reject_cause"
+  is_exported: true
   namespace: "telephony"
   description: "Elevate NRI#getRejectCause from System to Public"
   bug: "239730435"
 }
+
+# OWNER=sangyun TARGET=24Q3
+flag {
+    name: "backup_and_restore_for_enable_2g"
+    namespace: "telephony"
+    description: "Support backup & restore for allow 2g (setting) option."
+    bug:"314734614"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+

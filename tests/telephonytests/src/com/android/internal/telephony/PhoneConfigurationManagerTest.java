@@ -57,6 +57,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -157,6 +158,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
         init(1);
         assertEquals(PhoneCapability.DEFAULT_SSSS_CAPABILITY, mPcm.getStaticPhoneCapability());
 
+        mPcm.updateRadioCapability();
         setAndVerifyStaticCapability(PhoneCapability.DEFAULT_DSDS_CAPABILITY);
     }
 
@@ -171,6 +173,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
                 .setMaxActiveVoiceSubscriptions(2)
                 .build();
 
+        mPcm.updateRadioCapability();
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(mMockRadioConfig).getPhoneCapability(captor.capture());
         Message msg = captor.getValue();
@@ -188,7 +191,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
         init(2);
         mPcm.updateSimultaneousCallingSupport();
 
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(mMockRadioConfig).updateSimultaneousCallingSupport(captor.capture());
         Message msg = captor.getValue();
@@ -200,26 +203,40 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
         for (int i : enabledLogicalSlots) { expectedSlots.add(i); }
         assertEquals(expectedSlots, mPcm.getSlotsSupportingSimultaneousCellularCalls());
     }
+    @Test
+    @SmallTest
+    public void testUpdateSimultaneousCallingSupportBothInvalidSlotIds() throws Exception {
+        // Test case where both slot IDs are invalid (-1 and 5).
+        testUpdateSimultaneousCallingSupportWithInvalidSlots(Arrays.asList(-1, 5));
+    }
 
     @Test
     @SmallTest
-    public void testUpdateSimultaneousCallingSupport_invalidResponse_shouldFail() throws Exception {
-        doReturn(false).when(mFeatureFlags).simultaneousCallingIndications();
-        init(2);
-        mPcm.updateSimultaneousCallingSupport();
+    public void testUpdateSimultaneousCallingSupportOneInvalidSlotId() throws Exception {
+        // Test case where one slot ID is valid (1) and the other is invalid (2).
+        testUpdateSimultaneousCallingSupportWithInvalidSlots(Arrays.asList(1, 2));
+    }
 
-        // Have the modem send invalid phone slots -1 and 5:
-        int[] invalidEnabledLogicalSlots = {-1, 5};
-        ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
-        verify(mMockRadioConfig).updateSimultaneousCallingSupport(captor.capture());
-        Message msg = captor.getValue();
-        AsyncResult.forMessage(msg, invalidEnabledLogicalSlots, null);
-        msg.sendToTarget();
-        processAllMessages();
+    @Test
+    @SmallTest
+    public void testUpdateSimultaneousCallingSupportInvalidExtraSlotId() throws Exception {
+        // Test case where the number of slot IDs exceeds the phone count (2) and one slot ID is
+        // invalid (2).
+        testUpdateSimultaneousCallingSupportWithInvalidSlots(Arrays.asList(0, 1, 2));
+    }
 
-        // We would expect to DSDA to be disabled and mSlotsSupportingSimultaneousCellularCalls to
-        // have been cleared:
-        assertTrue(mPcm.getSlotsSupportingSimultaneousCellularCalls().isEmpty());
+    @Test
+    @SmallTest
+    public void testUpdateSimultaneousCallingSupportInvalidSingularSlotId() throws Exception {
+        // Test case where only a single, invalid slot ID (0) is provided.
+        testUpdateSimultaneousCallingSupportWithInvalidSlots(List.of(0));
+    }
+
+    @Test
+    @SmallTest
+    public void testUpdateSimultaneousCallingSupportInvalidEmptySlotIds() throws Exception {
+        // Test case where an empty list of slot IDs is provided.
+        testUpdateSimultaneousCallingSupportWithInvalidSlots(List.of());
     }
 
     /**
@@ -245,14 +262,14 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
         mPcm.registerForSimultaneousCellularCallingSlotsChanged(newSlots ->
                 cachedSimultaneousCallingSlots[0] = newSlots);
 
-        mPcm.getStaticPhoneCapability();
+        mPcm.updateRadioCapability();
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
         ArgumentCaptor<SubscriptionManager.OnSubscriptionsChangedListener> cBCaptor =
                 ArgumentCaptor.forClass(SubscriptionManager.OnSubscriptionsChangedListener.class);
         verify(mMockRegistryManager).addOnSubscriptionsChangedListener(cBCaptor.capture(), any());
         processAllMessages();
 
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         HashSet<Integer> expectedSlots = new HashSet<>(2);
         for (int i : enabledLogicalSlots) {
             expectedSlots.add(i);
@@ -296,7 +313,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
 
         // Simultaneous calling enabled
         mPcm.updateSimultaneousCallingSupport();
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(mMockRadioConfig).updateSimultaneousCallingSupport(captor.capture());
         Message msg = captor.getValue();
@@ -318,7 +335,7 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
 
         // Simultaneous Calling Disabled
         mPcm.updateSimultaneousCallingSupport();
-        int[] disabled = {};
+        List<Integer> disabled = List.of();
         captor = ArgumentCaptor.forClass(Message.class);
         verify(mMockRadioConfig, times(2)).updateSimultaneousCallingSupport(captor.capture());
         msg = captor.getAllValues().get(1);
@@ -346,13 +363,13 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
 
         // Set the capability to DSDA mode to register listener, which will also trigger
         // simultaneous calling evaluation
-        mPcm.getCurrentPhoneCapability();
+        mPcm.updateRadioCapability();
         setAndVerifyStaticCapability(STATIC_DSDA_CAPABILITY);
         ArgumentCaptor<SubscriptionManager.OnSubscriptionsChangedListener> cBCaptor =
                 ArgumentCaptor.forClass(SubscriptionManager.OnSubscriptionsChangedListener.class);
         verify(mMockRegistryManager).addOnSubscriptionsChangedListener(cBCaptor.capture(), any());
 
-        int[] enabledLogicalSlots = {0, 1};
+        List<Integer> enabledLogicalSlots = Arrays.asList(0, 1);
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(mMockRadioConfig).updateSimultaneousCallingSupport(captor.capture());
         Message msg = captor.getValue();
@@ -572,5 +589,29 @@ public class PhoneConfigurationManagerTest extends TelephonyTest {
         processAllMessages();
 
         assertEquals(capability, mPcm.getStaticPhoneCapability());
+    }
+
+    private void testUpdateSimultaneousCallingSupportWithInvalidSlots(List<Integer> invalidSlots)
+            throws Exception {
+        doReturn(false).when(mFeatureFlags).simultaneousCallingIndications();
+        init(2);
+        mPcm.updateSimultaneousCallingSupport();
+
+        sendInvalidSlotsToModem(invalidSlots);
+        processAllMessages();
+
+        assertDsdaDisabledAndSlotsCleared();
+    }
+
+    private void sendInvalidSlotsToModem(List<Integer> invalidSlots) {
+        ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
+        verify(mMockRadioConfig).updateSimultaneousCallingSupport(captor.capture());
+        Message msg = captor.getValue();
+        AsyncResult.forMessage(msg, invalidSlots, null);
+        msg.sendToTarget();
+    }
+
+    private void assertDsdaDisabledAndSlotsCleared() {
+        assertTrue(mPcm.getSlotsSupportingSimultaneousCellularCalls().isEmpty());
     }
 }

@@ -54,10 +54,8 @@ public class TelephonyNetworkAgent extends NetworkAgent {
     private static final int NETWORK_AGENT_TEARDOWN_DELAY_MS = 5_000;
 
     /** The parent data network. */
-    private final @NonNull DataNetwork mDataNetwork;
-
-    /** Network agent config. For unit test use only. */
-    private final @NonNull NetworkAgentConfig mNetworkAgentConfig;
+    @NonNull
+    private final DataNetwork mDataNetwork;
 
     /** This is the id from {@link NetworkAgent#register()}. */
     private final int mId;
@@ -72,7 +70,8 @@ public class TelephonyNetworkAgent extends NetworkAgent {
      * The callbacks that are used to pass information to {@link DataNetwork} and
      * {@link QosCallbackTracker}.
      */
-    private final @NonNull Set<TelephonyNetworkAgentCallback> mTelephonyNetworkAgentCallbacks =
+    @NonNull
+    private final Set<TelephonyNetworkAgentCallback> mTelephonyNetworkAgentCallbacks =
             new ArraySet<>();
 
     /**
@@ -112,7 +111,7 @@ public class TelephonyNetworkAgent extends NetworkAgent {
 
         /**
          * Called when a qos callback is registered with a filter.
-         *
+         * <p>
          * Any QoS events that are sent with the same callback id after this method is called are a
          * no-op.
          *
@@ -165,7 +164,6 @@ public class TelephonyNetworkAgent extends NetworkAgent {
                 config, provider);
         register();
         mDataNetwork = dataNetwork;
-        mNetworkAgentConfig = config;
         mTelephonyNetworkAgentCallbacks.add(callback);
         mId = getNetwork().getNetId();
         mLogTag = "TNA-" + mId;
@@ -270,7 +268,7 @@ public class TelephonyNetworkAgent extends NetworkAgent {
      * @param filter the filter being registered
      */
     @Override
-    public void onQosCallbackRegistered(final int qosCallbackId, final @NonNull QosFilter filter) {
+    public void onQosCallbackRegistered(final int qosCallbackId, @NonNull final QosFilter filter) {
         if (mAbandoned) {
             log("The agent is already abandoned. Ignored onQosCallbackRegistered.");
             return;
@@ -281,7 +279,7 @@ public class TelephonyNetworkAgent extends NetworkAgent {
 
     /**
      * Called when a qos callback is registered with a filter.
-     *
+     * <p>
      * Any QoS events that are sent with the same callback id after this method is called are a
      * no-op.
      *
@@ -342,15 +340,6 @@ public class TelephonyNetworkAgent extends NetworkAgent {
      */
     private void loge(@NonNull String s) {
         Rlog.e(mLogTag, s);
-    }
-
-    /**
-     * Log debug messages and also log into the local log.
-     * @param s debug messages
-     */
-    private void logl(@NonNull String s) {
-        log(s);
-        mLocalLog.log(s);
     }
 
     /**

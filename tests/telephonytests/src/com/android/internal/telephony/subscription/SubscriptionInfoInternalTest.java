@@ -110,7 +110,7 @@ public class SubscriptionInfoInternalTest {
                             SubscriptionDatabaseManagerTest
                                     .FAKE_SATELLITE_ATTACH_FOR_CARRIER_ENABLED)
                     .setOnlyNonTerrestrialNetwork(
-                            SubscriptionDatabaseManagerTest.FAKE_SATELLITE_IS_NTN_ENABLED)
+                            SubscriptionDatabaseManagerTest.FAKE_SATELLITE_IS_ONLY_NTN_ENABLED)
                     .setGroupDisabled(false)
                     .setOnlyNonTerrestrialNetwork(1)
                     .setServiceCapabilities(
@@ -122,6 +122,10 @@ public class SubscriptionInfoInternalTest {
                     .setSatelliteEntitlementPlmns(
                             SubscriptionDatabaseManagerTest
                                     .FAKE_SATELLITE_ENTITLEMENT_PLMNS1)
+                    .setSatelliteESOSSupported(
+                            SubscriptionDatabaseManagerTest.FAKE_SATELLITE_ESOS_SUPPORTED_ENABLED)
+                    .setIsSatelliteProvisionedForNonIpDatagram(
+                            SubscriptionDatabaseManagerTest.FAKE_SATELLITE_PROVISIONED)
                     .build();
 
     private final SubscriptionInfoInternal mSubInfoNull =
@@ -240,7 +244,7 @@ public class SubscriptionInfoInternalTest {
                 .isEqualTo(SubscriptionDatabaseManagerTest
                         .FAKE_SATELLITE_ATTACH_FOR_CARRIER_ENABLED);
         assertThat(mSubInfo.getOnlyNonTerrestrialNetwork()).isEqualTo(
-                SubscriptionDatabaseManagerTest.FAKE_SATELLITE_IS_NTN_ENABLED);
+                SubscriptionDatabaseManagerTest.FAKE_SATELLITE_IS_ONLY_NTN_ENABLED);
         assertThat(mSubInfo.isGroupDisabled()).isFalse();
         assertThat(mSubInfo.getOnlyNonTerrestrialNetwork()).isEqualTo(1);
         assertThat(mSubInfo.getServiceCapabilities()).isEqualTo(
@@ -252,6 +256,10 @@ public class SubscriptionInfoInternalTest {
         assertThat(mSubInfo.getSatelliteEntitlementPlmns())
                 .isEqualTo(SubscriptionDatabaseManagerTest
                         .FAKE_SATELLITE_ENTITLEMENT_PLMNS1);
+        assertThat(mSubInfo.getSatelliteESOSSupported())
+                .isEqualTo(SubscriptionDatabaseManagerTest.FAKE_SATELLITE_ESOS_SUPPORTED_ENABLED);
+        assertThat(mSubInfo.getIsSatelliteProvisionedForNonIpDatagram())
+                .isEqualTo(SubscriptionDatabaseManagerTest.FAKE_SATELLITE_PROVISIONED);
     }
 
     @Test
@@ -340,5 +348,70 @@ public class SubscriptionInfoInternalTest {
         assertThat(subInfoNull.getGroupUuid()).isNull();
         assertThat(subInfoNull.getCountryIso()).isEqualTo("");
         assertThat(subInfoNull.getGroupOwner()).isEqualTo("");
+    }
+
+    @Test
+    public void testIsVisible() {
+        // Regular profile
+        SubscriptionInfoInternal regularSub =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                    .setOnlyNonTerrestrialNetwork(0)
+                    .setOpportunistic(0)
+                    .setGroupUuid(SubscriptionDatabaseManagerTest.FAKE_UUID1)
+                    .build();
+        assertThat(regularSub.isVisible()).isTrue();
+
+        // Provisioning profile
+        SubscriptionInfoInternal provSub =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_PROVISIONING)
+                    .setOnlyNonTerrestrialNetwork(0)
+                    .setOpportunistic(0)
+                    .build();
+        assertThat(provSub.isVisible()).isFalse();
+
+        // NTN profile
+        SubscriptionInfoInternal ntnSub =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setOnlyNonTerrestrialNetwork(1)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                    .setOpportunistic(0)
+                    .build();
+        assertThat(ntnSub.isVisible()).isFalse();
+
+        // Opportunistic profile without group UUID
+        SubscriptionInfoInternal opportunisticSub =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setOnlyNonTerrestrialNetwork(0)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                    .setOpportunistic(1)
+                    .build();
+        assertThat(opportunisticSub.isVisible()).isTrue();
+
+        // Opportunistic profile with group UUID
+        SubscriptionInfoInternal opportunisticSubUuid =
+                new SubscriptionInfoInternal.Builder()
+                    .setId(2)
+                    .setIccId(SubscriptionDatabaseManagerTest.FAKE_ICCID1)
+                    .setSimSlotIndex(0)
+                    .setOnlyNonTerrestrialNetwork(0)
+                    .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                    .setOpportunistic(1)
+                    .setGroupUuid(SubscriptionDatabaseManagerTest.FAKE_UUID1)
+                    .build();
+        assertThat(opportunisticSubUuid.isVisible()).isFalse();
     }
 }

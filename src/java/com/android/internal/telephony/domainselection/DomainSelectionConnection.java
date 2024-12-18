@@ -35,12 +35,15 @@ import android.telephony.DomainSelectionService.EmergencyScanType;
 import android.telephony.DomainSelector;
 import android.telephony.EmergencyRegistrationResult;
 import android.telephony.NetworkRegistrationInfo;
+import android.telephony.PreciseDisconnectCause;
 import android.telephony.data.ApnSetting;
+import android.telephony.ims.ImsReasonInfo;
 import android.util.LocalLog;
 import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.infra.AndroidFuture;
+import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.IDomainSelector;
 import com.android.internal.telephony.ITransportSelectorCallback;
 import com.android.internal.telephony.ITransportSelectorResultCallback;
@@ -48,6 +51,7 @@ import com.android.internal.telephony.IWwanSelectorCallback;
 import com.android.internal.telephony.IWwanSelectorResultCallback;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.data.AccessNetworksManager.QualifiedNetworks;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.util.TelephonyUtils;
 
 import java.io.PrintWriter;
@@ -67,7 +71,9 @@ public class DomainSelectionConnection {
     protected static final int EVENT_SERVICE_CONNECTED = 3;
     protected static final int EVENT_SERVICE_BINDING_TIMEOUT = 4;
     protected static final int EVENT_RESET_NETWORK_SCAN_DONE = 5;
-    protected static final int EVENT_LAST = EVENT_RESET_NETWORK_SCAN_DONE;
+    protected static final int EVENT_TRIGGER_NETWORK_SCAN_DONE = 6;
+    protected static final int EVENT_MODEM_RESET = 7;
+    protected static final int EVENT_LAST = EVENT_MODEM_RESET;
 
     private static final int DEFAULT_BIND_RETRY_TIMEOUT_MS = 4 * 1000;
 
@@ -183,7 +189,10 @@ public class DomainSelectionConnection {
                     return;
                 }
                 DomainSelectionConnection.this.onSelectionTerminated(cause);
-                dispose();
+                if (!Flags.hangupEmergencyCallForCrossSimRedialing()
+                        || !mIsEmergency || !checkState(STATUS_DOMAIN_SELECTED)) {
+                    dispose();
+                }
             }
         }
     }
@@ -302,6 +311,23 @@ public class DomainSelectionConnection {
                                 mPendingScanRequest.mScanType, false);
                     }
                     break;
+                case EVENT_TRIGGER_NETWORK_SCAN_DONE:
+                    synchronized (mLock) {
+                        if (checkState(STATUS_DISPOSED) || !checkState(STATUS_WAIT_SCAN_RESULT)) {
+                            return;
+                        }
+                        ar = (AsyncResult) msg.obj;
+                        if (ar != null && ar.exception != null) {
+                            onTriggerNetworkScanError((Integer) ar.userObj,
+                                    ((CommandException) ar.exception).getCommandError());
+                        }
+                    }
+                    break;
+                case EVENT_MODEM_RESET:
+                    synchronized (mLock) {
+                        onModemReset();
+                    }
+                    break;
                 default:
                     loge("handleMessage unexpected msg=" + msg.what);
                     break;
@@ -350,6 +376,10 @@ public class DomainSelectionConnection {
     private @Nullable ScanRequest mPendingScanRequest;
 
     private boolean mIsTestMode = false;
+
+    private int mDisconnectCause = DisconnectCause.NOT_VALID;
+    private int mPreciseDisconnectCause = PreciseDisconnectCause.NOT_VALID;
+    private String mReasonMessage = null;
 
     /**
      * Creates an instance.
@@ -522,10 +552,13 @@ public class DomainSelectionConnection {
             if (!mRegisteredRegistrant) {
                 mPhone.registerForEmergencyNetworkScan(mHandler,
                         EVENT_EMERGENCY_NETWORK_SCAN_RESULT, null);
+                mPhone.mCi.registerForModemReset(mHandler, EVENT_MODEM_RESET, null);
                 mRegisteredRegistrant = true;
             }
             setState(STATUS_WAIT_SCAN_RESULT);
-            mPhone.triggerEmergencyNetworkScan(preferredNetworks, scanType, null);
+            mPhone.triggerEmergencyNetworkScan(preferredNetworks, scanType,
+                    mHandler.obtainMessage(EVENT_TRIGGER_NETWORK_SCAN_DONE,
+                            Integer.valueOf(scanType)));
             mPendingScanRequest = null;
         }
     }
@@ -715,6 +748,7 @@ public class DomainSelectionConnection {
         setState(STATUS_DISPOSED);
         if (mRegisteredRegistrant) {
             mPhone.unregisterForEmergencyNetworkScan(mHandler);
+            mPhone.mCi.unregisterForModemReset(mHandler);
             mRegisteredRegistrant = false;
         }
         onCancel(true);
@@ -737,6 +771,34 @@ public class DomainSelectionConnection {
             throw new IllegalStateException("DomainSelectionConnection for emergency calls"
                     + " should override onQualifiedNetworksChanged()");
         }
+    }
+
+    private void onTriggerNetworkScanError(int scanType, CommandException.Error error) {
+        loge("onTriggerNetworkScanError scanType=" + scanType + ", error=" + error);
+
+        if (shouldTerminateCallOnRadioNotAvailable()
+                && error == CommandException.Error.RADIO_NOT_AVAILABLE) {
+            clearState(STATUS_WAIT_SCAN_RESULT);
+            onSelectionTerminated(DisconnectCause.POWER_OFF);
+            dispose();
+            return;
+        }
+    }
+
+    private void onModemReset() {
+        loge("onModemReset status=" + mStatus);
+        if (!shouldTerminateCallOnRadioNotAvailable()) {
+            return;
+        }
+        if (checkState(STATUS_DISPOSED) || checkState(STATUS_DOMAIN_SELECTED)) {
+            return;
+        }
+        onSelectionTerminated(DisconnectCause.POWER_OFF);
+        dispose();
+    }
+
+    private boolean shouldTerminateCallOnRadioNotAvailable() {
+        return mIsEmergency && mSelectorType == DomainSelectionService.SELECTOR_TYPE_CALLING;
     }
 
     /**
@@ -786,6 +848,51 @@ public class DomainSelectionConnection {
     @VisibleForTesting
     public void setTestMode(boolean testMode) {
         mIsTestMode = testMode;
+    }
+
+    /**
+     * Save call disconnect info for error propagation.
+     * @param disconnectCause The code for the reason for the disconnect.
+     * @param preciseDisconnectCause The code for the precise reason for the disconnect.
+     * @param reasonMessage Description of the reason for the disconnect, not intended for the user
+     *                      to see.
+     */
+    public void setDisconnectCause(int disconnectCause, int preciseDisconnectCause,
+                                String reasonMessage) {
+        mDisconnectCause = disconnectCause;
+        mPreciseDisconnectCause = preciseDisconnectCause;
+        mReasonMessage = reasonMessage;
+    }
+
+    public int getDisconnectCause() {
+        return mDisconnectCause;
+    }
+
+    public int getPreciseDisconnectCause() {
+        return mPreciseDisconnectCause;
+    }
+
+    public String getReasonMessage() {
+        return mReasonMessage;
+    }
+
+    /**
+     * @return imsReasonInfo Reason for the IMS call failure.
+     */
+    public @Nullable ImsReasonInfo getImsReasonInfo() {
+        if (getSelectionAttributes() == null) {
+            // Neither selectDomain(...) nor reselectDomain(...) has been called yet.
+            return null;
+        }
+
+        return getSelectionAttributes().getPsDisconnectCause();
+    }
+
+    /**
+     * @return phoneId To support localized message based on phoneId
+     */
+    public int getPhoneId() {
+        return getPhone().getPhoneId();
     }
 
     /**

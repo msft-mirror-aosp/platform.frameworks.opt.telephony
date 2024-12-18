@@ -29,6 +29,7 @@ import android.os.Message;
 import android.os.PowerManager;
 import android.os.RegistrantList;
 import android.os.SystemProperties;
+import android.os.UserHandle;
 import android.provider.DeviceConfig;
 import android.sysprop.TelephonyProperties;
 import android.telephony.PhoneCapability;
@@ -45,6 +46,7 @@ import com.android.telephony.Rlog;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -97,7 +99,9 @@ public class PhoneConfigurationManager {
 
     private static PhoneConfigurationManager sInstance = null;
     private final Context mContext;
-    private PhoneCapability mStaticCapability;
+    // Static capability retrieved from the modem - may be null in the case where no info has been
+    // retrieved yet.
+    private PhoneCapability mStaticCapability = null;
     private final Set<Integer> mSlotsSupportingSimultaneousCellularCalls = new HashSet<>(3);
     private final Set<Integer> mSubIdsSupportingSimultaneousCellularCalls = new HashSet<>(3);
     private final HashSet<Consumer<Set<Integer>>> mSimultaneousCellularCallingListeners =
@@ -151,8 +155,6 @@ public class PhoneConfigurationManager {
         mFeatureFlags = featureFlags;
         // TODO: send commands to modem once interface is ready.
         mTelephonyManager = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
-        //initialize with default, it'll get updated when RADIO is ON/AVAILABLE
-        mStaticCapability = getDefaultCapability();
         mRadioConfig = RadioConfig.getInstance();
         mHandler = new ConfigManagerHandler();
         mPhoneStatusMap = new HashMap<>();
@@ -256,7 +258,8 @@ public class PhoneConfigurationManager {
         boolean halSupportSimulCalling = mRadioConfig != null
                 && mRadioConfig.getRadioConfigProxy(null).getVersion().greaterOrEqual(
                         RIL.RADIO_HAL_VERSION_2_2)
-                && getPhoneCount() > 1 && mStaticCapability.getMaxActiveVoiceSubscriptions() > 1;
+                && getPhoneCount() > 1
+                && getCellularStaticPhoneCapability().getMaxActiveVoiceSubscriptions() > 1;
         // Register for simultaneous calling support changes in the modem if the HAL supports it
         if (halSupportSimulCalling) {
             updateSimultaneousCallingSupport();
@@ -318,7 +321,7 @@ public class PhoneConfigurationManager {
                         log("Unable to add phoneStatus to cache. "
                                 + "No phone object provided for event " + msg.what);
                     }
-                    getStaticPhoneCapability();
+                    updateRadioCapability();
                     break;
                 case EVENT_SWITCH_DSDS_CONFIG_DONE:
                     ar = (AsyncResult) msg.obj;
@@ -343,7 +346,7 @@ public class PhoneConfigurationManager {
                 case EVENT_GET_PHONE_CAPABILITY_DONE:
                     ar = (AsyncResult) msg.obj;
                     if (ar != null && ar.exception == null) {
-                        mStaticCapability = (PhoneCapability) ar.result;
+                        setStaticPhoneCapability((PhoneCapability) ar.result);
                         notifyCapabilityChanged();
                         for (Listener l : mListeners) {
                             l.onPhoneCapabilityChanged();
@@ -376,12 +379,12 @@ public class PhoneConfigurationManager {
                     }
                     ar = (AsyncResult) msg.obj;
                     if (ar != null && ar.exception == null) {
-                        int[] returnedIntArray = (int[]) ar.result;
+                        List<Integer> returnedArrayList = (List<Integer>) ar.result;
                         if (!mSlotsSupportingSimultaneousCellularCalls.isEmpty()) {
                             mSlotsSupportingSimultaneousCellularCalls.clear();
                         }
                         int maxValidPhoneSlot = getPhoneCount() - 1;
-                        for (int i : returnedIntArray) {
+                        for (int i : returnedArrayList) {
                             if (i < 0 || i > maxValidPhoneSlot) {
                                 loge("Invalid slot supporting DSDA =" + i + ". Disabling DSDA.");
                                 mSlotsSupportingSimultaneousCellularCalls.clear();
@@ -389,9 +392,12 @@ public class PhoneConfigurationManager {
                             }
                             mSlotsSupportingSimultaneousCellularCalls.add(i);
                         }
-                        // Ensure the slots supporting cellular DSDA does not exceed the phone count
-                        if (mSlotsSupportingSimultaneousCellularCalls.size() > getPhoneCount()) {
-                            loge("Invalid size of DSDA slots. Disabling cellular DSDA.");
+                        // Ensure the number of slots supporting cellular DSDA is valid:
+                        if (mSlotsSupportingSimultaneousCellularCalls.size() > getPhoneCount() ||
+                                mSlotsSupportingSimultaneousCellularCalls.size() < 2) {
+                            loge("Invalid size of DSDA slots. Disabling cellular DSDA. Size of "
+                                    + "mSlotsSupportingSimultaneousCellularCalls=" +
+                                    mSlotsSupportingSimultaneousCellularCalls.size());
                             mSlotsSupportingSimultaneousCellularCalls.clear();
                         }
                     } else {
@@ -534,18 +540,40 @@ public class PhoneConfigurationManager {
     }
 
     /**
-     * get static overall phone capabilities for all phones.
+     * @return static overall phone capabilities for all phones, including voice overrides.
      */
     public synchronized PhoneCapability getStaticPhoneCapability() {
-        if (getDefaultCapability().equals(mStaticCapability)) {
-            log("getStaticPhoneCapability: sending the request for getting PhoneCapability");
-            Message callback = Message.obtain(
-                    mHandler, EVENT_GET_PHONE_CAPABILITY_DONE);
-            mRadioConfig.getPhoneCapability(callback);
-        }
-        mStaticCapability = maybeOverrideMaxActiveVoiceSubscriptions(mStaticCapability);
-        log("getStaticPhoneCapability: mStaticCapability " + mStaticCapability);
+        boolean isDefault = mStaticCapability == null;
+        PhoneCapability caps = isDefault ? getDefaultCapability() : mStaticCapability;
+        caps = maybeOverrideMaxActiveVoiceSubscriptions(caps);
+        log("getStaticPhoneCapability: isDefault=" + isDefault + ", caps=" + caps);
+        return caps;
+    }
+
+    /**
+     * @return untouched capabilities returned from the modem
+     */
+    private synchronized PhoneCapability getCellularStaticPhoneCapability() {
+        log("getCellularStaticPhoneCapability: mStaticCapability " + mStaticCapability);
         return mStaticCapability;
+    }
+
+    /**
+     * Caches the static PhoneCapability returned by the modem
+     */
+    public synchronized void setStaticPhoneCapability(PhoneCapability capability) {
+        log("setStaticPhoneCapability: mStaticCapability " + capability);
+        mStaticCapability = capability;
+    }
+
+    /**
+     * Query the modem to return its static PhoneCapability and cache it
+     */
+    @VisibleForTesting
+    public void updateRadioCapability() {
+        log("updateRadioCapability: sending the request for getting PhoneCapability");
+        Message callback = Message.obtain(mHandler, EVENT_GET_PHONE_CAPABILITY_DONE);
+        mRadioConfig.getPhoneCapability(callback);
     }
 
     /**
@@ -556,12 +584,11 @@ public class PhoneConfigurationManager {
     }
 
     public int getNumberOfModemsWithSimultaneousDataConnections() {
-        return mStaticCapability.getMaxActiveDataSubscriptions();
+        return getStaticPhoneCapability().getMaxActiveDataSubscriptions();
     }
 
     public int getNumberOfModemsWithSimultaneousVoiceConnections() {
-        return maybeOverrideMaxActiveVoiceSubscriptions(mStaticCapability)
-                .getMaxActiveVoiceSubscriptions();
+        return getStaticPhoneCapability().getMaxActiveVoiceSubscriptions();
     }
 
     public boolean isVirtualDsdaEnabled() {
@@ -591,8 +618,7 @@ public class PhoneConfigurationManager {
     }
 
     private void notifyCapabilityChanged() {
-        mNotifier.notifyPhoneCapabilityChanged(maybeOverrideMaxActiveVoiceSubscriptions(
-                mStaticCapability));
+        mNotifier.notifyPhoneCapabilityChanged(getStaticPhoneCapability());
     }
 
     /**
@@ -748,7 +774,11 @@ public class PhoneConfigurationManager {
 
         Intent intent = new Intent(ACTION_MULTI_SIM_CONFIG_CHANGED);
         intent.putExtra(EXTRA_ACTIVE_SIM_SUPPORTED_COUNT, numOfActiveModems);
-        mContext.sendBroadcast(intent);
+        if (mFeatureFlags.hsumBroadcast()) {
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+        } else {
+            mContext.sendBroadcast(intent);
+        }
     }
     /**
      * This is invoked from shell commands during CTS testing only.

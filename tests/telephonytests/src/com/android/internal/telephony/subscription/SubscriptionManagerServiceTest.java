@@ -43,13 +43,17 @@ import static com.android.internal.telephony.subscription.SubscriptionDatabaseMa
 import static com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.FAKE_PHONE_NUMBER2;
 import static com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.FAKE_RCS_CONFIG1;
 import static com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.FAKE_RCS_CONFIG2;
+import static com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.FAKE_SATELLITE_ENTITLEMENT_PLMNS1;
+import static com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.FAKE_SATELLITE_IS_ONLY_NTN_DISABLED;
 import static com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.FAKE_SUBSCRIPTION_INFO1;
 import static com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.FAKE_SUBSCRIPTION_INFO2;
 import static com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.FAKE_UUID1;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -105,8 +109,6 @@ import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.euicc.EuiccController;
-import com.android.internal.telephony.flags.FeatureFlags;
-import com.android.internal.telephony.subscription.SubscriptionDatabaseManager.SubscriptionDatabaseManagerCallback;
 import com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.SubscriptionProvider;
 import com.android.internal.telephony.subscription.SubscriptionManagerService.BinderWrapper;
 import com.android.internal.telephony.subscription.SubscriptionManagerService.SubscriptionManagerServiceCallback;
@@ -131,11 +133,13 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
@@ -158,7 +162,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     // mocked
     private SubscriptionManagerServiceCallback mMockedSubscriptionManagerServiceCallback;
     private EuiccController mEuiccController;
-    private FeatureFlags mFlags;
     private BinderWrapper mBinder;
     private Set<Integer> mActiveSubs = new ArraySet<>();
 
@@ -209,9 +212,13 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 Telephony.Carriers.CONTENT_URI.getAuthority(), mSubscriptionProvider);
 
-        mFlags = Mockito.mock(FeatureFlags.class);
+        doReturn(true).when(mFeatureFlags).saferGetPhoneNumber();
+        doReturn(true).when(mFeatureFlags).uiccPhoneNumberFix();
+        doReturn(true).when(mFeatureFlags).ddsCallback();
+        doReturn(true).when(mFeatureFlags).oemEnabledSatelliteFlag();
+
         mSubscriptionManagerServiceUT = new SubscriptionManagerService(mContext, Looper.myLooper(),
-                mFlags);
+                mFeatureFlags);
 
         monitorTestableLooper(new TestableLooper(getBackgroundHandler().getLooper()));
         monitorTestableLooper(new TestableLooper(getSubscriptionDatabaseManager().getLooper()));
@@ -234,11 +241,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         doReturn(true).when(mUserManager)
                 .isManagedProfile(eq(FAKE_MANAGED_PROFILE_USER_HANDLE.getIdentifier()));
 
-        // Due to affect exist implementation, bypass feature flag.
-        doReturn(false).when(mFlags).enforceTelephonyFeatureMappingForPublicApis();
         doReturn(true).when(mPackageManager).hasSystemFeature(
                 eq(PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION));
-
         logd("SubscriptionManagerServiceTest -Setup!");
     }
 
@@ -268,12 +272,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
                 "mSubscriptionDatabaseManager");
         field.setAccessible(true);
         return (SubscriptionDatabaseManager) field.get(mSubscriptionManagerServiceUT);
-    }
-
-    private SubscriptionDatabaseManagerCallback getSubscriptionDatabaseCallback() throws Exception {
-        Field field = SubscriptionDatabaseManager.class.getDeclaredField("mCallback");
-        field.setAccessible(true);
-        return (SubscriptionDatabaseManagerCallback) field.get(getSubscriptionDatabaseManager());
     }
 
     /**
@@ -421,24 +419,38 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     @Test
     public void testSetAdminOwned() {
         mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
-        mSubscriptionManagerServiceUT.addSubInfo(FAKE_ICCID1, FAKE_CARRIER_NAME1,
-                0, SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
+        mSubscriptionManagerServiceUT.addSubInfo(FAKE_ICCID1, FAKE_CARRIER_NAME1, 0,
+                SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
         processAllMessages();
         String groupOwner = "test";
 
         mSubscriptionManagerServiceUT.setGroupOwner(1, groupOwner);
 
-        SubscriptionInfoInternal subInfo = mSubscriptionManagerServiceUT
-                .getSubscriptionInfoInternal(1);
+        SubscriptionInfoInternal subInfo =
+                mSubscriptionManagerServiceUT.getSubscriptionInfoInternal(1);
         assertThat(subInfo).isNotNull();
         assertThat(subInfo.getGroupOwner()).isEqualTo(groupOwner);
         verify(mMockedSubscriptionManagerServiceCallback).onSubscriptionChanged(eq(1));
     }
 
     @Test
+    public void testSetGroupOwner_callerMissingpPermission_throws() {
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
+        mSubscriptionManagerServiceUT.addSubInfo(FAKE_ICCID1, FAKE_CARRIER_NAME1, 0,
+                SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
+        processAllMessages();
+        String groupOwner = "test";
+        // Remove MODIFY_PHONE_STATE
+        mContextFixture.removeCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
+
+        assertThrows(SecurityException.class,
+                () -> mSubscriptionManagerServiceUT.setGroupOwner(1, groupOwner));
+    }
+
+    @Test
     @DisableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testSetPhoneNumber() {
-        doReturn(false).when(mFlags).enforceTelephonyFeatureMapping();
+        doReturn(false).when(mFeatureFlags).enforceTelephonyFeatureMapping();
         doReturn(true).when(mPackageManager).hasSystemFeature(
                 eq(PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION));
 
@@ -498,7 +510,7 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
                 mSubscriptionManagerServiceUT, vendorApiLevel);
 
         // Enabled FeatureFlags and ENABLE_FEATURE_MAPPING, telephony features are defined
-        doReturn(true).when(mFlags).enforceTelephonyFeatureMappingForPublicApis();
+        doReturn(true).when(mFeatureFlags).enforceTelephonyFeatureMappingForPublicApis();
         doReturn(true).when(mPackageManager).hasSystemFeature(
                 eq(PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION));
         try {
@@ -767,6 +779,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
         assertThat(b.containsKey(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX)).isTrue();
         assertThat(b.getInt(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX)).isEqualTo(1);
+
+        verify(mMockedSubscriptionManagerServiceCallback).onDefaultDataSubscriptionChanged(eq(1));
     }
 
     @Test
@@ -1262,8 +1276,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     @EnableCompatChanges({SubscriptionManagerService.REQUIRE_DEVICE_IDENTIFIERS_FOR_GROUP_UUID,
             SubscriptionManagerService.FILTER_ACCESSIBLE_SUBS_BY_USER})
     public void testIsSubscriptionAssociatedWithUserMultiSubs() {
-        doReturn(true).when(mFlags).workProfileApiSplit();
-        doReturn(true).when(mFlags).enforceSubscriptionUserFilter();
+        doReturn(true).when(mFeatureFlags).workProfileApiSplit();
+        doReturn(true).when(mFeatureFlags).enforceSubscriptionUserFilter();
         mContextFixture.addCallingOrSelfPermission(
                 Manifest.permission.MANAGE_SUBSCRIPTION_USER_ASSOCIATION);
         insertSubscription(FAKE_SUBSCRIPTION_INFO1);
@@ -1325,8 +1339,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     public void testSubscriptionAssociationWorkProfileCallerVisibility() {
         // Split mode is defined as when a profile owns a dedicated sub, it loses the visibility to
         // the unassociated sub.
-        doReturn(true).when(mFlags).enforceSubscriptionUserFilter();
-        doReturn(true).when(mFlags).workProfileApiSplit();
+        doReturn(true).when(mFeatureFlags).enforceSubscriptionUserFilter();
+        doReturn(true).when(mFeatureFlags).workProfileApiSplit();
         mContextFixture.addCallingOrSelfPermission(
                 Manifest.permission.MANAGE_SUBSCRIPTION_USER_ASSOCIATION);
         // Sub 1 is associated with work profile; Sub 2 is unassociated.
@@ -1461,8 +1475,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     public void testSubscriptionAssociationPersonalCallerVisibility() {
         // Split mode is defined as when a profile owns a dedicated sub, it loses the visibility to
         // the unassociated sub.
-        doReturn(true).when(mFlags).enforceSubscriptionUserFilter();
-        doReturn(true).when(mFlags).workProfileApiSplit();
+        doReturn(true).when(mFeatureFlags).enforceSubscriptionUserFilter();
+        doReturn(true).when(mFeatureFlags).workProfileApiSplit();
         mContextFixture.addCallingOrSelfPermission(
                 Manifest.permission.MANAGE_SUBSCRIPTION_USER_ASSOCIATION);
         // Sub 1 is unassociated; Sub 2 is associated with work profile.
@@ -1786,6 +1800,45 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
         assertThat(mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(
                 1, CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER1);
+    }
+
+    @Test
+    public void testGetPhoneNumberSourcePriority() throws Exception {
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PHONE_NUMBERS);
+
+        String phoneNumberFromCarrier = "8675309";
+        String phoneNumberFromUicc = "1112223333";
+        String phoneNumberFromIms = "5553466";
+        String phoneNumberFromPhoneObject = "8001234567";
+
+        doReturn(phoneNumberFromPhoneObject).when(mPhone).getLine1Number();
+
+        SubscriptionInfoInternal multiNumberSubInfo =
+                new SubscriptionInfoInternal.Builder(FAKE_SUBSCRIPTION_INFO1)
+                        .setNumberFromCarrier(phoneNumberFromCarrier)
+                        .setNumber(phoneNumberFromUicc)
+                        .setNumberFromIms(phoneNumberFromIms)
+                        .build();
+        int subId = insertSubscription(multiNumberSubInfo);
+
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(
+                subId, CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(phoneNumberFromCarrier);
+
+        multiNumberSubInfo =
+                new SubscriptionInfoInternal.Builder(multiNumberSubInfo)
+                        .setNumberFromCarrier("")
+                        .setNumber("")
+                        .setNumberFromIms(phoneNumberFromIms)
+                        .build();
+        subId = insertSubscription(multiNumberSubInfo);
+
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(
+                subId, CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(phoneNumberFromPhoneObject);
+
+        doReturn("").when(mPhone).getLine1Number();
+
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(
+                subId, CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(phoneNumberFromIms);
     }
 
     @Test
@@ -2466,6 +2519,23 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     }
 
     @Test
+    public void testGetPhoneNumberFromUicc() {
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+        testSetPhoneNumber();
+        // Number from line1Number should be FAKE_PHONE_NUMBER1 instead of FAKE_PHONE_NUMBER2
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumber(1,
+                SubscriptionManager.PHONE_NUMBER_SOURCE_UICC, CALLING_PACKAGE, CALLING_FEATURE))
+                .isEqualTo(FAKE_PHONE_NUMBER1);
+
+        doReturn("").when(mPhone).getLine1Number();
+
+        // If getLine1Number is empty, then the number should be from the sub info.
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumber(1,
+                SubscriptionManager.PHONE_NUMBER_SOURCE_UICC, CALLING_PACKAGE, CALLING_FEATURE))
+                .isEqualTo(FAKE_PHONE_NUMBER2);
+    }
+
+    @Test
     public void testGetPhoneNumberFromInactiveSubscription() {
         mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
         testInactiveSimRemoval();
@@ -2481,6 +2551,37 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         assertThat(mSubscriptionManagerServiceUT.getPhoneNumber(1,
                 SubscriptionManager.PHONE_NUMBER_SOURCE_UICC, CALLING_PACKAGE, CALLING_FEATURE))
                 .isEqualTo(FAKE_PHONE_NUMBER2);
+    }
+
+    @Test
+    public void testGetPhoneNumberFromDefaultSubscription() {
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
+        int subId = insertSubscription(FAKE_SUBSCRIPTION_INFO1);
+
+        mSubscriptionManagerServiceUT.setDefaultVoiceSubId(subId);
+
+        assertThat(
+                mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(
+                        subId, CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER1);
+        assertThat(
+                mSubscriptionManagerServiceUT.getPhoneNumber(
+                        SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                        SubscriptionManager.PHONE_NUMBER_SOURCE_UICC,
+                        CALLING_PACKAGE,
+                        CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER1);
+        assertThat(
+                mSubscriptionManagerServiceUT.getPhoneNumber(
+                        SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                        SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER,
+                        CALLING_PACKAGE,
+                        CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER1);
+        assertThat(
+                mSubscriptionManagerServiceUT.getPhoneNumber(
+                        SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                        SubscriptionManager.PHONE_NUMBER_SOURCE_IMS,
+                        CALLING_PACKAGE,
+                        CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER1);
     }
 
     @Test
@@ -3101,7 +3202,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.putResource(R.string.config_satellite_sim_spn_identifier,
                 FAKE_CARRIER_NAME1);
         System.setProperty("persist.radio.allow_mock_modem", "true");
-        doReturn(true).when(mFlags).oemEnabledSatelliteFlag();
 
         EuiccProfileInfo profileInfo1 = new EuiccProfileInfo.Builder(FAKE_ICCID1)
                 .setIccid(FAKE_ICCID1)
@@ -3131,7 +3231,67 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.putResource(R.string.config_satellite_sim_spn_identifier,
                 FAKE_CARRIER_NAME1);
         System.setProperty("persist.radio.allow_mock_modem", "false");
-        doReturn(false).when(mFlags).oemEnabledSatelliteFlag();
+    }
+
+    @Test
+    public void testIsSatelliteSpnWithEmptySpn() {
+        mContextFixture.putResource(R.string.config_satellite_sim_spn_identifier, ""); // Empty
+        System.setProperty("persist.radio.allow_mock_modem", "true");
+
+        EuiccProfileInfo profileInfo1 = new EuiccProfileInfo.Builder(FAKE_ICCID1)
+                .setIccid(FAKE_ICCID1)
+                .setNickname(FAKE_CARRIER_NAME1)
+                .setServiceProviderName(FAKE_CARRIER_NAME1)
+                .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                .setCarrierIdentifier(new CarrierIdentifier(FAKE_MCC1, FAKE_MNC1,
+                        FAKE_CARRIER_NAME1, null, null, null, FAKE_CARRIER_ID1, FAKE_CARRIER_ID1))
+                .setUiccAccessRule(Arrays.asList(UiccAccessRule.decodeRules(
+                        FAKE_NATIVE_ACCESS_RULES1)))
+                .build();
+
+        GetEuiccProfileInfoListResult result = new GetEuiccProfileInfoListResult(
+                EuiccService.RESULT_OK, new EuiccProfileInfo[]{profileInfo1}, false);
+        doReturn(result).when(mEuiccController).blockingGetEuiccProfileInfoList(eq(1));
+        doReturn(TelephonyManager.INVALID_PORT_INDEX).when(mUiccSlot)
+                .getPortIndexFromIccId(anyString());
+        doReturn(FAKE_ICCID1).when(mUiccController).convertToCardString(eq(1));
+
+        mSubscriptionManagerServiceUT.updateEmbeddedSubscriptions(List.of(1), null);
+        processAllMessages();
+
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerServiceUT
+                .getSubscriptionInfoInternal(1);
+        assertThat(subInfo.getOnlyNonTerrestrialNetwork())
+                .isEqualTo(FAKE_SATELLITE_IS_ONLY_NTN_DISABLED);
+
+        mContextFixture.putResource(R.string.config_satellite_sim_spn_identifier,
+                FAKE_CARRIER_NAME1);
+        EuiccProfileInfo profileInfo2 = new EuiccProfileInfo.Builder(FAKE_ICCID2)
+                .setIccid(FAKE_ICCID2)
+                .setNickname(FAKE_CARRIER_NAME2)
+                .setServiceProviderName("")
+                .setProfileClass(SubscriptionManager.PROFILE_CLASS_OPERATIONAL)
+                .setCarrierIdentifier(new CarrierIdentifier(FAKE_MCC2, FAKE_MNC2,
+                        FAKE_CARRIER_NAME2, null, null, null, FAKE_CARRIER_ID2, FAKE_CARRIER_ID2))
+                .setUiccAccessRule(Arrays.asList(UiccAccessRule.decodeRules(
+                        FAKE_NATIVE_ACCESS_RULES2)))
+                .build();
+        result = new GetEuiccProfileInfoListResult(
+                EuiccService.RESULT_OK, new EuiccProfileInfo[]{profileInfo2}, false);
+        doReturn(result).when(mEuiccController).blockingGetEuiccProfileInfoList(eq(2));
+        doReturn(TelephonyManager.INVALID_PORT_INDEX).when(mUiccSlot)
+                .getPortIndexFromIccId(anyString());
+        doReturn(FAKE_ICCID2).when(mUiccController).convertToCardString(eq(2));
+
+        mSubscriptionManagerServiceUT.updateEmbeddedSubscriptions(List.of(2), null);
+        processAllMessages();
+
+        subInfo = mSubscriptionManagerServiceUT
+                .getSubscriptionInfoInternal(2);
+        assertThat(subInfo.getOnlyNonTerrestrialNetwork())
+                .isEqualTo(FAKE_SATELLITE_IS_ONLY_NTN_DISABLED);
+
+        System.setProperty("persist.radio.allow_mock_modem", "false");
     }
 
     @Test
@@ -3139,7 +3299,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.putResource(R.string.config_satellite_sim_spn_identifier,
                 FAKE_CARRIER_NAME1);
         System.setProperty("persist.radio.allow_mock_modem", "true");
-        doReturn(true).when(mFlags).oemEnabledSatelliteFlag();
 
         EuiccProfileInfo profileInfo1 = new EuiccProfileInfo.Builder(FAKE_ICCID1)
                 .setIccid(FAKE_ICCID1)
@@ -3168,7 +3327,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.putResource(R.string.config_satellite_sim_spn_identifier,
                 FAKE_CARRIER_NAME1);
         System.setProperty("persist.radio.allow_mock_modem", "false");
-        doReturn(false).when(mFlags).oemEnabledSatelliteFlag();
     }
 
     @Test
@@ -3176,7 +3334,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.putResource(R.string.config_satellite_sim_spn_identifier,
                 FAKE_CARRIER_NAME1);
         System.setProperty("persist.radio.allow_mock_modem", "true");
-        doReturn(true).when(mFlags).oemEnabledSatelliteFlag();
 
         EuiccProfileInfo profileInfo1 = new EuiccProfileInfo.Builder(FAKE_ICCID1)
                 .setIccid(FAKE_ICCID1)
@@ -3206,6 +3363,61 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.putResource(R.string.config_satellite_sim_spn_identifier,
                 FAKE_CARRIER_NAME1);
         System.setProperty("persist.radio.allow_mock_modem", "false");
-        doReturn(false).when(mFlags).oemEnabledSatelliteFlag();
+    }
+
+    @Test
+    public void testGetSatelliteEntitlementPlmnList() throws Exception {
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
+
+        // When the empty list is stored, verify whether SubscriptionInfoInternal returns an
+        // empty string and SubscriptionManagerService returns an empty List.
+        insertSubscription(FAKE_SUBSCRIPTION_INFO1);
+        List<String> expectedPlmnList = new ArrayList<>();
+        int subId = 1;
+
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerServiceUT
+                .getSubscriptionInfoInternal(subId);
+        assertTrue(subInfo.getSatelliteEntitlementPlmns().isEmpty());
+        assertEquals(expectedPlmnList,
+                mSubscriptionManagerServiceUT.getSatelliteEntitlementPlmnList(subId));
+
+        // When the list is stored as [123123,12310], verify whether SubscriptionInfoInternal
+        // returns the string as "123123,12310" and SubscriptionManagerService returns the List as
+        // [123123,12310].
+        insertSubscription(FAKE_SUBSCRIPTION_INFO2);
+        String expectedPlmn = FAKE_SATELLITE_ENTITLEMENT_PLMNS1;
+        expectedPlmnList = Arrays.stream(expectedPlmn.split(",")).collect(Collectors.toList());
+        subId = 2;
+
+        subInfo = mSubscriptionManagerServiceUT.getSubscriptionInfoInternal(subId);
+        assertEquals(expectedPlmn, subInfo.getSatelliteEntitlementPlmns());
+        assertEquals(expectedPlmnList,
+                mSubscriptionManagerServiceUT.getSatelliteEntitlementPlmnList(subId));
+
+        // When calling SubscriptionDatabaseManager#getSubscriptionInfoInternalreturns returns a
+        // null, then verify the SubscriptionManagerService returns an empty List.
+        SubscriptionDatabaseManager mockSubscriptionDatabaseManager = Mockito.mock(
+                SubscriptionDatabaseManager.class);
+        Field field = SubscriptionManagerService.class.getDeclaredField(
+                "mSubscriptionDatabaseManager");
+        field.setAccessible(true);
+        field.set(mSubscriptionManagerServiceUT, mockSubscriptionDatabaseManager);
+
+        doReturn(null).when(mockSubscriptionDatabaseManager).getSubscriptionInfoInternal(anyInt());
+        expectedPlmnList = new ArrayList<>();
+        assertEquals(expectedPlmnList,
+                mSubscriptionManagerServiceUT.getSatelliteEntitlementPlmnList(subId));
+
+        // When calling SubscriptionDatabaseManager#getSubscriptionInfoInternalreturns returns a
+        // non null. And when calling SubscriptionInfoInternal#getSatelliteEntitlementPlmns
+        // returns a null, then verify the SubscriptionManagerService returns an empty List.
+        SubscriptionInfoInternal mockSubscriptionInfoInternal = Mockito.mock(
+                SubscriptionInfoInternal.class);
+        doReturn(mockSubscriptionInfoInternal).when(
+                mockSubscriptionDatabaseManager).getSubscriptionInfoInternal(anyInt());
+        doReturn(null).when(mockSubscriptionInfoInternal).getSatelliteEntitlementPlmns();
+
+        assertEquals(expectedPlmnList,
+                mSubscriptionManagerServiceUT.getSatelliteEntitlementPlmnList(subId));
     }
 }

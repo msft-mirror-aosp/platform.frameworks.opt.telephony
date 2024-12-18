@@ -153,4 +153,10 @@ public interface PhoneNotifier {
 
     /** Notify that simultaneous cellular calling subscriptions have changed */
     void notifySimultaneousCellularCallingSubscriptionsChanged(Set<Integer> subIds);
+
+    /** Notify carrier roaming non-terrestrial network mode changed. **/
+    void notifyCarrierRoamingNtnModeChanged(Phone sender, boolean active);
+
+    /** Notify eligibility to connect to carrier roaming non-terrestrial network changed. */
+    void notifyCarrierRoamingNtnEligibleStateChanged(Phone sender, boolean eligible);
 }
