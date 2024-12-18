@@ -888,11 +888,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         doReturn(PhoneConstants.State.IDLE).when(mCT).getState();
         doReturn(new SubscriptionInfoInternal.Builder().setId(1).build())
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
-
         doReturn(true).when(mFeatureFlags).carrierEnabledSatelliteFlag();
         doReturn(true).when(mFeatureFlags).satelliteInternet();
-        doReturn(true).when(mFeatureFlags).simDisabledGracefulTearDown();
-
         when(mContext.getPackageManager()).thenReturn(mMockPackageManager);
         doReturn(true).when(mMockPackageManager).hasSystemFeature(anyString());
 
@@ -1991,6 +1988,194 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     @Test
+    public void testIgnoreDataRoamingSettingForSatellite() throws Exception {
+        // set up satellite network and register data roaming
+        mIsNonTerrestrialNetwork = true;
+        doReturn(true).when(mServiceState).getDataRoaming();
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+
+        // Enable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
+
+        // Set network request transport with Internet capability
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(true,
+                        NetworkCapabilities.NET_CAPABILITY_INTERNET,
+                        NetworkCapabilities.NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED));
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Disable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(false);
+        processAllMessages();
+
+        // Verify internet is not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup carrier to bypass data roaming off setting for satellite network
+        mCarrierConfig.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_IGNORE_DATA_ROAMING_SETTING_BOOL, true);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // reset satellite network and roaming registration
+        mIsNonTerrestrialNetwork = false;
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+    }
+
+    @Test
+    public void testIgnoreDataRoamingSettingForSatelliteWithBandwithConstrained() throws Exception {
+        // set up satellite network and register data roaming
+        mIsNonTerrestrialNetwork = true;
+        doReturn(true).when(mServiceState).getDataRoaming();
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+
+        // Enable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
+
+        // Set network request transport with Internet capability
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(true, NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Disable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(false);
+        processAllMessages();
+
+        // Verify internet is not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup carrier to bypass data roaming off setting for satellite network
+        mCarrierConfig.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_IGNORE_DATA_ROAMING_SETTING_BOOL, true);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // reset satellite network and roaming registration
+        mIsNonTerrestrialNetwork = false;
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+    }
+
+    @Test
+    public void testIgnoreDataRoamingSettingForSatelliteForUnrestrictedNetwork() throws Exception {
+        // set up satellite network and register data roaming
+        mIsNonTerrestrialNetwork = true;
+        doReturn(true).when(mServiceState).getDataRoaming();
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+
+        // Disable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(false);
+
+        // Set network request transport with Internet capability
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify internet is not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup carrier to bypass data roaming off setting for satellite network
+        mCarrierConfig.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_IGNORE_DATA_ROAMING_SETTING_BOOL, true);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is still not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup satellite data support mode serve all network requests
+        mCarrierConfig.putInt(
+                CarrierConfigManager.KEY_SATELLITE_DATA_SUPPORT_MODE_INT,
+                CarrierConfigManager.SATELLITE_DATA_SUPPORT_ALL);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // reset satellite network and roaming registration
+        mIsNonTerrestrialNetwork = false;
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+    }
+
+    @Test
+    public void testIgnoreDataRoamingSettingForSatelliteConfigForTerrestialNetwork() throws Exception {
+        // set up terrestrial network and roaming registration
+        mIsNonTerrestrialNetwork = false;
+        doReturn(true).when(mServiceState).getDataRoaming();
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+
+        // Enable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
+
+        // Set network request transport with Internet capability
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // Verify internet is connected
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Disable data roaming setting
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(false);
+        processAllMessages();
+
+        // Verify internet is not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Setup carrier to bypass data roaming off setting for satellite network
+        mCarrierConfig.putBoolean(
+                CarrierConfigManager.KEY_SATELLITE_IGNORE_DATA_ROAMING_SETTING_BOOL, true);
+        carrierConfigChanged();
+        processAllMessages();
+
+        // Verify internet is still not connected
+        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // Enable data roaming again
+        mDataNetworkControllerUT.getDataSettingsManager().setDataRoamingEnabled(true);
+        processAllMessages();
+
+        // Verify internet is connected again
+        verifyInternetConnected();
+        Mockito.clearInvocations(mMockedDataNetworkControllerCallback);
+
+        // reset roaming registration
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+    }
+
+    @Test
     public void testDataEnabledChanged() throws Exception {
         mDataNetworkControllerUT.getDataSettingsManager().setDataEnabled(
                 TelephonyManager.DATA_ENABLED_REASON_USER, false, mContext.getOpPackageName());
@@ -2481,7 +2666,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
         // Change data network type to NR
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_NR,
-                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false))
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false, false, false))
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         dataNetwork.sendMessage(13/*EVENT_DISPLAY_INFO_CHANGED*/);
         processAllMessages();
@@ -2524,7 +2709,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
         // Change data network type to NR
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_NR,
-                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false))
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false, false, false))
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         dataNetwork.sendMessage(13/*EVENT_DISPLAY_INFO_CHANGED*/);
         processAllMessages();
@@ -2580,7 +2765,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
         // Change data network type to NR
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_NR,
-                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false))
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false, false, false))
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         dataNetwork.sendMessage(13/*EVENT_DISPLAY_INFO_CHANGED*/);
         processAllMessages();
@@ -3216,6 +3401,118 @@ public class DataNetworkControllerTest extends TelephonyTest {
         verify(mMockedWwanDataServiceManager, times(9)).setupDataCall(anyInt(),
                 any(DataProfile.class), anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(),
                 any(), any(), anyBoolean(), any(Message.class));
+    }
+
+    @Test
+    public void testSetupDataNetworkWithCandidateProfileWithIncompatibleRetryDataProfile() throws Exception {
+        mDataNetworkControllerUT
+                .getDataRetryManager()
+                .registerCallback(mMockedDataRetryManagerCallback);
+        setFailedSetupDataResponse(mMockedWwanDataServiceManager,
+                DataFailCause.ONLY_IPV4_ALLOWED, 2500 /* mSec */, false);
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+        verify(mMockedWwanDataServiceManager, times(1)).setupDataCall(anyInt(),
+                any(DataProfile.class), anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(),
+                any(), any(), anyBoolean(), any(Message.class));
+
+        moveTimeForward(2500);
+        processAllMessages();
+        ArgumentCaptor<DataRetryManager.DataSetupRetryEntry> retryEntry =
+                ArgumentCaptor.forClass(DataRetryManager.DataSetupRetryEntry.class);
+        verify(mMockedDataRetryManagerCallback, times(1))
+                .onDataNetworkSetupRetry(retryEntry.capture());
+
+        ArgumentCaptor<List<ThrottleStatus>> throttleStatusCaptor =
+                ArgumentCaptor.forClass(List.class);
+        verify(mMockedDataRetryManagerCallback)
+                .onThrottleStatusChanged(throttleStatusCaptor.capture());
+
+        assertThat(retryEntry.getValue().dataProfile).isNotNull();
+
+        assertThat(retryEntry.getValue().dataProfile).isEqualTo(mGeneralPurposeDataProfile);
+        doReturn(false)
+                .when(mDataProfileManager)
+                .isDataProfileCompatible(retryEntry.getValue().dataProfile);
+
+        doReturn(mDuplicatedGeneralPurposeDataProfile).when(mDataProfileManager)
+                .getDataProfileForNetworkRequest(any(TelephonyNetworkRequest.class),
+                anyInt(), anyBoolean(), anyBoolean(), anyBoolean());
+
+        setSuccessfulSetupDataResponse(mMockedWwanDataServiceManager, 2);
+
+        mDataNetworkControllerUT
+                .getDataRetryManager()
+                .obtainMessage(
+                        6 /* EVENT_DATA_PROFILE_UNTHROTTLED*/,
+                        new AsyncResult(
+                                AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                                mGeneralPurposeDataProfile,
+                                null))
+                .sendToTarget();
+        processAllFutureMessages();
+
+        verify(mMockedWwanDataServiceManager, times(2)).setupDataCall(anyInt(),
+                any(DataProfile.class), anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(),
+                any(), any(), anyBoolean(), any(Message.class));
+
+        verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        verifyConnectedNetworkHasDataProfile(mDuplicatedGeneralPurposeDataProfile);
+    }
+
+    @Test
+    public void testSetupDataNetworkRetryWithCompatibleRetryDataProfile() throws Exception {
+        mDataNetworkControllerUT
+                .getDataRetryManager()
+                .registerCallback(mMockedDataRetryManagerCallback);
+        setFailedSetupDataResponse(mMockedWwanDataServiceManager,
+                DataFailCause.ONLY_IPV4_ALLOWED, 2500 /* mSec */, false);
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+        verify(mMockedWwanDataServiceManager, times(1)).setupDataCall(anyInt(),
+                any(DataProfile.class), anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(),
+                any(), any(), anyBoolean(), any(Message.class));
+
+        moveTimeForward(2500);
+        processAllMessages();
+        ArgumentCaptor<DataRetryManager.DataSetupRetryEntry> retryEntry =
+                ArgumentCaptor.forClass(DataRetryManager.DataSetupRetryEntry.class);
+        verify(mMockedDataRetryManagerCallback, times(1))
+                .onDataNetworkSetupRetry(retryEntry.capture());
+
+        ArgumentCaptor<List<ThrottleStatus>> throttleStatusCaptor =
+                ArgumentCaptor.forClass(List.class);
+        verify(mMockedDataRetryManagerCallback)
+                .onThrottleStatusChanged(throttleStatusCaptor.capture());
+
+        assertThat(retryEntry.getValue().dataProfile).isNotNull();
+
+        assertThat(retryEntry.getValue().dataProfile).isEqualTo(mGeneralPurposeDataProfile);
+
+        assertThat(mDataProfileManager.isDataProfileCompatible(retryEntry.getValue().dataProfile))
+                .isTrue();
+
+        setSuccessfulSetupDataResponse(mMockedWwanDataServiceManager, 2);
+
+        mDataNetworkControllerUT
+                .getDataRetryManager()
+                .obtainMessage(
+                        6 /* EVENT_DATA_PROFILE_UNTHROTTLED*/,
+                        new AsyncResult(
+                                AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                                mGeneralPurposeDataProfile,
+                                null))
+                .sendToTarget();
+        processAllFutureMessages();
+
+        verify(mMockedWwanDataServiceManager, times(2)).setupDataCall(anyInt(),
+                any(DataProfile.class), anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(),
+                any(), any(), anyBoolean(), any(Message.class));
+
+        verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        verifyConnectedNetworkHasDataProfile(mGeneralPurposeDataProfile);
     }
 
     @Test
@@ -4199,7 +4496,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testImsGracefulTearDownSimRemoval() throws Exception {
+    public void testImsGracefulTearDown() throws Exception {
         setImsRegistered(true);
         setRcsRegistered(true);
 
@@ -4221,52 +4518,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
         // SIM removal
         mDataNetworkControllerUT.obtainMessage(9/*EVENT_SIM_STATE_CHANGED*/,
                 TelephonyManager.SIM_STATE_ABSENT, 0).sendToTarget();
-        processAllMessages();
-
-        // Make sure data network enters disconnecting state
-        ArgumentCaptor<PreciseDataConnectionState> pdcsCaptor =
-                ArgumentCaptor.forClass(PreciseDataConnectionState.class);
-        verify(mPhone).notifyDataConnection(pdcsCaptor.capture());
-        PreciseDataConnectionState pdcs = pdcsCaptor.getValue();
-        assertThat(pdcs.getState()).isEqualTo(TelephonyManager.DATA_DISCONNECTING);
-
-        // IMS de-registered. Now data network is safe to be torn down.
-        Mockito.clearInvocations(mPhone);
-        setImsRegistered(false);
-        setRcsRegistered(false);
-        processAllMessages();
-
-        // All data should be disconnected.
-        verifyAllDataDisconnected();
-        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_IMS);
-        verify(mPhone).notifyDataConnection(pdcsCaptor.capture());
-        pdcs = pdcsCaptor.getValue();
-        assertThat(pdcs.getState()).isEqualTo(TelephonyManager.DATA_DISCONNECTED);
-    }
-
-    @Test
-    public void testImsGracefulTearDownSimDisabled() throws Exception {
-        setImsRegistered(true);
-        setRcsRegistered(true);
-
-        NetworkCapabilities netCaps = new NetworkCapabilities();
-        netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_IMS);
-        netCaps.maybeMarkCapabilitiesRestricted();
-        netCaps.setRequestorPackageName(FAKE_MMTEL_PACKAGE);
-
-        NetworkRequest nativeNetworkRequest = new NetworkRequest(netCaps,
-                ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
-        TelephonyNetworkRequest networkRequest = new TelephonyNetworkRequest(
-                nativeNetworkRequest, mPhone, mFeatureFlags);
-
-        mDataNetworkControllerUT.addNetworkRequest(networkRequest);
-
-        processAllMessages();
-        Mockito.clearInvocations(mPhone);
-
-        // SIM disabled
-        mDataNetworkControllerUT.obtainMessage(9/*EVENT_SIM_STATE_CHANGED*/,
-                TelephonyManager.SIM_STATE_NOT_READY, 0).sendToTarget();
         processAllMessages();
 
         // Make sure data network enters disconnecting state

@@ -16,11 +16,12 @@
 
 package com.android.internal.telephony.satellite;
 
+import static android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_MODEM_TIMEOUT;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
-import static com.android.internal.telephony.satellite.DatagramController.SATELLITE_ALIGN_TIMEOUT;
 import static com.android.internal.telephony.SmsDispatchersController.PendingRequest;
+import static com.android.internal.telephony.satellite.DatagramController.SATELLITE_ALIGN_TIMEOUT;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -30,6 +31,7 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
@@ -58,6 +60,7 @@ import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
 import com.android.internal.R;
+import com.android.internal.os.SomeArgs;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.SmsDispatchersController;
@@ -176,6 +179,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
         when(mMockDatagramController.isPollingInIdleState()).thenReturn(true);
         when(mMockSatelliteController.getSatellitePhone()).thenReturn(mPhone);
         when(mPhone.getSmsDispatchersController()).thenReturn(mMockSmsDispatchersController);
+        when(mMockSatelliteController.getSatelliteCarrierId()).thenReturn(UNKNOWN_CARRIER_ID);
         mPendingSms = createPendingRequest();
     }
 
@@ -255,7 +259,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                             eq(SATELLITE_RESULT_SUCCESS));
             verifyNoMoreInteractions(mMockDatagramController);
             verify(mMockSessionMetricsStats, times(1))
-                    .addCountOfSuccessfulOutgoingDatagram(eq(datagramType));
+                    .addCountOfSuccessfulOutgoingDatagram(eq(datagramType), anyLong());
             verify(mMockSatelliteModemInterface, times(1)).sendSatelliteDatagram(
                     any(SatelliteDatagram.class), anyBoolean(), anyBoolean(), any(Message.class));
             assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
@@ -396,7 +400,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                     any(SatelliteDatagram.class), anyBoolean(), anyBoolean(), any(Message.class));
             assertThat(mResultListener.peek()).isEqualTo(SATELLITE_RESULT_SUCCESS);
             verify(mMockSessionMetricsStats, times(1))
-                    .addCountOfSuccessfulOutgoingDatagram(anyInt());
+                    .addCountOfSuccessfulOutgoingDatagram(anyInt(), anyLong());
             clearInvocations(mMockSatelliteModemInterface);
             clearInvocations(mMockDatagramController);
             clearInvocations(mMockSessionMetricsStats);
@@ -521,7 +525,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                             eq(SATELLITE_RESULT_SUCCESS));
             assertThat(mResultListener.peek()).isEqualTo(SATELLITE_RESULT_SUCCESS);
             verify(mMockSessionMetricsStats, times(1))
-                    .addCountOfSuccessfulOutgoingDatagram(eq(datagramType));
+                    .addCountOfSuccessfulOutgoingDatagram(eq(datagramType), anyLong());
             mDatagramDispatcherUT.setDemoMode(false);
             mDatagramDispatcherUT.setDeviceAlignedWithSatellite(false);
         }
@@ -616,7 +620,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSessionMetricsStats, times(1))
-                .addCountOfSuccessfulOutgoingDatagram(eq(DATAGRAM_TYPE2));
+                .addCountOfSuccessfulOutgoingDatagram(eq(DATAGRAM_TYPE2), anyLong());
 
         mDatagramDispatcherUT.setDemoMode(false);
         mDatagramDispatcherUT.setDeviceAlignedWithSatellite(false);
@@ -729,7 +733,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                     anyInt(), any(SatelliteDatagram.class));
             verify(mMockDatagramController).pollPendingSatelliteDatagrams(anyInt(), any());
             verify(mMockSessionMetricsStats, times(1))
-                    .addCountOfSuccessfulOutgoingDatagram(anyInt());
+                    .addCountOfSuccessfulOutgoingDatagram(anyInt(), anyLong());
 
             // Test when overlay config config_send_satellite_datagram_to_modem_in_demo_mode is
             // false
@@ -822,7 +826,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -856,7 +860,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, false);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, false);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -1039,7 +1043,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(1),
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSessionMetricsStats, times(1))
-                .addCountOfSuccessfulOutgoingDatagram(eq(datagramTypeSos));
+                .addCountOfSuccessfulOutgoingDatagram(eq(datagramTypeSos), anyLong());
         verify(mMockSatelliteModemInterface, times(1)).sendSatelliteDatagram(
                 any(SatelliteDatagram.class), anyBoolean(), anyBoolean(), any(Message.class));
         assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
@@ -1054,7 +1058,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSmsDispatchersController).sendCarrierRoamingNbIotNtnText(eq(mPendingSms));
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
         processAllMessages();
 
         mInOrder.verify(mMockDatagramController)
@@ -1105,7 +1109,7 @@ public class DatagramDispatcherTest extends TelephonyTest {
         processAllMessages();
         verifyZeroInteractions(mMockSatelliteModemInterface);
 
-        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.messageId, true);
+        mDatagramDispatcherUT.onSendSmsDone(mPhone.getSubId(), mPendingSms.uniqueMessageId, true);
         processAllMessages();
         mInOrder.verify(mMockDatagramController)
                 .updateSendStatus(eq(SUB_ID), eq(datagramTypeSms),
@@ -1131,10 +1135,170 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                         eq(SATELLITE_RESULT_SUCCESS));
         verify(mMockSessionMetricsStats, times(1))
-                .addCountOfSuccessfulOutgoingDatagram(eq(datagramTypeSos));
+                .addCountOfSuccessfulOutgoingDatagram(eq(datagramTypeSos), anyLong());
         verify(mMockSatelliteModemInterface, times(1)).sendSatelliteDatagram(
                 any(SatelliteDatagram.class), anyBoolean(), anyBoolean(), any(Message.class));
         assertFalse(mDatagramDispatcherUT.isDatagramWaitForConnectedStateTimerStarted());
+    }
+
+   @Test
+   public void testHandleMessage_eventMtSmsPollingThrottleTimedOut_sendsMtSmsPollInNotConnected() {
+        setShouldPollMtSmsTrue();
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mContextFixture.putBooleanResource(
+                R.bool.config_satellite_allow_check_message_in_not_connected, true);
+
+        mDatagramDispatcherUT.handleMessage(
+                mDatagramDispatcherUT.obtainMessage(10 /*EVENT_MT_SMS_POLLING_THROTTLE_TIMED_OUT*/,
+                        new AsyncResult(null, null, null)));
+
+        verify(mMockSmsDispatchersController, times(1)).sendMtSmsPollingMessage();
+   }
+
+    @Test
+    public void
+            testHandleMessage_eventMtSmsPollingThrottleTimedOut_configDisabled_doesNotSendMtSmsPoll() {
+        setShouldPollMtSmsTrue();
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        // Set config_satellite_allow_check_message_in_not_connected to false
+        mContextFixture.putBooleanResource(
+                R.bool.config_satellite_allow_check_message_in_not_connected, false);
+
+        mDatagramDispatcherUT.handleMessage(
+                mDatagramDispatcherUT.obtainMessage(10 /*EVENT_MT_SMS_POLLING_THROTTLE_TIMED_OUT*/,
+                        new AsyncResult(null, null, null)));
+
+        verifyZeroInteractions(mMockSmsDispatchersController);
+   }
+
+    @Test
+    public void
+            testHandleMessage_eventMtSmsPollingThrottleTimedOut_flagDisabled_doesNotSendMtSmsPoll() {
+        setShouldPollMtSmsTrue();
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
+        // Set flag to false
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(false);
+        mContextFixture.putBooleanResource(
+                R.bool.config_satellite_allow_check_message_in_not_connected, true);
+
+        mDatagramDispatcherUT.handleMessage(
+                mDatagramDispatcherUT.obtainMessage(10 /*EVENT_MT_SMS_POLLING_THROTTLE_TIMED_OUT*/,
+                        new AsyncResult(null, null, null)));
+
+        verifyZeroInteractions(mMockSmsDispatchersController);
+   }
+
+
+
+    @Test
+    public void testSetDeviceAlignedWithSatellite_isAligned_notConnected_sendsMtSmsPoll() {
+        setShouldPollMtSmsTrue();
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mContextFixture.putBooleanResource(
+                R.bool.config_satellite_allow_check_message_in_not_connected, true);
+
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
+
+        verify(mMockSmsDispatchersController, times(1)).sendMtSmsPollingMessage();
+    }
+
+    @Test
+    public void testSetDeviceAlignedWithSatellite_notAligned_doesNotSendsMtSmsPoll() {
+        setShouldPollMtSmsTrue();
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mContextFixture.putBooleanResource(
+                R.bool.config_satellite_allow_check_message_in_not_connected, true);
+
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(false);
+
+        verifyZeroInteractions(mMockSmsDispatchersController);
+    }
+
+    @Test
+    public void testOnSatelliteModemStateChanged_notConnected_sendsMtSmsPoll() {
+        setShouldPollMtSmsTrue();
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mContextFixture.putBooleanResource(
+                R.bool.config_satellite_allow_check_message_in_not_connected, true);
+
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+
+        verify(mMockSmsDispatchersController, times(1)).sendMtSmsPollingMessage();
+    }
+
+    @Test
+    public void testOnSatelliteModemStateChanged_connected_sendsMtSmsPoll() {
+        setShouldPollMtSmsTrue();
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+
+        verify(mMockSmsDispatchersController, times(1)).sendMtSmsPollingMessage();
+    }
+
+    @Test
+    public void testOnSatelliteModemStateChanged_transferring_sendsMtSmsPoll() {
+        setShouldPollMtSmsTrue();
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING);
+
+        verify(mMockSmsDispatchersController, times(1)).sendMtSmsPollingMessage();
+    }
+
+    @Test
+    public void testOnSatelliteModemStateChanged_throttled_doesNotSendMtSmsPoll() {
+        startMtSmsPollingThrottle();
+        setShouldPollMtSmsTrue();
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mContextFixture.putBooleanResource(
+                R.bool.config_satellite_allow_check_message_in_not_connected, true);
+
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+
+        verify(mMockSmsDispatchersController, times(0)).sendMtSmsPollingMessage();
+    }
+
+    private void setModemState(int state) {
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(state);
+    }
+
+    private void setShouldPollMtSmsTrue() {
+        // Set mHasEnteredConnectedState true
+        setModemState(SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        // Set the following so shouldPollMtSms returns true
+        mContextFixture.putBooleanResource(R.bool.config_enabled_mt_sms_polling, true);
+        when(mMockSatelliteController.shouldSendSmsToDatagramDispatcher(any(Phone.class)))
+                .thenReturn(true);
+        // This will trigger mShouldPollMtSms = shouldPollMtSms
+        setModemState(SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+    }
+
+    private void startMtSmsPollingThrottle() {
+        // Call sendSms to put message in mPendingSmsMap with isMtSmsPolling=true
+        PendingRequest pendingRequest = new PendingRequest(
+                SmsDispatchersController.PendingRequest.TYPE_TEXT, null, "test-app",
+                Binder.getCallingUserHandle().getIdentifier(), "1111", "2222", asArrayList(null),
+                asArrayList(null), false, null, 0, asArrayList("text"), null, false, 0, false,
+                10, 100L, false, /* isMtSmsPolling= */ true);
+        mDatagramDispatcherUT.sendSms(pendingRequest);
+        SomeArgs args = SomeArgs.obtain();
+        args.arg1 = mPhone.getSubId();
+        args.arg2 = pendingRequest.uniqueMessageId;
+        args.arg3 = true;
+        // EVENT_SEND_SMS_DONE to trigger handleEventSendSmsDone which will start the throttle
+        mDatagramDispatcherUT.handleMessage(
+                mDatagramDispatcherUT.obtainMessage(9 /*EVENT_SEND_SMS_DONE*/, args));
     }
 
     private boolean waitForIntegerConsumerResult(int expectedNumberOfEvents) {
@@ -1202,6 +1366,6 @@ public class DatagramDispatcherTest extends TelephonyTest {
                 SmsDispatchersController.PendingRequest.TYPE_TEXT, null, "test-app",
                 Binder.getCallingUserHandle().getIdentifier(), "1111", "2222", asArrayList(null),
                 asArrayList(null), false, null, 0, asArrayList("text"), null, false, 0, false,
-                10, 100L, false);
+                10, 100L, false, false);
     }
 }

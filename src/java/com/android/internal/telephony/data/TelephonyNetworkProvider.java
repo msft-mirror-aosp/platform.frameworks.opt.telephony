@@ -152,7 +152,7 @@ public class TelephonyNetworkProvider extends NetworkProvider implements Network
             return;
         }
 
-        mPhoneSwitcher.onRequestNetwork(request);
+        mPhoneSwitcher.onRequestNetwork(networkRequest);
 
         // Check with PhoneSwitcher to see where to route the request.
         int phoneId = getPhoneIdForNetworkRequest(networkRequest);
@@ -187,7 +187,7 @@ public class TelephonyNetworkProvider extends NetworkProvider implements Network
             return;
         }
 
-        mPhoneSwitcher.onReleaseNetwork(request);
+        mPhoneSwitcher.onReleaseNetwork(networkRequest);
         int phoneId = mNetworkRequests.remove(networkRequest);
         Phone phone = PhoneFactory.getPhone(phoneId);
         if (phone != null) {
