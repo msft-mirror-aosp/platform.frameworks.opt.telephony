@@ -164,7 +164,6 @@ import android.telephony.satellite.ISatelliteCapabilitiesCallback;
 import android.telephony.satellite.ISatelliteDatagramCallback;
 import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.ISatelliteProvisionStateCallback;
-import android.telephony.satellite.ISatelliteSupportedStateCallback;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
 import android.telephony.satellite.ISelectedNbIotSatelliteSubscriptionCallback;
 import android.telephony.satellite.NtnSignalStrength;
@@ -187,6 +186,7 @@ import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 
 import com.android.internal.R;
+import com.android.internal.telephony.IBooleanConsumer;
 import com.android.internal.telephony.IIntegerConsumer;
 import com.android.internal.telephony.IVoidConsumer;
 import com.android.internal.telephony.Phone;
@@ -3769,8 +3769,8 @@ public class SatelliteControllerTest extends TelephonyTest {
                 enableSatelliteResponse.capture());
         SatelliteModemEnableRequestAttributes request = enableSatelliteRequest.getValue();
         assertTrue(request.isEnabled());
-        assertFalse(request.isDemoMode());
-        assertFalse(request.isEmergencyMode());
+        assertFalse(request.isForDemoMode());
+        assertFalse(request.isForEmergencyMode());
 
         clearInvocations(mMockSatelliteModemInterface);
         moveTimeForward(TEST_WAIT_FOR_SATELLITE_ENABLING_RESPONSE_TIMEOUT_MILLIS);
@@ -3928,10 +3928,10 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         Semaphore semaphore = new Semaphore(0);
         final boolean[] isSupported  = new boolean[1];
-        ISatelliteSupportedStateCallback callback =
-                new ISatelliteSupportedStateCallback.Stub() {
+        IBooleanConsumer callback =
+                new IBooleanConsumer.Stub() {
                     @Override
-                    public void onSatelliteSupportedStateChanged(boolean supported) {
+                    public void accept(boolean supported) {
                         logd("onSatelliteSupportedStateChanged: supported=" + supported);
                         isSupported[0] = supported;
                         try {
@@ -4020,10 +4020,10 @@ public class SatelliteControllerTest extends TelephonyTest {
         when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);
 
         Semaphore semaphore = new Semaphore(0);
-        ISatelliteSupportedStateCallback callback =
-                new ISatelliteSupportedStateCallback.Stub() {
+        IBooleanConsumer callback =
+                new IBooleanConsumer.Stub() {
                     @Override
-                    public void onSatelliteSupportedStateChanged(boolean supported) {
+                    public void accept(boolean supported) {
                         logd("onSatelliteSupportedStateChanged: supported=" + supported);
                         try {
                             semaphore.release();
@@ -4891,10 +4891,10 @@ public class SatelliteControllerTest extends TelephonyTest {
         List<SatelliteSubscriberInfo> list = new ArrayList<>();
         list.add(new SatelliteSubscriberInfo.Builder().setSubscriberId(mSubscriberId).setCarrierId(
                 mCarrierId).setNiddApn(mNiddApn).setSubId(SUB_ID).setSubscriberIdType(
-                SatelliteSubscriberInfo.IMSI_MSISDN).build());
+                SatelliteSubscriberInfo.SUBSCRIBER_ID_TYPE_IMSI_MSISDN).build());
         list.add(new SatelliteSubscriberInfo.Builder().setSubscriberId(mSubscriberId2).setCarrierId(
                 mCarrierId).setNiddApn(mNiddApn).setSubId(SUB_ID1).setSubscriberIdType(
-                SatelliteSubscriberInfo.ICCID).build());
+                SatelliteSubscriberInfo.SUBSCRIBER_ID_TYPE_ICCID).build());
         return list;
     }
 
