@@ -104,7 +104,6 @@ import android.os.IBinder;
 import android.os.ICancellationSignal;
 import android.os.Looper;
 import android.os.Message;
-import android.os.OutcomeReceiver;
 import android.os.PersistableBundle;
 import android.os.Registrant;
 import android.os.RegistrantList;
@@ -295,7 +294,6 @@ public class SatelliteController extends Handler {
     private static final int EVENT_UPDATE_PROVISION_SATELLITE_TOKEN_DONE = 45;
     private static final int EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT = 46;
     private static final int EVENT_WIFI_CONNECTIVITY_STATE_CHANGED = 47;
-    private static final int EVENT_SATELLITE_ACCESS_RESTRICTION_CHECKING_RESULT = 48;
     protected static final int EVENT_WAIT_FOR_CELLULAR_MODEM_OFF_TIMED_OUT = 49;
     private static final int CMD_UPDATE_SATELLITE_ENABLE_ATTRIBUTES = 50;
     private static final int EVENT_UPDATE_SATELLITE_ENABLE_ATTRIBUTES_DONE = 51;
@@ -534,8 +532,6 @@ public class SatelliteController extends Handler {
      */
     @GuardedBy("mSatellitePhoneLock")
     private Boolean mLastNotifiedNtnEligibility = null;
-    @GuardedBy("mSatellitePhoneLock")
-    private boolean mNtnEligibilityHysteresisTimedOut = false;
     @GuardedBy("mSatellitePhoneLock")
     private boolean mCheckingAccessRestrictionInProgress = false;
 
@@ -1969,16 +1965,10 @@ public class SatelliteController extends Handler {
             }
 
             case EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT: {
-                synchronized (mSatellitePhoneLock) {
-                    mNtnEligibilityHysteresisTimedOut = true;
-                }
-
                 boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
                 plogd("EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT:"
                         + " isCarrierRoamingNtnEligible=" + eligible);
-                if (eligible) {
-                    requestIsSatelliteAllowedForCurrentLocation();
-                }
+                updateLastNotifiedNtnEligibilityAndNotify(eligible);
                 break;
             }
 
@@ -2060,10 +2050,6 @@ public class SatelliteController extends Handler {
                             + mIsWifiConnected);
                 }
                 evaluateCarrierRoamingNtnEligibilityChange();
-                break;
-            }
-            case EVENT_SATELLITE_ACCESS_RESTRICTION_CHECKING_RESULT: {
-                handleSatelliteAccessRestrictionCheckingResult((boolean) msg.obj);
                 break;
             }
 
@@ -6128,9 +6114,6 @@ public class SatelliteController extends Handler {
                 startNtnEligibilityHysteresisTimer();
             }
         } else {
-            synchronized (mSatellitePhoneLock) {
-                mNtnEligibilityHysteresisTimedOut = false;
-            }
             stopNtnEligibilityHysteresisTimer();
             updateLastNotifiedNtnEligibilityAndNotify(false);
         }
@@ -6164,9 +6147,6 @@ public class SatelliteController extends Handler {
 
         int subId = getSelectedSatelliteSubId();
         long timeout = getCarrierSupportedSatelliteNotificationHysteresisTimeMillis(subId);
-        synchronized (mSatellitePhoneLock) {
-            mNtnEligibilityHysteresisTimedOut = false;
-        }
         plogd("startNtnEligibilityHysteresisTimer: sendMessageDelayed subId=" + subId
                     + ", phoneId=" + satellitePhone.getPhoneId() + ", timeout=" + timeout);
         sendMessageDelayed(obtainMessage(EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT),
@@ -7762,6 +7742,12 @@ public class SatelliteController extends Handler {
             return false;
         }
 
+        boolean isSatelliteAccessAllowed = isSatelliteAccessAllowedAtCurrentLocation();
+        if (!isSatelliteAccessAllowed) {
+            plogd("isCarrierRoamingNtnEligible: satellite access is not allowed");
+            return false;
+        }
+
         if (phone == null) {
             plogd("isCarrierRoamingNtnEligible: phone is null");
             return false;
@@ -7784,7 +7770,6 @@ public class SatelliteController extends Handler {
                     + "]: subscription is not provisioned to use satellite.");
             return false;
         }
-
 
         int[] services = getSupportedServicesOnCarrierRoamingNtn(subId);
         if (!ArrayUtils.contains(services, NetworkRegistrationInfo.SERVICE_TYPE_SMS)) {
@@ -7862,64 +7847,6 @@ public class SatelliteController extends Handler {
         }
     }
 
-    private void requestIsSatelliteAllowedForCurrentLocation() {
-        plogd("requestIsSatelliteAllowedForCurrentLocation()");
-        synchronized (mSatellitePhoneLock) {
-            if (mCheckingAccessRestrictionInProgress) {
-                plogd("requestIsSatelliteCommunicationAllowedForCurrentLocation was already sent");
-                return;
-            }
-            mCheckingAccessRestrictionInProgress = true;
-        }
-
-        OutcomeReceiver<Boolean, SatelliteManager.SatelliteException> callback =
-                new OutcomeReceiver<>() {
-                    @Override
-                    public void onResult(Boolean result) {
-                        plogd("requestIsSatelliteAllowedForCurrentLocation: result=" + result);
-                        sendMessage(obtainMessage(
-                                EVENT_SATELLITE_ACCESS_RESTRICTION_CHECKING_RESULT, result));
-                    }
-
-                    @Override
-                    public void onError(SatelliteManager.SatelliteException ex) {
-                        plogd("requestIsSatelliteAllowedForCurrentLocation: onError, ex=" + ex);
-                        sendMessage(obtainMessage(
-                                EVENT_SATELLITE_ACCESS_RESTRICTION_CHECKING_RESULT, false));
-                    }
-                };
-        requestIsSatelliteCommunicationAllowedForCurrentLocation(callback);
-    }
-
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
-    protected void requestIsSatelliteCommunicationAllowedForCurrentLocation(
-            @NonNull OutcomeReceiver<Boolean, SatelliteManager.SatelliteException> callback) {
-        SatelliteManager satelliteManager = mContext.getSystemService(SatelliteManager.class);
-        if (satelliteManager == null) {
-            ploge("requestIsSatelliteCommunicationAllowedForCurrentLocation: "
-                    + "SatelliteManager is null");
-            return;
-        }
-
-        satelliteManager.requestIsCommunicationAllowedForCurrentLocation(
-                this::post, callback);
-    }
-
-    private void handleSatelliteAccessRestrictionCheckingResult(boolean satelliteAllowed) {
-        synchronized (mSatellitePhoneLock) {
-            mCheckingAccessRestrictionInProgress = false;
-            boolean eligible = isCarrierRoamingNtnEligible(mSatellitePhone);
-            plogd("handleSatelliteAccessRestrictionCheckingResult:"
-                    + " satelliteAllowed=" + satelliteAllowed
-                    + ", isCarrierRoamingNtnEligible=" + eligible
-                    + ", mNtnEligibilityHysteresisTimedOut=" + mNtnEligibilityHysteresisTimedOut);
-            if (satelliteAllowed && eligible && mNtnEligibilityHysteresisTimedOut) {
-                updateLastNotifiedNtnEligibilityAndNotify(true);
-                mNtnEligibilityHysteresisTimedOut = false;
-            }
-        }
-    }
-
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected void registerForSatelliteCommunicationAllowedStateChanged() {
         if (mRegisteredForSatelliteCommunicationAllowedStateChanged.get()) {
@@ -7944,6 +7871,7 @@ public class SatelliteController extends Handler {
                     synchronized (mSatelliteAccessConfigLock) {
                         mSatelliteAccessAllowed = isAllowed;
                     }
+                    evaluateCarrierRoamingNtnEligibilityChange();
                 }
 
                 @Override
