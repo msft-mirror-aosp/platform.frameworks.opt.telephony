@@ -360,6 +360,9 @@ public class ServiceStateTracker extends Handler {
     private Pattern mOperatorNameStringPattern;
     private PersistableBundle mCarrierConfig;
 
+    @NonNull
+    private final FeatureFlags mFeatureFlags;
+
     private class SstSubscriptionsChangedListener extends OnSubscriptionsChangedListener {
 
         /**
@@ -705,6 +708,7 @@ public class ServiceStateTracker extends Handler {
                 .makeNitzStateMachine(phone);
         mPhone = phone;
         mCi = ci;
+        mFeatureFlags = featureFlags;
 
         mServiceStateStats = new ServiceStateStats(mPhone);
 
@@ -3867,23 +3871,26 @@ public class ServiceStateTracker extends Handler {
 
             tm.setNetworkOperatorNumericForPhone(mPhone.getPhoneId(), operatorNumeric);
 
-            // If the OPERATOR command hasn't returned a valid operator or the device is on IWLAN (
-            // because operatorNumeric would be SIM's mcc/mnc when device is on IWLAN), but if the
-            // device has camped on a cell either to attempt registration or for emergency services,
-            // then for purposes of setting the locale, we don't care if registration fails or is
-            // incomplete. Additionally, if there is no cellular service and ims is registered over
-            // the IWLAN, the locale will not be updated.
-            // CellIdentity can return a null MCC and MNC in CDMA
-            String localeOperator = operatorNumeric;
-            int dataNetworkType = mSS.getDataNetworkType();
-            if (dataNetworkType == TelephonyManager.NETWORK_TYPE_IWLAN
-                    || (dataNetworkType == TelephonyManager.NETWORK_TYPE_UNKNOWN
-                            && getImsRegistrationTech()
-                                    == ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN)) {
-                // TODO(b/333346537#comment10): Complete solution would be ignore mcc/mnc reported
-                //  by the unsolicited indication OPERATOR from RIL, but only relies on MCC/MNC from
-                //  data registration or voice registration.
-                localeOperator = null;
+            String localeOperator = null;
+            if (!mFeatureFlags.ignoreMccMncFromOperatorForLocale()) {
+                // If the OPERATOR command hasn't returned a valid operator or the device is on
+                // IWLAN (because operatorNumeric would be SIM's mcc/mnc when device is on IWLAN),
+                // but if the device has camped on a cell either to attempt registration or for
+                // emergency services, then for purposes of setting the locale, we don't care if
+                // registration fails or is incomplete. Additionally, if there is no cellular
+                // service and ims is registered over the IWLAN, the locale will not be updated.
+                // CellIdentity can return a null MCC and MNC in CDMA
+                localeOperator = operatorNumeric;
+                int dataNetworkType = mSS.getDataNetworkType();
+                if (dataNetworkType == TelephonyManager.NETWORK_TYPE_IWLAN
+                        || (dataNetworkType == TelephonyManager.NETWORK_TYPE_UNKNOWN
+                        && getImsRegistrationTech()
+                        == ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN)) {
+                    // TODO(b/333346537#comment10): Complete solution would be ignore mcc/mnc
+                    //  reported by the unsolicited indication OPERATOR from RIL, but only relies on
+                    //  MCC/MNC from data registration or voice registration.
+                    localeOperator = null;
+                }
             }
             if (isInvalidOperatorNumeric(localeOperator)) {
                 for (CellIdentity cid : prioritizedCids) {

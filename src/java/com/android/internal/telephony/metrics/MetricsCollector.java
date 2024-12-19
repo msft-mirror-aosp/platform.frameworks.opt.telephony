@@ -1480,7 +1480,10 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 satelliteController.carrierId,
                 satelliteController.countOfSatelliteAllowedStateChangedEvents,
                 satelliteController.countOfSuccessfulLocationQueries,
-                satelliteController.countOfFailedLocationQueries);
+                satelliteController.countOfFailedLocationQueries,
+                satelliteController.countOfP2PSmsAvailableNotificationShown,
+                satelliteController.countOfP2PSmsAvailableNotificationRemoved,
+                satelliteController.isNtnOnlyCarrier);
     }
 
     private static StatsEvent buildStatsEvent(SatelliteSession satelliteSession) {
@@ -1502,7 +1505,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 satelliteSession.carrierId,
                 satelliteSession.countOfSatelliteNotificationDisplayed,
                 satelliteSession.countOfAutoExitDueToScreenOff,
-                satelliteSession.countOfAutoExitDueToTnNetwork);
+                satelliteSession.countOfAutoExitDueToTnNetwork,
+                satelliteSession.isEmergency);
     }
 
     private static StatsEvent buildStatsEvent(SatelliteIncomingDatagram stats) {
