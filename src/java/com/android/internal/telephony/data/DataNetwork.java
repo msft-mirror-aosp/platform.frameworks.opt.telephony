@@ -1394,8 +1394,14 @@ public class DataNetwork extends StateMachine {
                 }
                 case EVENT_DETACH_ALL_NETWORK_REQUESTS: {
                     for (TelephonyNetworkRequest networkRequest : mAttachedNetworkRequestList) {
-                        networkRequest.setState(TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED);
-                        networkRequest.setAttachedNetwork(null);
+                        // Check if the network request still belongs to this network, because
+                        // during data switch, the network request can be attached to other network
+                        // on a different SIM.
+                        if (networkRequest.getAttachedNetwork() == DataNetwork.this) {
+                            networkRequest.setState(
+                                    TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED);
+                            networkRequest.setAttachedNetwork(null);
+                        }
                     }
                     log("All network requests detached.");
                     mAttachedNetworkRequestList.clear();
@@ -2141,14 +2147,19 @@ public class DataNetwork extends StateMachine {
     private void onDetachNetworkRequest(@NonNull TelephonyNetworkRequest networkRequest,
             boolean shouldRetry) {
         mAttachedNetworkRequestList.remove(networkRequest);
-        networkRequest.setState(TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED);
-        networkRequest.setAttachedNetwork(null);
+        // Check if the network request still belongs to this network, because
+        // during data switch, the network request can be attached to other network
+        // on a different SIM.
+        if (networkRequest.getAttachedNetwork() == DataNetwork.this) {
+            networkRequest.setState(TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED);
+            networkRequest.setAttachedNetwork(null);
 
-        if (shouldRetry) {
-            // Inform DataNetworkController that a network request was detached and should be
-            // scheduled to retry.
-            mDataNetworkCallback.invokeFromExecutor(
-                    () -> mDataNetworkCallback.onRetryUnsatisfiedNetworkRequest(networkRequest));
+            if (shouldRetry) {
+                // Inform DataNetworkController that a network request was detached and should be
+                // scheduled to retry.
+                mDataNetworkCallback.invokeFromExecutor(() ->
+                        mDataNetworkCallback.onRetryUnsatisfiedNetworkRequest(networkRequest));
+            }
         }
 
         if (mAttachedNetworkRequestList.isEmpty()) {
