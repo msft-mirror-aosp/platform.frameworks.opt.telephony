@@ -246,3 +246,14 @@ flag {
     description: "Disable CDMA and NV backing code"
     bug: "379356026"
 }
+
+# OWNER=tjstuart TARGET=25Q2
+flag {
+    name: "dynamic_do_not_ask_again_text"
+    namespace: "telephony"
+    description: "Make No Emergency Wifi Calling Do Not Ask Again text translatable"
+    bug:"382006472"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
