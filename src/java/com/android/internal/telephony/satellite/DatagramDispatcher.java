@@ -272,6 +272,7 @@ public class DatagramDispatcher extends Handler {
                 request = (DatagramDispatcherHandlerRequest) msg.obj;
                 SendSatelliteDatagramArgument argument =
                         (SendSatelliteDatagramArgument) request.argument;
+                argument.setDatagramStartTime();
                 onCompleted = obtainMessage(EVENT_SEND_SATELLITE_DATAGRAM_DONE, request);
 
                 synchronized (mLock) {
@@ -480,7 +481,6 @@ public class DatagramDispatcher extends Handler {
                 // Modem can be busy receiving datagrams, so send datagram only when modem is
                 // not busy.
                 mSendingInProgress = true;
-                datagramArgs.setDatagramStartTime();
                 mDatagramController.updateSendStatus(subId, datagramType,
                         SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
                         getPendingMessagesCount(), SatelliteManager.SATELLITE_RESULT_SUCCESS);
@@ -639,7 +639,6 @@ public class DatagramDispatcher extends Handler {
 
             mSendingInProgress = true;
             // Sets the trigger time for getting pending datagrams
-            datagramArg.setDatagramStartTime();
             mDatagramController.updateSendStatus(datagramArg.subId, datagramArg.datagramType,
                     SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING,
                     getPendingMessagesCount(), SatelliteManager.SATELLITE_RESULT_SUCCESS);
@@ -1346,9 +1345,8 @@ public class DatagramDispatcher extends Handler {
         if (!mIsAligned) return false;
 
         boolean isModemStateConnectedOrTransferring =
-                mModemState == SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED
-                        || mModemState
-                                == SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING;
+                mModemState == SATELLITE_MODEM_STATE_CONNECTED
+                        || mModemState == SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING;
         if (!isModemStateConnectedOrTransferring && !allowCheckMessageInNotConnected()) {
             plogd("EVENT_MT_SMS_POLLING_THROTTLE_TIMED_OUT:"
                     + " allow_check_message_in_not_connected is disabled");
