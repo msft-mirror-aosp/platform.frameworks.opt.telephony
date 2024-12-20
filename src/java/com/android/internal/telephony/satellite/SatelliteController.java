@@ -2032,6 +2032,7 @@ public class SatelliteController extends Handler {
                 mProvisionMetricsStats.setResultCode(error)
                         .setIsProvisionRequest(argument.mProvisioned)
                         .setCarrierId(getSatelliteCarrierId())
+                        .setIsNtnOnlyCarrier(isNtnOnlyCarrier())
                         .reportProvisionMetrics();
                 if (argument.mProvisioned) {
                     mControllerMetricsStats.reportProvisionCount(error);
@@ -4395,6 +4396,7 @@ public class SatelliteController extends Handler {
                     .setResultCode(SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE)
                     .setIsProvisionRequest(true)
                     .setCarrierId(getSatelliteCarrierId())
+                    .setIsNtnOnlyCarrier(isNtnOnlyCarrier())
                     .reportProvisionMetrics();
             mControllerMetricsStats.reportProvisionCount(
                     SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE);
@@ -4414,6 +4416,7 @@ public class SatelliteController extends Handler {
         mProvisionMetricsStats.setResultCode(result)
                 .setIsProvisionRequest(true)
                 .setCarrierId(getSatelliteCarrierId())
+                .setIsNtnOnlyCarrier(isNtnOnlyCarrier())
                 .reportProvisionMetrics();
         mControllerMetricsStats.reportProvisionCount(result);
     }
@@ -4444,6 +4447,7 @@ public class SatelliteController extends Handler {
         mProvisionMetricsStats.setResultCode(result)
                 .setIsProvisionRequest(false)
                 .setCarrierId(getSatelliteCarrierId())
+                .setIsNtnOnlyCarrier(isNtnOnlyCarrier())
                 .reportProvisionMetrics();
         mControllerMetricsStats.reportDeprovisionCount(result);
     }
@@ -5960,9 +5964,19 @@ public class SatelliteController extends Handler {
                 .setSatelliteTechnology(getSupportedNtnRadioTechnology())
                 .setIsDemoMode(mIsDemoModeEnabled)
                 .setCarrierId(getSatelliteCarrierId())
+                .setIsNtnOnlyCarrier(isNtnOnlyCarrier())
                 .reportSessionMetrics();
         mSessionStartTimeStamp = 0;
         mSessionProcessingTimeStamp = 0;
+    }
+
+    public boolean isNtnOnlyCarrier() {
+        synchronized (mSatelliteTokenProvisionedLock) {
+            if (mSelectedSatelliteSubId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                return false;
+            }
+            return mSelectedSatelliteSubId == getNtnOnlySubscriptionId();
+        }
     }
 
     private void registerForServiceStateChanged() {
@@ -7423,10 +7437,7 @@ public class SatelliteController extends Handler {
             } else {
                 logd("selectBindingSatelliteSubscription: Carrier ID is UNKNOWN_CARRIER_ID");
             }
-            synchronized (mSatelliteTokenProvisionedLock) {
-                mControllerMetricsStats.setIsNtnOnlyCarrier(
-                        mSelectedSatelliteSubId == getNtnOnlySubscriptionId());
-            }
+            mControllerMetricsStats.setIsNtnOnlyCarrier(isNtnOnlyCarrier());
         }
         plogd("selectBindingSatelliteSubscription: SelectedSatelliteSubId=" + selectedSubId);
         handleEventSelectedNbIotSatelliteSubscriptionChanged(selectedSubId);
