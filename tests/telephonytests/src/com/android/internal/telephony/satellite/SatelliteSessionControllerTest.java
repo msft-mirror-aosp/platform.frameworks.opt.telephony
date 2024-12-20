@@ -2124,6 +2124,48 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         clearInvocations(mMockDatagramController);
     }
 
+    @Test
+    public void testP2pSmsInactivityTimerTimedOut_tnScanningNotSupported() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
+
+        when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(false);
+        when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
+                anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getSupportedServicesOnCarrierRoamingNtn(anyInt()))
+                .thenReturn(new int[]{
+                        NetworkRegistrationInfo.SERVICE_TYPE_SMS,
+                        NetworkRegistrationInfo.SERVICE_TYPE_EMERGENCY});
+        when(mMockSatelliteController.isInCarrierRoamingNbIotNtn()).thenReturn(true);
+        Resources resources = mContext.getResources();
+        when(resources.getBoolean(
+                R.bool.config_satellite_allow_tn_scanning_during_satellite_session))
+                .thenReturn(false);
+        PersistableBundle bundle = new PersistableBundle();
+        bundle.putInt(KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
+                P2P_SMS_INACTIVITY_TIMEOUT_SEC);
+        when(mMockSatelliteController.getPersistableBundle(anyInt())).thenReturn(bundle);
+
+        // Since satellite is supported, SatelliteSessionController should move to POWER_OFF state.
+        assertNotNull(mTestSatelliteSessionController);
+        mTestSatelliteSessionController.setSatelliteEnabledForNtnOnlySubscription(false);
+        assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
+        setupDatagramTransferringState(true);
+
+        moveToNotConnectedState();
+
+        // Verify that the P2P SMS inactivity timer is started.
+        assertTrue(mTestSatelliteSessionController.isP2pSmsInActivityTimerStarted());
+
+        // Time shift to cause timeout
+        moveTimeForward(P2P_SMS_INACTIVITY_TIMEOUT_SEC * 1000);
+        processAllMessages();
+
+        // Should disable satellite
+        verify(mMockSatelliteController).requestSatelliteEnabled(
+                eq(false), eq(false), eq(false), any(IIntegerConsumer.Stub.class));
+    }
+
     private void verifyEsosP2pSmsInactivityTimer(boolean esosTimer, boolean p2pSmsTimer) {
         assertEquals(mTestSatelliteSessionController.isEsosInActivityTimerStarted(), esosTimer);
         assertEquals(mTestSatelliteSessionController.isP2pSmsInActivityTimerStarted(),
