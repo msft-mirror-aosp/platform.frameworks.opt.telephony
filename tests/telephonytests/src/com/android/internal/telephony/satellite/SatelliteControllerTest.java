@@ -35,7 +35,6 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_S
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL;
 import static android.telephony.CarrierConfigManager.SATELLITE_DATA_SUPPORT_ALL;
 import static android.telephony.CarrierConfigManager.SATELLITE_DATA_SUPPORT_BANDWIDTH_CONSTRAINED;
-import static android.telephony.CarrierConfigManager.SATELLITE_DATA_SUPPORT_ONLY_RESTRICTED;
 import static android.telephony.NetworkRegistrationInfo.SERVICE_TYPE_DATA;
 import static android.telephony.NetworkRegistrationInfo.SERVICE_TYPE_SMS;
 import static android.telephony.NetworkRegistrationInfo.SERVICE_TYPE_VOICE;
@@ -169,7 +168,6 @@ import android.telephony.satellite.ISatelliteSupportedStateCallback;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
 import android.telephony.satellite.ISelectedNbIotSatelliteSubscriptionCallback;
 import android.telephony.satellite.NtnSignalStrength;
-import android.telephony.satellite.SatelliteAccessConfiguration;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteInfo;
@@ -4259,6 +4257,7 @@ public class SatelliteControllerTest extends TelephonyTest {
             );
         }
         mSatelliteControllerUT.setSatellitePhone(1);
+        mSatelliteControllerUT.setIsSatelliteAllowedState(true);
         processAllMessages();
 
         assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
@@ -4326,6 +4325,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         mSatelliteControllerUT.setSatellitePhone(1);
         mSatelliteControllerUT.isSatelliteAllowedCallback = null;
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        mSatelliteControllerUT.setIsSatelliteAllowedState(true);
         processAllMessages();
         mSatelliteControllerUT.elapsedRealtime = 0;
         assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
@@ -4336,10 +4336,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         // 2 minutes later and hysteresis timeout is 1 minute
         mSatelliteControllerUT.elapsedRealtime = 2 * 60 * 1000;
         moveTimeForward(2 * 60 * 1000);
-        processAllMessages();
-        assertNotNull(mSatelliteControllerUT.isSatelliteAllowedCallback);
-
-        mSatelliteControllerUT.isSatelliteAllowedCallback.onResult(true);
         processAllMessages();
         assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
         verify(mPhone, times(1)).notifyCarrierRoamingNtnEligibleStateChanged(eq(true));
@@ -4354,31 +4350,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertFalse(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
         verify(mPhone, times(1)).notifyCarrierRoamingNtnEligibleStateChanged(eq(false));
         verify(mPhone2, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(anyBoolean());
-
-        // isSatelliteAllowedCallback.onError() returns error
-        when(mServiceState.getState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);
-        sendServiceStateChangedEvent();
-        processAllMessages();
-        mSatelliteControllerUT.elapsedRealtime = 0;
-        assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
-        verify(mPhone, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(eq(true));
-        verify(mPhone2, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(anyBoolean());
-        clearInvocations(mPhone);
-
-        // 2 minutes later and hysteresis timeout is 1 minute
-        mSatelliteControllerUT.elapsedRealtime = 2 * 60 * 1000;
-        moveTimeForward(2 * 60 * 1000);
-        processAllMessages();
-        assertNotNull(mSatelliteControllerUT.isSatelliteAllowedCallback);
-
-        mSatelliteControllerUT.isSatelliteAllowedCallback.onError(new SatelliteException(
-                SATELLITE_RESULT_ERROR));
-        processAllMessages();
-        assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
-        verify(mPhone, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(eq(true));
-        verify(mPhone2, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(anyBoolean());
-        verify(mMockNotificationManager, times(2)).cancelAsUser(anyString(), anyInt(),
-                any());
     }
 
     @Test
@@ -6253,14 +6224,6 @@ public class SatelliteControllerTest extends TelephonyTest {
             synchronized (mSatellitePhoneLock) {
                 mSatellitePhone = mPhone;
             }
-        }
-
-        @Override
-        protected void requestIsSatelliteCommunicationAllowedForCurrentLocation(
-                @NonNull OutcomeReceiver<Boolean, SatelliteManager.SatelliteException> callback) {
-            logd("requestIsSatelliteCommunicationAllowedForCurrentLocation: callback="
-                    + callback);
-            isSatelliteAllowedCallback = callback;
         }
 
         @Override
