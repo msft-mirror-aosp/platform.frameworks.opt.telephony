@@ -132,7 +132,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         }
 
         private SMSDispatcher.SmsTracker getSmsTracker(String destAddr, long messageId) {
-            return new SMSDispatcher.SmsTracker(destAddr, messageId);
+            return new SMSDispatcher.SmsTracker(destAddr, messageId, "testMessage");
         }
     }
 

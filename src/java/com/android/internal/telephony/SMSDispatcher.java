@@ -2626,7 +2626,7 @@ public abstract class SMSDispatcher extends Handler {
         }
 
         @VisibleForTesting
-        public SmsTracker(String destAddr, long messageId) {
+        public SmsTracker(String destAddr, long messageId, String messageText) {
             mData = null;
             mSentIntent = null;
             mDeliveryIntent = null;
@@ -2643,6 +2643,7 @@ public abstract class SMSDispatcher extends Handler {
             mSkipShortCodeDestAddrCheck = false;
             mUniqueMessageId = 0;
             mResultCodeFromCarrierMessagingService = CarrierMessagingService.SEND_STATUS_OK;
+            mFullMessageText = messageText;
         }
 
         public HashMap<String, Object> getData() {
@@ -2680,6 +2681,22 @@ public abstract class SMSDispatcher extends Handler {
                                     getAppPackageName(), userHandle);
             }
             return mIsFromDefaultSmsApplication;
+        }
+
+        /**
+         * Check if the message is a MT SMS polling message.
+         *
+         * @param context The Context
+         * @return true if the message is a MT SMS polling message, false otherwise.
+         */
+        public boolean isMtSmsPollingMessage(Context context) {
+            if (mFullMessageText == null) {
+                return false;
+            }
+
+            String mtSmsPollingText =
+                    context.getResources().getString(R.string.config_mt_sms_polling_text);
+            return mFullMessageText.equals(mtSmsPollingText);
         }
 
         /**
