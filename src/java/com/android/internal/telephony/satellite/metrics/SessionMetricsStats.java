@@ -62,6 +62,7 @@ public class SessionMetricsStats {
     private int mCountOfAutoExitDueToScreenOff;
     private int mCountOfAutoExitDueToTnNetwork;
     private boolean mIsEmergency;
+    private boolean mIsNtnOnlyCarrier;
     private SatelliteSessionStats mDatagramStats;
 
     private SessionMetricsStats() {
@@ -267,6 +268,13 @@ public class SessionMetricsStats {
         return this;
     }
 
+    /** Capture the latest provisioned state for satellite service */
+    public SessionMetricsStats setIsNtnOnlyCarrier(boolean isNtnOnlyCarrier) {
+        mIsNtnOnlyCarrier = isNtnOnlyCarrier;
+        logd("setIsNtnOnlyCarrier(" + mIsNtnOnlyCarrier + ")");
+        return this;
+    }
+
     /** Report the session metrics atoms to PersistAtomsStorage in telephony. */
     public void reportSessionMetrics() {
         SatelliteStats.SatelliteSessionParams sessionParams =
@@ -289,6 +297,7 @@ public class SessionMetricsStats {
                         .setCountOfAutoExitDueToScreenOff(mCountOfAutoExitDueToScreenOff)
                         .setCountOfAutoExitDueToTnNetwork(mCountOfAutoExitDueToTnNetwork)
                         .setIsEmergency(mIsEmergency)
+                        .setIsNtnOnlyCarrier(mIsNtnOnlyCarrier)
                         .build();
         logd("reportSessionMetrics: " + sessionParams.toString());
         SatelliteStats.getInstance().onSatelliteSessionMetrics(sessionParams);
@@ -347,6 +356,7 @@ public class SessionMetricsStats {
         mCountOfAutoExitDueToScreenOff = 0;
         mCountOfAutoExitDueToTnNetwork = 0;
         mIsEmergency = false;
+        mIsNtnOnlyCarrier = false;
     }
 
     public void resetSessionStatsShadowCounters() {

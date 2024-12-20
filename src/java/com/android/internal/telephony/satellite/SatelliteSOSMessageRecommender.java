@@ -445,7 +445,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
                         .setRecommendingHandoverType(getEmergencyCallToSatelliteHandoverType())
                         .setIsSatelliteAllowedInCurrentLocation(isSatelliteAllowed())
                         .setIsWifiConnected(mCountryDetector.isWifiNetworkConnected())
-                        .setCarrierId(mSatelliteController.getSatelliteCarrierId()).build());
+                        .setCarrierId(mSatelliteController.getSatelliteCarrierId())
+                        .setIsNtnOnlyCarrier(mSatelliteController.isNtnOnlyCarrier()).build());
     }
 
     private void cleanUpResources(boolean isDialerNotified) {

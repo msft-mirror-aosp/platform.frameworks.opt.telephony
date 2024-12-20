@@ -39,6 +39,7 @@ public class ProvisionMetricsStats {
     private boolean mIsProvisionRequest;
     private boolean mIsCanceled;
     private int mCarrierId;
+    private boolean mIsNtnOnlyCarrier;
 
     private ProvisionMetricsStats() {
         initializeProvisionParams();
@@ -88,6 +89,12 @@ public class ProvisionMetricsStats {
         return this;
     }
 
+    /** Capture the latest provisioned state for satellite service */
+    public ProvisionMetricsStats setIsNtnOnlyCarrier(boolean isNtnOnlyCarrier) {
+        mIsNtnOnlyCarrier = isNtnOnlyCarrier;
+        return this;
+    }
+
     /** Report the provision metrics atoms to PersistAtomsStorage in telephony */
     public void reportProvisionMetrics() {
         SatelliteStats.SatelliteProvisionParams provisionParams =
@@ -98,6 +105,7 @@ public class ProvisionMetricsStats {
                         .setIsProvisionRequest(mIsProvisionRequest)
                         .setIsCanceled(mIsCanceled)
                         .setCarrierId(mCarrierId)
+                        .setIsNtnOnlyCarrier(mIsNtnOnlyCarrier)
                         .build();
         SatelliteStats.getInstance().onSatelliteProvisionMetrics(provisionParams);
         logd("reportProvisionMetrics: " + provisionParams);
@@ -110,6 +118,7 @@ public class ProvisionMetricsStats {
         mIsProvisionRequest = false;
         mIsCanceled = false;
         mCarrierId = UNKNOWN_CARRIER_ID;
+        mIsNtnOnlyCarrier = false;
     }
 
     private static void logd(@NonNull String log) {
