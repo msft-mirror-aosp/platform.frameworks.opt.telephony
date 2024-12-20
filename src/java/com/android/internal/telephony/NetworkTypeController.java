@@ -338,10 +338,6 @@ public class NetworkTypeController extends StateMachine {
         mServiceState = mPhone.getServiceStateTracker().getServiceState();
         mPhysicalChannelConfigs = mPhone.getServiceStateTracker().getPhysicalChannelConfigList();
 
-        if(mFeatureFlags.carrierEnabledSatelliteFlag()) {
-            registerForSatelliteNetwork();
-        }
-
         sendMessage(EVENT_INITIALIZE);
     }
 
