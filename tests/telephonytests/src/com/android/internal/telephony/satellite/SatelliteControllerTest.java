@@ -4895,10 +4895,10 @@ public class SatelliteControllerTest extends TelephonyTest {
     private List<SatelliteSubscriberInfo> getExpectedSatelliteSubscriberInfoList() {
         List<SatelliteSubscriberInfo> list = new ArrayList<>();
         list.add(new SatelliteSubscriberInfo.Builder().setSubscriberId(mSubscriberId).setCarrierId(
-                mCarrierId).setNiddApn(mNiddApn).setSubId(SUB_ID).setSubscriberIdType(
+                mCarrierId).setNiddApn(mNiddApn).setSubscriptionId(SUB_ID).setSubscriberIdType(
                 SatelliteSubscriberInfo.SUBSCRIBER_ID_TYPE_IMSI_MSISDN).build());
         list.add(new SatelliteSubscriberInfo.Builder().setSubscriberId(mSubscriberId2).setCarrierId(
-                mCarrierId).setNiddApn(mNiddApn).setSubId(SUB_ID1).setSubscriberIdType(
+                mCarrierId).setNiddApn(mNiddApn).setSubscriptionId(SUB_ID1).setSubscriberIdType(
                 SatelliteSubscriberInfo.SUBSCRIBER_ID_TYPE_ICCID).build());
         return list;
     }
@@ -5003,7 +5003,7 @@ public class SatelliteControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testRegisterForSatelliteCommunicationAllowedStateChanged() throws Exception {
+    public void testRegisterForSatelliteCommunicationAccessStateChanged() throws Exception {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         mContextFixture.putIntArrayResource(
                 R.array.config_verizon_satellite_enabled_tagids,
@@ -5035,7 +5035,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         setComponentName();
         mSatelliteControllerUT.setIsSatelliteAllowedState(true);
 
-        mSatelliteControllerUT.registerForSatelliteCommunicationAllowedStateChanged();
+        mSatelliteControllerUT.registerForSatelliteCommunicationAccessStateChanged();
 
         // Test satelliteAccessConfigCallback.onSuccess
         // with current location NOT supporting carrier satellite
@@ -6218,8 +6218,8 @@ public class SatelliteControllerTest extends TelephonyTest {
         }
 
         @Override
-        protected void registerForSatelliteCommunicationAllowedStateChanged() {
-            logd("registerForSatelliteCommunicationAllowedStateChanged");
+        protected void registerForSatelliteCommunicationAccessStateChanged() {
+            logd("registerForSatelliteCommunicationAccessStateChanged");
         }
 
         void setSatelliteSessionController(SatelliteSessionController satelliteSessionController) {
