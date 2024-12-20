@@ -741,6 +741,8 @@ public class DataNetworkController extends Handler {
 
         private static final String RULE_TAG_ROAMING = "roaming";
 
+        private static final String RULE_TAG_INCALL = "incall";
+
         /** Handover rule type. */
         @HandoverRuleType
         public final int type;
@@ -766,6 +768,9 @@ public class DataNetworkController extends Handler {
         /** {@code true} indicates this policy is only applicable when the device is roaming. */
         public final boolean isOnlyForRoaming;
 
+        /** {@code true} indicates this policy is only applicable when the device is incall. */
+        public final boolean isOnlyForIncall;
+
         /**
          * Constructor
          *
@@ -773,7 +778,7 @@ public class DataNetworkController extends Handler {
          *
          * @see CarrierConfigManager#KEY_IWLAN_HANDOVER_POLICY_STRING_ARRAY
          */
-        public HandoverRule(@NonNull String ruleString) {
+        public HandoverRule(@NonNull String ruleString, @NonNull FeatureFlags featureFlags) {
             if (TextUtils.isEmpty(ruleString)) {
                 throw new IllegalArgumentException("illegal rule " + ruleString);
             }
@@ -781,6 +786,7 @@ public class DataNetworkController extends Handler {
             Set<Integer> source = null, target = null, capabilities = Collections.emptySet();
             int type = 0;
             boolean roaming = false;
+            boolean incall = false;
 
             ruleString = ruleString.trim().toLowerCase(Locale.ROOT);
             String[] expressions = ruleString.split("\\s*,\\s*");
@@ -820,6 +826,11 @@ public class DataNetworkController extends Handler {
                             break;
                         case RULE_TAG_ROAMING:
                             roaming = Boolean.parseBoolean(value);
+                            break;
+                        case RULE_TAG_INCALL:
+                            if (featureFlags.incallHandoverPolicy()) {
+                                incall = Boolean.parseBoolean(value);
+                            }
                             break;
                         default:
                             throw new IllegalArgumentException("unexpected key " + key);
@@ -867,6 +878,7 @@ public class DataNetworkController extends Handler {
             this.type = type;
             networkCapabilities = capabilities;
             isOnlyForRoaming = roaming;
+            isOnlyForIncall = incall;
         }
 
         @Override
@@ -876,8 +888,8 @@ public class DataNetworkController extends Handler {
                     .map(AccessNetworkType::toString).collect(Collectors.joining("|"))
                     + ", target=" + targetAccessNetworks.stream().map(AccessNetworkType::toString)
                     .collect(Collectors.joining("|")) + ", isRoaming=" + isOnlyForRoaming
-                    + ", capabilities=" + DataUtils.networkCapabilitiesToString(networkCapabilities)
-                    + "]";
+                    + ", isIncall=" + isOnlyForIncall + ", capabilities="
+                    + DataUtils.networkCapabilitiesToString(networkCapabilities) + "]";
         }
     }
 
@@ -2353,6 +2365,9 @@ public class DataNetworkController extends Handler {
             // in data network.
             boolean isRoaming = isWwanInService ? mServiceState.getDataRoamingFromRegistration()
                     : dataNetwork.getLastKnownRoamingState();
+            Phone imsPhone = mPhone.getImsPhone();
+            boolean isIncall = mFeatureFlags.incallHandoverPolicy() && imsPhone != null
+                    && (imsPhone.getCallTracker().getState() != PhoneConstants.State.IDLE);
             int targetAccessNetwork = DataUtils.networkTypeToAccessNetworkType(
                     getDataNetworkType(DataUtils.getTargetTransport(dataNetwork.getTransport())));
             NetworkCapabilities capabilities = dataNetwork.getNetworkCapabilities();
@@ -2360,6 +2375,7 @@ public class DataNetworkController extends Handler {
                     + "source=" + AccessNetworkType.toString(sourceAccessNetwork)
                     + ", target=" + AccessNetworkType.toString(targetAccessNetwork)
                     + ", roaming=" + isRoaming
+                    + ", incall=" + isIncall
                     + ", ServiceState=" + mServiceState
                     + ", capabilities=" + capabilities);
 
@@ -2368,6 +2384,11 @@ public class DataNetworkController extends Handler {
                 // Check if the rule is only for roaming and we are not roaming.
                 if (rule.isOnlyForRoaming && !isRoaming) {
                     // If the rule is for roaming only, and the device is not roaming, then bypass
+                    // this rule.
+                    continue;
+                }
+                if (rule.isOnlyForIncall && (!mFeatureFlags.incallHandoverPolicy() || !isIncall)) {
+                    // If the rule is for incall only, and the device is not incall, then bypass
                     // this rule.
                     continue;
                 }
