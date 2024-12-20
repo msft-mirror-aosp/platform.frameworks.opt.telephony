@@ -1254,6 +1254,7 @@ public class DatagramDispatcher extends Handler {
                         getPendingMessagesCount(), SATELLITE_RESULT_SUCCESS);
                 if (datagramType == DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS) {
                     startMtSmsPollingThrottle();
+                    mShouldPollMtSms = false;
                 }
             } else {
                 // Update send status
@@ -1295,7 +1296,9 @@ public class DatagramDispatcher extends Handler {
         }
 
         plogd("sendMtSmsPollingMessage");
-        mShouldPollMtSms = false;
+        if (!allowCheckMessageInNotConnected()) {
+            mShouldPollMtSms = false;
+        }
 
         for (Entry<Long, PendingRequest> entry : mPendingSmsMap.entrySet()) {
             PendingRequest pendingRequest = entry.getValue();
