@@ -875,8 +875,7 @@ public class SatelliteSessionController extends StateMachine {
 
             //Enable Cellular Modem scanning
             boolean configSatelliteAllowTnScanningDuringSatelliteSession =
-                    mContext.getResources().getBoolean(
-                        R.bool.config_satellite_allow_tn_scanning_during_satellite_session);
+                    isTnScanningAllowedDuringSatelliteSession();
             if (configSatelliteAllowTnScanningDuringSatelliteSession) {
                 Message onCompleted =
                     obtainMessage(EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE);
@@ -1217,12 +1216,7 @@ public class SatelliteSessionController extends StateMachine {
                     }
                     break;
                 case EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT:
-                    if (isEsosInActivityTimerStarted()) {
-                        plogd("NotConnectedState: processing: ESOS inactivity timer running "
-                                + "can not move to IDLE");
-                    } else {
-                        transitionTo(mIdleState);
-                    }
+                    handleEventP2pSmsInactivityTimerTimedOut();
                     break;
                 case EVENT_NB_IOT_INACTIVITY_TIMER_TIMED_OUT:
                     transitionTo(mIdleState);
@@ -1345,12 +1339,7 @@ public class SatelliteSessionController extends StateMachine {
                     }
                     break;
                 case EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT:
-                    if (isEsosInActivityTimerStarted()) {
-                        plogd("ConnectedState: processing: ESOS inactivity timer running "
-                                + "can not move to IDLE");
-                    } else {
-                        transitionTo(mIdleState);
-                    }
+                    handleEventP2pSmsInactivityTimerTimedOut();
                     break;
             }
             // Ignore all unexpected events.
@@ -1690,6 +1679,35 @@ public class SatelliteSessionController extends StateMachine {
         }
     }
 
+    private void handleEventP2pSmsInactivityTimerTimedOut() {
+        if (isEsosInActivityTimerStarted()) {
+            plogd("handleEventP2pSmsInactivityTimerTimedOut: processing: ESOS inactivity timer "
+                    + "running can not move to IDLE");
+        } else {
+            if (isTnScanningAllowedDuringSatelliteSession()) {
+                plogd("handleEventP2pSmsInactivityTimerTimedOut: Transition to IDLE state");
+                transitionTo(mIdleState);
+            } else {
+                if (mSatelliteController.getRequestIsEmergency()) {
+                    plogd("handleEventP2pSmsInactivityTimerTimedOut: Emergency mode");
+                    return;
+                }
+
+                plogd("handleEventP2pSmsInactivityTimerTimedOut: request disable satellite");
+                mSatelliteController.requestSatelliteEnabled(
+                        false /*enableSatellite*/,
+                        false /*enableDemoMode*/,
+                        mSatelliteController.getRequestIsEmergency() /*isEmergency*/,
+                        new IIntegerConsumer.Stub() {
+                            @Override
+                            public void accept(int result) {
+                                plogd("requestSatelliteEnabled result=" + result);
+                            }
+                        });
+            }
+        }
+    }
+
     private int getScreenOffInactivityTimeoutDurationSec() {
         PersistableBundle config = mSatelliteController.getPersistableBundle(getSubId());
 
@@ -1959,6 +1977,16 @@ public class SatelliteSessionController extends StateMachine {
                 R.bool.config_satellite_modem_support_concurrent_tn_scanning);
         } catch (RuntimeException e) {
             plogd("isConcurrentTnScanningSupported: ex=" + e);
+            return false;
+        }
+    }
+
+    private boolean isTnScanningAllowedDuringSatelliteSession() {
+        try {
+            return mContext.getResources().getBoolean(
+                    R.bool.config_satellite_allow_tn_scanning_during_satellite_session);
+        } catch (RuntimeException e) {
+            plogd("isTnScanningAllowedDuringSatelliteSession: ex=" + e);
             return false;
         }
     }
