@@ -1508,7 +1508,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 satelliteSession.countOfAutoExitDueToScreenOff,
                 satelliteSession.countOfAutoExitDueToTnNetwork,
                 satelliteSession.isEmergency,
-                satelliteSession.isNtnOnlyCarrier);
+                satelliteSession.isNtnOnlyCarrier,
+                satelliteSession.maxInactivityDurationSec);
     }
 
     private static StatsEvent buildStatsEvent(SatelliteIncomingDatagram stats) {

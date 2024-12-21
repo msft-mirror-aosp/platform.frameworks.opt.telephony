@@ -749,6 +749,7 @@ message SatelliteSession {
     optional int32 count_of_auto_exit_due_to_tn_network = 17;
     optional bool is_emergency = 18;
     optional bool is_ntn_only_carrier = 19;
+    optional int32 max_inactivity_duration_sec = 20;
 }
 
 message SatelliteIncomingDatagram {
