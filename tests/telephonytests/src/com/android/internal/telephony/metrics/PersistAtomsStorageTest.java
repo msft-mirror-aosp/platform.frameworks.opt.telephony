@@ -1216,6 +1216,7 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteSession1.countOfAutoExitDueToScreenOff = 6;
         mSatelliteSession1.countOfAutoExitDueToTnNetwork = 7;
         mSatelliteSession1.isEmergency = true;
+        mSatelliteSession1.maxInactivityDurationSec = 8;
 
         mSatelliteSession2 = new SatelliteSession();
         mSatelliteSession2.satelliteServiceInitializationResult =
@@ -1239,6 +1240,7 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         mSatelliteSession2.countOfAutoExitDueToScreenOff = 60;
         mSatelliteSession2.countOfAutoExitDueToTnNetwork = 70;
         mSatelliteSession2.isEmergency = false;
+        mSatelliteSession2.maxInactivityDurationSec = 80;
 
         mSatelliteSessions =
                 new SatelliteSession[] {
@@ -6060,32 +6062,33 @@ public class PersistAtomsStorageTest extends TelephonyTest {
         int actualCount = 0;
         for (SatelliteSession stats : tested) {
             if (stats.satelliteServiceInitializationResult
-                    == expectedStats.satelliteServiceInitializationResult
+                            == expectedStats.satelliteServiceInitializationResult
                     && stats.satelliteTechnology == expectedStats.satelliteTechnology
                     && stats.satelliteServiceTerminationResult
-                        == expectedStats.satelliteServiceTerminationResult
+                            == expectedStats.satelliteServiceTerminationResult
                     && stats.initializationProcessingTimeMillis
-                        == expectedStats.initializationProcessingTimeMillis
+                            == expectedStats.initializationProcessingTimeMillis
                     && stats.terminationProcessingTimeMillis
-                        == expectedStats.terminationProcessingTimeMillis
+                            == expectedStats.terminationProcessingTimeMillis
                     && stats.sessionDurationSeconds == expectedStats.sessionDurationSeconds
                     && stats.countOfOutgoingDatagramSuccess
-                        == expectedStats.countOfOutgoingDatagramSuccess
+                            == expectedStats.countOfOutgoingDatagramSuccess
                     && stats.countOfOutgoingDatagramFailed
-                        == expectedStats.countOfOutgoingDatagramFailed
+                            == expectedStats.countOfOutgoingDatagramFailed
                     && stats.countOfIncomingDatagramSuccess
-                        == expectedStats.countOfIncomingDatagramSuccess
+                            == expectedStats.countOfIncomingDatagramSuccess
                     && stats.countOfIncomingDatagramFailed
-                        == expectedStats.countOfIncomingDatagramFailed
+                            == expectedStats.countOfIncomingDatagramFailed
                     && stats.isDemoMode == expectedStats.isDemoMode
                     && stats.carrierId == expectedStats.carrierId
                     && stats.countOfSatelliteNotificationDisplayed
-                    == expectedStats.countOfSatelliteNotificationDisplayed
+                            == expectedStats.countOfSatelliteNotificationDisplayed
                     && stats.countOfAutoExitDueToScreenOff
-                    == expectedStats.countOfAutoExitDueToScreenOff
+                            == expectedStats.countOfAutoExitDueToScreenOff
                     && stats.countOfAutoExitDueToTnNetwork
-                    == expectedStats.countOfAutoExitDueToTnNetwork
-                    && stats.isEmergency == expectedStats.isEmergency) {
+                            == expectedStats.countOfAutoExitDueToTnNetwork
+                    && stats.isEmergency == expectedStats.isEmergency
+                    && stats.maxInactivityDurationSec == expectedStats.maxInactivityDurationSec) {
                 actualCount = stats.count;
             }
         }

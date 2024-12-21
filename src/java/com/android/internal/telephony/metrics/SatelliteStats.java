@@ -804,6 +804,7 @@ public class SatelliteStats {
         private final int mCountOfAutoExitDueToScreenOff;
         private final int mCountOfAutoExitDueToTnNetwork;
         private final boolean mIsEmergency;
+        private final int mMaxInactivityDurationSec;
         private final boolean mIsNtnOnlyCarrier;
 
         private SatelliteSessionParams(Builder builder) {
@@ -828,6 +829,7 @@ public class SatelliteStats {
             this.mCountOfAutoExitDueToTnNetwork = builder.mCountOfAutoExitDueToTnNetwork;
             this.mIsEmergency = builder.mIsEmergency;
             this.mIsNtnOnlyCarrier = builder.mIsNtnOnlyCarrier;
+            this.mMaxInactivityDurationSec = builder.mMaxInactivityDurationSec;
         }
 
         public int getSatelliteServiceInitializationResult() {
@@ -902,6 +904,10 @@ public class SatelliteStats {
             return mIsNtnOnlyCarrier;
         }
 
+        public int getMaxInactivityDurationSec() {
+            return mMaxInactivityDurationSec;
+        }
+
         /**
          * A builder class to create {@link SatelliteSessionParams} data structure class
          */
@@ -925,6 +931,7 @@ public class SatelliteStats {
             private int mCountOfAutoExitDueToTnNetwork = -1;
             private boolean mIsEmergency = false;
             private boolean mIsNtnOnlyCarrier = false;
+            private int mMaxInactivityDurationSec = -1;
 
             /**
              * Sets satelliteServiceInitializationResult value of {@link SatelliteSession}
@@ -1058,6 +1065,12 @@ public class SatelliteStats {
                 return this;
             }
 
+            /** Sets the max user inactivity duration in seconds. */
+            public Builder setMaxInactivityDurationSec(int maxInactivityDurationSec) {
+                this.mMaxInactivityDurationSec = maxInactivityDurationSec;
+                return this;
+            }
+
             /**
              * Returns SessionParams, which contains whole component of
              * {@link SatelliteSession} atom
@@ -1090,6 +1103,7 @@ public class SatelliteStats {
                     + ", CountOfAutoExitDueToTnNetwork" + mCountOfAutoExitDueToTnNetwork
                     + ", IsEmergency=" + mIsEmergency
                     + ", IsNtnOnlyCarrier=" + mIsNtnOnlyCarrier
+                    + ", MaxInactivityDurationSec=" + mMaxInactivityDurationSec
                     + ")";
         }
     }
@@ -2715,6 +2729,7 @@ public class SatelliteStats {
         proto.countOfAutoExitDueToTnNetwork = param.getCountOfAutoExitDueToTnNetwork();
         proto.isEmergency = param.getIsEmergency();
         proto.isNtnOnlyCarrier = param.isNtnOnlyCarrier();
+        proto.maxInactivityDurationSec = param.getMaxInactivityDurationSec();
         mAtomsStorage.addSatelliteSessionStats(proto);
     }
 
