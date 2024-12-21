@@ -160,18 +160,19 @@ public class SmsStats {
     /** Create a new atom when an outgoing SMS is sent. */
     public void onOutgoingSms(boolean isOverIms, boolean is3gpp2, boolean fallbackToCs,
             @SmsManager.Result int sendErrorCode, long messageId, boolean isFromDefaultApp,
-            long intervalMillis, boolean isEmergency) {
+            long intervalMillis, boolean isEmergency, boolean isMtSmsPolling) {
         onOutgoingSms(isOverIms, is3gpp2, fallbackToCs, sendErrorCode, NO_ERROR_CODE,
-                messageId, isFromDefaultApp, intervalMillis, isEmergency);
+                messageId, isFromDefaultApp, intervalMillis, isEmergency, isMtSmsPolling);
     }
 
     /** Create a new atom when an outgoing SMS is sent. */
     public void onOutgoingSms(boolean isOverIms, boolean is3gpp2, boolean fallbackToCs,
             @SmsManager.Result int sendErrorCode, int networkErrorCode, long messageId,
-            boolean isFromDefaultApp, long intervalMillis, boolean isEmergency) {
+            boolean isFromDefaultApp, long intervalMillis, boolean isEmergency,
+            boolean isMtSmsPolling) {
         OutgoingSms proto =
                 getOutgoingDefaultProto(is3gpp2, isOverIms, messageId, isFromDefaultApp,
-                        intervalMillis, isEmergency);
+                        intervalMillis, isEmergency, isMtSmsPolling);
 
         // The field errorCode is used for up-to-Android-13 devices. From Android 14, sendErrorCode
         // and networkErrorCode will be used. The field errorCode will be deprecated when most
@@ -247,7 +248,8 @@ public class SmsStats {
 
     /** Create a proto for a normal {@code OutgoingSms} with default values. */
     private OutgoingSms getOutgoingDefaultProto(boolean is3gpp2, boolean isOverIms,
-            long messageId, boolean isFromDefaultApp, long intervalMillis, boolean isEmergency) {
+            long messageId, boolean isFromDefaultApp, long intervalMillis, boolean isEmergency,
+            boolean isMtSmsPolling) {
         OutgoingSms proto = new OutgoingSms();
         proto.smsFormat = getSmsFormat(is3gpp2);
         proto.smsTech = getSmsTech(isOverIms, is3gpp2);
@@ -270,6 +272,7 @@ public class SmsStats {
         proto.isManagedProfile = mPhone.isManagedProfile();
         proto.isEmergency = isEmergency;
         proto.isNtn = isNonTerrestrialNetwork();
+        proto.isMtSmsPolling = isMtSmsPolling;
         return proto;
     }
 
