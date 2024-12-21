@@ -254,6 +254,7 @@ public class SatelliteStatsTest extends TelephonyTest {
                         .setCountOfAutoExitDueToScreenOff(7)
                         .setCountOfAutoExitDueToTnNetwork(3)
                         .setIsEmergency(true)
+                        .setMaxInactivityDurationSec(10)
                         .build();
 
         mSatelliteStats.onSatelliteSessionMetrics(param);
@@ -283,6 +284,7 @@ public class SatelliteStatsTest extends TelephonyTest {
         assertEquals(param.getCountOfAutoExitDueToScreenOff(), stats.countOfAutoExitDueToScreenOff);
         assertEquals(param.getCountOfAutoExitDueToTnNetwork(), stats.countOfAutoExitDueToTnNetwork);
         assertEquals(param.getIsEmergency(), stats.isEmergency);
+        assertEquals(param.getMaxInactivityDurationSec(), stats.maxInactivityDurationSec);
 
         verifyNoMoreInteractions(mPersistAtomsStorage);
     }

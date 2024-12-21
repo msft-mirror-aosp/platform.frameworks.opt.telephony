@@ -21,6 +21,7 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_S
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_SMS;
 import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE;
+import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_UNKNOWN;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_NONE;
@@ -30,6 +31,7 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TR
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_UNKNOWN;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_ENABLING_SATELLITE;
@@ -143,6 +145,7 @@ public class SatelliteSessionController extends StateMachine {
     private static final int DEFAULT_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC = 30;
     private static final int DEFAULT_P2P_SMS_INACTIVITY_TIMEOUT_SEC = 180;
     private static final int DEFAULT_ESOS_INACTIVITY_TIMEOUT_SEC = 600;
+    private static final long UNDEFINED_TIMESTAMP = 0L;
 
     @NonNull private final ExponentialBackoff mExponentialBackoff;
     @NonNull private final Object mLock = new Object();
@@ -181,6 +184,12 @@ public class SatelliteSessionController extends StateMachine {
     // Interested in screen off, so use default value true
     boolean mIsScreenOn = true;
     private boolean mIsDeviceAlignedWithSatellite = false;
+    private long mInactivityStartTimestamp = UNDEFINED_TIMESTAMP;
+    private DatagramTransferState mLastDatagramTransferState =
+            new DatagramTransferState(
+                    SATELLITE_DATAGRAM_TRANSFER_STATE_UNKNOWN,
+                    SATELLITE_DATAGRAM_TRANSFER_STATE_UNKNOWN,
+                    DATAGRAM_TYPE_UNKNOWN);
 
     @NonNull private final SatelliteController mSatelliteController;
     @NonNull private final DatagramController mDatagramController;
@@ -334,10 +343,20 @@ public class SatelliteSessionController extends StateMachine {
             @SatelliteManager.SatelliteDatagramTransferState int sendState,
             @SatelliteManager.SatelliteDatagramTransferState int receiveState,
             @SatelliteManager.DatagramType int datagramType) {
-        sendMessage(EVENT_DATAGRAM_TRANSFER_STATE_CHANGED,
-                new DatagramTransferState(sendState, receiveState, datagramType));
+        DatagramTransferState datagramTransferState =
+                new DatagramTransferState(sendState, receiveState, datagramType);
+        mLastDatagramTransferState = datagramTransferState;
+
+        sendMessage(EVENT_DATAGRAM_TRANSFER_STATE_CHANGED, datagramTransferState);
+
         if (sendState == SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING) {
             mIsSendingTriggeredDuringTransferringState.set(true);
+        }
+
+        if (datagramTransferState.isIdle()) {
+            checkForInactivity();
+        } else {
+            endUserInactivity();
         }
     }
 
@@ -556,11 +575,13 @@ public class SatelliteSessionController extends StateMachine {
         if (mIsDeviceAlignedWithSatellite) {
             stopEsosInactivityTimer();
             stopP2pSmsInactivityTimer();
+            endUserInactivity();
         } else {
             if (mCurrentState == SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED) {
                 evaluateStartingEsosInactivityTimer();
                 evaluateStartingP2pSmsInactivityTimer();
             }
+            checkForInactivity();
         }
     }
 
@@ -591,6 +612,7 @@ public class SatelliteSessionController extends StateMachine {
     public void cleanUpResource() {
         plogd("cleanUpResource");
         mIsDeviceAlignedWithSatellite = false;
+        mInactivityStartTimestamp = UNDEFINED_TIMESTAMP;
         unregisterForScreenStateChanged();
         if (mAlarmManager != null) {
             mAlarmManager.cancel(mAlarmListener);
@@ -648,6 +670,11 @@ public class SatelliteSessionController extends StateMachine {
             this.receiveState = receiveState;
             this.datagramType = datagramType;
         }
+
+        public boolean isIdle() {
+            return (sendState == SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE
+                    && receiveState == SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE);
+        }
     }
 
     private class UnavailableState extends State {
@@ -678,6 +705,7 @@ public class SatelliteSessionController extends StateMachine {
             mIsSendingTriggeredDuringTransferringState.set(false);
             unbindService();
             stopNbIotInactivityTimer();
+            endUserInactivity();
             DemoSimulator.getInstance().onSatelliteModeOff();
             notifyStateChangedEvent(SatelliteManager.SATELLITE_MODEM_STATE_OFF);
 
@@ -1832,6 +1860,50 @@ public class SatelliteSessionController extends StateMachine {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public boolean isP2pSmsInActivityTimerStarted() {
         return hasMessages(EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT);
+    }
+
+    /**
+     * Initializes the inactivity start timestamp.
+     *
+     * <p>This method is called when 1) the datagram transfer state changes to idle or 2) the
+     * device is unaligned with the satellite.
+     */
+    private void checkForInactivity() {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            return;
+        }
+
+        // If the inactivity start timestamp is not undefined, it means the inactivity has already
+        // started.
+        if (mInactivityStartTimestamp != UNDEFINED_TIMESTAMP) {
+            return;
+        }
+
+        boolean isInactive = mLastDatagramTransferState.isIdle() && !mIsDeviceAlignedWithSatellite;
+        if (isInactive) {
+            mInactivityStartTimestamp = SystemClock.elapsedRealtime();
+        }
+    }
+
+    /**
+     * Updates the max inactivity duration session metric.
+     *
+     * <p>This method is called when 1) the datagram transfer state changes to not idle, 2) the
+     * device is aligned with the satellite, or 3) modem state moves to PowerOffState.
+     */
+    private void endUserInactivity() {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("endUserInactivity: carrierRoamingNbIotNtn is disabled");
+            return;
+        }
+
+        if (mInactivityStartTimestamp != UNDEFINED_TIMESTAMP) {
+            long inactivityDurationMs = SystemClock.elapsedRealtime() - mInactivityStartTimestamp;
+            int inactivityDurationSec = (int) (inactivityDurationMs / 1000);
+            mSessionMetricsStats.updateMaxInactivityDurationSec(inactivityDurationSec);
+
+            mInactivityStartTimestamp = UNDEFINED_TIMESTAMP;
+        }
     }
 
     private void handleEventScreenOffInactivityTimerTimedOut() {

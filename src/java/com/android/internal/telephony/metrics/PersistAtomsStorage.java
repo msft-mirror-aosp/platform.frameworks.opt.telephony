@@ -2347,7 +2347,8 @@ public class PersistAtomsStorage {
                     == key.countOfSatelliteNotificationDisplayed
                     && stats.countOfAutoExitDueToScreenOff == key.countOfAutoExitDueToScreenOff
                     && stats.countOfAutoExitDueToTnNetwork == key.countOfAutoExitDueToTnNetwork
-                    && stats.isEmergency == key.isEmergency) {
+                    && stats.isEmergency == key.isEmergency
+                    && stats.maxInactivityDurationSec == key.maxInactivityDurationSec) {
                 return stats;
             }
         }

@@ -63,6 +63,7 @@ public class SessionMetricsStats {
     private int mCountOfAutoExitDueToTnNetwork;
     private boolean mIsEmergency;
     private boolean mIsNtnOnlyCarrier;
+    private int mMaxInactivityDurationSec;
     private SatelliteSessionStats mDatagramStats;
 
     private SessionMetricsStats() {
@@ -275,6 +276,18 @@ public class SessionMetricsStats {
         return this;
     }
 
+    /** Updates the max inactivity duration session metric. */
+    public SessionMetricsStats updateMaxInactivityDurationSec(int inactivityDurationSec) {
+        if (inactivityDurationSec > mMaxInactivityDurationSec) {
+            mMaxInactivityDurationSec = inactivityDurationSec;
+        }
+        logd("updateMaxInactivityDurationSec: latest inactivty duration (sec)="
+                + inactivityDurationSec
+                + ", max inactivity duration="
+                + mMaxInactivityDurationSec);
+        return this;
+    }
+
     /** Report the session metrics atoms to PersistAtomsStorage in telephony. */
     public void reportSessionMetrics() {
         SatelliteStats.SatelliteSessionParams sessionParams =
@@ -298,6 +311,7 @@ public class SessionMetricsStats {
                         .setCountOfAutoExitDueToTnNetwork(mCountOfAutoExitDueToTnNetwork)
                         .setIsEmergency(mIsEmergency)
                         .setIsNtnOnlyCarrier(mIsNtnOnlyCarrier)
+                        .setMaxInactivityDurationSec(mMaxInactivityDurationSec)
                         .build();
         logd("reportSessionMetrics: " + sessionParams.toString());
         SatelliteStats.getInstance().onSatelliteSessionMetrics(sessionParams);
@@ -357,6 +371,7 @@ public class SessionMetricsStats {
         mCountOfAutoExitDueToTnNetwork = 0;
         mIsEmergency = false;
         mIsNtnOnlyCarrier = false;
+        mMaxInactivityDurationSec = 0;
     }
 
     public void resetSessionStatsShadowCounters() {
