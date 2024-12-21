@@ -145,6 +145,8 @@ public class DatagramDispatcher extends Handler {
     private boolean mShouldPollMtSms = false;
     @GuardedBy("mLock")
     private boolean mIsMtSmsPollingThrottled = false;
+    @GuardedBy("mLock")
+    private int mConnectedStateCounter = 0;
 
     /**
      * Create the DatagramDispatcher singleton instance.
@@ -808,6 +810,12 @@ public class DatagramDispatcher extends Handler {
 
             if (state == SATELLITE_MODEM_STATE_CONNECTED) {
                 mHasEnteredConnectedState = true;
+
+                mConnectedStateCounter++;
+                if (isFirstConnected()) {
+                    mShouldPollMtSms = shouldPollMtSms();
+                }
+
                 if (isDatagramWaitForConnectedStateTimerStarted()) {
                     stopDatagramWaitForConnectedStateTimer();
                     sendPendingMessages();
@@ -825,6 +833,11 @@ public class DatagramDispatcher extends Handler {
                 sendMtSmsPollingMessage();
             }
         }
+    }
+
+    /** Returns true if this is the first time the satellite modem is connected. */
+    private boolean isFirstConnected() {
+        return mConnectedStateCounter == 1;
     }
 
     @GuardedBy("mLock")
@@ -858,6 +871,7 @@ public class DatagramDispatcher extends Handler {
         mModemState = SATELLITE_MODEM_STATE_UNKNOWN;
         mHasEnteredConnectedState = false;
         mShouldPollMtSms = false;
+        mConnectedStateCounter = 0;
         stopMtSmsPollingThrottle();
     }
 
