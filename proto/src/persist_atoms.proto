@@ -378,6 +378,7 @@ message OutgoingSms {
     optional bool is_managed_profile = 18;
     optional bool is_emergency = 19;
     optional bool is_ntn = 20;
+    optional bool is_mt_sms_polling = 21;
 
     // Internal use only
     optional int32 hashCode = 10001;
