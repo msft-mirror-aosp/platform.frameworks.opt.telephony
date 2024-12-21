@@ -1269,6 +1269,21 @@ public class DatagramDispatcherTest extends TelephonyTest {
         verify(mMockSmsDispatchersController, times(0)).sendMtSmsPollingMessage();
     }
 
+    @Test
+    public void testOnSatelliteModemStateChanged_onFirstConnected_sendsMtSmsPoll() {
+        mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        // Set the following so shouldPollMtSms returns true
+        mContextFixture.putBooleanResource(R.bool.config_enabled_mt_sms_polling, true);
+        when(mMockSatelliteController.shouldSendSmsToDatagramDispatcher(any(Phone.class)))
+                .thenReturn(true);
+
+        mDatagramDispatcherUT.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+
+        verify(mMockSmsDispatchersController, times(1)).sendMtSmsPollingMessage();
+    }
+
     private void setModemState(int state) {
         mDatagramDispatcherUT.onSatelliteModemStateChanged(state);
     }
