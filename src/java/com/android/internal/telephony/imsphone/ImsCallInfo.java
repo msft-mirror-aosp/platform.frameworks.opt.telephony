@@ -33,6 +33,7 @@ public class ImsCallInfo {
     private @Nullable ImsPhoneConnection mConnection = null;
     private Call.State mState = Call.State.IDLE;
     private boolean mIsHeldByRemote = false;
+    private boolean mShouldIgnoreUpdate = false;
     private @RadioAccessNetworkType int mCallRadioTech = AccessNetworkType.UNKNOWN;
 
     public ImsCallInfo(int index) {
@@ -44,18 +45,22 @@ public class ImsCallInfo {
         mConnection = null;
         mState = Call.State.IDLE;
         mIsHeldByRemote = false;
+        mShouldIgnoreUpdate = false;
         mCallRadioTech = AccessNetworkType.UNKNOWN;
     }
 
     /**
-     * Updates the state of the IMS call.
+     * Initializes the state of the IMS call when this object is just created or re-used.
      *
      * @param c The instance of {@link ImsPhoneConnection}.
      */
-    public void update(@NonNull ImsPhoneConnection c) {
+    public void init(@NonNull ImsPhoneConnection c) {
         mConnection = c;
         mState = c.getState();
         mCallRadioTech = getCallRadioTech(c);
+        // MO call: Need to wait for any state changes from ImsCall.
+        // MT call: Ready to update the state.
+        mShouldIgnoreUpdate = !isIncoming();
     }
 
     /**
@@ -70,6 +75,7 @@ public class ImsCallInfo {
         Call.State state = c.getState();
         int callRadioTech = getCallRadioTech(c);
         boolean changed = mState != state || mCallRadioTech != callRadioTech;
+
         mState = state;
         mCallRadioTech = callRadioTech;
 
@@ -79,6 +85,22 @@ public class ImsCallInfo {
         } else if (resumeReceived && mIsHeldByRemote) {
             changed = true;
             mIsHeldByRemote = false;
+        }
+
+        if (shouldIgnoreUpdate()) {
+            if (!c.isAlive()) {
+                // Even if the call state or attributes are updated,
+                // there is no need to update the call state
+                // because the call state has never been updated to the modem.
+                //
+                // For example, the call has created and cancelled by user immediately
+                // before receiving any state changes from ImsCall.
+                changed = false;
+            } else {
+                // Enforce IMS call state update even if the call state is the same.
+                changed = true;
+                mShouldIgnoreUpdate = false;
+            }
         }
 
         return changed;
@@ -112,6 +134,11 @@ public class ImsCallInfo {
     /** @return {@code true} if the call is an emergency call. */
     public boolean isEmergencyCall() {
         return mConnection.isEmergencyCall();
+    }
+
+    /** @return {@code true} if the update should be ignored. */
+    public boolean shouldIgnoreUpdate() {
+        return mShouldIgnoreUpdate;
     }
 
     /** @return the radio technology used for current connection. */
