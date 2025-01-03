@@ -679,6 +679,8 @@ public class SatelliteControllerTest extends TelephonyTest {
                 .when(mMockSessionMetricsStats).setIsDemoMode(anyBoolean());
         doReturn(mMockSessionMetricsStats)
                 .when(mMockSessionMetricsStats).setCarrierId(anyInt());
+        doReturn(mMockSessionMetricsStats)
+                .when(mMockSessionMetricsStats).setIsNtnOnlyCarrier(anyBoolean());
         doNothing().when(mMockSessionMetricsStats).reportSessionMetrics();
 
         doReturn(mMockProvisionMetricsStats).when(mMockProvisionMetricsStats)
@@ -687,6 +689,8 @@ public class SatelliteControllerTest extends TelephonyTest {
                 .setIsProvisionRequest(anyBoolean());
         doReturn(mMockProvisionMetricsStats).when(mMockProvisionMetricsStats)
                 .setCarrierId(anyInt());
+        doReturn(mMockProvisionMetricsStats).when(mMockProvisionMetricsStats)
+                .setIsNtnOnlyCarrier(anyBoolean());
         doNothing().when(mMockProvisionMetricsStats).reportProvisionMetrics();
         doNothing().when(mMockControllerMetricsStats).reportDeprovisionCount(anyInt());
         when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);

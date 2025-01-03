@@ -37,7 +37,6 @@ import com.android.internal.telephony.satellite.DatagramDispatcher;
  */
 public class SessionMetricsStats {
     private static final String TAG = SessionMetricsStats.class.getSimpleName();
-    private static final boolean DBG = false;
 
     private static SessionMetricsStats sInstance = null;
     private @SatelliteManager.SatelliteResult int mInitializationResult;
@@ -62,11 +61,14 @@ public class SessionMetricsStats {
     private int mCountOfSatelliteNotificationDisplayed;
     private int mCountOfAutoExitDueToScreenOff;
     private int mCountOfAutoExitDueToTnNetwork;
-    private SatelliteSessionStats datagramStats;
+    private boolean mIsEmergency;
+    private boolean mIsNtnOnlyCarrier;
+    private int mMaxInactivityDurationSec;
+    private SatelliteSessionStats mDatagramStats;
 
     private SessionMetricsStats() {
         initializeSessionMetricsParam();
-        datagramStats = new SatelliteSessionStats();
+        mDatagramStats = new SatelliteSessionStats();
     }
 
     /**
@@ -133,7 +135,9 @@ public class SessionMetricsStats {
     public SessionMetricsStats addCountOfSuccessfulOutgoingDatagram(
             @NonNull @SatelliteManager.DatagramType int datagramType,
             long datagramTransmissionTime) {
-        datagramStats.recordSuccessfulOutgoingDatagramStats(datagramType, datagramTransmissionTime);
+        logd("addCountOfSuccessfulOutgoingDatagram: datagramType=" + datagramType);
+        mDatagramStats.recordSuccessfulOutgoingDatagramStats(datagramType,
+                datagramTransmissionTime);
         if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
             // Ignore KEEP_ALIVE messages
             return this;
@@ -141,8 +145,6 @@ public class SessionMetricsStats {
 
         mCountOfSuccessfulOutgoingDatagram++;
         mShadowCountOfSuccessfulOutgoingDatagram++;
-        logd("addCountOfSuccessfulOutgoingDatagram: current count="
-                + mCountOfSuccessfulOutgoingDatagram);
         return this;
     }
 
@@ -150,7 +152,9 @@ public class SessionMetricsStats {
     public SessionMetricsStats addCountOfFailedOutgoingDatagram(
             @NonNull @SatelliteManager.DatagramType int datagramType,
             @NonNull @SatelliteManager.SatelliteResult int resultCode) {
-        datagramStats.addCountOfUnsuccessfulUserMessages(datagramType, resultCode);
+        logd("addCountOfFailedOutgoingDatagram: datagramType=" + datagramType + "  resultCode = "
+                + resultCode);
+        mDatagramStats.addCountOfUnsuccessfulUserMessages(datagramType, resultCode);
         if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
             // Ignore KEEP_ALIVE messages
             return this;
@@ -158,14 +162,11 @@ public class SessionMetricsStats {
 
         mCountOfFailedOutgoingDatagram++;
         mShadowCountOfFailedOutgoingDatagram++;
-        logd("addCountOfFailedOutgoingDatagram: current count=" + mCountOfFailedOutgoingDatagram);
-
         if (resultCode == SatelliteManager.SATELLITE_RESULT_NOT_REACHABLE) {
             addCountOfTimedOutUserMessagesWaitingForConnection(datagramType);
         } else if (resultCode == SatelliteManager.SATELLITE_RESULT_MODEM_TIMEOUT) {
             addCountOfTimedOutUserMessagesWaitingForAck(datagramType);
         }
-
         return this;
     }
 
@@ -261,6 +262,32 @@ public class SessionMetricsStats {
         return this;
     }
 
+    /** Sets whether the session is enabled for emergency or not. */
+    public SessionMetricsStats setIsEmergency(boolean isEmergency) {
+        mIsEmergency = isEmergency;
+        logd("setIsEmergency(" + mIsEmergency + ")");
+        return this;
+    }
+
+    /** Capture the latest provisioned state for satellite service */
+    public SessionMetricsStats setIsNtnOnlyCarrier(boolean isNtnOnlyCarrier) {
+        mIsNtnOnlyCarrier = isNtnOnlyCarrier;
+        logd("setIsNtnOnlyCarrier(" + mIsNtnOnlyCarrier + ")");
+        return this;
+    }
+
+    /** Updates the max inactivity duration session metric. */
+    public SessionMetricsStats updateMaxInactivityDurationSec(int inactivityDurationSec) {
+        if (inactivityDurationSec > mMaxInactivityDurationSec) {
+            mMaxInactivityDurationSec = inactivityDurationSec;
+        }
+        logd("updateMaxInactivityDurationSec: latest inactivty duration (sec)="
+                + inactivityDurationSec
+                + ", max inactivity duration="
+                + mMaxInactivityDurationSec);
+        return this;
+    }
+
     /** Report the session metrics atoms to PersistAtomsStorage in telephony. */
     public void reportSessionMetrics() {
         SatelliteStats.SatelliteSessionParams sessionParams =
@@ -282,6 +309,9 @@ public class SessionMetricsStats {
                                 mCountOfSatelliteNotificationDisplayed)
                         .setCountOfAutoExitDueToScreenOff(mCountOfAutoExitDueToScreenOff)
                         .setCountOfAutoExitDueToTnNetwork(mCountOfAutoExitDueToTnNetwork)
+                        .setIsEmergency(mIsEmergency)
+                        .setIsNtnOnlyCarrier(mIsNtnOnlyCarrier)
+                        .setMaxInactivityDurationSec(mMaxInactivityDurationSec)
                         .build();
         logd("reportSessionMetrics: " + sessionParams.toString());
         SatelliteStats.getInstance().onSatelliteSessionMetrics(sessionParams);
@@ -304,9 +334,9 @@ public class SessionMetricsStats {
                 .build();
         bundle.putParcelable(SatelliteManager.KEY_SESSION_STATS, sessionStats);
 
-        // TODO b/381007377 should retrieve MessagesInQueueToBeSent count per messageType and add
-        //  to datagramStats
-        bundle.putParcelable(KEY_SESSION_STATS_V2, datagramStats);
+        DatagramDispatcher.getInstance().updateSessionStatsWithPendingUserMsgCount(mDatagramStats);
+        bundle.putParcelable(KEY_SESSION_STATS_V2, mDatagramStats);
+        Log.i(TAG, "[END] DatagramStats = " + mDatagramStats);
         result.send(SATELLITE_RESULT_SUCCESS, bundle);
     }
 
@@ -339,6 +369,9 @@ public class SessionMetricsStats {
         mCountOfSatelliteNotificationDisplayed = 0;
         mCountOfAutoExitDueToScreenOff = 0;
         mCountOfAutoExitDueToTnNetwork = 0;
+        mIsEmergency = false;
+        mIsNtnOnlyCarrier = false;
+        mMaxInactivityDurationSec = 0;
     }
 
     public void resetSessionStatsShadowCounters() {
@@ -347,13 +380,11 @@ public class SessionMetricsStats {
         mShadowCountOfFailedOutgoingDatagram = 0;
         mShadowCountOfTimedOutUserMessagesWaitingForConnection = 0;
         mShadowCountOfTimedOutUserMessagesWaitingForAck = 0;
-        datagramStats.clear();
+        mDatagramStats.clear();
     }
 
     private static void logd(@NonNull String log) {
-        if (DBG) {
-            Log.d(TAG, log);
-        }
+        Log.d(TAG, log);
     }
 
     private static void loge(@NonNull String log) {

@@ -766,14 +766,17 @@ public class PersistAtomsStorage {
             existingStats.countOfDisallowedSatelliteAccess
                     += stats.countOfDisallowedSatelliteAccess;
             existingStats.countOfSatelliteAccessCheckFail += stats.countOfSatelliteAccessCheckFail;
-
-            existingStats.isProvisioned = stats.isProvisioned;
-
+            // Does not update isProvisioned and carrierId due to they are dimension fields.
             existingStats.countOfSatelliteAllowedStateChangedEvents
                     += stats.countOfSatelliteAllowedStateChangedEvents;
             existingStats.countOfSuccessfulLocationQueries +=
                     stats.countOfSuccessfulLocationQueries;
             existingStats.countOfFailedLocationQueries += stats.countOfFailedLocationQueries;
+            existingStats.countOfP2PSmsAvailableNotificationShown
+                    += stats.countOfP2PSmsAvailableNotificationShown;
+            existingStats.countOfP2PSmsAvailableNotificationRemoved
+                    += stats.countOfP2PSmsAvailableNotificationRemoved;
+            // Does not update isNtnOnlyCarrier due to it is a dimension field.
         } else {
             mAtoms.satelliteController = insertAtRandomPlace(mAtoms.satelliteController, stats,
                     mMaxNumSatelliteStats);
@@ -861,7 +864,6 @@ public class PersistAtomsStorage {
             CarrierRoamingSatelliteControllerStats stats) {
         CarrierRoamingSatelliteControllerStats existingStats = find(stats);
         if (existingStats != null) {
-            existingStats.configDataSource = stats.configDataSource;
             existingStats.countOfEntitlementStatusQueryRequest +=
                     stats.countOfEntitlementStatusQueryRequest;
             existingStats.countOfSatelliteConfigUpdateRequest +=
@@ -871,6 +873,8 @@ public class PersistAtomsStorage {
             existingStats.satelliteSessionGapMinSec = stats.satelliteSessionGapMinSec;
             existingStats.satelliteSessionGapAvgSec = stats.satelliteSessionGapAvgSec;
             existingStats.satelliteSessionGapMaxSec = stats.satelliteSessionGapMaxSec;
+            // Does not update configDataSource, carrierId, isDeviceEntitled, due to  they are
+            // dimension fields.
             existingStats.isDeviceEntitled = stats.isDeviceEntitled;
         } else {
             mAtoms.carrierRoamingSatelliteControllerStats = insertAtRandomPlace(
@@ -2342,7 +2346,9 @@ public class PersistAtomsStorage {
                     && stats.countOfSatelliteNotificationDisplayed
                     == key.countOfSatelliteNotificationDisplayed
                     && stats.countOfAutoExitDueToScreenOff == key.countOfAutoExitDueToScreenOff
-                    && stats.countOfAutoExitDueToTnNetwork == key.countOfAutoExitDueToTnNetwork) {
+                    && stats.countOfAutoExitDueToTnNetwork == key.countOfAutoExitDueToTnNetwork
+                    && stats.isEmergency == key.isEmergency
+                    && stats.maxInactivityDurationSec == key.maxInactivityDurationSec) {
                 return stats;
             }
         }
@@ -2362,6 +2368,8 @@ public class PersistAtomsStorage {
                     && stats.cellularServiceState == key.cellularServiceState
                     && stats.isMultiSim == key.isMultiSim
                     && stats.recommendingHandoverType == key.recommendingHandoverType
+                    && stats.isSatelliteAllowedInCurrentLocation
+                    == key.isSatelliteAllowedInCurrentLocation
                     && stats.isWifiConnected == key.isWifiConnected
                     && stats.carrierId == key.carrierId) {
                 return stats;
@@ -2388,12 +2396,14 @@ public class PersistAtomsStorage {
     }
 
     /**
-     * Returns SatelliteController atom that has same carrier_id value or
-     * {@code null} if does not exist.
+     * Returns the SatelliteController atom with the matching `carrier_id`, `is_provisioned`, and
+     * `is_ntn_only_carrier` values, or {@code null} if does not exist.
      */
     private @Nullable SatelliteController find(SatelliteController key) {
         for (SatelliteController stats : mAtoms.satelliteController) {
-            if (stats.carrierId == key.carrierId) {
+            if (stats.carrierId == key.carrierId
+                    && stats.isProvisioned == key.isProvisioned
+                    && stats.isNtnOnlyCarrier == key.isNtnOnlyCarrier) {
                 return stats;
             }
         }
@@ -2408,7 +2418,9 @@ public class PersistAtomsStorage {
             CarrierRoamingSatelliteControllerStats key) {
         for (CarrierRoamingSatelliteControllerStats stats :
                 mAtoms.carrierRoamingSatelliteControllerStats) {
-            if (stats.carrierId == key.carrierId) {
+            if (stats.carrierId == key.carrierId
+                    && stats.configDataSource == key.configDataSource
+                    && stats.isDeviceEntitled == key.isDeviceEntitled) {
                 return stats;
             }
         }
