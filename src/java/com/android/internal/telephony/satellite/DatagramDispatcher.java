@@ -147,6 +147,7 @@ public class DatagramDispatcher extends Handler {
     private boolean mIsMtSmsPollingThrottled = false;
     @GuardedBy("mLock")
     private int mConnectedStateCounter = 0;
+    private long mSmsTransmissionStartTime = 0;
 
     /**
      * Create the DatagramDispatcher singleton instance.
@@ -404,6 +405,7 @@ public class DatagramDispatcher extends Handler {
                     return;
                 }
 
+                mSmsTransmissionStartTime = System.currentTimeMillis();
                 smsDispatchersController.sendCarrierRoamingNbIotNtnText(pendingRequest);
                 break;
             }
@@ -752,6 +754,21 @@ public class DatagramDispatcher extends Handler {
                 argument, phone);
         Message msg = this.obtainMessage(command, request);
         msg.sendToTarget();
+    }
+
+    private void reportSendSmsCompleted(@NonNull PendingRequest pendingRequest,
+            @SatelliteManager.SatelliteResult int resultCode) {
+        int datagramType = pendingRequest.isMtSmsPolling
+                ? DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS : DATAGRAM_TYPE_SMS;
+        if (resultCode == SATELLITE_RESULT_SUCCESS) {
+            long smsTransmissionTime = mSmsTransmissionStartTime > 0
+                    ? (System.currentTimeMillis() - mSmsTransmissionStartTime) : 0;
+            mSessionMetricsStats.addCountOfSuccessfulOutgoingDatagram(
+                    datagramType, smsTransmissionTime);
+        } else {
+            mSessionMetricsStats.addCountOfFailedOutgoingDatagram(
+                    datagramType, resultCode);
+        }
     }
 
     private void reportSendDatagramCompleted(@NonNull SendSatelliteDatagramArgument argument,
@@ -1241,6 +1258,7 @@ public class DatagramDispatcher extends Handler {
             PendingRequest pendingRequest = entry.getValue();
             smsDispatchersController.onSendCarrierRoamingNbIotNtnTextError(
                     pendingRequest, errorCode);
+            reportSendSmsCompleted(pendingRequest, errorCode);
         }
 
         // Clear pending text map
@@ -1268,6 +1286,7 @@ public class DatagramDispatcher extends Handler {
                 mDatagramController.updateSendStatus(subId, datagramType,
                         SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS,
                         getPendingMessagesCount(), SATELLITE_RESULT_SUCCESS);
+                reportSendSmsCompleted(pendingSms, SATELLITE_RESULT_SUCCESS);
                 if (datagramType == DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS) {
                     startMtSmsPollingThrottle();
                     mShouldPollMtSms = false;
@@ -1277,6 +1296,7 @@ public class DatagramDispatcher extends Handler {
                 mDatagramController.updateSendStatus(subId, datagramType,
                         SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED,
                         getPendingMessagesCount(), SATELLITE_RESULT_NETWORK_ERROR);
+                reportSendSmsCompleted(pendingSms, SATELLITE_RESULT_NETWORK_ERROR);
             }
 
             if (getPendingMessagesCount() > 0) {
@@ -1424,21 +1444,35 @@ public class DatagramDispatcher extends Handler {
     }
 
     public void updateSessionStatsWithPendingUserMsgCount(SatelliteSessionStats datagramStats) {
-        Log.d("SessionMetricsStats1",
-                " mPendingEmergencyDatagramsMap size = " + mPendingEmergencyDatagramsMap.size());
-        Log.d("SessionMetricsStats1", " mPendingNonEmergencyDatagramsMap size = "
-                + mPendingNonEmergencyDatagramsMap.size());
-        for (Entry<Long, SendSatelliteDatagramArgument> entry :
-                mPendingEmergencyDatagramsMap.entrySet()) {
-            SendSatelliteDatagramArgument argument = entry.getValue();
-            Log.d("SessionMetricsStats1", "DataGramType1 =  " + argument.datagramType);
-            datagramStats.updateCountOfUserMessagesInQueueToBeSent(argument.datagramType);
-        }
-        for (Entry<Long, SendSatelliteDatagramArgument> entry :
-                mPendingNonEmergencyDatagramsMap.entrySet()) {
-            SendSatelliteDatagramArgument argument = entry.getValue();
-            Log.d("SessionMetricsStats1", "DataGramType2 =  " + argument.datagramType);
-            datagramStats.updateCountOfUserMessagesInQueueToBeSent(argument.datagramType);
+        synchronized (mLock) {
+            Log.d("SessionMetricsStats1",
+                    " mPendingEmergencyDatagramsMap size = "
+                            + mPendingEmergencyDatagramsMap.size());
+            Log.d("SessionMetricsStats1", " mPendingNonEmergencyDatagramsMap size = "
+                    + mPendingNonEmergencyDatagramsMap.size());
+            Log.d("SessionMetricsStats1", " mPendingSmsMap size = "
+                    + mPendingSmsMap.size());
+            for (Entry<Long, SendSatelliteDatagramArgument> entry :
+                    mPendingEmergencyDatagramsMap.entrySet()) {
+                SendSatelliteDatagramArgument argument = entry.getValue();
+                Log.d("SessionMetricsStats1", "DataGramType1 =  "
+                        + argument.datagramType);
+                datagramStats.updateCountOfUserMessagesInQueueToBeSent(argument.datagramType);
+            }
+            for (Entry<Long, SendSatelliteDatagramArgument> entry :
+                    mPendingNonEmergencyDatagramsMap.entrySet()) {
+                SendSatelliteDatagramArgument argument = entry.getValue();
+                Log.d("SessionMetricsStats1", "DataGramType2 =  "
+                        + argument.datagramType);
+                datagramStats.updateCountOfUserMessagesInQueueToBeSent(argument.datagramType);
+            }
+            for (Entry<Long, PendingRequest> entry : mPendingSmsMap.entrySet()) {
+                PendingRequest pendingRequest = entry.getValue();
+                int datagramType = pendingRequest.isMtSmsPolling
+                        ? DATAGRAM_TYPE_CHECK_PENDING_INCOMING_SMS : DATAGRAM_TYPE_SMS;
+                Log.d("SessionMetricsStats1", "DataGramType3 =  " + datagramType);
+                datagramStats.updateCountOfUserMessagesInQueueToBeSent(datagramType);
+            }
         }
     }
 }
