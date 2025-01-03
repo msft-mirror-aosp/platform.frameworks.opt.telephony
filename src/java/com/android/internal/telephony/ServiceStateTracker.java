@@ -3184,9 +3184,15 @@ public class ServiceStateTracker extends Handler {
         }
 
         SatelliteModemStateListener satelliteModemStateListener = getSatelliteModemStateListener();
+        String operator = mNewSS.getOperatorAlphaLong();
+        SatelliteController sc = SatelliteController.getInstance();
+        // Override satellite display name if device is in carrier roaming nb iot ntn mode
+        // and has a valid operator
         if (satelliteModemStateListener != null
-                && satelliteModemStateListener.isInConnectedState()) {
-            // override satellite display name.
+                && satelliteModemStateListener.isInConnectedState()
+                || (!TextUtils.isEmpty(operator)
+                        && sc != null && sc.isInCarrierRoamingNbIotNtn())) {
+            // override satellite display name
             mNewSS.setOperatorName(
                     satelliteDisplayName, satelliteDisplayName, mNewSS.getOperatorNumeric());
             log("Override satellite display name to " + satelliteDisplayName);
