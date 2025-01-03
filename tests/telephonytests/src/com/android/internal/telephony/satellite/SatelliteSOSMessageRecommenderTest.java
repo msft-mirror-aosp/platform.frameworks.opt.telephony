@@ -877,8 +877,8 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         }
 
         @Override
-        protected void registerForSatelliteCommunicationAllowedStateChanged() {
-            logd("registerForSatelliteCommunicationAllowedStateChanged");
+        protected void registerForSatelliteCommunicationAccessStateChanged() {
+            logd("registerForSatelliteCommunicationAccessStateChanged");
         }
 
         @Override
@@ -1004,8 +1004,8 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         }
 
         @Override
-        protected void registerForSatelliteCommunicationAllowedStateChanged() {
-            logd("registerForSatelliteCommunicationAllowedStateChanged");
+        protected void registerForSatelliteCommunicationAccessStateChanged() {
+            logd("registerForSatelliteCommunicationAccessStateChanged");
         }
     }
 

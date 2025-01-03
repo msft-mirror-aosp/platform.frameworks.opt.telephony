@@ -138,7 +138,7 @@ import android.telephony.satellite.ISelectedNbIotSatelliteSubscriptionCallback;
 import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.SatelliteAccessConfiguration;
 import android.telephony.satellite.SatelliteCapabilities;
-import android.telephony.satellite.SatelliteCommunicationAllowedStateCallback;
+import android.telephony.satellite.SatelliteCommunicationAccessStateCallback;
 import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteManager;
 import android.telephony.satellite.SatelliteModemEnableRequestAttributes;
@@ -392,7 +392,7 @@ public class SatelliteController extends Handler {
             new AtomicBoolean(false);
     private final AtomicBoolean mRegisteredForTerrestrialNetworkAvailableChanged =
             new AtomicBoolean(false);
-    private final AtomicBoolean mRegisteredForSatelliteCommunicationAllowedStateChanged =
+    private final AtomicBoolean mRegisteredForSatelliteCommunicationAccessStateChanged =
         new AtomicBoolean(false);
     /**
      * Map key: subId, value: callback to get error code of the provision request.
@@ -895,7 +895,7 @@ public class SatelliteController extends Handler {
         registerForSatelliteModemStateChanged();
         registerForServiceStateChanged();
         registerForSignalStrengthChanged();
-        registerForSatelliteCommunicationAllowedStateChanged();
+        registerForSatelliteCommunicationAccessStateChanged();
         mContentResolver = mContext.getContentResolver();
         mCarrierConfigManager = mContext.getSystemService(CarrierConfigManager.class);
 
@@ -4796,7 +4796,7 @@ public class SatelliteController extends Handler {
         synchronized (mSatelliteTokenProvisionedLock) {
             for (SatelliteSubscriberInfo subscriberInfo : newList) {
 
-                int subId = subscriberInfo.getSubId();
+                int subId = subscriberInfo.getSubscriptionId();
                 Boolean currentProvisioned =
                         mProvisionedSubscriberId.get(subscriberInfo.getSubscriberId());
                 if (currentProvisioned == null) {
@@ -6136,7 +6136,7 @@ public class SatelliteController extends Handler {
             return;
         }
 
-        registerForSatelliteCommunicationAllowedStateChanged();
+        registerForSatelliteCommunicationAccessStateChanged();
 
         boolean eligible = isCarrierRoamingNtnEligible(getSatellitePhone());
         plogd("evaluateCarrierRoamingNtnEligibilityChange: "
@@ -7380,7 +7380,7 @@ public class SatelliteController extends Handler {
                     SatelliteSubscriberInfo satelliteSubscriberInfo =
                             new SatelliteSubscriberInfo.Builder().setSubscriberId(subscriberId)
                                     .setCarrierId(carrierId).setNiddApn(apn)
-                                    .setSubId(info.getSubscriptionId())
+                                    .setSubscriptionId(info.getSubscriptionId())
                                     .setSubscriberIdType(subscriberIdPair.second)
                                     .build();
                     boolean provisioned = mProvisionedSubscriberId.getOrDefault(subscriberId,
@@ -7898,25 +7898,25 @@ public class SatelliteController extends Handler {
     }
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
-    protected void registerForSatelliteCommunicationAllowedStateChanged() {
-        if (mRegisteredForSatelliteCommunicationAllowedStateChanged.get()) {
+    protected void registerForSatelliteCommunicationAccessStateChanged() {
+        if (mRegisteredForSatelliteCommunicationAccessStateChanged.get()) {
             if (DEBUG) {
-                plogd("registerForSatelliteCommunicationAllowedStateChanged: already registered.");
+                plogd("registerForSatelliteCommunicationAccessStateChanged: already registered.");
             }
             return;
         }
 
         SatelliteManager satelliteManager = mContext.getSystemService(SatelliteManager.class);
         if (satelliteManager == null) {
-            ploge("registerForSatelliteCommunicationAllowedStateChanged: SatelliteManager is null");
+            ploge("registerForSatelliteCommunicationAccessStateChanged: SatelliteManager is null");
             return;
         }
 
-        SatelliteCommunicationAllowedStateCallback allowedStateCallback =
-            new SatelliteCommunicationAllowedStateCallback() {
+        SatelliteCommunicationAccessStateCallback accessStateCallback =
+            new SatelliteCommunicationAccessStateCallback() {
                 @Override
-                public void onSatelliteCommunicationAllowedStateChanged(boolean isAllowed) {
-                    plogd("onSatelliteCommunicationAllowedStateChanged: isAllowed="
+                public void onAccessAllowedStateChanged(boolean isAllowed) {
+                    plogd("onAccessStateChanged: isAllowed="
                         + isAllowed);
                     synchronized (mSatelliteAccessConfigLock) {
                         mSatelliteAccessAllowed = isAllowed;
@@ -7925,23 +7925,23 @@ public class SatelliteController extends Handler {
                 }
 
                 @Override
-                public void onSatelliteAccessConfigurationChanged(
+                public void onAccessConfigurationChanged(
                     SatelliteAccessConfiguration satelliteAccessConfiguration) {
-                    plogd("onSatelliteAccessConfigurationChanged: satelliteAccessConfiguration="
+                    plogd("onAccessConfigurationChanged: satelliteAccessConfiguration="
                         + satelliteAccessConfiguration);
                     handleSatelliteAccessConfigUpdateResult(satelliteAccessConfiguration);
                 }
             };
         try {
-            satelliteManager.registerForCommunicationAllowedStateChanged(
-                    this::post, allowedStateCallback);
+            satelliteManager.registerForCommunicationAccessStateChanged(
+                    this::post, accessStateCallback);
         } catch(RuntimeException e) {
-            plogd("registerForSatelliteCommunicationAllowedStateChanged: " +
-                    "satelliteManager.registerForCommunicationAllowedStateChanged() failed, " +
-                    "e=" + e);
+            plogd("registerForSatelliteCommunicationAccessStateChanged: "
+                    + "satelliteManager.registerForCommunicationAccessStateChanged() failed, "
+                    + "e=" + e);
             return;
         }
-        mRegisteredForSatelliteCommunicationAllowedStateChanged.set(true);
+        mRegisteredForSatelliteCommunicationAccessStateChanged.set(true);
     }
 
     private void handleSatelliteAccessConfigUpdateResult(
@@ -8224,7 +8224,7 @@ public class SatelliteController extends Handler {
         }
         return new SatelliteSubscriberInfo.Builder().setSubscriberId(subscriberId)
                         .setCarrierId(carrierId).setNiddApn(apn)
-                        .setSubId(subInfo.getSubscriptionId())
+                        .setSubscriptionId(subInfo.getSubscriptionId())
                         .setSubscriberIdType(subscriberIdPair.second)
                         .build();
     }
