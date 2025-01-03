@@ -334,6 +334,9 @@ public class SessionMetricsStats {
                 .build();
         bundle.putParcelable(SatelliteManager.KEY_SESSION_STATS, sessionStats);
 
+        // Reset countOfUserMessagesInQueueToBeSent for each datagramType to 0.
+        mDatagramStats.resetCountOfUserMessagesInQueueToBeSent();
+
         DatagramDispatcher.getInstance().updateSessionStatsWithPendingUserMsgCount(mDatagramStats);
         bundle.putParcelable(KEY_SESSION_STATS_V2, mDatagramStats);
         Log.i(TAG, "[END] DatagramStats = " + mDatagramStats);
