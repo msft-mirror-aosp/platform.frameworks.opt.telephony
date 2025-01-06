@@ -1,6 +1,17 @@
 package: "com.android.internal.telephony.flags"
 container: "system"
 
+# OWNER=linggm TARGET=25Q2
+flag {
+  name: "keep_ping_request"
+  namespace: "telephony"
+  description: "If ping test is not required to pass, keep the ping request to avoid deactivate followed by reactivate"
+  bug: "366318732"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
 # OWNER=linggm TARGET=24Q4
 flag {
   name: "keep_empty_requests_network"
@@ -110,32 +121,22 @@ flag {
   bug:"353723350"
 }
 
-# OWNER=jackyu TARGET=25Q1
-flag {
-  name: "support_network_provider"
-  namespace: "telephony"
-  description: "Deprecate network factory and adapt the new network provider model from connectivity service"
-  bug: "343370895"
-  metadata {
-    purpose: PURPOSE_BUGFIX
-  }
-}
-
-# OWNER=jackyu TARGET=25Q1
-flag {
-  name: "sim_disabled_graceful_tear_down"
-  namespace: "telephony"
-  description: "Gracefully tear down the networks when SIM is disabled."
-  bug: "362372940"
-  metadata {
-    purpose: PURPOSE_BUGFIX
-  }
-}
-
-# OWNER=TBD TARGET=TBD
+# OWNER=jackyu TARGET=25Q2
 flag {
   name: "oem_paid_private"
   namespace: "telephony"
   description: "Support OEM_PAID and OEM_PRIVATE networks"
   bug: "366194627"
+  is_exported: true
+}
+
+# OWNER=gwenlin TARGET=25Q2
+flag {
+  name: "incall_handover_policy"
+  namespace: "telephony"
+  description: "Support IWLAN handover policy based on incall."
+  bug:"376765521"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
 }

@@ -659,6 +659,20 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
                 });
     }
 
+    /**
+     * Return GroupIdLevel2 for the subscriber
+     */
+    public String getGroupIdLevel2ForSubscriber(int subId, String callingPackage,
+            String callingFeatureId) {
+        return callPhoneMethodForSubIdWithPrivilegedCheck(subId,
+                "getGroupIdLevel2", (phone)-> {
+                    enforceTelephonyFeatureWithException(callingPackage,
+                            PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION,
+                            "getGroupIdLevel2ForSubscriber");
+                    return phone.getGroupIdLevel2();
+                });
+    }
+
     /** Below are utility methods that abstracts the flow that many public methods use:
      *  1. Check permission: pass, throw exception, or fails (returns false).
      *  2. clearCallingIdentity.

@@ -19,6 +19,15 @@ flag {
   bug: "296076674"
 }
 
+# OWNER=rambowang TARGET=24Q3
+flag {
+  name: "data_only_cellular_service"
+  is_exported: true
+  namespace: "telephony"
+  description: "Supports customized cellular service capabilities per subscription."
+  bug: "296097429"
+}
+
 # OWNER=hhshin TARGET=24Q3
 flag {
   name: "support_psim_to_esim_conversion"
@@ -71,4 +80,13 @@ flag {
   metadata {
     purpose: PURPOSE_BUGFIX
   }
+}
+
+# OWNER=jmattis TARGET=25Q2
+flag {
+  name: "subscription_plan_allow_status_and_end_date"
+  namespace: "telephony"
+  description: "Provide APIs to retrieve the status and recurrence rule info on a subscription plan"
+  bug: "357272015"
+  is_exported: true
 }

@@ -741,6 +741,8 @@ public class DataNetworkController extends Handler {
 
         private static final String RULE_TAG_ROAMING = "roaming";
 
+        private static final String RULE_TAG_INCALL = "incall";
+
         /** Handover rule type. */
         @HandoverRuleType
         public final int type;
@@ -766,6 +768,9 @@ public class DataNetworkController extends Handler {
         /** {@code true} indicates this policy is only applicable when the device is roaming. */
         public final boolean isOnlyForRoaming;
 
+        /** {@code true} indicates this policy is only applicable when the device is incall. */
+        public final boolean isOnlyForIncall;
+
         /**
          * Constructor
          *
@@ -773,7 +778,7 @@ public class DataNetworkController extends Handler {
          *
          * @see CarrierConfigManager#KEY_IWLAN_HANDOVER_POLICY_STRING_ARRAY
          */
-        public HandoverRule(@NonNull String ruleString) {
+        public HandoverRule(@NonNull String ruleString, @NonNull FeatureFlags featureFlags) {
             if (TextUtils.isEmpty(ruleString)) {
                 throw new IllegalArgumentException("illegal rule " + ruleString);
             }
@@ -781,6 +786,7 @@ public class DataNetworkController extends Handler {
             Set<Integer> source = null, target = null, capabilities = Collections.emptySet();
             int type = 0;
             boolean roaming = false;
+            boolean incall = false;
 
             ruleString = ruleString.trim().toLowerCase(Locale.ROOT);
             String[] expressions = ruleString.split("\\s*,\\s*");
@@ -820,6 +826,11 @@ public class DataNetworkController extends Handler {
                             break;
                         case RULE_TAG_ROAMING:
                             roaming = Boolean.parseBoolean(value);
+                            break;
+                        case RULE_TAG_INCALL:
+                            if (featureFlags.incallHandoverPolicy()) {
+                                incall = Boolean.parseBoolean(value);
+                            }
                             break;
                         default:
                             throw new IllegalArgumentException("unexpected key " + key);
@@ -867,6 +878,7 @@ public class DataNetworkController extends Handler {
             this.type = type;
             networkCapabilities = capabilities;
             isOnlyForRoaming = roaming;
+            isOnlyForIncall = incall;
         }
 
         @Override
@@ -876,8 +888,8 @@ public class DataNetworkController extends Handler {
                     .map(AccessNetworkType::toString).collect(Collectors.joining("|"))
                     + ", target=" + targetAccessNetworks.stream().map(AccessNetworkType::toString)
                     .collect(Collectors.joining("|")) + ", isRoaming=" + isOnlyForRoaming
-                    + ", capabilities=" + DataUtils.networkCapabilitiesToString(networkCapabilities)
-                    + "]";
+                    + ", isIncall=" + isOnlyForIncall + ", capabilities="
+                    + DataUtils.networkCapabilitiesToString(networkCapabilities) + "]";
         }
     }
 
@@ -1664,7 +1676,11 @@ public class DataNetworkController extends Handler {
         }
 
         // Check if data roaming is disabled.
-        if (mServiceState.getDataRoaming() && !mDataSettingsManager.isDataRoamingEnabled()) {
+        // But if the data roaming setting for satellite connection is ignored as the satellite
+        // data plan is included in the user mobile plan, then we should not disallow data due to
+        // roaming disabled.
+        if (mServiceState.getDataRoaming() && !mDataSettingsManager.isDataRoamingEnabled()
+                    && !shouldIgnoreDataRoamingSettingForSatellite()) {
             evaluation.addDataDisallowedReason(DataDisallowedReason.ROAMING_DISABLED);
         }
 
@@ -1808,6 +1824,18 @@ public class DataNetworkController extends Handler {
                     + ", " + networkRequest);
         }
         return evaluation;
+    }
+
+    /**
+     * Returns whether the data roaming setting should be ignored for satellite connection,
+     * as the satellite data plan is included in the user mobile plan.
+     *
+     * @return {@code true} if the data roaming setting should be ignored for satellite connection.
+     * {@code false} otherwise.
+     */
+    private boolean shouldIgnoreDataRoamingSettingForSatellite() {
+        return mServiceState.isUsingNonTerrestrialNetwork()
+                && mDataConfigManager.isIgnoringDataRoamingSettingForSatellite();
     }
 
     /**
@@ -2337,6 +2365,9 @@ public class DataNetworkController extends Handler {
             // in data network.
             boolean isRoaming = isWwanInService ? mServiceState.getDataRoamingFromRegistration()
                     : dataNetwork.getLastKnownRoamingState();
+            Phone imsPhone = mPhone.getImsPhone();
+            boolean isIncall = mFeatureFlags.incallHandoverPolicy() && imsPhone != null
+                    && (imsPhone.getCallTracker().getState() != PhoneConstants.State.IDLE);
             int targetAccessNetwork = DataUtils.networkTypeToAccessNetworkType(
                     getDataNetworkType(DataUtils.getTargetTransport(dataNetwork.getTransport())));
             NetworkCapabilities capabilities = dataNetwork.getNetworkCapabilities();
@@ -2344,6 +2375,7 @@ public class DataNetworkController extends Handler {
                     + "source=" + AccessNetworkType.toString(sourceAccessNetwork)
                     + ", target=" + AccessNetworkType.toString(targetAccessNetwork)
                     + ", roaming=" + isRoaming
+                    + ", incall=" + isIncall
                     + ", ServiceState=" + mServiceState
                     + ", capabilities=" + capabilities);
 
@@ -2352,6 +2384,11 @@ public class DataNetworkController extends Handler {
                 // Check if the rule is only for roaming and we are not roaming.
                 if (rule.isOnlyForRoaming && !isRoaming) {
                     // If the rule is for roaming only, and the device is not roaming, then bypass
+                    // this rule.
+                    continue;
+                }
+                if (rule.isOnlyForIncall && (!mFeatureFlags.incallHandoverPolicy() || !isIncall)) {
+                    // If the rule is for incall only, and the device is not incall, then bypass
                     // this rule.
                     continue;
                 }
@@ -2514,53 +2551,27 @@ public class DataNetworkController extends Handler {
     }
 
     private void onRemoveNetworkRequest(@NonNull TelephonyNetworkRequest request) {
-        if (mFeatureFlags.supportNetworkProvider()) {
-            if (!mAllNetworkRequestList.remove(request)) {
-                loge("onRemoveNetworkRequest: Network request does not exist. " + request);
-                return;
-            }
-
-            if (request.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS)) {
-                mImsThrottleCounter.addOccurrence();
-                mLastReleasedImsRequestCapabilities = request.getCapabilities();
-                mLastImsOperationIsRelease = true;
-            }
-
-            if (request.getAttachedNetwork() != null) {
-                request.getAttachedNetwork().detachNetworkRequest(
-                        request, false /* shouldRetry */);
-            }
-
-            request.setState(TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED);
-            request.setEvaluation(null);
-
-            log("onRemoveNetworkRequest: Removed " + request);
+        if (!mAllNetworkRequestList.remove(request)) {
+            loge("onRemoveNetworkRequest: Network request does not exist. " + request);
             return;
         }
 
-        // The request generated from telephony network factory does not contain the information
-        // the original request has, for example, attached data network. We need to find the
-        // original one.
-        TelephonyNetworkRequest networkRequest = mAllNetworkRequestList.stream()
-                .filter(r -> r.equals(request))
-                .findFirst()
-                .orElse(null);
-        if (networkRequest == null || !mAllNetworkRequestList.remove(networkRequest)) {
-            loge("onRemoveNetworkRequest: Network request does not exist. " + networkRequest);
-            return;
-        }
-
-        if (networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS)) {
+        if (request.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS)) {
             mImsThrottleCounter.addOccurrence();
-            mLastReleasedImsRequestCapabilities = networkRequest.getCapabilities();
+            mLastReleasedImsRequestCapabilities = request.getCapabilities();
             mLastImsOperationIsRelease = true;
         }
 
-        if (networkRequest.getAttachedNetwork() != null) {
-            networkRequest.getAttachedNetwork().detachNetworkRequest(
-                    networkRequest, false /* shouldRetry */);
+        if (request.getAttachedNetwork() != null) {
+            request.getAttachedNetwork().detachNetworkRequest(
+                    request, false /* shouldRetry */);
         }
-        log("onRemoveNetworkRequest: Removed " + networkRequest);
+
+        request.setState(TelephonyNetworkRequest.REQUEST_STATE_UNSATISFIED);
+        request.setEvaluation(null);
+
+        log("onRemoveNetworkRequest: Removed " + request);
+        return;
     }
 
     /**
@@ -3543,6 +3554,15 @@ public class DataNetworkController extends Handler {
     }
 
     /**
+     * Called when SIM is absent.
+     */
+    private void onSimAbsent() {
+        log("onSimAbsent");
+        sendMessage(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
+                DataEvaluationReason.SIM_REMOVAL));
+    }
+
+    /**
      * Called when SIM state changes.
      *
      * @param simState SIM state. (Note this is mixed with card state and application state.)
@@ -3550,22 +3570,13 @@ public class DataNetworkController extends Handler {
     private void onSimStateChanged(@SimState int simState) {
         log("onSimStateChanged: state=" + TelephonyManager.simStateToString(simState));
         if (mSimState != simState) {
+            mSimState = simState;
             if (simState == TelephonyManager.SIM_STATE_ABSENT) {
-                log("onSimStateChanged: SIM absent.");
-                sendMessage(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
-                        DataEvaluationReason.SIM_REMOVAL));
-            } else if (simState == TelephonyManager.SIM_STATE_NOT_READY
-                    && mSimState == TelephonyManager.SIM_STATE_LOADED) {
-                if (mFeatureFlags.simDisabledGracefulTearDown()) {
-                    log("onSimStateChanged: SIM disabled.");
-                    sendMessage(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
-                            DataEvaluationReason.SIM_DISABLED));
-                }
+                onSimAbsent();
             } else if (simState == TelephonyManager.SIM_STATE_LOADED) {
                 sendMessage(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
                         DataEvaluationReason.SIM_LOADED));
             }
-            mSimState = simState;
             mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                     () -> callback.onSimStateChanged(mSimState)));
         }

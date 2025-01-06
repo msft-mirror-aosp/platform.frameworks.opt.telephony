@@ -155,6 +155,7 @@ flag {
     namespace: "telephony"
     description: "Used to expose SMS related hidden APIs for SMS over IMS to public API."
     bug:"359721349"
+    is_exported: true
 }
 
 # OWNER=jhyoon TARGET=25Q2
@@ -163,4 +164,16 @@ flag {
     namespace: "telephony"
     description: "This flag controls the type of API regarding MmTelFeature, either hidden or system type."
     bug:"359721349"
+    is_exported: true
+}
+
+# OWNER=joonhunshin TARGET=25Q2
+flag {
+    name: "skip_mmi_code_check_for_emergency_call"
+    namespace: "telephony"
+    description: "This flag allows to skip the MMI code check for the emergency number."
+    bug:"378065922"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }

@@ -78,6 +78,15 @@ flag {
   bug: "309896524"
 }
 
+# OWNER=rambowang TARGET=24Q3
+flag {
+    name: "reset_mobile_network_settings"
+    is_exported: true
+    namespace: "telephony"
+    description: "Allows applications to launch Reset Mobile Network Settings page in Settings app."
+    bug:"271921464"
+}
+
 # OWNER=sangyun TARGET=24Q3
 flag {
     name: "roaming_notification_for_single_data_network"
@@ -211,3 +220,40 @@ flag {
     }
 }
 
+# OWNER=jackyu TARGET=25Q2
+flag {
+    name: "power_down_race_fix"
+    namespace: "telephony"
+    description: "Fixed race condition while powering down"
+    bug:"378616116"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=jackyu TARGET=25Q2
+flag {
+    name: "deprecate_cdma"
+    namespace: "telephony"
+    description: "Deprecate CDMA and NV APIS"
+    bug: "379356026"
+}
+
+# OWNER=jackyu TARGET=25Q2
+flag {
+    name: "cleanup_cdma"
+    namespace: "telephony"
+    description: "Disable CDMA and NV backing code"
+    bug: "379356026"
+}
+
+# OWNER=tjstuart TARGET=25Q2
+flag {
+    name: "dynamic_do_not_ask_again_text"
+    namespace: "telephony"
+    description: "Make No Emergency Wifi Calling Do Not Ask Again text translatable"
+    bug:"382006472"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}

@@ -892,6 +892,17 @@ public class DataConfigManager extends Handler {
     }
 
     /**
+     * Returns whether the data roaming setting for satellite connection is ignored.
+     *
+     * @return {@code true} if data roaming setting for satellite connection is ignored,
+     * {@code false} otherwise.
+     */
+    public boolean isIgnoringDataRoamingSettingForSatellite() {
+        return mCarrierConfig.getBoolean(
+            CarrierConfigManager.KEY_SATELLITE_IGNORE_DATA_ROAMING_SETTING_BOOL);
+    }
+
+    /**
      * @return Whether data throttling should be reset when the TAC changes from the carrier config.
      */
     public boolean shouldResetDataThrottlingWhenTacChanges() {
@@ -1269,7 +1280,7 @@ public class DataConfigManager extends Handler {
             if (handoverRulesStrings != null) {
                 for (String ruleString : handoverRulesStrings) {
                     try {
-                        mHandoverRuleList.add(new HandoverRule(ruleString));
+                        mHandoverRuleList.add(new HandoverRule(ruleString, mFeatureFlags));
                     } catch (IllegalArgumentException e) {
                         loge("updateHandoverRules: " + e.getMessage());
                     }

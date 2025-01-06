@@ -93,3 +93,31 @@ flag {
     }
 }
 
+# OWNER=yomna TARGET=25Q2
+flag {
+  name: "security_algorithms_update_indications"
+  is_exported: true
+  namespace: "telephony"
+  description: "guard system API onSecurityAlgorithmsChanged"
+  bug: "355062720"
+}
+
+# OWNER=yomna TARGET=25Q2
+flag {
+  name: "cellular_identifier_disclosure_indications"
+  is_exported: true
+  namespace: "telephony"
+  description: "guard system API onCellularIdentifierDisclosedChanged"
+  bug: "355062720"
+}
+
+# OWNER=jackyu TARGET=25Q3
+flag {
+    name: "ignore_mcc_mnc_from_operator_for_locale"
+    namespace: "telephony"
+    description: "Ignoring mcc/mnc from RIL indication OPERATOR but only relying MCC/MNC from registered or nearby cells."
+    bug:"374589521"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}

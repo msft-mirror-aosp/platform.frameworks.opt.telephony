@@ -122,7 +122,11 @@ public class ApduSenderTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws InterruptedException {
+        // Send an APDU to verify that the channel lock is not stuck (b/382549728).
+        // Sameas testSend(), but not verifying mMockCi interactions.
+        checkChannelLock();
+
         mHandler.removeCallbacksAndMessages(null);
         mHandler = null;
         mLooper = null;
@@ -535,5 +539,21 @@ public class ApduSenderTest {
                 .remove(SHARED_PREFS_KEY_CHANNEL_ID)
                 .remove(SHARED_PREFS_KEY_CHANNEL_RESPONSE)
                 .apply();
+    }
+
+    /**
+     * Send an APDU to verify that the channel lock is not stuck (b/382549728).
+     * Same as testSend(), but not verifying mMockCi interactions.
+     */
+    private void checkChannelLock() throws InterruptedException {
+        int channel = LogicalChannelMocker.mockOpenLogicalChannelResponse(mMockCi, "9000");
+        LogicalChannelMocker.mockSendToLogicalChannel(mMockCi, channel, "A1A1A19000");
+        LogicalChannelMocker.mockCloseLogicalChannel(mMockCi, channel, /* error= */ null);
+
+        mSender.send((selectResponse, requestBuilder) -> requestBuilder.addApdu(
+                10, 1, 2, 3, 0, "a"), mResponseCaptor, mHandler);
+        mLooper.processAllMessages();
+
+        assertEquals("A1A1A1", IccUtils.bytesToHexString(mResponseCaptor.response));
     }
 }

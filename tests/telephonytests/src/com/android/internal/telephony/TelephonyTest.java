@@ -580,7 +580,6 @@ public abstract class TelephonyTest {
         mNullCipherNotifier = Mockito.mock(NullCipherNotifier.class);
 
         doReturn(true).when(mFeatureFlags).minimalTelephonyCdmCheck();
-        doReturn(true).when(mFeatureFlags).supportNetworkProvider();
         doReturn(true).when(mFeatureFlags).hsumBroadcast();
         doReturn(true).when(mFeatureFlags).hsumPackageManager();
 
@@ -747,6 +746,8 @@ public abstract class TelephonyTest {
         doReturn(mDataRetryManager).when(mDataNetworkController).getDataRetryManager();
         doReturn(mCarrierPrivilegesTracker).when(mPhone).getCarrierPrivilegesTracker();
         doReturn(0).when(mPhone).getPhoneId();
+        doReturn(true).when(mPhone).hasCalling();
+        doReturn(true).when(mPhone2).hasCalling();
 
         //mUiccController
         doReturn(mUiccCardApplication3gpp).when(mUiccController).getUiccCardApplication(anyInt(),
@@ -809,7 +810,7 @@ public abstract class TelephonyTest {
         doReturn(ServiceState.RIL_RADIO_TECHNOLOGY_LTE).when(mServiceState)
                 .getRilDataRadioTechnology();
         doReturn(new TelephonyDisplayInfo(TelephonyManager.NETWORK_TYPE_LTE,
-                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false))
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE, false, false, false))
                 .when(mDisplayInfoController).getTelephonyDisplayInfo();
         doReturn(mPhone).when(mCT).getPhone();
         doReturn(mImsEcbm).when(mImsManager).getEcbmInterface();
