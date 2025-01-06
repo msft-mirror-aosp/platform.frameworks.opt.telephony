@@ -3590,6 +3590,34 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         Bundle b = getExtrasFromLastSpnUpdateIntent();
         assertThat(b.getString(TelephonyManager.EXTRA_PLMN)).isEqualTo(SATELLITE_DISPLAY_NAME);
         assertThat(b.getBoolean(TelephonyManager.EXTRA_SHOW_PLMN)).isTrue();
+
+        // Override operator name to "Satellite" when registration state is IN_SERVICE.
+        mSimulatedCommands.setVoiceRegState(
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+        mSimulatedCommands.setVoiceRadioTech(ServiceState.RIL_RADIO_TECHNOLOGY_LTE);
+        mSimulatedCommands.setDataRegState(
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+        mSimulatedCommands.setDataRadioTech(ServiceState.RIL_RADIO_TECHNOLOGY_LTE);
+        doReturn(ServiceState.STATE_IN_SERVICE).when(mServiceState).getState();
+        doReturn(ServiceState.STATE_IN_SERVICE).when(mServiceState).getDataRegistrationState();
+        doReturn("Skylo Technologies").when(mServiceState).getOperatorAlpha();
+
+        mBundle.putBoolean(
+                CarrierConfigManager.KEY_ENABLE_CARRIER_DISPLAY_NAME_RESOLVER_BOOL, false);
+        mBundle.putBoolean(CarrierConfigManager.KEY_CARRIER_NAME_OVERRIDE_BOOL, true);
+        mBundle.putString(CarrierConfigManager.KEY_CARRIER_NAME_STRING, "");
+        sendCarrierConfigUpdate(PHONE_ID);
+
+        callback.onSatelliteModemStateChanged(
+                SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING);
+        waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
+
+        // update the spn
+        sst.updateCarrierDisplayName();
+
+        b = getExtrasFromLastSpnUpdateIntent();
+        assertThat(b.getString(TelephonyManager.EXTRA_PLMN)).isEqualTo(SATELLITE_DISPLAY_NAME);
+        assertThat(b.getBoolean(TelephonyManager.EXTRA_SHOW_PLMN)).isTrue();
     }
 
 }

@@ -614,7 +614,8 @@ public class SatelliteController extends Handler {
             new ArrayList<>();
     // The ID of the satellite subscription that has highest priority and is provisioned.
     @GuardedBy("mSatelliteTokenProvisionedLock")
-    private int mSelectedSatelliteSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected int mSelectedSatelliteSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
     // The last ICC ID that framework configured to modem.
     @GuardedBy("mSatelliteTokenProvisionedLock")
     private String mLastConfiguredIccId;
@@ -7426,9 +7427,13 @@ public class SatelliteController extends Handler {
             selectedSubId = getNtnOnlySubscriptionId();
         }
 
-        synchronized (mSatelliteTokenProvisionedLock) {
-            mSelectedSatelliteSubId = selectedSubId;
+        int preSelectedSatelliteSubId = getSelectedSatelliteSubId();
+        setSelectedSatelliteSubId(selectedSubId);
+        if (preSelectedSatelliteSubId != getSelectedSatelliteSubId()) {
+            plogd("selectBindingSatelliteSubscription: SelectedSatelliteSubId changed");
+            evaluateCarrierRoamingNtnEligibilityChange();
         }
+
         setSatellitePhone(selectedSubId);
         if (selectedSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
             int carrierId = getSatelliteCarrierId();
@@ -7714,6 +7719,13 @@ public class SatelliteController extends Handler {
         }
     }
 
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected void setSelectedSatelliteSubId(int subId) {
+        synchronized (mSatelliteTokenProvisionedLock) {
+            mSelectedSatelliteSubId = subId;
+        }
+    }
+
     /** Return the carrier ID of the binding satellite subscription. */
     public int getSatelliteCarrierId() {
         synchronized (mSatelliteTokenProvisionedLock) {
@@ -7764,7 +7776,7 @@ public class SatelliteController extends Handler {
             return false;
         }
 
-        int subId = phone.getSubId();
+        int subId = getSelectedSatelliteSubId();
         if (!isSatelliteRoamingP2pSmSSupported(subId)) {
             plogd("isCarrierRoamingNtnEligible(" + subId + "): doesn't support P2P SMS");
             return false;
