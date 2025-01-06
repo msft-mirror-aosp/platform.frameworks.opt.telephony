@@ -2997,14 +2997,11 @@ public class ServiceStateTracker extends Handler {
 
         String satellitePlmn = null;
         SatelliteModemStateListener satelliteModemStateListener = getSatelliteModemStateListener();
-        if (combinedRegState == ServiceState.STATE_OUT_OF_SERVICE
-                && satelliteModemStateListener != null
+        if (satelliteModemStateListener != null
                 && satelliteModemStateListener.isInConnectedState()) {
-            // If device is connected to the nb-iot satellite,
-            // 1) No service but nb-iot satellite is connected ->
-            //    expected to show "Satellite" for demo mode.
             satellitePlmn = getSatelliteDisplayName();
         }
+        log("updateCarrierDisplayName: satellitePlmn=" + satellitePlmn);
 
         if (mPhone.isPhoneTypeGsm()) {
             // The values of plmn/showPlmn change in different scenarios.
