@@ -4261,6 +4261,8 @@ public class SatelliteControllerTest extends TelephonyTest {
             );
         }
         mSatelliteControllerUT.setSatellitePhone(1);
+        mSatelliteControllerUT.setSelectedSatelliteSubId(SUB_ID);
+        mSatelliteControllerUT.isSatelliteProvisioned = true;
         mSatelliteControllerUT.setIsSatelliteAllowedState(true);
         processAllMessages();
 
@@ -4327,6 +4329,8 @@ public class SatelliteControllerTest extends TelephonyTest {
             );
         }
         mSatelliteControllerUT.setSatellitePhone(1);
+        mSatelliteControllerUT.setSelectedSatelliteSubId(SUB_ID);
+        mSatelliteControllerUT.isSatelliteProvisioned = true;
         mSatelliteControllerUT.isSatelliteAllowedCallback = null;
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         mSatelliteControllerUT.setIsSatelliteAllowedState(true);
@@ -6173,6 +6177,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         public boolean isSatelliteBeingDisabled = false;
         public boolean mIsApplicationSupportsP2P = false;
         public int selectedSatelliteSubId = -1;
+        public boolean isSatelliteProvisioned;
 
         TestSatelliteController(
                 Context context, Looper looper, @NonNull FeatureFlags featureFlags) {
@@ -6235,13 +6240,16 @@ public class SatelliteControllerTest extends TelephonyTest {
         }
 
         @Override
-        protected boolean isSubscriptionProvisioned(int subId) {
-            synchronized (mSatellitePhoneLock) {
-                if (mSatellitePhone.getSubId() == subId) {
-                    return true;
-                }
+        protected void setSelectedSatelliteSubId(int subId) {
+            logd("setSelectedSatelliteSubId: subId=" + subId);
+            synchronized (mSatelliteTokenProvisionedLock) {
+                mSelectedSatelliteSubId = subId;
             }
-            return false;
+        }
+
+        @Override
+        protected boolean isSubscriptionProvisioned(int subId) {
+            return isSatelliteProvisioned;
         }
 
         @Override
