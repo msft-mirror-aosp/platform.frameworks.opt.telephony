@@ -838,6 +838,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
                 .updateSendStatus(eq(SUB_ID), eq(datagramType),
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                         eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSessionMetricsStats, times(1))
+                .addCountOfSuccessfulOutgoingDatagram(eq(datagramType), anyLong());
         verifyNoMoreInteractions(mMockDatagramController);
     }
 
@@ -874,6 +876,9 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(datagramType),
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                         eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSessionMetricsStats, times(1))
+                .addCountOfFailedOutgoingDatagram(eq(datagramType), eq(
+                        SatelliteManager.SATELLITE_RESULT_NETWORK_ERROR));
     }
 
     @Test
