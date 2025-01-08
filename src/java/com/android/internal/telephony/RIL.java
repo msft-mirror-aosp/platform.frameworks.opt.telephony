@@ -5874,7 +5874,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_GET_IMEISV:
             case RIL_REQUEST_SIM_OPEN_CHANNEL:
             case RIL_REQUEST_SIM_TRANSMIT_APDU_CHANNEL:
-            case RIL_REQUEST_DEVICE_IMEI:
 
                 if (!RILJ_LOGV) {
                     // If not versbose logging just return and don't display IMSI and IMEI, IMEISV
@@ -5913,6 +5912,16 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 while (i < length) {
                     sb.append(", ").append(strings[i++]);
                 }
+            }
+            sb.append("}");
+            s = sb.toString();
+        } else if (req == RIL_REQUEST_DEVICE_IMEI) {
+            sb = new StringBuilder("{");
+            ImeiInfo imeiInfo = (ImeiInfo) ret;
+            if (imeiInfo != null) {
+                sb.append(Rlog.pii(RILJ_LOG_TAG, imeiInfo.imei)).append(", ");
+                sb.append(imeiInfo.type).append(", ");
+                sb.append(imeiInfo.svn);
             }
             sb.append("}");
             s = sb.toString();
