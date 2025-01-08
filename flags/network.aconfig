@@ -121,3 +121,11 @@ flag {
         purpose: PURPOSE_BUGFIX
     }
 }
+
+flag {
+    name: "vendor_specific_cellular_identifier_disclosure_indications"
+    is_exported: true
+    namespace: "telephony"
+    description: "Guard system API for vendor-specific classifications of cellular ID disclosures"
+    bug: "355062720"
+}
