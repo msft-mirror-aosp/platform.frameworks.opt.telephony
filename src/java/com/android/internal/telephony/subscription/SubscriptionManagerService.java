@@ -4721,6 +4721,9 @@ public class SubscriptionManagerService extends ISub.Stub {
     public boolean isSatelliteProvisionedForNonIpDatagram(int subId) {
         SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager.getSubscriptionInfoInternal(
                 subId);
+        if (subInfo == null) {
+            return false;
+        }
 
         return subInfo.getIsSatelliteProvisionedForNonIpDatagram() == 1;
     }
