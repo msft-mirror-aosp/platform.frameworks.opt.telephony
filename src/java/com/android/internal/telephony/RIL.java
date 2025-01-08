@@ -5422,7 +5422,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 rr,
                 "setSatellitePlmn",
                 () -> {
-                    networkProxy.setSatellitePlmn(rr.mSerial, simSlot, carrierPlmnList,
+                    networkProxy.setSatellitePlmn(rr.mSerial, carrierPlmnList,
                             allSatellitePlmnList);
                 });
     }
@@ -5454,8 +5454,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 rr,
                 "setSatelliteEnabledForCarrier",
                 () -> {
-                    networkProxy.setSatelliteEnabledForCarrier(rr.mSerial, simSlot,
-                            satelliteEnabled);
+                    networkProxy.setSatelliteEnabledForCarrier(rr.mSerial, satelliteEnabled);
                 });
     }
 
@@ -5482,7 +5481,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         radioServiceInvokeHelper(
                 HAL_SERVICE_NETWORK, rr, "isSatelliteEnabledForCarrier", () -> {
-                    networkProxy.isSatelliteEnabledForCarrier(rr.mSerial, simSlot);
+                    networkProxy.isSatelliteEnabledForCarrier(rr.mSerial);
                 });
     }
 
