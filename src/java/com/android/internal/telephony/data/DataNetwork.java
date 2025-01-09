@@ -105,6 +105,7 @@ import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.metrics.DataCallSessionStats;
 import com.android.internal.telephony.metrics.DataNetworkValidationStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FunctionalUtils;
 import com.android.internal.util.IState;
@@ -2572,7 +2573,16 @@ public class DataNetwork extends StateMachine {
         // Configure the network as restricted/constrained for unrestricted satellite network.
         if (mFlags.satelliteInternet() && mIsSatellite && builder.build()
                 .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
-            switch (mDataConfigManager.getSatelliteDataSupportMode()) {
+
+            int dataPolicy;
+            if (mFlags.dataServiceCheck()) {
+                final SatelliteController satelliteController = SatelliteController.getInstance();
+                dataPolicy = satelliteController.getSatelliteDataServicePolicyForPlmn(mSubId,
+                        mPhone.getServiceState().getOperatorNumeric());
+            } else {
+                dataPolicy = mDataConfigManager.getSatelliteDataSupportMode();
+            }
+            switch (dataPolicy) {
                 case CarrierConfigManager.SATELLITE_DATA_SUPPORT_ONLY_RESTRICTED
                         -> builder.removeCapability(
                                 NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
