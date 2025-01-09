@@ -65,14 +65,6 @@ flag {
   bug: "310639009"
 }
 
-# OWNER=sarahchin TARGET=24Q2
-flag {
-  name: "support_nr_sa_rrc_idle"
-  namespace: "telephony"
-  description: "Support RRC idle for NR SA."
-  bug: "298233308"
-}
-
 # OWNER=nharold TARGET=24Q3
 flag {
   name: "network_registration_info_reject_cause"
