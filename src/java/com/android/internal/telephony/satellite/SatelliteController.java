@@ -7228,22 +7228,50 @@ public class SatelliteController extends Handler {
         return new Pair<>(subscriberId, subscriberIdType);
     }
 
-    private String getPhoneNumberBasedCarrier(int subId) {
+    /** Get subscriberId from phone number and carrier information. */
+    @VisibleForTesting(visibility =  VisibleForTesting.Visibility.PRIVATE)
+    public String getPhoneNumberBasedCarrier(int subId) {
+        String subscriberId = "";
         SubscriptionInfoInternal internal = mSubscriptionManagerService.getSubscriptionInfoInternal(
                 subId);
+        if (internal == null) {
+            plogd("getPhoneNumberBasedCarrier: subscriptionInfoInternal is null.");
+            return subscriberId;
+        }
+
         SubscriptionManager subscriptionManager = mContext.getSystemService(
                 SubscriptionManager.class);
         if (mInjectSubscriptionManager != null) {
-            logd("getPhoneNumberBasedCarrier: InjectSubscriptionManager");
+            plogd("getPhoneNumberBasedCarrier: InjectSubscriptionManager");
             subscriptionManager = mInjectSubscriptionManager;
         }
-        String phoneNumber = subscriptionManager.getPhoneNumber(subId);
-        if (phoneNumber == null) {
-            logd("getPhoneNumberBasedCarrier: phoneNumber null");
-            return "";
+
+        if (subscriptionManager == null) {
+            plogd("getPhoneNumberBasedCarrier: subscriptionManager is null");
+            return subscriberId;
         }
-        return internal.getImsi() == null ? "" : internal.getImsi().substring(0, 6)
+
+        String phoneNumber = subscriptionManager.getPhoneNumber(subId);
+        if (TextUtils.isEmpty(phoneNumber)) {
+            plogd("getPhoneNumberBasedCarrier: phoneNumber is empty.");
+            return subscriberId;
+        }
+
+        String imsi = internal.getImsi();
+        if (TextUtils.isEmpty(imsi)) {
+            plogd("getPhoneNumberBasedCarrier: imsi is empty");
+            return subscriberId;
+        }
+
+        if (imsi.length() < 6) {
+            plogd("getPhoneNumberBasedCarrier: imsi length is less than 6");
+            return subscriberId;
+        }
+
+        subscriberId = internal.getImsi().substring(0, 6)
                 + phoneNumber.replaceFirst("^\\+", "");
+        plogd("getPhoneNumberBasedCarrier: subscriberId=" + subscriberId);
+        return subscriberId;
     }
 
     private boolean isPriorityChanged(Map<Integer, List<SubscriptionInfo>> currentMap,
