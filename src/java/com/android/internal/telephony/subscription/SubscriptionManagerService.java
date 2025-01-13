@@ -2308,9 +2308,17 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         enforceTelephonyFeatureWithException(getCurrentPackageName(), "addSubInfo");
 
-        if (!SubscriptionManager.isValidSlotIndex(slotIndex)
-                && slotIndex != SubscriptionManager.INVALID_SIM_SLOT_INDEX) {
-            throw new IllegalArgumentException("Invalid slotIndex " + slotIndex);
+        if (subscriptionType == SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM) {
+            if (!SubscriptionManager.isValidSlotIndex(slotIndex)) {
+                throw new IllegalArgumentException("Invalid slot index " + slotIndex
+                        + " for local SIM");
+            }
+        } else if (subscriptionType == SubscriptionManager.SUBSCRIPTION_TYPE_REMOTE_SIM) {
+            // We only support one remote SIM at this point, so use -1. This needs to be revisited
+            // if we plan to support multiple remote SIMs in the future.
+            slotIndex = SubscriptionManager.INVALID_SIM_SLOT_INDEX;
+        } else {
+            throw new IllegalArgumentException("Invalid subscription type " + subscriptionType);
         }
 
         // Now that all security checks passes, perform the operation as ourselves.
