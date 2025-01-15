@@ -3002,21 +3002,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     }
 
     @Test
-    public void testCellularIdentifierDisclosure_noModemCallOnRadioAvailable_FlagOff() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(false);
-        GsmCdmaPhone phoneUT = makeNewPhoneUT();
-        assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
-
-        sendRadioAvailableToPhone(phoneUT);
-
-        verify(mMockCi, never()).setCellularIdentifierTransparencyEnabled(anyBoolean(),
-                any(Message.class));
-        assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
-    }
-
-    @Test
     public void testCellularIdentifierDisclosure_unsupportedByModemOnRadioAvailable() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
         assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
 
@@ -3033,7 +3019,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testCellularIdentifierDisclosure_supportedByModem() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
         assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
 

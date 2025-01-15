@@ -5430,11 +5430,6 @@ public class GsmCdmaPhone extends Phone {
 
     @Override
     public void handleIdentifierDisclosureNotificationPreferenceChange() {
-        if (!mFeatureFlags.enableIdentifierDisclosureTransparency()) {
-            logi("Not handling identifier disclosure preference change. Feature flag "
-                    + "enable_identifier_disclosure_transparency disabled");
-            return;
-        }
         boolean prefEnabled = getIdentifierDisclosureNotificationsPreferenceEnabled();
 
         // The notifier is tied to handling unsolicited updates from the modem, not the
