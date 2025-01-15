@@ -1,15 +1,6 @@
 package: "com.android.internal.telephony.flags"
 container: "system"
 
-# OWNER=sarahchin TARGET=24Q1
-flag {
-  name: "hide_roaming_icon"
-  is_exported: true
-  namespace: "telephony"
-  description: "Allow carriers to hide the roaming (R) icon when roaming."
-  bug: "301467052"
-}
-
 # OWNER=cukie TARGET=24Q3
 flag {
   name: "enable_identifier_disclosure_transparency"
