@@ -5443,11 +5443,6 @@ public class GsmCdmaPhone extends Phone {
 
     @Override
     public void handleNullCipherNotificationPreferenceChanged() {
-        if (!mFeatureFlags.enableModemCipherTransparency()) {
-            logi("Not handling null cipher notification preference change. Feature flag "
-                    + "enable_modem_cipher_transparency disabled");
-            return;
-        }
         boolean prefEnabled = getNullCipherNotificationsPreferenceEnabled();
 
         // The notifier is tied to handling unsolicited updates from the modem, not the
