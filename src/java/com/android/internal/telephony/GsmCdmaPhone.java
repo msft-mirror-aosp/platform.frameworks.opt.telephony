@@ -1711,9 +1711,16 @@ public class GsmCdmaPhone extends Phone {
         String newDialString = PhoneNumberUtils.stripSeparators(dialString);
 
         if (isPhoneTypeGsm()) {
-            // handle in-call MMI first if applicable
-            if (handleInCallMmiCommands(newDialString)) {
-                return null;
+            if (mFeatureFlags.skipMmiCodeCheckForEmergencyCall()) {
+                // If not emergency number, handle in-call MMI first if applicable
+                if (!dialArgs.isEmergency && handleInCallMmiCommands(newDialString)) {
+                    return null;
+                }
+            } else {
+                // handle in-call MMI first if applicable
+                if (handleInCallMmiCommands(newDialString)) {
+                    return null;
+                }
             }
 
             // Only look at the Network portion for mmi

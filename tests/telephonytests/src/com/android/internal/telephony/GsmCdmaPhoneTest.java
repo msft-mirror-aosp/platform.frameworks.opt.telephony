@@ -96,6 +96,7 @@ import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyStateTracker;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.imsphone.ImsPhone;
+import com.android.internal.telephony.imsphone.ImsPhoneCall;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.test.SimulatedCommands;
@@ -522,6 +523,50 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         } catch (CallStateException e) {
             fail();
         }
+    }
+
+    @Test
+    @SmallTest
+    public void testDialWithShortEmergencyNumber() throws Exception {
+        ServiceState serviceState = Mockito.mock(ServiceState.class);
+        ImsPhoneCall imsPhoneCall = Mockito.mock(ImsPhoneCall.class);
+        GsmCdmaCall gsmCdmaCall2 = Mockito.mock(GsmCdmaCall.class);
+
+        mSST.mSS = mServiceState;
+        mCT.mForegroundCall = mGsmCdmaCall;
+        mCT.mBackgroundCall = gsmCdmaCall2;
+        mCT.mRingingCall = gsmCdmaCall2;
+
+        // Set the 2-digits as emergency number.
+        doReturn(true).when(mPackageManager).hasSystemFeature(
+                eq(PackageManager.FEATURE_TELEPHONY_CALLING));
+        doReturn(true).when(mTelephonyManager).isEmergencyNumber(eq("17"));
+
+        // Exist active call.
+        doReturn(GsmCdmaCall.State.ACTIVE).when(mGsmCdmaCall).getState();
+        doReturn(GsmCdmaCall.State.IDLE).when(gsmCdmaCall2).getState();
+        // ImsService is not ready.
+        doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(serviceState).getState();
+        doReturn(serviceState).when(mImsPhone).getServiceState();
+        doReturn(false).when(imsPhoneCall).isRinging();
+        doReturn(imsPhoneCall).when(mImsPhone).getRingingCall();
+
+        replaceInstance(Phone.class, "mImsPhone", mPhoneUT, mImsPhone);
+
+        Connection connection = mPhoneUT.dial("17",
+                new PhoneInternalInterface.DialArgs.Builder()
+                        .setIsEmergency(true)
+                        .build());
+        assertNull(connection);
+        verify(mCT, never()).dialGsm(eq("17"), any(PhoneInternalInterface.DialArgs.class));
+
+        // Enable feature flag.
+        doReturn(true).when(mFeatureFlags).skipMmiCodeCheckForEmergencyCall();
+        mPhoneUT.dial("17",
+                new PhoneInternalInterface.DialArgs.Builder()
+                        .setIsEmergency(true)
+                        .build());
+        verify(mCT).dialGsm(eq("17"), any(PhoneInternalInterface.DialArgs.class));
     }
 
     @Test
