@@ -776,6 +776,8 @@ public class NetworkTypeController extends StateMachine {
                     mRatchetedNrBandwidths = 0;
                     mLastAnchorNrCellId = PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN;
                     mDoesPccListIndicateIdle = false;
+                    mIsNrAdvancedAllowedByPco = false;
+                    mInVoiceCall = false;
                     mPhysicalChannelConfigs = null;
                     transitionTo(mLegacyState);
                     break;
