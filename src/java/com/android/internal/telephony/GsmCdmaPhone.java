@@ -538,24 +538,21 @@ public class GsmCdmaPhone extends Phone {
 
         mCi.registerForImeiMappingChanged(this, EVENT_IMEI_MAPPING_CHANGED, null);
 
-        if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()
-                || mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
+        if (mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
             mSafetySource =
                     mTelephonyComponentFactory.makeCellularNetworkSecuritySafetySource(mContext);
         }
 
-        if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()) {
-            logi(
-                    "enable_identifier_disclosure_transparency_unsol_events is on. Registering for "
-                            + "cellular identifier disclosures from phone "
-                            + getPhoneId());
-            mIdentifierDisclosureNotifier =
-                    mTelephonyComponentFactory
-                            .inject(CellularIdentifierDisclosureNotifier.class.getName())
-                            .makeIdentifierDisclosureNotifier(mSafetySource);
-            mCi.registerForCellularIdentifierDisclosures(
-                    this, EVENT_CELL_IDENTIFIER_DISCLOSURE, null);
-        }
+        logi(
+                "enable_identifier_disclosure_transparency_unsol_events is on. Registering for "
+                        + "cellular identifier disclosures from phone "
+                        + getPhoneId());
+        mIdentifierDisclosureNotifier =
+                mTelephonyComponentFactory
+                        .inject(CellularIdentifierDisclosureNotifier.class.getName())
+                        .makeIdentifierDisclosureNotifier(mSafetySource);
+        mCi.registerForCellularIdentifierDisclosures(
+                this, EVENT_CELL_IDENTIFIER_DISCLOSURE, null);
 
         if (mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
             logi(
@@ -3772,8 +3769,7 @@ public class GsmCdmaPhone extends Phone {
                 }
 
                 CellularIdentifierDisclosure disclosure = (CellularIdentifierDisclosure) ar.result;
-                if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()
-                        && mIdentifierDisclosureNotifier != null
+                if (mIdentifierDisclosureNotifier != null
                         && disclosure != null) {
                     mIdentifierDisclosureNotifier.addDisclosure(mContext, getSubId(), disclosure);
                 }
@@ -5435,15 +5431,10 @@ public class GsmCdmaPhone extends Phone {
         // The notifier is tied to handling unsolicited updates from the modem, not the
         // enable/disable API, so we only toggle the enable state if the unsol events feature
         // flag is enabled.
-        if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()) {
-            if (prefEnabled) {
-                mIdentifierDisclosureNotifier.enable(mContext);
-            } else {
-                mIdentifierDisclosureNotifier.disable(mContext);
-            }
+        if (prefEnabled) {
+            mIdentifierDisclosureNotifier.enable(mContext);
         } else {
-            logi("Not toggling enable state for disclosure notifier. Feature flag "
-                    + "enable_identifier_disclosure_transparency_unsol_events is disabled");
+            mIdentifierDisclosureNotifier.disable(mContext);
         }
 
         mCi.setCellularIdentifierTransparencyEnabled(prefEnabled,
@@ -5513,8 +5504,7 @@ public class GsmCdmaPhone extends Phone {
 
     @Override
     public void refreshSafetySources(String refreshBroadcastId) {
-        if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()
-                || mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
+        if (mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
             post(() -> mSafetySource.refresh(mContext, refreshBroadcastId));
         }
     }
