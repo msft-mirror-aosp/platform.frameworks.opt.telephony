@@ -116,6 +116,7 @@ import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccSlot;
 import com.android.internal.telephony.util.ArrayUtils;
 import com.android.internal.telephony.util.TelephonyUtils;
+import com.android.internal.telephony.util.WorkerThread;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
@@ -491,10 +492,14 @@ public class SubscriptionManagerService extends ISub.Stub {
         mUiccController = UiccController.getInstance();
         mHandler = new Handler(looper);
 
-        HandlerThread backgroundThread = new HandlerThread(LOG_TAG);
-        backgroundThread.start();
+        if (mFeatureFlags.threadShred()) {
+            mBackgroundHandler = new Handler(WorkerThread.get().getLooper());
+        } else {
+            HandlerThread backgroundThread = new HandlerThread(LOG_TAG);
+            backgroundThread.start();
 
-        mBackgroundHandler = new Handler(backgroundThread.getLooper());
+            mBackgroundHandler = new Handler(backgroundThread.getLooper());
+        }
 
         mDefaultVoiceSubId = new WatchedInt(Settings.Global.getInt(mContext.getContentResolver(),
                 Settings.Global.MULTI_SIM_VOICE_CALL_SUBSCRIPTION,
@@ -549,12 +554,22 @@ public class SubscriptionManagerService extends ISub.Stub {
         mSimState = new int[mTelephonyManager.getSupportedModemCount()];
         Arrays.fill(mSimState, TelephonyManager.SIM_STATE_UNKNOWN);
 
-        // Create a separate thread for subscription database manager. The database will be updated
-        // from a different thread.
-        HandlerThread handlerThread = new HandlerThread(LOG_TAG);
-        handlerThread.start();
-        mSubscriptionDatabaseManager = new SubscriptionDatabaseManager(context,
-                handlerThread.getLooper(), mFeatureFlags,
+        Looper dbLooper = null;
+
+        if (mFeatureFlags.threadShred()) {
+            dbLooper = WorkerThread.get().getLooper();
+        } else {
+            // Create a separate thread for subscription database manager.
+            // The database will be updated from a different thread.
+            HandlerThread handlerThread = new HandlerThread(LOG_TAG);
+            handlerThread.start();
+            dbLooper = handlerThread.getLooper();
+        }
+
+        mSubscriptionDatabaseManager = new SubscriptionDatabaseManager(
+                context,
+                dbLooper,
+                mFeatureFlags,
                 new SubscriptionDatabaseManagerCallback(mHandler::post) {
                     /**
                      * Called when database has been loaded into the cache.

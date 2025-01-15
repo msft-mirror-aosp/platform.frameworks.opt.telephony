@@ -71,6 +71,7 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccProfile;
+import com.android.internal.telephony.util.WorkerThread;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
@@ -369,48 +370,72 @@ public class CarrierPrivilegesTracker extends Handler {
 
         if (mFeatureFlags.asyncInitCarrierPrivilegesTracker()) {
             final Object localLock = new Object();
-            HandlerThread initializerThread =
-                    new HandlerThread("CarrierPrivilegesTracker Initializer") {
-                        @Override
-                        protected void onLooperPrepared() {
-                            synchronized (localLock) {
-                                localLock.notifyAll();
-                            }
+            if (mFeatureFlags.threadShred()) {
+                mCurrentHandler = new Handler(WorkerThread.get().getLooper()) {
+                    @Override
+                    public void handleMessage(Message msg) {
+                        switch(msg.what) {
+                            case ACTION_INITIALIZE_TRACKER:
+                                handleInitializeTracker();
+                                if (!hasMessagesOrCallbacks()) {
+                                    mCurrentHandler = CarrierPrivilegesTracker.this;
+                                }
+                                break;
+                            default:
+                                Message m = CarrierPrivilegesTracker.this.obtainMessage();
+                                m.copyFrom(msg);
+                                m.sendToTarget();
+                                if (!hasMessagesOrCallbacks()) {
+                                    mCurrentHandler = CarrierPrivilegesTracker.this;
+                                }
+                                break;
                         }
-                    };
-            synchronized (localLock) {
-                initializerThread.start();
-                while (true) {
-                    try {
-                        localLock.wait();
-                        break;
-                    } catch (InterruptedException ie) {
+                    }
+                };
+            } else {
+                HandlerThread initializerThread =
+                        new HandlerThread("CarrierPrivilegesTracker Initializer") {
+                            @Override
+                            protected void onLooperPrepared() {
+                                synchronized (localLock) {
+                                    localLock.notifyAll();
+                                }
+                            }
+                        };
+                synchronized (localLock) {
+                    initializerThread.start();
+                    while (true) {
+                        try {
+                            localLock.wait();
+                            break;
+                        } catch (InterruptedException ie) {
+                        }
                     }
                 }
+                mCurrentHandler = new Handler(initializerThread.getLooper()) {
+                    @Override
+                    public void handleMessage(Message msg) {
+                        switch(msg.what) {
+                            case ACTION_INITIALIZE_TRACKER:
+                                handleInitializeTracker();
+                                if (!hasMessagesOrCallbacks()) {
+                                    mCurrentHandler = CarrierPrivilegesTracker.this;
+                                    initializerThread.quitSafely();
+                                }
+                                break;
+                            default:
+                                Message m = CarrierPrivilegesTracker.this.obtainMessage();
+                                m.copyFrom(msg);
+                                m.sendToTarget();
+                                if (!hasMessagesOrCallbacks()) {
+                                    mCurrentHandler = CarrierPrivilegesTracker.this;
+                                    initializerThread.quitSafely();
+                                }
+                                break;
+                        }
+                    }
+                };
             }
-            mCurrentHandler = new Handler(initializerThread.getLooper()) {
-                @Override
-                public void handleMessage(Message msg) {
-                    switch(msg.what) {
-                        case ACTION_INITIALIZE_TRACKER:
-                            handleInitializeTracker();
-                            if (!hasMessagesOrCallbacks()) {
-                                mCurrentHandler = CarrierPrivilegesTracker.this;
-                                initializerThread.quitSafely();
-                            }
-                            break;
-                        default:
-                            Message m = CarrierPrivilegesTracker.this.obtainMessage();
-                            m.copyFrom(msg);
-                            m.sendToTarget();
-                            if (!hasMessagesOrCallbacks()) {
-                                mCurrentHandler = CarrierPrivilegesTracker.this;
-                                initializerThread.quitSafely();
-                            }
-                            break;
-                    }
-                }
-            };
         } else {
             mCurrentHandler = this;
         }
