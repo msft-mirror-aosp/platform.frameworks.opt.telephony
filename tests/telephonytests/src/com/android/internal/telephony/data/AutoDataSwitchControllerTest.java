@@ -193,9 +193,8 @@ public class AutoDataSwitchControllerTest extends TelephonyTest {
         mScheduledEventsToExtras = getPrivateField(mAutoDataSwitchControllerUT,
                 "mScheduledEventsToExtras", Map.class);
 
-        doReturn(true).when(mFeatureFlags).autoDataSwitchAllowRoaming();
         doReturn(true).when(mFeatureFlags).carrierEnabledSatelliteFlag();
-        doReturn(true).when(mFeatureFlags).autoDataSwitchUsesDataEnabled();
+        doReturn(true).when(mFeatureFlags).autoDataSwitchEnhanced();
     }
 
     @After

@@ -23,28 +23,16 @@ flag {
   }
 }
 
-# OWNER=linggm TARGET=24Q3
+# OWNER=linggm TARGET=25Q2
 flag {
-  name: "auto_data_switch_allow_roaming"
+  name: "auto_data_switch_enhanced"
   namespace: "telephony"
-  description: "Allow using roaming network as target if user allows it from settings."
+  description: "Ramp up RAT signal strength based auto data switch"
   bug: "287132491"
   metadata {
     purpose: PURPOSE_BUGFIX
   }
 }
-
-# OWNER=linggm TARGET=24Q3
-flag {
-  name: "auto_data_switch_uses_data_enabled"
-  namespace: "telephony"
-  description: "Separately consider the backup phone's data allowed and data enabled."
-  bug: "338552223"
-  metadata {
-    purpose: PURPOSE_BUGFIX
-  }
-}
-
 
 # OWNER=sarahchin TARGET=24Q3
 flag {
