@@ -6836,4 +6836,45 @@ public class SatelliteControllerTest extends TelephonyTest {
         verify(mPhone, times(2)).notifyCarrierRoamingNtnAvailableServicesChanged(
                 (int[]) ArgumentMatchers.any());
     }
+
+    @Test
+    public void testGetPhoneNumberBasedCarrier() throws Exception {
+        assertEquals("", mSatelliteControllerUT.getPhoneNumberBasedCarrier(-1));
+
+        int carrierId_subID = 0;
+        SubscriptionInfoInternal subInfoInternal =
+                new SubscriptionInfoInternal.Builder().setCarrierId(
+                        carrierId_subID).setImsi("").setIccId(mIccId).build();
+        doReturn(subInfoInternal).when(mMockSubscriptionManagerService)
+                .getSubscriptionInfoInternal(eq(SUB_ID));
+
+        // subscriptionManager is null
+        Field field = SatelliteController.class.getDeclaredField("mInjectSubscriptionManager");
+        field.setAccessible(true);
+        field.set(mSatelliteControllerUT, null);
+        assertEquals("", mSatelliteControllerUT.getPhoneNumberBasedCarrier(SUB_ID));
+
+        // phoneNumber is empty
+        field.set(mSatelliteControllerUT, mSubscriptionManager);
+        doReturn("").when(mSubscriptionManager).getPhoneNumber(eq(SUB_ID));
+        assertEquals("", mSatelliteControllerUT.getPhoneNumberBasedCarrier(SUB_ID));
+
+        // IMSI is empty
+        doReturn(mMsisdn).when(mSubscriptionManager).getPhoneNumber(eq(SUB_ID));
+        assertEquals("", mSatelliteControllerUT.getPhoneNumberBasedCarrier(SUB_ID));
+
+        // IMSI length is less than 6
+        subInfoInternal = new SubscriptionInfoInternal.Builder().setCarrierId(
+                        carrierId_subID).setImsi("12345").setIccId(mIccId).build();
+        doReturn(subInfoInternal).when(mMockSubscriptionManagerService)
+                .getSubscriptionInfoInternal(eq(SUB_ID));
+        assertEquals("", mSatelliteControllerUT.getPhoneNumberBasedCarrier(SUB_ID));
+
+        subInfoInternal = new SubscriptionInfoInternal.Builder().setCarrierId(
+                carrierId_subID).setImsi(mImsi).setIccId(mIccId).build();
+        doReturn(subInfoInternal).when(mMockSubscriptionManagerService)
+                .getSubscriptionInfoInternal(eq(SUB_ID));
+        String expectedResult = "123456" + "0987654321";
+        assertEquals(expectedResult, mSatelliteControllerUT.getPhoneNumberBasedCarrier(SUB_ID));
+    }
 }
