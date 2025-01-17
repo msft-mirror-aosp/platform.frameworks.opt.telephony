@@ -613,11 +613,11 @@ public class SatelliteControllerTest extends TelephonyTest {
                 SATELLITE_RESULT_REQUEST_ABORTED);
         mServiceState2 = mock(ServiceState.class);
         when(mPhone.getServiceState()).thenReturn(mServiceState);
-        when(mPhone.getSubId()).thenReturn(SUB_ID);
+        doReturn(SUB_ID).when(mPhone).getSubId();
         when(mPhone.getPhoneId()).thenReturn(0);
         when(mPhone.getSignalStrengthController()).thenReturn(mSignalStrengthController);
         when(mPhone2.getServiceState()).thenReturn(mServiceState2);
-        when(mPhone2.getSubId()).thenReturn(SUB_ID1);
+        doReturn(SUB_ID1).when(mPhone2).getSubId();
         when(mPhone2.getPhoneId()).thenReturn(1);
         when(mPhone2.getSignalStrengthController()).thenReturn(mSignalStrengthController);
 
