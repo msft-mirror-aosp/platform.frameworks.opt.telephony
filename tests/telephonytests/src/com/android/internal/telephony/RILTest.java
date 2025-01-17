@@ -356,8 +356,6 @@ public class RILTest extends TelephonyTest {
             replaceInstance(RIL.class, "mHalVersion", mRILUnderTest, mHalVersionV14);
         } catch (Exception e) {
         }
-
-        doReturn(true).when(mFeatureFlags).combineRilDeathHandle();
     }
 
     @After

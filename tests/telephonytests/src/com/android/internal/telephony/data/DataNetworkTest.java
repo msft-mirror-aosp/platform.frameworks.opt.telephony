@@ -1264,7 +1264,6 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testNetworkRequestDetachedBeforeConnected() throws Exception {
-        doReturn(true).when(mFeatureFlags).keepEmptyRequestsNetwork();
         NetworkRequestList networkRequestList = new NetworkRequestList(new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
