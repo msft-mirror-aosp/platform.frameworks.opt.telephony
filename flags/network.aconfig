@@ -1,18 +1,6 @@
 package: "com.android.internal.telephony.flags"
 container: "system"
 
-# OWNER=nharold TARGET=24Q1
-flag {
-    name: "enable_carrier_config_n1_control_attempt2"
-    namespace: "telephony"
-    description: "enabling this flag allows KEY_CARRIER_NR_AVAILABILITIES_INT_ARRAY to control N1 mode enablement"
-    bug:"328848947"
-
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
 # OWNER=sarahchin TARGET=24Q1
 flag {
   name: "hide_roaming_icon"
