@@ -368,9 +368,11 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Verify that the P2P SMS inactivity timer is stopped.
         assertFalse(mTestSatelliteSessionController.isP2pSmsInActivityTimerStarted());
 
+        moveNotConnectedToConnectedState();
+
         mTestSatelliteSessionController.setDeviceAlignedWithSatellite(false);
 
-        // Verify that the P2P SMS inactivity timer is started.
+        // Verify that the P2P SMS inactivity timer is started in CONNECTED state.
         assertTrue(mTestSatelliteSessionController.isP2pSmsInActivityTimerStarted());
 
         // Time shift to cause timeout
