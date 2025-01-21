@@ -308,6 +308,7 @@ public class SatelliteController extends Handler {
     private static final int CMD_UPDATE_SYSTEM_SELECTION_CHANNELS = 58;
     private static final int EVENT_UPDATE_SYSTEM_SELECTION_CHANNELS_DONE = 59;
     private static final int EVENT_SELECTED_NB_IOT_SATELLITE_SUBSCRIPTION_CHANGED = 60;
+    private static final int CMD_EVALUATE_CARRIER_ROAMING_NTN_ELIGIBILITY_CHANGE = 61;
 
     @NonNull private static SatelliteController sInstance;
     @NonNull private final Context mContext;
@@ -2164,6 +2165,19 @@ public class SatelliteController extends Handler {
                     loge("EVENT_SELECTED_NB_IOT_SATELLITE_SUBSCRIPTION_CHANGED: result is null");
                 } else {
                     handleEventSelectedNbIotSatelliteSubscriptionChanged((int) ar.result);
+                }
+                break;
+            }
+
+            case CMD_EVALUATE_CARRIER_ROAMING_NTN_ELIGIBILITY_CHANGE: {
+                plogd("CMD_EVALUATE_CARRIER_ROAMING_NTN_ELIGIBILITY_CHANGE");
+                evaluateCarrierRoamingNtnEligibilityChange();
+                boolean eligible = isCarrierRoamingNtnEligible(getSatellitePhone());
+                plogd("CMD_EVALUATE_CARRIER_ROAMING_NTN_ELIGIBILITY_CHANGE: eligible=" + eligible);
+                int selectedSatelliteSubId = getSelectedSatelliteSubId();
+                Phone phone = SatelliteServiceUtils.getPhone(selectedSatelliteSubId);
+                if (eligible) {
+                    phone.notifyCarrierRoamingNtnEligibleStateChanged(eligible);
                 }
                 break;
             }
@@ -4535,7 +4549,7 @@ public class SatelliteController extends Handler {
         RequestSatelliteEnabledArgument argument =
                 (RequestSatelliteEnabledArgument) request.argument;
         handlePersistentLoggingOnSessionStart(argument);
-        selectBindingSatelliteSubscription(argument.enableSatellite);
+        selectBindingSatelliteSubscription(false);
         SatelliteModemEnableRequestAttributes enableRequestAttributes =
                     createModemEnableRequest(argument);
         if (enableRequestAttributes == null) {
@@ -5274,6 +5288,10 @@ public class SatelliteController extends Handler {
                 false, "moveSatelliteToOffStateAndCleanUpResources");
         selectBindingSatelliteSubscription(false);
         updateLastNotifiedNtnModeAndNotify(getSatellitePhone());
+
+        sendMessage(obtainMessage(CMD_EVALUATE_ESOS_PROFILES_PRIORITIZATION));
+        // Evaluate eligibility after satellite session is disabled
+        sendMessage(obtainMessage(CMD_EVALUATE_CARRIER_ROAMING_NTN_ELIGIBILITY_CHANGE));
     }
 
     private void setDemoModeEnabled(boolean enabled) {
@@ -6158,6 +6176,12 @@ public class SatelliteController extends Handler {
         }
 
         registerForSatelliteCommunicationAccessStateChanged();
+
+        if (isSatelliteEnabledOrBeingEnabled()) {
+            plogd("evaluateCarrierRoamingNtnEligibilityChange: "
+                    + "Skip eligibility check as satellite is enabled or being enabled");
+            return;
+        }
 
         boolean eligible = isCarrierRoamingNtnEligible(getSatellitePhone());
         plogd("evaluateCarrierRoamingNtnEligibilityChange: "
@@ -7143,6 +7167,13 @@ public class SatelliteController extends Handler {
             plogd("evaluateESOSProfilesPrioritization: Flag CarrierRoamingNbIotNtn is disabled");
             return;
         }
+
+        if (isSatelliteEnabledOrBeingEnabled()) {
+            plogd("evaluateESOSProfilesPrioritization: Skip evaluation as satellite is enabled "
+                    + "or being enabled");
+            return;
+        }
+
         boolean isChanged = false;
         List<SubscriptionInfo> allSubInfos = mSubscriptionManagerService.getAllSubInfoList(
                 mContext.getOpPackageName(), mContext.getAttributionTag());
