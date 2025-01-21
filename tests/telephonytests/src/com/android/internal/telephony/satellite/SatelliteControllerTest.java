@@ -1631,8 +1631,8 @@ public class SatelliteControllerTest extends TelephonyTest {
     @Test
     public void testIsSatelliteEnabled() {
         logd("testIsSatelliteEnabled: starting");
-        setUpResponseForRequestIsSatelliteEnabled(true, SATELLITE_RESULT_SUCCESS);
         assertFalse(mSatelliteControllerUT.isSatelliteEnabledOrBeingEnabled());
+        setUpResponseForRequestIsSatelliteEnabled(true, SATELLITE_RESULT_SUCCESS);
         mIsSatelliteEnabledSemaphore.drainPermits();
         mSatelliteControllerUT.requestIsSatelliteEnabled(mIsSatelliteEnabledReceiver);
         processAllMessages();
@@ -5481,6 +5481,7 @@ public class SatelliteControllerTest extends TelephonyTest {
             message.sendToTarget();
             return null;
         }).when(mMockSatelliteModemInterface).requestIsSatelliteEnabled(any(Message.class));
+        mSatelliteControllerUT.isSatelliteEnabledOrBeingEnabled = isSatelliteEnabled;
     }
 
     private void setUpResponseForRequestIsSatelliteSupported(
@@ -5960,6 +5961,11 @@ public class SatelliteControllerTest extends TelephonyTest {
         msg.sendToTarget();
     }
 
+    private void sendCmdEvaluateCarrierRoamingNtnEligibilityChange() {
+        mSatelliteControllerUT.obtainMessage(
+                61 /* CMD_EVALUATE_CARRIER_ROAMING_NTN_ELIGIBILITY_CHANGE */).sendToTarget();
+    }
+
     private void setRadioPower(boolean on) {
         mSimulatedCommands.setRadioPower(on, false, false, null);
     }
@@ -6175,6 +6181,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         public boolean mIsApplicationSupportsP2P = false;
         public int selectedSatelliteSubId = -1;
         public boolean isSatelliteProvisioned;
+        public boolean isSatelliteEnabledOrBeingEnabled = false;
 
         TestSatelliteController(
                 Context context, Looper looper, @NonNull FeatureFlags featureFlags) {
@@ -6258,6 +6265,11 @@ public class SatelliteControllerTest extends TelephonyTest {
         @Override
         public boolean isSatelliteBeingDisabled() {
             return isSatelliteBeingDisabled;
+        }
+
+        @Override
+        public boolean isSatelliteEnabledOrBeingEnabled() {
+            return isSatelliteEnabledOrBeingEnabled;
         }
 
         protected String getConfigSatelliteGatewayServicePackage() {
@@ -6664,5 +6676,21 @@ public class SatelliteControllerTest extends TelephonyTest {
         int dataSupportModeForPlmn = mSatelliteControllerUT
                 .getSatelliteDataServicePolicyForPlmn(SUB_ID, "00101");
         assertEquals(SATELLITE_DATA_SUPPORT_BANDWIDTH_CONSTRAINED, dataSupportModeForPlmn);
+    }
+
+    @Test
+    public void testEvaluateCarrierRoamingNtnEligibilityChange_inSatelliteMode() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+
+        mSatelliteControllerUT.isSatelliteEnabledOrBeingEnabled = true;
+        mSatelliteControllerUT.setSatellitePhone(1);
+        mSatelliteControllerUT.setSelectedSatelliteSubId(SUB_ID);
+        mSatelliteControllerUT.isSatelliteProvisioned = true;
+        mSatelliteControllerUT.isSatelliteAllowedCallback = null;
+        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        mSatelliteControllerUT.setIsSatelliteAllowedState(true);
+        sendCmdEvaluateCarrierRoamingNtnEligibilityChange();
+        processAllMessages();
+        verify(mPhone, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(anyBoolean());
     }
 }
