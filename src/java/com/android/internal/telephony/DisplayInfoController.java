@@ -166,8 +166,7 @@ public class DisplayInfoController extends Handler {
      */
     private boolean isRoaming() {
         boolean roaming = mServiceState.getRoaming();
-        if (roaming && mFeatureFlags.hideRoamingIcon()
-                && !mConfigs.getBoolean(CarrierConfigManager.KEY_SHOW_ROAMING_INDICATOR_BOOL)) {
+        if (roaming && !mConfigs.getBoolean(CarrierConfigManager.KEY_SHOW_ROAMING_INDICATOR_BOOL)) {
             logl("Override roaming for display due to carrier configs.");
             roaming = false;
         }
