@@ -35,6 +35,7 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TR
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_ENABLING_SATELLITE;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_IDLE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_LISTENING;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_UNKNOWN;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED;
@@ -571,13 +572,16 @@ public class SatelliteSessionController extends StateMachine {
         }
 
         mIsDeviceAlignedWithSatellite = isAligned;
+        plogd("setDeviceAlignedWithSatellite: isAligned " +  isAligned);
 
         if (mIsDeviceAlignedWithSatellite) {
             stopEsosInactivityTimer();
             stopP2pSmsInactivityTimer();
             endUserInactivity();
         } else {
-            if (mCurrentState == SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED) {
+            if (mCurrentState == SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED
+                    || mCurrentState == SATELLITE_MODEM_STATE_CONNECTED
+                    || mCurrentState == SATELLITE_MODEM_STATE_IDLE) {
                 evaluateStartingEsosInactivityTimer();
                 evaluateStartingP2pSmsInactivityTimer();
             }
@@ -704,6 +708,8 @@ public class SatelliteSessionController extends StateMachine {
             mCurrentState = SatelliteManager.SATELLITE_MODEM_STATE_OFF;
             mIsSendingTriggeredDuringTransferringState.set(false);
             unbindService();
+            stopNbIotInactivityTimer();
+            stopEsosInactivityTimer();
             stopNbIotInactivityTimer();
             endUserInactivity();
             DemoSimulator.getInstance().onSatelliteModeOff();
@@ -1060,6 +1066,9 @@ public class SatelliteSessionController extends StateMachine {
         public void enter() {
             if (DBG) plogd("Entering TransferringState");
             stopNbIotInactivityTimer();
+            stopEsosInactivityTimer();
+            stopNbIotInactivityTimer();
+
             mPreviousState = mCurrentState;
             mCurrentState = SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING;
             notifyStateChangedEvent(SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING);
@@ -1219,9 +1228,6 @@ public class SatelliteSessionController extends StateMachine {
         @Override
         public void exit() {
             if (DBG) plogd("Exiting NotConnectedState");
-
-            stopEsosInactivityTimer();
-            stopP2pSmsInactivityTimer();
         }
 
         @Override
@@ -1327,9 +1333,6 @@ public class SatelliteSessionController extends StateMachine {
         @Override
         public void exit() {
             if (DBG) plogd("Exiting ConnectedState");
-
-            stopEsosInactivityTimer();
-            stopP2pSmsInactivityTimer();
         }
 
         @Override
@@ -1611,17 +1614,6 @@ public class SatelliteSessionController extends StateMachine {
             return;
         }
 
-        if (!mSatelliteController.isInCarrierRoamingNbIotNtn()) {
-            logd("registerScreenOnOffChanged: device is not in CarrierRoamingNbIotNtn");
-            return;
-        }
-
-        if (mSatelliteController.getRequestIsEmergency()) {
-            logd("registerScreenOnOffChanged: not register, device is in Emergency mode");
-            // screen on/off timer is available in not emergency mode
-            return;
-        }
-
         if (!mIsRegisteredScreenStateChanged && mDeviceStateMonitor != null) {
             mDeviceStateMonitor.registerForScreenStateChanged(
                     getHandler(), EVENT_SCREEN_STATE_CHANGED, null);
@@ -1666,6 +1658,11 @@ public class SatelliteSessionController extends StateMachine {
             return;
         }
         mIsScreenOn = screenOn;
+
+        if (!mSatelliteController.isInCarrierRoamingNbIotNtn()) {
+            logd("handleEventScreenStateChanged: device is not in CarrierRoamingNbIotNtn");
+            return;
+        }
 
         if (mSatelliteController.getRequestIsEmergency()) {
             if (DBG) logd("handleEventScreenStateChanged: Emergency mode");
