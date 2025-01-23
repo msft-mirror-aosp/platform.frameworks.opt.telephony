@@ -24,14 +24,12 @@ import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_SOS_MES
 import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_UNKNOWN;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED;
-import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_NONE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT;
-import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_UNKNOWN;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
 import static org.junit.Assert.assertEquals;
@@ -378,9 +376,11 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Verify that the P2P SMS inactivity timer is stopped.
         assertFalse(mTestSatelliteSessionController.isP2pSmsInActivityTimerStarted());
 
+        moveNotConnectedToConnectedState();
+
         mTestSatelliteSessionController.setDeviceAlignedWithSatellite(false);
 
-        // Verify that the P2P SMS inactivity timer is started.
+        // Verify that the P2P SMS inactivity timer is started in CONNECTED state.
         assertTrue(mTestSatelliteSessionController.isP2pSmsInActivityTimerStarted());
 
         // Time shift to cause timeout
