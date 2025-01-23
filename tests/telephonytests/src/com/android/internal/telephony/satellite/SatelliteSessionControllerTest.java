@@ -242,7 +242,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         bundle.putInt(KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
                 SCREEN_OFF_INACTIVITY_TIMEOUT_SEC);
         when(mMockSatelliteController.getPersistableBundle(anyInt())).thenReturn(bundle);
-        when(mMockSatelliteController.isInCarrierRoamingNbIotNtn()).thenReturn(true);
+        when(mMockSatelliteController.isInCarrierRoamingNbIotNtn()).thenReturn(false);
 
         // Since satellite is supported, SatelliteSessionController should move to POWER_OFF state.
         assertNotNull(mTestSatelliteSessionController);
@@ -250,9 +250,12 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         moveToIdleState();
 
+        // Even if the device is not in CarrierRoamingNbIotNtn
         // SatelliteSessionController should call registerForScreenStateChanged.
         verify(mDeviceStateMonitor).registerForScreenStateChanged(mHandlerCaptor.capture(),
                 mMsgCaptor.capture(), any());
+
+        when(mMockSatelliteController.isInCarrierRoamingNbIotNtn()).thenReturn(true);
 
         // Notify Screen off
         sendScreenStateChanged(mHandlerCaptor.getValue(), mMsgCaptor.getValue(), false);
@@ -291,7 +294,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         doNothing().when(mDeviceStateMonitor).registerForScreenStateChanged(
                 eq(mTestSatelliteSessionController.getHandler()), anyInt(), any());
         // Satellite enabling request is for an emergency.
-        when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(true);
+        when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(false);
         PersistableBundle bundle = new PersistableBundle();
         bundle.putInt(KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
                 SCREEN_OFF_INACTIVITY_TIMEOUT_SEC);
@@ -304,18 +307,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         moveToIdleState();
 
-        // SatelliteSessionController should not call registerForScreenStateChanged.
-        verify(mDeviceStateMonitor, never()).registerForScreenStateChanged(
-                eq(mTestSatelliteSessionController.getHandler()), anyInt(), any());
-
-        moveToPowerOffState();
-
-        // Satellite enabling request is not for an emergency.
-        when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(false);
-
-        moveToIdleState();
-
-        // SatelliteSessionController should call registerForScreenStateChanged.
+         // SatelliteSessionController should call registerForScreenStateChanged.
         verify(mDeviceStateMonitor).registerForScreenStateChanged(mHandlerCaptor.capture(),
                 mMsgCaptor.capture(), any());
 

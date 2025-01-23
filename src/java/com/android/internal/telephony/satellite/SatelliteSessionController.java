@@ -1614,17 +1614,6 @@ public class SatelliteSessionController extends StateMachine {
             return;
         }
 
-        if (!mSatelliteController.isInCarrierRoamingNbIotNtn()) {
-            logd("registerScreenOnOffChanged: device is not in CarrierRoamingNbIotNtn");
-            return;
-        }
-
-        if (mSatelliteController.getRequestIsEmergency()) {
-            logd("registerScreenOnOffChanged: not register, device is in Emergency mode");
-            // screen on/off timer is available in not emergency mode
-            return;
-        }
-
         if (!mIsRegisteredScreenStateChanged && mDeviceStateMonitor != null) {
             mDeviceStateMonitor.registerForScreenStateChanged(
                     getHandler(), EVENT_SCREEN_STATE_CHANGED, null);
@@ -1669,6 +1658,11 @@ public class SatelliteSessionController extends StateMachine {
             return;
         }
         mIsScreenOn = screenOn;
+
+        if (!mSatelliteController.isInCarrierRoamingNbIotNtn()) {
+            logd("handleEventScreenStateChanged: device is not in CarrierRoamingNbIotNtn");
+            return;
+        }
 
         if (mSatelliteController.getRequestIsEmergency()) {
             if (DBG) logd("handleEventScreenStateChanged: Emergency mode");
