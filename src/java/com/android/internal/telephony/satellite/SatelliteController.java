@@ -5643,7 +5643,8 @@ public class SatelliteController extends Handler {
                             .isSatelliteProvisionedForNonIpDatagram(subId);
                     if (Provisioned) {
                         mProvisionedSubscriberId.put(subscriberId, true);
-                        logd("updateSatelliteProvisionStatePerSubscriberId: " + subscriberId
+                        logd("updateSatelliteProvisionStatePerSubscriberId: "
+                                + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, subscriberId)
                                 + " set true");
                     }
                 }
@@ -7285,8 +7286,9 @@ public class SatelliteController extends Handler {
             subscriberId = getPhoneNumberBasedCarrier(info.getSubscriptionId());
             subscriberIdType = SatelliteSubscriberInfo.SUBSCRIBER_ID_TYPE_IMSI_MSISDN;
         }
-        logd("getSubscriberIdAndType: subscriberId=" + subscriberId + ", subscriberIdType="
-                + subscriberIdType);
+        logd("getSubscriberIdAndType: subscriberId="
+                + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, subscriberId)
+                + ", subscriberIdType=" + subscriberIdType);
         return new Pair<>(subscriberId, subscriberIdType);
     }
 
@@ -7332,7 +7334,8 @@ public class SatelliteController extends Handler {
 
         subscriberId = internal.getImsi().substring(0, 6)
                 + phoneNumber.replaceFirst("^\\+", "");
-        plogd("getPhoneNumberBasedCarrier: subscriberId=" + subscriberId);
+        plogd("getPhoneNumberBasedCarrier: subscriberId="
+                + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, subscriberId));
         return subscriberId;
     }
 
@@ -7476,8 +7479,10 @@ public class SatelliteController extends Handler {
                     int carrierId = info.getCarrierId();
                     String apn = getConfigForSubId(info.getSubscriptionId())
                             .getString(KEY_SATELLITE_NIDD_APN_NAME_STRING, "");
-                    logd("getPrioritySatelliteSubscriberProvisionStatusList: subscriberId:"
-                            + subscriberId + " , carrierId=" + carrierId + " , apn=" + apn);
+                    logd("getPrioritySatelliteSubscriberProvisionStatusList:"
+                            + " subscriberId:"
+                            + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, subscriberId)
+                            + " , carrierId=" + carrierId + " , apn=" + apn);
                     if (subscriberId.isEmpty()) {
                         logd("getPrioritySatelliteSubscriberProvisionStatusList: getSubscriberId "
                                 + "failed skip this subscriberId.");
@@ -8329,8 +8334,9 @@ public class SatelliteController extends Handler {
         int carrierId = subInfo.getCarrierId();
         String apn = getConfigForSubId(subInfo.getSubscriptionId())
                 .getString(KEY_SATELLITE_NIDD_APN_NAME_STRING, "");
-        logd("getSatelliteSubscriberInfo: subInfo: " + subInfo + ", subscriberId:"
-                + subscriberId + " , carrierId=" + carrierId + " , apn=" + apn);
+        logd("getSatelliteSubscriberInfo: subInfo: " + subInfo
+                + ", subscriberId:" + Rlog.pii(TelephonyUtils.IS_DEBUGGABLE, subscriberId)
+                + " , carrierId=" + carrierId + " , apn=" + apn);
         if (subscriberId.isEmpty()) {
             logw("getSatelliteSubscriberInfo: not a satellite subscription.");
             return null;
