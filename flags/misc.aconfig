@@ -246,3 +246,14 @@ flag {
         purpose: PURPOSE_BUGFIX
     }
 }
+#
+# OWNER=nharold TARGET=25Q4
+flag {
+    name: "thread_shred"
+    namespace: "telephony"
+    description: "Consolidate a bunch of unneeded worker threads to save resources"
+    bug:"390244513"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}

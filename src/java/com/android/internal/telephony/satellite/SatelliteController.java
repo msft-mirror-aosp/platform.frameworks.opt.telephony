@@ -178,6 +178,7 @@ import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.util.ArrayUtils;
 import com.android.internal.telephony.util.TelephonyUtils;
+import com.android.internal.telephony.util.WorkerThread;
 import com.android.internal.util.FunctionalUtils;
 
 import java.util.ArrayList;
@@ -835,9 +836,15 @@ public class SatelliteController extends Handler {
      */
     public static void make(@NonNull Context context, @NonNull FeatureFlags featureFlags) {
         if (sInstance == null) {
-            HandlerThread satelliteThread = new HandlerThread(TAG);
-            satelliteThread.start();
-            sInstance = new SatelliteController(context, satelliteThread.getLooper(), featureFlags);
+            if (featureFlags.threadShred()) {
+                sInstance = new SatelliteController(
+                        context, WorkerThread.get().getLooper(), featureFlags);
+            } else {
+                HandlerThread satelliteThread = new HandlerThread(TAG);
+                satelliteThread.start();
+                sInstance = new SatelliteController(
+                        context, satelliteThread.getLooper(), featureFlags);
+            }
         }
     }
 
