@@ -269,6 +269,10 @@ public class SatelliteConfig {
         } catch (IOException ex) {
             Log.e(TAG, "copySatelliteFileToPhoneDirectory: ex=" + ex);
         }
+        Log.d(
+                TAG,
+                "targetSatelliteFilePath's path: "
+                        + targetSatelliteFilePath.toAbsolutePath().toString());
         return targetSatelliteFilePath.toFile();
     }
 
