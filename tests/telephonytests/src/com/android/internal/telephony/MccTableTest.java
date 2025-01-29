@@ -17,40 +17,69 @@
 package com.android.internal.telephony;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 import android.content.Context;
+import android.platform.test.annotations.UsesFlags;
+import android.platform.test.flag.junit.FlagsParameterization;
+import android.platform.test.flag.junit.SetFlagsRule;
 
 import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.MccTable.MccMnc;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.util.LocaleUtils;
 
+import org.junit.ClassRule;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.List;
 import java.util.Locale;
 
+@RunWith(Parameterized.class)
+@UsesFlags({
+        com.android.internal.telephony.flags.Flags.class,
+        com.android.icu.Flags.class
+})
 public class MccTableTest {
+    @ClassRule
+    public static final SetFlagsRule.ClassRule mSetFlagsClassRule = new SetFlagsRule.ClassRule();
+
+    @Parameterized.Parameters(name = "{0}")
+    public static List<FlagsParameterization> getParams() {
+        return FlagsParameterization.allCombinationsOf(
+                Flags.FLAG_USE_I18N_FOR_MCC_MAPPING,
+                com.android.icu.Flags.FLAG_TELEPHONY_LOOKUP_MCC_EXTENSION);
+    }
+
+    @Rule
+    public final SetFlagsRule mSetFlagsRule;
+
+    public MccTableTest(FlagsParameterization flags) {
+        mSetFlagsRule = mSetFlagsClassRule.createSetFlagsRule(flags);
+    }
 
     @SmallTest
     @Test
     public void testCountryCodeForMcc() throws Exception {
-        checkMccLookupWithNoMnc("lu", 270);
-        checkMccLookupWithNoMnc("gr", 202);
-        checkMccLookupWithNoMnc("fk", 750);
-        checkMccLookupWithNoMnc("mg", 646);
-        checkMccLookupWithNoMnc("us", 314);
-        checkMccLookupWithNoMnc("", 300);  // mcc not defined, hence default
-        checkMccLookupWithNoMnc("", 0);    // mcc not defined, hence default
-        checkMccLookupWithNoMnc("", 2000); // mcc not defined, hence default
+        checkMccLookupWithNoMnc("lu", "270");
+        checkMccLookupWithNoMnc("gr", "202");
+        checkMccLookupWithNoMnc("fk", "750");
+        checkMccLookupWithNoMnc("mg", "646");
+        checkMccLookupWithNoMnc("us", "314");
+        checkMccLookupWithNoMnc("", "300");  // mcc not defined, hence default
+        checkMccLookupWithNoMnc("", "0");    // mcc not defined, hence default
+        checkMccLookupWithNoMnc("", "2000"); // mcc not defined, hence default
     }
 
-    private void checkMccLookupWithNoMnc(String expectedCountryIsoCode, int mcc) {
+    private void checkMccLookupWithNoMnc(String expectedCountryIsoCode, String mcc) {
         assertEquals(expectedCountryIsoCode, MccTable.countryCodeForMcc(mcc));
-        assertEquals(expectedCountryIsoCode, MccTable.countryCodeForMcc(mcc));
-        assertEquals(expectedCountryIsoCode, MccTable.countryCodeForMcc("" + mcc));
         assertEquals(expectedCountryIsoCode,
-                MccTable.geoCountryCodeForMccMnc(new MccMnc("" + mcc, "999")));
+                MccTable.geoCountryCodeForMccMnc(new MccMnc(mcc, "999")));
     }
 
     @SmallTest
@@ -69,9 +98,9 @@ public class MccTableTest {
         assertEquals("nl", LocaleUtils.defaultLanguageForMcc(204));
         assertEquals("is", LocaleUtils.defaultLanguageForMcc(274));
         // mcc not defined, hence default
-        assertEquals(null, LocaleUtils.defaultLanguageForMcc(0));
+        assertNull(LocaleUtils.defaultLanguageForMcc(0));
         // mcc not defined, hence default
-        assertEquals(null, LocaleUtils.defaultLanguageForMcc(2000));
+        assertNull(LocaleUtils.defaultLanguageForMcc(2000));
     }
 
     @SmallTest
