@@ -2184,6 +2184,9 @@ public class SatelliteController extends Handler {
                 int selectedSatelliteSubId = getSelectedSatelliteSubId();
                 Phone phone = SatelliteServiceUtils.getPhone(selectedSatelliteSubId);
                 if (eligible) {
+                    synchronized (mSatellitePhoneLock) {
+                        mLastNotifiedNtnEligibility = eligible;
+                    }
                     phone.notifyCarrierRoamingNtnEligibleStateChanged(eligible);
                 }
                 break;
