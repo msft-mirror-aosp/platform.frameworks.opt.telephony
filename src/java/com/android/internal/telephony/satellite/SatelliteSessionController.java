@@ -710,7 +710,7 @@ public class SatelliteSessionController extends StateMachine {
             unbindService();
             stopNbIotInactivityTimer();
             stopEsosInactivityTimer();
-            stopNbIotInactivityTimer();
+            stopP2pSmsInactivityTimer();
             endUserInactivity();
             DemoSimulator.getInstance().onSatelliteModeOff();
             notifyStateChangedEvent(SatelliteManager.SATELLITE_MODEM_STATE_OFF);
@@ -1067,7 +1067,7 @@ public class SatelliteSessionController extends StateMachine {
             if (DBG) plogd("Entering TransferringState");
             stopNbIotInactivityTimer();
             stopEsosInactivityTimer();
-            stopNbIotInactivityTimer();
+            stopP2pSmsInactivityTimer();
 
             mPreviousState = mCurrentState;
             mCurrentState = SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING;
