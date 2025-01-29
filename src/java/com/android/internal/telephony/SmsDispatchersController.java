@@ -1878,6 +1878,11 @@ public class SmsDispatchersController extends Handler {
             // Send P2P SMS using carrier roaming NB IOT NTN
             DatagramDispatcher.getInstance().sendSms(pendingRequest);
             return;
+        } else if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn()) {
+            Rlog.d(TAG, "Block SMS in carrier roaming NB IOT NTN mode.");
+            // Block SMS in satellite mode if P2P SMS is not supported.
+            triggerSentIntentForFailure(pendingRequest.sentIntents);
+            return;
         }
 
         sendTextInternal(pendingRequest);
@@ -2041,6 +2046,11 @@ public class SmsDispatchersController extends Handler {
         if (SatelliteController.getInstance().shouldSendSmsToDatagramDispatcher(mPhone)) {
             // Send multipart P2P SMS using carrier roaming NB IOT NTN
             DatagramDispatcher.getInstance().sendSms(pendingRequest);
+            return;
+        } else if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn()) {
+            Rlog.d(TAG, "Block SMS in carrier roaming NB IOT NTN mode.");
+            // Block SMS in satellite mode if P2P SMS is not supported.
+            triggerSentIntentForFailure(pendingRequest.sentIntents);
             return;
         }
 
