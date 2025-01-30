@@ -214,7 +214,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 Telephony.Carriers.CONTENT_URI.getAuthority(), mSubscriptionProvider);
 
-        doReturn(true).when(mFeatureFlags).saferGetPhoneNumber();
         doReturn(true).when(mFeatureFlags).uiccPhoneNumberFix();
         doReturn(true).when(mFeatureFlags).ddsCallback();
         doReturn(true).when(mFeatureFlags).oemEnabledSatelliteFlag();
