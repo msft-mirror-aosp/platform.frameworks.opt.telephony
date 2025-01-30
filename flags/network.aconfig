@@ -3,14 +3,6 @@ container: "system"
 
 # OWNER=cukie TARGET=24Q3
 flag {
-  name: "enable_identifier_disclosure_transparency_unsol_events"
-  namespace: "telephony"
-  description: "Allows the framework to register for CellularIdentifierDisclosure events and emit notifications to the user about them"
-  bug: "276752426"
-}
-
-# OWNER=cukie TARGET=24Q3
-flag {
   name: "enable_modem_cipher_transparency"
   is_exported: true
   namespace: "telephony"

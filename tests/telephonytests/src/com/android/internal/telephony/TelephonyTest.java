@@ -703,10 +703,11 @@ public abstract class TelephonyTest {
                 .makeCellularNetworkSecuritySafetySource(any(Context.class));
         doReturn(mIdentifierDisclosureNotifier)
                 .when(mTelephonyComponentFactory)
-                .makeIdentifierDisclosureNotifier(any(CellularNetworkSecuritySafetySource.class));
+                .makeIdentifierDisclosureNotifier(
+                        nullable(CellularNetworkSecuritySafetySource.class));
         doReturn(mNullCipherNotifier)
                 .when(mTelephonyComponentFactory)
-                .makeNullCipherNotifier(any(CellularNetworkSecuritySafetySource.class));
+                .makeNullCipherNotifier(nullable(CellularNetworkSecuritySafetySource.class));
 
         //mPhone
         doReturn(mContext).when(mPhone).getContext();
