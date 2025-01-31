@@ -35,6 +35,9 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.List;
+import java.util.Set;
+
 public class TelephonyNetworkRequestTest extends TelephonyTest {
 
     private static final ApnSetting INTERNET_APN_SETTING = new ApnSetting.Builder()
@@ -486,5 +489,26 @@ public class TelephonyNetworkRequestTest extends TelephonyTest {
         assertThat(generalRequest.canBeSatisfiedBy(satelliteInternetDataProfile)).isTrue();
         assertThat(cellularRequest.canBeSatisfiedBy(cellularInternetDataProfile)).isTrue();
         assertThat(generalRequest.canBeSatisfiedBy(cellularInternetDataProfile)).isTrue();
+    }
+
+    @Test
+    public void testGetAllSupportedNetworkCapabilities() {
+        doReturn(Set.of(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH,
+                NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY,
+                NetworkCapabilities.NET_CAPABILITY_VSIM, NetworkCapabilities.NET_CAPABILITY_MMS,
+                NetworkCapabilities.NET_CAPABILITY_XCAP)).when(mDataConfigManager)
+                .getUnsupportedNetworkCapabilities();
+
+        List<Integer> caps = TelephonyNetworkRequest.getAllSupportedNetworkCapabilities();
+        assertThat(caps).contains(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        assertThat(caps).contains(NetworkCapabilities.NET_CAPABILITY_FOTA);
+        assertThat(caps).contains(NetworkCapabilities.NET_CAPABILITY_SUPL);
+        assertThat(caps).contains(NetworkCapabilities.NET_CAPABILITY_CBS);
+        assertThat(caps).contains(NetworkCapabilities.NET_CAPABILITY_RCS);
+        assertThat(caps).doesNotContain(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH);
+        assertThat(caps).doesNotContain(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY);
+        assertThat(caps).doesNotContain(NetworkCapabilities.NET_CAPABILITY_VSIM);
+        assertThat(caps).doesNotContain(NetworkCapabilities.NET_CAPABILITY_MMS);
+        assertThat(caps).doesNotContain(NetworkCapabilities.NET_CAPABILITY_XCAP);
     }
 }
