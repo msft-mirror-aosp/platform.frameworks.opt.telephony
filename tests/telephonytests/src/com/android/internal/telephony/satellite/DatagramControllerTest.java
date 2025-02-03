@@ -87,7 +87,6 @@ public class DatagramControllerTest extends TelephonyTest {
                 mMockSatelliteController);
         replaceInstance(SatelliteSessionController.class, "sInstance", null,
                 mMockSatelliteSessionController);
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
         mDatagramControllerUT = new DatagramController(
                 mContext, Looper.myLooper(), mFeatureFlags, mMockPointingAppController);

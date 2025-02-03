@@ -216,7 +216,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
         doReturn(true).when(mFeatureFlags).uiccPhoneNumberFix();
         doReturn(true).when(mFeatureFlags).ddsCallback();
-        doReturn(true).when(mFeatureFlags).oemEnabledSatelliteFlag();
 
         mSubscriptionManagerServiceUT = new SubscriptionManagerService(mContext, Looper.myLooper(),
                 mFeatureFlags);

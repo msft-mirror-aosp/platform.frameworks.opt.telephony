@@ -490,12 +490,8 @@ public class TelephonyCountryDetector extends Handler {
             }
         }
         evaluateRequestingLocationUpdates();
-        if (mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("mCountryCodeChangedRegistrants.notifyRegistrants()");
-            mCountryCodeChangedRegistrants.notifyRegistrants();
-        } else {
-            logd("mCountryCodeChangedRegistrants.notifyRegistrants() is not called");
-        }
+        logd("mCountryCodeChangedRegistrants.notifyRegistrants()");
+        mCountryCodeChangedRegistrants.notifyRegistrants();
     }
 
     private void handleEventWifiConnectivityStateChanged(boolean connected) {
