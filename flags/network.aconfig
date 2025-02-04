@@ -3,15 +3,6 @@ container: "system"
 
 # OWNER=cukie TARGET=24Q3
 flag {
-  name: "enable_modem_cipher_transparency"
-  is_exported: true
-  namespace: "telephony"
-  description: "Guards APIs for enabling and disabling modem cipher transparency."
-  bug: "283336425"
-}
-
-# OWNER=cukie TARGET=24Q3
-flag {
   name: "enable_modem_cipher_transparency_unsol_events"
   namespace: "telephony"
   description: "Allows the framework to register for SecurityAlgorithmChanged events and emit notifications to the user when a device is using null ciphers."
