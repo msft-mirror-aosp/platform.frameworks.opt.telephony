@@ -175,6 +175,10 @@ public final class MccTable {
      */
     @NonNull
     public static String countryCodeForMcc(@NonNull String mcc) {
+        if (mcc == null) {
+            return "";
+        }
+
         if (!isNewMccTableEnabled()) {
             try {
                 MccEntry entry = entryForMcc(Integer.parseInt(mcc));

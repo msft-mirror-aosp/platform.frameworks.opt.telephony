@@ -146,4 +146,10 @@ public class MccTableTest {
         // mcc not defined, hence default
         assertEquals(2, MccTable.smallestDigitsMccForMnc(2000));
     }
+
+    @SmallTest
+    @Test
+    public void testNullMcc() throws Exception {
+        assertEquals("", MccTable.countryCodeForMcc(null));
+    }
 }
