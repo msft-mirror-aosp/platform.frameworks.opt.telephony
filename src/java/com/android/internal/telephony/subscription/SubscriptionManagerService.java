@@ -924,10 +924,6 @@ public class SubscriptionManagerService extends ISub.Stub {
      * {@code false} otherwise.
      */
     public void setNtn(int subId, boolean isNtn) {
-        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            return;
-        }
-
         // This can throw IllegalArgumentException if the subscription does not exist.
         try {
             mSubscriptionDatabaseManager.setNtn(subId, (isNtn ? 1 : 0));
@@ -1248,14 +1244,9 @@ public class SubscriptionManagerService extends ISub.Stub {
                     }
 
                     boolean isSatelliteSpn = false;
-                    if (mFeatureFlags.oemEnabledSatelliteFlag() ) {
-                        if (isSatelliteSpn(embeddedProfile.getServiceProviderName())) {
-                            isSatelliteSpn = true;
-                            builder.setOnlyNonTerrestrialNetwork(1);
-                        }
-                    } else {
-                        log("updateEmupdateEmbeddedSubscriptions: oemEnabledSatelliteFlag is "
-                                + "disabled");
+                    if (isSatelliteSpn(embeddedProfile.getServiceProviderName())) {
+                        isSatelliteSpn = true;
+                        builder.setOnlyNonTerrestrialNetwork(1);
                     }
 
                     if (android.os.Build.isDebuggable() &&
@@ -1282,7 +1273,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                         String mnc = cid.getMnc();
                         builder.setMcc(mcc);
                         builder.setMnc(mnc);
-                        if (mFeatureFlags.oemEnabledSatelliteFlag() && !isSatelliteSpn) {
+                        if (!isSatelliteSpn) {
                             builder.setOnlyNonTerrestrialNetwork(
                                     isSatellitePlmn(mcc + mnc) ? 1 : 0);
                         }
@@ -4797,11 +4788,6 @@ public class SubscriptionManagerService extends ISub.Stub {
      * "config_satellite_sim_plmn_identifier", {@code false} otherwise.
      */
     private boolean isSatellitePlmn(@NonNull String mccMnc) {
-        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            log("isSatellitePlmn: oemEnabledSatelliteFlag is disabled");
-            return false;
-        }
-
         final int id = R.string.config_satellite_sim_plmn_identifier;
         String overlayMccMnc = null;
         try {
@@ -4826,11 +4812,6 @@ public class SubscriptionManagerService extends ISub.Stub {
      * "config_satellite_sim_spn_identifier", {@code false} otherwise.
      */
     private boolean isSatelliteSpn(@NonNull String spn) {
-        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            log("isSatelliteSpn: oemEnabledSatelliteFlag is disabled");
-            return false;
-        }
-
         final int id = R.string.config_satellite_sim_spn_identifier;
         String overlaySpn = null;
         try {

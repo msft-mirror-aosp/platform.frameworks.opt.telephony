@@ -49,7 +49,6 @@ import android.os.Bundle;
 import android.os.Looper;
 import android.os.OutcomeReceiver;
 import android.os.RemoteException;
-import android.platform.test.annotations.EnableFlags;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.telecom.Connection;
 import android.telecom.TelecomManager;
@@ -155,7 +154,6 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
                 .thenReturn(TEST_EMERGENCY_CALL_TO_SOS_MSG_HYSTERESIS_TIMEOUT_MILLIS);
         when(mResources.getString(R.string.config_oem_enabled_satellite_sos_handover_app))
                 .thenReturn(DEFAULT_SOS_HANDOVER_APP);
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         mTestSatelliteController = new TestSatelliteController(mContext,
                 Looper.myLooper(), mFeatureFlags);

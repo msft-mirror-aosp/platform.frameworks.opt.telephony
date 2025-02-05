@@ -26,7 +26,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -456,7 +455,6 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
 
         doReturn(1).when(mUiccController).convertToPublicCardId(eq(FAKE_ICCID1));
         doReturn(2).when(mUiccController).convertToPublicCardId(eq(FAKE_ICCID2));
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         when(mFeatureFlags.supportPsimToEsimConversion()).thenReturn(true);
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         mDatabaseManagerUT = new SubscriptionDatabaseManager(mContext, Looper.myLooper(),
@@ -2071,51 +2069,6 @@ public class SubscriptionDatabaseManagerTest extends TelephonyTest {
         verify(mSubscriptionDatabaseManagerCallback, times(1)).onSubscriptionChanged(eq(1));
         assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(
                 FAKE_SUBSCRIPTION_INFO1.getSubscriptionId()).isGroupDisabled()).isFalse();
-    }
-
-    @Test
-    public void testUpdateSatelliteNtnWithFeatureDisabled() throws Exception {
-        assertThrows(IllegalArgumentException.class,
-                () -> mDatabaseManagerUT.setSatelliteAttachEnabledForCarrier(
-                        FAKE_SUBSCRIPTION_INFO1.getSubscriptionId(),
-                        FAKE_SATELLITE_ATTACH_FOR_CARRIER_ENABLED));
-
-        SubscriptionInfoInternal subInfo = insertSubscriptionAndVerify(FAKE_SUBSCRIPTION_INFO1);
-        mDatabaseManagerUT.setSatelliteAttachEnabledForCarrier(
-                FAKE_SUBSCRIPTION_INFO1.getSubscriptionId(),
-                FAKE_SATELLITE_IS_ONLY_NTN_DISABLED);
-        processAllMessages();
-
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);
-        reset(mSubscriptionDatabaseManagerCallback);
-        subInfo = new SubscriptionInfoInternal.Builder(subInfo)
-                .setOnlyNonTerrestrialNetwork(FAKE_SATELLITE_IS_ONLY_NTN_ENABLED)
-                .build();
-
-        int subId = subInfo.getSubscriptionId();
-        // Verify the cache value is not same as the inserted one.
-        assertWithMessage("Subscription info cache value is not different.")
-                .that(mDatabaseManagerUT.getSubscriptionInfoInternal(subId)).isNotEqualTo(subInfo);
-
-        // Load subscription info from the database.
-        mDatabaseManagerUT.reloadDatabaseSync();
-        processAllMessages();
-
-        // Verify the database value is not same as the inserted one.
-        assertWithMessage("Subscription info database value is not different.")
-                .that(mDatabaseManagerUT.getSubscriptionInfoInternal(subId)).isNotEqualTo(subInfo);
-
-        verify(mSubscriptionDatabaseManagerCallback, never()).onSubscriptionChanged(eq(1));
-
-        assertThat(mDatabaseManagerUT.getSubscriptionProperty(
-                FAKE_SUBSCRIPTION_INFO1.getSubscriptionId(),
-                SimInfo.COLUMN_IS_ONLY_NTN)).isNotEqualTo(FAKE_SATELLITE_IS_ONLY_NTN_ENABLED);
-
-        mDatabaseManagerUT.setSubscriptionProperty(FAKE_SUBSCRIPTION_INFO1.getSubscriptionId(),
-                SimInfo.COLUMN_IS_ONLY_NTN, FAKE_SATELLITE_IS_ONLY_NTN_ENABLED);
-        assertThat(mDatabaseManagerUT.getSubscriptionInfoInternal(
-                FAKE_SUBSCRIPTION_INFO1.getSubscriptionId()).getOnlyNonTerrestrialNetwork())
-                .isNotEqualTo(FAKE_SATELLITE_IS_ONLY_NTN_ENABLED);
     }
 
     @Test

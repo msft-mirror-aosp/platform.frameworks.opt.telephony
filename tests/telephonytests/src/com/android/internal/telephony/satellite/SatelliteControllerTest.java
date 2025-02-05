@@ -73,7 +73,6 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_ERRO
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_INVALID_ARGUMENTS;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_INVALID_MODEM_STATE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
-import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_MODEM_ERROR;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_MODEM_TIMEOUT;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_NO_RESOURCES;
@@ -694,7 +693,6 @@ public class SatelliteControllerTest extends TelephonyTest {
                 .setIsNtnOnlyCarrier(anyBoolean());
         doNothing().when(mMockProvisionMetricsStats).reportProvisionMetrics();
         doNothing().when(mMockControllerMetricsStats).reportDeprovisionCount(anyInt());
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         doReturn(mSST).when(mPhone).getServiceStateTracker();
         doReturn(mSST).when(mPhone2).getServiceStateTracker();
@@ -1313,16 +1311,11 @@ public class SatelliteControllerTest extends TelephonyTest {
         mSatelliteControllerUT.allRadiosDisabled = true;
 
         resetSatelliteControllerUTToOnAndProvisionedState();
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);
         mSatelliteControllerUT.onSetCellularRadioPowerStateRequested(false);
         processAllMessages();
-        // Satellite should not be powered off since the feature flag oemEnabledSatelliteFlag is
-        // disabled
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         verifySatelliteEnabled(true, SATELLITE_RESULT_SUCCESS);
 
         // Successfully disable satellite.
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         mIIntegerConsumerResults.clear();
         mIIntegerConsumerSemaphore.drainPermits();
         setUpResponseForRequestSatelliteEnabled(false, false, false, SATELLITE_RESULT_SUCCESS);
@@ -2606,9 +2599,6 @@ public class SatelliteControllerTest extends TelephonyTest {
                         satelliteController.getSupportedNtnRadioTechnology()));
         assertEquals(mQueriedSatelliteCapabilities.getMaxBytesPerOutgoingDatagram(), 255);
         assertTrue(satelliteController.isSatelliteAttachRequired());
-
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);
-        assertFalse(satelliteController.isSatelliteAttachRequired());
     }
 
     @Test
@@ -2647,7 +2637,6 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testRequestNtnSignalStrengthWithFeatureFlagEnabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         resetSatelliteControllerUT();
 
         mRequestNtnSignalStrengthSemaphore.drainPermits();
@@ -2683,39 +2672,7 @@ public class SatelliteControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testRequestNtnSignalStrengthWithFeatureFlagDisabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);
-
-        resetSatelliteControllerUT();
-        mRequestNtnSignalStrengthSemaphore.drainPermits();
-        doReturn(false).when(mMockSatelliteModemInterface).isSatelliteServiceSupported();
-
-        @NtnSignalStrength.NtnSignalStrengthLevel int expectedLevel = NTN_SIGNAL_STRENGTH_GREAT;
-        setUpResponseForRequestNtnSignalStrength(expectedLevel, SATELLITE_RESULT_SUCCESS);
-        verifyRequestNtnSignalStrength(NTN_SIGNAL_STRENGTH_NONE,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-
-        doReturn(true).when(mMockSatelliteModemInterface).isSatelliteServiceSupported();
-        setUpResponseForRequestNtnSignalStrength(expectedLevel, SATELLITE_RESULT_SUCCESS);
-        verifyRequestNtnSignalStrength(NTN_SIGNAL_STRENGTH_NONE,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-
-        expectedLevel = NTN_SIGNAL_STRENGTH_POOR;
-        doReturn(true).when(mMockSatelliteModemInterface).isSatelliteServiceSupported();
-        setUpResponseForRequestNtnSignalStrength(expectedLevel, SATELLITE_RESULT_SUCCESS);
-        verifyRequestNtnSignalStrength(NTN_SIGNAL_STRENGTH_NONE,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-
-        doReturn(true).when(mMockSatelliteModemInterface).isSatelliteServiceSupported();
-        setUpResponseForRequestNtnSignalStrength(expectedLevel, SATELLITE_RESULT_MODEM_ERROR);
-        verifyRequestNtnSignalStrength(NTN_SIGNAL_STRENGTH_NONE,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-    }
-
-    @Test
     public void testRegisterForNtnSignalStrengthChangedWithFeatureFlagEnabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
-
         Semaphore semaphore = new Semaphore(0);
         final NtnSignalStrength[] signalStrength = new NtnSignalStrength[1];
         INtnSignalStrengthCallback callback =
@@ -2784,60 +2741,7 @@ public class SatelliteControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testRegisterForNtnSignalStrengthChangedWithFeatureFlagDisabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);
-
-        Semaphore semaphore = new Semaphore(0);
-        final NtnSignalStrength[] signalStrength = new NtnSignalStrength[1];
-        INtnSignalStrengthCallback callback =
-                new INtnSignalStrengthCallback.Stub() {
-                    @Override
-                    public void onNtnSignalStrengthChanged(NtnSignalStrength ntnSignalStrength) {
-                        logd("onNtnSignalStrengthChanged: ntnSignalStrength="
-                                + ntnSignalStrength);
-                        try {
-                            signalStrength[0] = ntnSignalStrength;
-                            semaphore.release();
-                        } catch (Exception ex) {
-                            loge("onNtnSignalStrengthChanged: Got exception in releasing "
-                                    + "semaphore, ex=" + ex);
-                        }
-                    }
-                };
-
-        verifyRegisterForNtnSignalStrengthChanged(SUB_ID, callback,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-
-        setUpResponseForRequestIsSatelliteSupported(false,
-                SATELLITE_RESULT_SUCCESS);
-        verifySatelliteSupported(false, SATELLITE_RESULT_NOT_SUPPORTED);
-        verifyRegisterForNtnSignalStrengthChanged(SUB_ID, callback,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-        setUpResponseForRequestNtnSignalStrength(NTN_SIGNAL_STRENGTH_NONE,
-                SATELLITE_RESULT_SUCCESS);
-        verifyRequestNtnSignalStrength(NTN_SIGNAL_STRENGTH_NONE,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-
-        resetSatelliteControllerUT();
-        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        verifySatelliteSupported(false, SATELLITE_RESULT_NOT_SUPPORTED);
-        verifyRegisterForNtnSignalStrengthChanged(SUB_ID, callback,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-        verifyRequestNtnSignalStrength(NTN_SIGNAL_STRENGTH_NONE,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-
-        @NtnSignalStrength.NtnSignalStrengthLevel int expectedNtnSignalStrengthLevel =
-                NTN_SIGNAL_STRENGTH_GOOD;
-        sendNtnSignalStrengthChangedEvent(expectedNtnSignalStrengthLevel, null);
-        processAllMessages();
-        assertTrue(waitForForEvents(
-                semaphore, 0, "testRegisterForNtnSignalStrengthChanged"));
-    }
-
-    @Test
     public void testSendingNtnSignalStrengthWithFeatureEnabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
-
         int expectedResult = SATELLITE_RESULT_SUCCESS;
         // startSendingNtnSignalStrength() is requested when screen on event comes.
         reset(mMockSatelliteModemInterface);
@@ -2936,36 +2840,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         sendCmdStartSendingNtnSignalStrengthChangedEvent(false);
         processAllMessages();
         verify(mMockSatelliteModemInterface, times(1))
-                .stopSendingNtnSignalStrength(any(Message.class));
-    }
-
-    @Test
-    public void testSendingNtnSignalStrengthWithFeatureDisabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);
-
-        int expectedResult = SATELLITE_RESULT_SUCCESS;
-        // startSendingNtnSignalStrength() is requested when screen on event comes.
-        reset(mMockSatelliteModemInterface);
-        doReturn(true).when(mMockSatelliteModemInterface).isSatelliteServiceSupported();
-        setUpResponseForRequestIsSatelliteSupported(true, expectedResult);
-        setUpResponseForRequestIsSatelliteProvisioned(true, expectedResult);
-        verifySatelliteSupported(false, SATELLITE_RESULT_NOT_SUPPORTED);
-        verifySatelliteProvisioned(false, SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-        setUpResponseForStartSendingNtnSignalStrength(expectedResult);
-        sendCmdStartSendingNtnSignalStrengthChangedEvent(true);
-        processAllMessages();
-        verify(mMockSatelliteModemInterface, never())
-                .startSendingNtnSignalStrength(any(Message.class));
-
-        // stopSendingNtnSignalStrength() is requested when screen off event comes.
-        reset(mMockSatelliteModemInterface);
-        setUpResponseForRequestIsSatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        doReturn(true).when(mMockSatelliteModemInterface).isSatelliteServiceSupported();
-        setUpResponseForStopSendingNtnSignalStrength(expectedResult);
-        sendCmdStartSendingNtnSignalStrengthChangedEvent(false);
-        processAllMessages();
-        verify(mMockSatelliteModemInterface, never())
                 .stopSendingNtnSignalStrength(any(Message.class));
     }
 
@@ -3074,8 +2948,6 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testRegisterForSatelliteCapabilitiesChangedWithFeatureFlagEnabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
-
         Semaphore semaphore = new Semaphore(0);
         final SatelliteCapabilities[] satelliteCapabilities = new SatelliteCapabilities[1];
         ISatelliteCapabilitiesCallback callback =
@@ -3122,49 +2994,6 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         mSatelliteControllerUT.unregisterForCapabilitiesChanged(callback);
         expectedCapabilities = mSatelliteCapabilities;
-        sendSatelliteCapabilitiesChangedEvent(expectedCapabilities, null);
-        processAllMessages();
-        assertTrue(waitForForEvents(
-                semaphore, 0, "testRegisterForSatelliteCapabilitiesChanged"));
-    }
-
-    @Test
-    public void testRegisterForSatelliteCapabilitiesChangedWithFeatureFlagDisabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);
-
-        Semaphore semaphore = new Semaphore(0);
-        final SatelliteCapabilities[] satelliteCapabilities = new SatelliteCapabilities[1];
-        ISatelliteCapabilitiesCallback callback =
-                new ISatelliteCapabilitiesCallback.Stub() {
-                    @Override
-                    public void onSatelliteCapabilitiesChanged(SatelliteCapabilities capabilities) {
-                        logd("onSatelliteCapabilitiesChanged: " + capabilities);
-                        try {
-                            satelliteCapabilities[0] = capabilities;
-                            semaphore.release();
-                        } catch (Exception ex) {
-                            loge("onSatelliteCapabilitiesChanged: Got exception in releasing "
-                                    + "semaphore, ex=" + ex);
-                        }
-                    }
-                };
-
-        int errorCode = mSatelliteControllerUT.registerForCapabilitiesChanged(callback);
-        assertEquals(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, errorCode);
-
-        setUpResponseForRequestIsSatelliteSupported(false,
-                SATELLITE_RESULT_SUCCESS);
-        verifySatelliteSupported(false, SATELLITE_RESULT_NOT_SUPPORTED);
-        errorCode = mSatelliteControllerUT.registerForCapabilitiesChanged(callback);
-        assertEquals(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, errorCode);
-
-        resetSatelliteControllerUT();
-        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        verifySatelliteSupported(false, SATELLITE_RESULT_NOT_SUPPORTED);
-        errorCode = mSatelliteControllerUT.registerForCapabilitiesChanged(callback);
-        assertEquals(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, errorCode);
-
-        SatelliteCapabilities expectedCapabilities = mSatelliteCapabilities;
         sendSatelliteCapabilitiesChangedEvent(expectedCapabilities, null);
         processAllMessages();
         assertTrue(waitForForEvents(
@@ -3848,8 +3677,6 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testUpdateNtnSignalStrentghReportWithFeatureFlagEnabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
-
         mIsSatelliteEnabledSemaphore.drainPermits();
         mIIntegerConsumerResults.clear();
         resetSatelliteControllerUT();
@@ -3941,8 +3768,6 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testRegisterForSatelliteSupportedStateChanged_WithFeatureFlagEnabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
-
         Semaphore semaphore = new Semaphore(0);
         final boolean[] isSupported  = new boolean[1];
         IBooleanConsumer callback =
@@ -4030,29 +3855,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         processAllMessages();
         assertFalse(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteSupportedStateChanged"));
-    }
-
-    @Test
-    public void testRegisterForSatelliteSupportedStateChanged_WithFeatureFlagDisabled() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);
-
-        Semaphore semaphore = new Semaphore(0);
-        IBooleanConsumer callback =
-                new IBooleanConsumer.Stub() {
-                    @Override
-                    public void accept(boolean supported) {
-                        logd("onSatelliteSupportedStateChanged: supported=" + supported);
-                        try {
-                            semaphore.release();
-                        } catch (Exception ex) {
-                            loge("onSatelliteSupportedStateChanged: Got exception in releasing "
-                                    + "semaphore, ex=" + ex);
-                        }
-                    }
-                };
-        int errorCode = mSatelliteControllerUT.registerForSatelliteSupportedStateChanged(
-                callback);
-        assertEquals(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, errorCode);
     }
 
     @Test
@@ -4631,7 +4433,6 @@ public class SatelliteControllerTest extends TelephonyTest {
     @Test
     public void testRequestSatelliteSubscriberProvisionStatus() throws Exception {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         verifyRequestSatelliteSubscriberProvisionStatus();
     }
 
@@ -4665,7 +4466,6 @@ public class SatelliteControllerTest extends TelephonyTest {
     @Test
     public void testProvisionSatellite() throws Exception {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         verifyRequestSatelliteSubscriberProvisionStatus();
         List<SatelliteSubscriberInfo> inputList = getExpectedSatelliteSubscriberInfoList();
         verifyProvisionSatellite(inputList);
@@ -4688,7 +4488,6 @@ public class SatelliteControllerTest extends TelephonyTest {
     @Test
     public void testRegisterForSatelliteSubscriptionProvisionStateChanged() throws Exception {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
 
         Semaphore semaphore = new Semaphore(0);
         SatelliteSubscriberProvisionStatus[] resultArray =
@@ -4831,7 +4630,6 @@ public class SatelliteControllerTest extends TelephonyTest {
     @Test
     public void testDeprovisionSatellite() throws Exception {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         verifyRequestSatelliteSubscriberProvisionStatus();
         List<SatelliteSubscriberInfo> inputList = getExpectedSatelliteSubscriberInfoList();
         verifyProvisionSatellite(inputList);
@@ -5246,7 +5044,6 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testUpdateSystemSelectionChannels() {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
 
         String mccmnc = "123455";

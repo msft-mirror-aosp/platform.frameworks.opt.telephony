@@ -166,7 +166,6 @@ public class DatagramDispatcherTest extends TelephonyTest {
         replaceInstance(SessionMetricsStats.class, "sInstance", null,
                 mMockSessionMetricsStats);
 
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         when(mFeatureFlags.satellitePersistentLogging()).thenReturn(true);
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         mDatagramDispatcherUT = new TestDatagramDispatcher(mContext, Looper.myLooper(),
@@ -691,8 +690,6 @@ public class DatagramDispatcherTest extends TelephonyTest {
 
     @Test
     public void testSendSatelliteDatagramToModemInDemoMode() throws Exception {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
-
         mDatagramDispatcherUT.setDemoMode(true);
         mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
 
