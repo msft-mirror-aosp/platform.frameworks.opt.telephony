@@ -19,10 +19,15 @@ package com.android.internal.telephony;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
+import static org.junit.Assume.assumeTrue;
+
 import android.content.Context;
 import android.platform.test.annotations.UsesFlags;
 import android.platform.test.flag.junit.FlagsParameterization;
 import android.platform.test.flag.junit.SetFlagsRule;
+import android.timezone.MobileCountries;
+import android.timezone.TelephonyLookup;
+import android.timezone.TelephonyNetworkFinder;
 
 import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.SmallTest;
@@ -145,6 +150,23 @@ public class MccTableTest {
         assertEquals(2, MccTable.smallestDigitsMccForMnc(0));
         // mcc not defined, hence default
         assertEquals(2, MccTable.smallestDigitsMccForMnc(2000));
+    }
+
+    @Test
+    public void telephonyFinder_shouldBeIdenticalToTelephonyMccTable() {
+        assumeTrue(Flags.useI18nForMccMapping());
+        assumeTrue(com.android.icu.Flags.telephonyLookupMccExtension());
+
+        TelephonyNetworkFinder telephonyNetworkFinder =
+                TelephonyLookup.getInstance().getTelephonyNetworkFinder();
+
+        MccTable.getAllMccEntries().forEach(mccEntry -> {
+                MobileCountries telephonyCountry =
+                        telephonyNetworkFinder.findCountriesByMcc(
+                                String.valueOf(mccEntry.mMcc));
+
+                assertEquals(mccEntry.mIso, telephonyCountry.getDefaultCountryIsoCode());
+        });
     }
 
     @SmallTest

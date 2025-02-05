@@ -30,12 +30,14 @@ import android.timezone.TelephonyNetwork;
 import android.timezone.TelephonyNetworkFinder;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.telephony.Rlog;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -53,12 +55,18 @@ public final class MccTable {
 
     static ArrayList<MccEntry> sTable;
 
+    @VisibleForTesting
+    public static List<MccEntry> getAllMccEntries() {
+        return new ArrayList<>(sTable);
+    }
+
     /**
      * Container class for mcc and iso. This class implements compareTo so that it can be sorted
      * by mcc.
      */
     public static class MccEntry implements Comparable<MccEntry> {
-        final int mMcc;
+        @VisibleForTesting
+        public final int mMcc;
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.Q,
                 publicAlternatives = "There is no alternative for {@code MccTable.MccEntry.mIso}, "
                         + "but it was included in hidden APIs due to a static analysis false "
