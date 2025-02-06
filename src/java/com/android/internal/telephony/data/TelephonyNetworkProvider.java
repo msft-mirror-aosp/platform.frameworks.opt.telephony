@@ -237,6 +237,7 @@ public class TelephonyNetworkProvider extends NetworkProvider implements Network
     private NetworkCapabilities makeNetworkFilter() {
         final NetworkCapabilities.Builder builder = new NetworkCapabilities.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+                .addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_IA)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_MMTEL)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
@@ -253,13 +254,6 @@ public class TelephonyNetworkProvider extends NetworkProvider implements Network
                 .setNetworkSpecifier(new MatchAllNetworkSpecifier());
         TelephonyNetworkRequest.getAllSupportedNetworkCapabilities()
                 .forEach(builder::addCapability);
-
-        // TODO: b/328622096 remove the try/catch
-        try {
-            builder.addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE);
-        } catch (IllegalArgumentException exception) {
-            log("TRANSPORT_SATELLITE is not supported.");
-        }
 
         return builder.build();
     }

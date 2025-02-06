@@ -2359,13 +2359,7 @@ public class DataNetwork extends StateMachine {
         if (mFlags.satelliteInternet() && mIsSatellite
                 && mDataConfigManager.getForcedCellularTransportCapabilities().stream()
                 .noneMatch(this::hasNetworkCapabilityInNetworkRequests)) {
-            // TODO: b/328622096 remove the try/catch
-            try {
-                builder.addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE);
-            } catch (IllegalArgumentException exception) {
-                loge("TRANSPORT_SATELLITE is not supported.");
-                builder.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
-            }
+            builder.addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE);
         } else {
             builder.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
         }
