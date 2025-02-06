@@ -32,6 +32,7 @@ import android.telephony.SubscriptionManager;
 import android.util.ArrayMap;
 import android.util.LocalLog;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.data.PhoneSwitcher.PhoneSwitcherCallback;
@@ -233,8 +234,9 @@ public class TelephonyNetworkProvider extends NetworkProvider implements Network
     /**
      * @return The maximal network capabilities that telephony can support.
      */
+    @VisibleForTesting
     @NonNull
-    private NetworkCapabilities makeNetworkFilter() {
+    public NetworkCapabilities makeNetworkFilter() {
         final NetworkCapabilities.Builder builder = new NetworkCapabilities.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_IA)
