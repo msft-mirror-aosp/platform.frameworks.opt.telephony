@@ -117,3 +117,14 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 }
+
+# OWNER=nagendranb TARGET=25Q2
+flag {
+  name: "data_service_check"
+  namespace: "telephony"
+  description: "Support data service check based on nri available services."
+  bug:"381338283"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}

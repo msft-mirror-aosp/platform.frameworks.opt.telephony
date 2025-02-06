@@ -583,6 +583,7 @@ public abstract class TelephonyTest {
         doReturn(true).when(mFeatureFlags).minimalTelephonyCdmCheck();
         doReturn(true).when(mFeatureFlags).hsumBroadcast();
         doReturn(true).when(mFeatureFlags).hsumPackageManager();
+        doReturn(true).when(mFeatureFlags).dataServiceCheck();
 
         WorkerThread.reset();
         TelephonyManager.disableServiceHandleCaching();

@@ -21,6 +21,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Matchers.argThat;
@@ -382,6 +383,7 @@ public class DataNetworkTest extends TelephonyTest {
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
         doReturn(1).when(mPhone).getSubId();
+        doReturn("12345").when(mServiceState).getOperatorNumeric();
         doReturn(mImsPhone).when(mPhone).getImsPhone();
         doReturn(mImsCT).when(mImsPhone).getCallTracker();
         doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
@@ -430,7 +432,8 @@ public class DataNetworkTest extends TelephonyTest {
                 NetworkCapabilities.NET_CAPABILITY_EIMS, NetworkCapabilities.NET_CAPABILITY_XCAP))
                 .when(mDataConfigManager).getForcedCellularTransportCapabilities();
         doReturn(CarrierConfigManager.SATELLITE_DATA_SUPPORT_ONLY_RESTRICTED)
-                .when(mDataConfigManager).getSatelliteDataSupportMode();
+                .when(mSatelliteController)
+                .getSatelliteDataServicePolicyForPlmn(anyInt(), anyString());
         doReturn(true).when(mFeatureFlags).carrierEnabledSatelliteFlag();
         doReturn(true).when(mFeatureFlags).satelliteInternet();
 
@@ -2528,6 +2531,45 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testUnrestrictedSatelliteNetworkCapabilities() {
+        setupNonTerrestrialDataNetwork();
+        assertThat(mDataNetworkUT.isSatellite()).isTrue();
+
+        assertThat(mDataNetworkUT.getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)).isFalse();
+
+        // Test constrained traffic
+        doReturn(CarrierConfigManager.SATELLITE_DATA_SUPPORT_BANDWIDTH_CONSTRAINED)
+                .when(mSatelliteController)
+                .getSatelliteDataServicePolicyForPlmn(anyInt(), anyString());
+        mDataNetworkUT.sendMessage(22/*EVENT_VOICE_CALL_STARTED*/); // update network capabilities
+        processAllMessages();
+
+        assertThat(mDataNetworkUT.getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)).isTrue();
+        try {
+            assertThat(mDataNetworkUT.getNetworkCapabilities()
+                    .hasCapability(DataUtils.NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED)).isFalse();
+        } catch (Exception ignored) { }
+
+        // Test unconstrained traffic
+        doReturn(CarrierConfigManager.SATELLITE_DATA_SUPPORT_ALL)
+                .when(mSatelliteController)
+                .getSatelliteDataServicePolicyForPlmn(anyInt(), anyString());
+        mDataNetworkUT.sendMessage(22/*EVENT_VOICE_CALL_STARTED*/); // update network capabilities
+        processAllMessages();
+
+        assertThat(mDataNetworkUT.getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)).isTrue();
+        // TODO(enable after NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED become a default cap)
+//        try {
+//            assertThat(mDataNetworkUT.getNetworkCapabilities()
+//                    .hasCapability(DataUtils.NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED)).isTrue();
+//        } catch (Exception ignored) {}
+    }
+
+    @Test
+    public void testUnrestrictedSatelliteNetworkCapabilities_WithDataServiceCheckFlagDisabled() {
+        doReturn(false).when(mFeatureFlags).dataServiceCheck();
         setupNonTerrestrialDataNetwork();
         assertThat(mDataNetworkUT.isSatellite()).isTrue();
 

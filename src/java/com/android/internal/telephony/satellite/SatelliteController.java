@@ -8710,9 +8710,24 @@ public class SatelliteController extends Handler {
     }
 
     /**
+     * Check if the available satellite services support
+     * {@link NetworkRegistrationInfo#SERVICE_TYPE_DATA} service or not.
+     *
+     * @return {@code true} if data services is supported, otherwise {@code false}.
+     */
+    private boolean isSatelliteDataServicesAllowed(int subId, String plmn) {
+        // validate is available services support data, for satellite internet bringup
+        List<Integer> availableServices = getSupportedSatelliteServicesForPlmn(subId, plmn);
+        return availableServices.stream().anyMatch(num -> num
+                == NetworkRegistrationInfo.SERVICE_TYPE_DATA);
+    }
+
+    /**
      * Method to return the current satellite data service policy supported mode for the registered
      * plmn based on entitlement provisioning information. Note: If no information at
-     * provisioning is supported this is overridden with operator carrier config information.
+     * provisioning is supported this is overridden with operator carrier config information
+     * if available satellite services support data else data service policy is marked as
+     * restricted.
      *
      * @param subId current subscription id
      * @param plmn current registered plmn information
@@ -8731,8 +8746,13 @@ public class SatelliteController extends Handler {
                     return dataServicePolicy.get(plmn);
                 }
             }
+
+            if (isSatelliteDataServicesAllowed(subId, plmn)) {
+                return getCarrierSatelliteDataSupportedModeFromConfig(subId);
+            }
         }
-        return getCarrierSatelliteDataSupportedModeFromConfig(subId);
+
+        return CarrierConfigManager.SATELLITE_DATA_SUPPORT_ONLY_RESTRICTED;
     }
 
     /**
