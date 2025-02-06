@@ -111,6 +111,7 @@ import com.android.internal.telephony.data.DataStallRecoveryManager.DataStallRec
 import com.android.internal.telephony.data.LinkBandwidthEstimator.LinkBandwidthEstimatorCallback;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.ims.ImsResolver;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.util.TelephonyUtils;
@@ -1646,6 +1647,10 @@ public class DataNetworkController extends Handler {
             evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_CONFIG_NOT_READY);
         }
 
+        if (mFeatureFlags.dataServiceCheck() && !isDataServiceSupported(transport)) {
+            evaluation.addDataDisallowedReason(DataDisallowedReason.SERVICE_OPTION_NOT_SUPPORTED);
+        }
+
         // Check CS call state and see if concurrent voice/data is allowed.
         if (hasCalling() && mPhone.getCallTracker().getState() != PhoneConstants.State.IDLE
                 && !mPhone.getServiceStateTracker().isConcurrentVoiceAndDataAllowed()) {
@@ -1979,6 +1984,11 @@ public class DataNetworkController extends Handler {
             evaluation.addDataDisallowedReason(DataDisallowedReason.CDMA_EMERGENCY_CALLBACK_MODE);
         }
 
+        if (mFeatureFlags.dataServiceCheck()
+                && !isDataServiceSupported(dataNetwork.getTransport())) {
+            evaluation.addDataDisallowedReason(DataDisallowedReason.SERVICE_OPTION_NOT_SUPPORTED);
+        }
+
         // If the network is satellite, then the network must be restricted.
         if (mFeatureFlags.satelliteInternet()) {
             // The IWLAN data network should remain intact even when satellite is connected.
@@ -2176,6 +2186,21 @@ public class DataNetworkController extends Handler {
     }
 
     /**
+     * Check if the available services support data service.
+     * {@link NetworkRegistrationInfo#SERVICE_TYPE_DATA} service or not.
+     *
+     * @param transport The preferred transport type for the request. The transport here is
+     * WWAN/WLAN.
+     * @return {@code true} if data services is supported, otherwise {@code false}.
+     */
+    private boolean isDataServiceSupported(@TransportType int transport) {
+        NetworkRegistrationInfo nri = mServiceState.getNetworkRegistrationInfo(
+                    NetworkRegistrationInfo.DOMAIN_PS, transport);
+        return nri != null && nri.getAvailableServices().contains(
+                    NetworkRegistrationInfo.SERVICE_TYPE_DATA);
+    }
+
+    /**
      * Check if the transport from connectivity service can satisfy the network request. Note the
      * transport here is connectivity service's transport (Wifi, cellular, satellite, etc..), not
      * the widely used {@link AccessNetworkConstants#TRANSPORT_TYPE_WLAN WLAN},
@@ -2196,11 +2221,20 @@ public class DataNetworkController extends Handler {
             return true;
         }
 
-        // When the device is on satellite, only restricted/constrained network request can request
-        // network.
+        // When the device is on satellite, allow network request without bandwidth not constrained
+        // to enable data connection with constrained network.
         if (mServiceState.isUsingNonTerrestrialNetwork() && networkRequest.hasCapability(
                 NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
-            switch (mDataConfigManager.getSatelliteDataSupportMode()) {
+
+            int dataPolicy;
+            if (mFeatureFlags.dataServiceCheck()) {
+                final SatelliteController satelliteController = SatelliteController.getInstance();
+                dataPolicy = satelliteController.getSatelliteDataServicePolicyForPlmn(mSubId,
+                        mPhone.getServiceState().getOperatorNumeric());
+            } else {
+                dataPolicy = mDataConfigManager.getSatelliteDataSupportMode();
+            }
+            switch (dataPolicy) {
                 case CarrierConfigManager.SATELLITE_DATA_SUPPORT_ONLY_RESTRICTED -> {
                     return false;
                 }
@@ -2381,7 +2415,7 @@ public class DataNetworkController extends Handler {
 
             // Matching the rules by the configured order. Bail out if find first matching rule.
             for (HandoverRule rule : handoverRules) {
-                // Check if the rule is only for roaming and we are not roaming.
+                // Check if the rule is only for roaming and we are not  aroaming.
                 if (rule.isOnlyForRoaming && !isRoaming) {
                     // If the rule is for roaming only, and the device is not roaming, then bypass
                     // this rule.

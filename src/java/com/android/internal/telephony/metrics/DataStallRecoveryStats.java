@@ -47,6 +47,7 @@ import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataCallResponse.LinkStatus;
 import android.text.TextUtils;
 
+import com.android.internal.os.BackgroundThread;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.TelephonyStatsLog;
@@ -143,9 +144,14 @@ public class DataStallRecoveryStats {
         mPhone = phone;
         mFeatureFlags = featureFlags;
 
-        HandlerThread handlerThread = new HandlerThread(mTag + "-thread");
-        handlerThread.start();
-        mHandler = new Handler(handlerThread.getLooper());
+        if (mFeatureFlags.threadShred()) {
+            mHandler = new Handler(BackgroundThread.get().getLooper());
+        } else {
+            HandlerThread handlerThread = new HandlerThread(mTag + "-thread");
+            handlerThread.start();
+            mHandler = new Handler(handlerThread.getLooper());
+        }
+
         mTelephonyManager = mPhone.getContext().getSystemService(TelephonyManager.class);
 
         dataNetworkController.registerDataNetworkControllerCallback(

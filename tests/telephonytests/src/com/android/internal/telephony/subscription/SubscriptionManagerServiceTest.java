@@ -52,6 +52,7 @@ import static com.android.internal.telephony.subscription.SubscriptionDatabaseMa
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -213,16 +214,17 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 Telephony.Carriers.CONTENT_URI.getAuthority(), mSubscriptionProvider);
 
-        doReturn(true).when(mFeatureFlags).saferGetPhoneNumber();
         doReturn(true).when(mFeatureFlags).uiccPhoneNumberFix();
         doReturn(true).when(mFeatureFlags).ddsCallback();
-        doReturn(true).when(mFeatureFlags).oemEnabledSatelliteFlag();
 
         mSubscriptionManagerServiceUT = new SubscriptionManagerService(mContext, Looper.myLooper(),
                 mFeatureFlags);
 
         monitorTestableLooper(new TestableLooper(getBackgroundHandler().getLooper()));
-        monitorTestableLooper(new TestableLooper(getSubscriptionDatabaseManager().getLooper()));
+
+        if (!mFeatureFlags.threadShred()) {
+            monitorTestableLooper(new TestableLooper(getSubscriptionDatabaseManager().getLooper()));
+        }
 
         doAnswer(invocation -> {
             ((Runnable) invocation.getArguments()[0]).run();
@@ -2883,7 +2885,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
                 .getSubscriptionInfoInternal(1);
         assertThat(subInfo.getIccId()).isEqualTo(FAKE_MAC_ADDRESS1);
         assertThat(subInfo.getDisplayName()).isEqualTo(FAKE_CARRIER_NAME1);
-        assertThat(subInfo.getSimSlotIndex()).isEqualTo(0);
+        assertThat(subInfo.getSimSlotIndex()).isEqualTo(
+                SubscriptionManager.INVALID_SIM_SLOT_INDEX);
         assertThat(subInfo.getSubscriptionType()).isEqualTo(
                 SubscriptionManager.SUBSCRIPTION_TYPE_REMOTE_SIM);
 
@@ -3433,5 +3436,9 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
         assertEquals(expectedPlmnList,
                 mSubscriptionManagerServiceUT.getSatelliteEntitlementPlmnList(subId));
+    }
+
+    public void testIsSatelliteProvisionedForNonIpDatagram() {
+        assertFalse(mSubscriptionManagerServiceUT.isSatelliteProvisionedForNonIpDatagram(-1));
     }
 }

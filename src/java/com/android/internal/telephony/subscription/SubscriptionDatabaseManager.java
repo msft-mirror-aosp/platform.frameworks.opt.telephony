@@ -2072,9 +2072,6 @@ public class SubscriptionDatabaseManager extends Handler {
      * @throws IllegalArgumentException if the subscription does not exist.
      */
     public void setNtn(int subId, int isNtn) {
-        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            return;
-        }
         writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_IS_ONLY_NTN, isNtn,
                 SubscriptionInfoInternal.Builder::setOnlyNonTerrestrialNetwork);
     }
@@ -2447,10 +2444,8 @@ public class SubscriptionDatabaseManager extends Handler {
                 .setIsSatelliteProvisionedForNonIpDatagram(cursor.getInt(
                         cursor.getColumnIndexOrThrow(
                                 SimInfo.COLUMN_IS_SATELLITE_PROVISIONED_FOR_NON_IP_DATAGRAM)));
-        if (mFeatureFlags.oemEnabledSatelliteFlag()) {
-            builder.setOnlyNonTerrestrialNetwork(cursor.getInt(cursor.getColumnIndexOrThrow(
-                    SimInfo.COLUMN_IS_ONLY_NTN)));
-        }
+        builder.setOnlyNonTerrestrialNetwork(cursor.getInt(cursor.getColumnIndexOrThrow(
+                SimInfo.COLUMN_IS_ONLY_NTN)));
         if (mFeatureFlags.supportPsimToEsimConversion()) {
             builder.setTransferStatus(cursor.getInt(cursor.getColumnIndexOrThrow(
                     SimInfo.COLUMN_TRANSFER_STATUS)));

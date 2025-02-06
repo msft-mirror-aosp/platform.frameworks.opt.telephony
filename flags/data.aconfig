@@ -12,39 +12,16 @@ flag {
   }
 }
 
-# OWNER=linggm TARGET=24Q4
+# OWNER=linggm TARGET=25Q2
 flag {
-  name: "keep_empty_requests_network"
+  name: "auto_data_switch_enhanced"
   namespace: "telephony"
-  description: "Don't tear down network even if no requests attached to it."
-  bug: "331301784"
-  metadata {
-    purpose: PURPOSE_BUGFIX
-  }
-}
-
-# OWNER=linggm TARGET=24Q3
-flag {
-  name: "auto_data_switch_allow_roaming"
-  namespace: "telephony"
-  description: "Allow using roaming network as target if user allows it from settings."
+  description: "Ramp up RAT signal strength based auto data switch"
   bug: "287132491"
   metadata {
     purpose: PURPOSE_BUGFIX
   }
 }
-
-# OWNER=linggm TARGET=24Q3
-flag {
-  name: "auto_data_switch_uses_data_enabled"
-  namespace: "telephony"
-  description: "Separately consider the backup phone's data allowed and data enabled."
-  bug: "338552223"
-  metadata {
-    purpose: PURPOSE_BUGFIX
-  }
-}
-
 
 # OWNER=sarahchin TARGET=24Q3
 flag {
@@ -136,6 +113,17 @@ flag {
   namespace: "telephony"
   description: "Support IWLAN handover policy based on incall."
   bug:"376765521"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+# OWNER=nagendranb TARGET=25Q2
+flag {
+  name: "data_service_check"
+  namespace: "telephony"
+  description: "Support data service check based on nri available services."
+  bug:"381338283"
   metadata {
     purpose: PURPOSE_BUGFIX
   }

@@ -41,3 +41,11 @@ flag {
     description: "This flag controls the behavior of terminating an emergency call for cross SIM redialing."
     bug:"336398541"
 }
+
+# OWNER=avinashmp TARGET=25Q1
+flag {
+    name: "add_ims_redial_codes_for_emergency_calls"
+    namespace: "telephony"
+    description: "This flag controls the addition of EMERGENCY_REDIAL_ON_IMS and EMERGENCY_REDIAL_ON_VOWIFI redial codes for normal routed emergency calls."
+    bug:"357980439"
+}

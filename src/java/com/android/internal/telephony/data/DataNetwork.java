@@ -105,6 +105,7 @@ import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.metrics.DataCallSessionStats;
 import com.android.internal.telephony.metrics.DataNetworkValidationStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FunctionalUtils;
 import com.android.internal.util.IState;
@@ -1534,10 +1535,6 @@ public class DataNetwork extends StateMachine {
                         setupData();
                     } else {
                         mRetryDelayMillis = DataCallResponse.RETRY_DURATION_UNDEFINED;
-                        if (!mFlags.keepEmptyRequestsNetwork()) {
-                            // This will mark the data profile as no retry perm failure.
-                            mFailCause = DataFailCause.NO_RETRY_FAILURE;
-                        }
                         transitionTo(mDisconnectedState);
                     }
                     break;
@@ -1662,15 +1659,6 @@ public class DataNetwork extends StateMachine {
                 }
 
                 updateDataNetwork(response);
-
-                if (!mFlags.keepEmptyRequestsNetwork() && mAttachedNetworkRequestList.isEmpty()) {
-                    log("Tear down the network since there is no live network request.");
-                    // Directly call onTearDown here. Calling tearDown will cause deadlock because
-                    // EVENT_TEAR_DOWN_NETWORK is deferred until state machine enters connected
-                    // state, which will never happen in this case.
-                    onTearDown(TEAR_DOWN_REASON_NO_LIVE_REQUEST);
-                    return;
-                }
 
                 if (mVcnManager != null && mVcnManager.applyVcnNetworkPolicy(mNetworkCapabilities,
                         mLinkProperties).isTeardownRequested()) {
@@ -2358,13 +2346,7 @@ public class DataNetwork extends StateMachine {
         if (mFlags.satelliteInternet() && mIsSatellite
                 && mDataConfigManager.getForcedCellularTransportCapabilities().stream()
                 .noneMatch(this::hasNetworkCapabilityInNetworkRequests)) {
-            // TODO: b/328622096 remove the try/catch
-            try {
-                builder.addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE);
-            } catch (IllegalArgumentException exception) {
-                loge("TRANSPORT_SATELLITE is not supported.");
-                builder.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
-            }
+            builder.addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE);
         } else {
             builder.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
         }
@@ -2572,7 +2554,16 @@ public class DataNetwork extends StateMachine {
         // Configure the network as restricted/constrained for unrestricted satellite network.
         if (mFlags.satelliteInternet() && mIsSatellite && builder.build()
                 .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
-            switch (mDataConfigManager.getSatelliteDataSupportMode()) {
+
+            int dataPolicy;
+            if (mFlags.dataServiceCheck()) {
+                final SatelliteController satelliteController = SatelliteController.getInstance();
+                dataPolicy = satelliteController.getSatelliteDataServicePolicyForPlmn(mSubId,
+                        mPhone.getServiceState().getOperatorNumeric());
+            } else {
+                dataPolicy = mDataConfigManager.getSatelliteDataSupportMode();
+            }
+            switch (dataPolicy) {
                 case CarrierConfigManager.SATELLITE_DATA_SUPPORT_ONLY_RESTRICTED
                         -> builder.removeCapability(
                                 NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);

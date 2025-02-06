@@ -54,8 +54,6 @@ import java.util.List;
  * @hide
  */
 public class ApduSender {
-    private static final String LOG_TAG = "ApduSender";
-
     // Parameter and response used by the command to get extra responses of an APDU command.
     private static final int INS_GET_MORE_RESPONSE = 0xC0;
     private static final int SW1_MORE_RESPONSE = 0x61;
@@ -70,18 +68,6 @@ public class ApduSender {
     static final String ISD_R_AID = "A0000005591010FFFFFFFF8900000100";
     private static final String CHANNEL_RESPONSE_ID_PRE = "esim-res-id";
 
-    private static void logv(String msg) {
-        Rlog.v(LOG_TAG, msg);
-    }
-
-    private static void logd(String msg) {
-        Rlog.d(LOG_TAG, msg);
-    }
-
-    private static void loge(String msg) {
-        Rlog.e(LOG_TAG, msg);
-    }
-
     private final String mAid;
     private final boolean mSupportExtendedApdu;
     private final OpenLogicalChannelInvocation mOpenChannel;
@@ -92,6 +78,7 @@ public class ApduSender {
     private final String mChannelResponseKey;
     // closeAnyOpenChannel() needs a handler for its async callbacks.
     private final Handler mHandler;
+    private final String mLogTag;
 
     // Lock for accessing mChannelInUse. We only allow to open a single logical
     // channel at any time for an AID and to invoke one command at any time.
@@ -110,6 +97,7 @@ public class ApduSender {
         if (!aid.equals(ISD_R_AID) && !"user".equals(Build.TYPE)) {
             throw new IllegalArgumentException("Only ISD-R AID is supported.");
         }
+        mLogTag = "ApduSender-" + phoneId;
         mAid = aid;
         mContext = context;
         mSupportExtendedApdu = supportExtendedApdu;
@@ -533,5 +521,17 @@ public class ApduSender {
             logd("Channel lock acquired.");
             return true;
         }
+    }
+
+    private void logv(String msg) {
+        Rlog.v(mLogTag, msg);
+    }
+
+    private void logd(String msg) {
+        Rlog.d(mLogTag, msg);
+    }
+
+    private void loge(String msg) {
+        Rlog.e(mLogTag, msg);
     }
 }

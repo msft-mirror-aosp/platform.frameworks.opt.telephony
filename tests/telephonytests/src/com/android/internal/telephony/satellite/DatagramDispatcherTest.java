@@ -166,7 +166,6 @@ public class DatagramDispatcherTest extends TelephonyTest {
         replaceInstance(SessionMetricsStats.class, "sInstance", null,
                 mMockSessionMetricsStats);
 
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
         when(mFeatureFlags.satellitePersistentLogging()).thenReturn(true);
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         mDatagramDispatcherUT = new TestDatagramDispatcher(mContext, Looper.myLooper(),
@@ -691,8 +690,6 @@ public class DatagramDispatcherTest extends TelephonyTest {
 
     @Test
     public void testSendSatelliteDatagramToModemInDemoMode() throws Exception {
-        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
-
         mDatagramDispatcherUT.setDemoMode(true);
         mDatagramDispatcherUT.setDeviceAlignedWithSatellite(true);
 
@@ -838,6 +835,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
                 .updateSendStatus(eq(SUB_ID), eq(datagramType),
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                         eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSessionMetricsStats, times(1))
+                .addCountOfSuccessfulOutgoingDatagram(eq(datagramType), anyLong());
         verifyNoMoreInteractions(mMockDatagramController);
     }
 
@@ -874,6 +873,9 @@ public class DatagramDispatcherTest extends TelephonyTest {
                         eq(datagramType),
                         eq(SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE), eq(0),
                         eq(SATELLITE_RESULT_SUCCESS));
+        verify(mMockSessionMetricsStats, times(1))
+                .addCountOfFailedOutgoingDatagram(eq(datagramType), eq(
+                        SatelliteManager.SATELLITE_RESULT_NETWORK_ERROR));
     }
 
     @Test

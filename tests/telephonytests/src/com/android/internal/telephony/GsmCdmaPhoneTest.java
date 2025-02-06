@@ -96,6 +96,7 @@ import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyStateTracker;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.imsphone.ImsPhone;
+import com.android.internal.telephony.imsphone.ImsPhoneCall;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.test.SimulatedCommands;
@@ -522,6 +523,50 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         } catch (CallStateException e) {
             fail();
         }
+    }
+
+    @Test
+    @SmallTest
+    public void testDialWithShortEmergencyNumber() throws Exception {
+        ServiceState serviceState = Mockito.mock(ServiceState.class);
+        ImsPhoneCall imsPhoneCall = Mockito.mock(ImsPhoneCall.class);
+        GsmCdmaCall gsmCdmaCall2 = Mockito.mock(GsmCdmaCall.class);
+
+        mSST.mSS = mServiceState;
+        mCT.mForegroundCall = mGsmCdmaCall;
+        mCT.mBackgroundCall = gsmCdmaCall2;
+        mCT.mRingingCall = gsmCdmaCall2;
+
+        // Set the 2-digits as emergency number.
+        doReturn(true).when(mPackageManager).hasSystemFeature(
+                eq(PackageManager.FEATURE_TELEPHONY_CALLING));
+        doReturn(true).when(mTelephonyManager).isEmergencyNumber(eq("17"));
+
+        // Exist active call.
+        doReturn(GsmCdmaCall.State.ACTIVE).when(mGsmCdmaCall).getState();
+        doReturn(GsmCdmaCall.State.IDLE).when(gsmCdmaCall2).getState();
+        // ImsService is not ready.
+        doReturn(ServiceState.STATE_OUT_OF_SERVICE).when(serviceState).getState();
+        doReturn(serviceState).when(mImsPhone).getServiceState();
+        doReturn(false).when(imsPhoneCall).isRinging();
+        doReturn(imsPhoneCall).when(mImsPhone).getRingingCall();
+
+        replaceInstance(Phone.class, "mImsPhone", mPhoneUT, mImsPhone);
+
+        Connection connection = mPhoneUT.dial("17",
+                new PhoneInternalInterface.DialArgs.Builder()
+                        .setIsEmergency(true)
+                        .build());
+        assertNull(connection);
+        verify(mCT, never()).dialGsm(eq("17"), any(PhoneInternalInterface.DialArgs.class));
+
+        // Enable feature flag.
+        doReturn(true).when(mFeatureFlags).skipMmiCodeCheckForEmergencyCall();
+        mPhoneUT.dial("17",
+                new PhoneInternalInterface.DialArgs.Builder()
+                        .setIsEmergency(true)
+                        .build());
+        verify(mCT).dialGsm(eq("17"), any(PhoneInternalInterface.DialArgs.class));
     }
 
     @Test
@@ -1519,8 +1564,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_firstRequest_incompleteCarrierConfig_changeNeeded() {
-        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
-
         mPhoneUT.mCi = mMockCi;
         PersistableBundle bundle = mContextFixture.getCarrierConfigBundle();
         bundle.putIntArray(CarrierConfigManager.KEY_CARRIER_NR_AVAILABILITIES_INT_ARRAY,
@@ -1550,8 +1593,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_firstRequest_noChangeNeeded() {
-        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
-
         mPhoneUT.mCi = mMockCi;
         PersistableBundle bundle = mContextFixture.getCarrierConfigBundle();
         bundle.putIntArray(CarrierConfigManager.KEY_CARRIER_NR_AVAILABILITIES_INT_ARRAY,
@@ -1574,8 +1615,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_firstRequest_needsChange() {
-        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
-
         mPhoneUT.mCi = mMockCi;
         PersistableBundle bundle = mContextFixture.getCarrierConfigBundle();
         bundle.putIntArray(CarrierConfigManager.KEY_CARRIER_NR_AVAILABILITIES_INT_ARRAY,
@@ -1598,8 +1637,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_CarrierConfigChanges() {
-        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
-
         // Initialize the inner cache and set the modem to N1 mode = enabled/true
         testNrCapabilityChanged_firstRequest_needsChange();
 
@@ -1620,8 +1657,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_CarrierConfigChanges_ErrorResponse() {
-        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
-
         mPhoneUT.mCi = mMockCi;
         for (int i = 0; i < 2; i++) {
             PersistableBundle bundle = mContextFixture.getCarrierConfigBundle();
@@ -1646,8 +1681,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_firstRequest_ImsChanges() {
-        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
-
         mPhoneUT.mCi = mMockCi;
         Message passthroughMessage = mTestHandler.obtainMessage(0xC0FFEE);
 
@@ -2510,21 +2543,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                 any(Message.class));
     }
 
-    @Test
-    public void testHandleNullCipherAndIntegrityEnabled_featureFlagOff() {
-        mPhoneUT.mCi = mMockCi;
-        DeviceConfig.setProperty(DeviceConfig.NAMESPACE_CELLULAR_SECURITY,
-                TelephonyManager.PROPERTY_ENABLE_NULL_CIPHER_TOGGLE, Boolean.FALSE.toString(),
-                false);
-
-        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(EVENT_RADIO_AVAILABLE,
-                new AsyncResult(null, new int[]{ServiceState.RIL_RADIO_TECHNOLOGY_GSM}, null)));
-        processAllMessages();
-
-        verify(mMockCi, times(0)).setNullCipherAndIntegrityEnabled(anyBoolean(),
-                any(Message.class));
-    }
-
     public void fdnCheckCleanup() {
         doReturn(false).when(mUiccCardApplication3gpp).getIccFdnAvailable();
         doReturn(false).when(mUiccCardApplication3gpp).getIccFdnEnabled();
@@ -2862,31 +2880,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     }
 
     @Test
-    public void testCellularIdentifierDisclosureFlagOff() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()).thenReturn(false);
-
-        GsmCdmaPhone phoneUT =
-                new GsmCdmaPhone(
-                        mContext,
-                        mSimulatedCommands,
-                        mNotifier,
-                        true,
-                        0,
-                        PhoneConstants.PHONE_TYPE_GSM,
-                        mTelephonyComponentFactory,
-                        (c, p) -> mImsManager,
-                        mFeatureFlags);
-        phoneUT.mCi = mMockCi;
-
-        verify(mMockCi, never())
-                .registerForCellularIdentifierDisclosures(
-                        any(Handler.class), anyInt(), any(Object.class));
-    }
-
-    @Test
-    public void testCellularIdentifierDisclosureFlagOn() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()).thenReturn(true);
-
+    public void testCellularIdentifierDisclosure() {
         Phone phoneUT =
                 new GsmCdmaPhone(
                         mContext,
@@ -2910,7 +2904,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     public void testCellularIdentifierDisclosure_disclosureEventAddedToNotifier() {
         int phoneId = 0;
         int subId = 10;
-        when(mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()).thenReturn(true);
         when(mSubscriptionManagerService.getSubId(phoneId)).thenReturn(subId);
 
         Phone phoneUT =
@@ -2945,7 +2938,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     public void testCellularIdentifierDisclosure_disclosureEventNull() {
         int phoneId = 4;
         int subId = 6;
-        when(mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()).thenReturn(true);
         when(mSubscriptionManagerService.getSubId(phoneId)).thenReturn(subId);
         Phone phoneUT =
                 new GsmCdmaPhone(
@@ -2969,21 +2961,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     }
 
     @Test
-    public void testCellularIdentifierDisclosure_noModemCallOnRadioAvailable_FlagOff() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(false);
-        GsmCdmaPhone phoneUT = makeNewPhoneUT();
-        assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
-
-        sendRadioAvailableToPhone(phoneUT);
-
-        verify(mMockCi, never()).setCellularIdentifierTransparencyEnabled(anyBoolean(),
-                any(Message.class));
-        assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
-    }
-
-    @Test
     public void testCellularIdentifierDisclosure_unsupportedByModemOnRadioAvailable() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
         assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
 
@@ -3000,7 +2978,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testCellularIdentifierDisclosure_supportedByModem() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
         assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
 
@@ -3013,15 +2990,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         sendRequestSuccessToPhone(phoneUT, EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE);
 
         assertTrue(phoneUT.isIdentifierDisclosureTransparencySupported());
-    }
-
-    @Test
-    public void testSecurityAlgorithmUpdateFlagOff() {
-        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(false);
-
-        makeNewPhoneUT();
-
-        verify(mMockCi, never()).registerForSecurityAlgorithmUpdates(any(), anyInt(), any());
     }
 
     @Test
@@ -3115,21 +3083,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     }
 
     @Test
-    public void testNullCipherNotification_noModemCallOnRadioAvailable_FlagOff() {
-        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(false);
-        GsmCdmaPhone phoneUT = makeNewPhoneUT();
-        assertFalse(phoneUT.isNullCipherNotificationSupported());
-
-        sendRadioAvailableToPhone(phoneUT);
-
-        verify(mMockCi, never()).setSecurityAlgorithmsUpdatedEnabled(anyBoolean(),
-                any(Message.class));
-        assertFalse(phoneUT.isNullCipherNotificationSupported());
-    }
-
-    @Test
     public void testNullCipherNotification_unsupportedByModemOnRadioAvailable() {
-        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
         assertFalse(phoneUT.isNullCipherNotificationSupported());
 
@@ -3143,7 +3097,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNullCipherNotification_supportedByModem() {
-        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
         assertFalse(phoneUT.isNullCipherNotificationSupported());
 
@@ -3157,7 +3110,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNullCipherNotification_preferenceEnabled() {
-        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
         when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
 
@@ -3171,7 +3123,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNullCipherNotification_preferenceDisabled() {
-        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
         when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
 

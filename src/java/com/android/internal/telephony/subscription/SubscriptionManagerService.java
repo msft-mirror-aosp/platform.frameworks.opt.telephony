@@ -116,6 +116,7 @@ import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccSlot;
 import com.android.internal.telephony.util.ArrayUtils;
 import com.android.internal.telephony.util.TelephonyUtils;
+import com.android.internal.telephony.util.WorkerThread;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
@@ -491,10 +492,14 @@ public class SubscriptionManagerService extends ISub.Stub {
         mUiccController = UiccController.getInstance();
         mHandler = new Handler(looper);
 
-        HandlerThread backgroundThread = new HandlerThread(LOG_TAG);
-        backgroundThread.start();
+        if (mFeatureFlags.threadShred()) {
+            mBackgroundHandler = new Handler(WorkerThread.get().getLooper());
+        } else {
+            HandlerThread backgroundThread = new HandlerThread(LOG_TAG);
+            backgroundThread.start();
 
-        mBackgroundHandler = new Handler(backgroundThread.getLooper());
+            mBackgroundHandler = new Handler(backgroundThread.getLooper());
+        }
 
         mDefaultVoiceSubId = new WatchedInt(Settings.Global.getInt(mContext.getContentResolver(),
                 Settings.Global.MULTI_SIM_VOICE_CALL_SUBSCRIPTION,
@@ -549,12 +554,22 @@ public class SubscriptionManagerService extends ISub.Stub {
         mSimState = new int[mTelephonyManager.getSupportedModemCount()];
         Arrays.fill(mSimState, TelephonyManager.SIM_STATE_UNKNOWN);
 
-        // Create a separate thread for subscription database manager. The database will be updated
-        // from a different thread.
-        HandlerThread handlerThread = new HandlerThread(LOG_TAG);
-        handlerThread.start();
-        mSubscriptionDatabaseManager = new SubscriptionDatabaseManager(context,
-                handlerThread.getLooper(), mFeatureFlags,
+        Looper dbLooper = null;
+
+        if (mFeatureFlags.threadShred()) {
+            dbLooper = WorkerThread.get().getLooper();
+        } else {
+            // Create a separate thread for subscription database manager.
+            // The database will be updated from a different thread.
+            HandlerThread handlerThread = new HandlerThread(LOG_TAG);
+            handlerThread.start();
+            dbLooper = handlerThread.getLooper();
+        }
+
+        mSubscriptionDatabaseManager = new SubscriptionDatabaseManager(
+                context,
+                dbLooper,
+                mFeatureFlags,
                 new SubscriptionDatabaseManagerCallback(mHandler::post) {
                     /**
                      * Called when database has been loaded into the cache.
@@ -909,10 +924,6 @@ public class SubscriptionManagerService extends ISub.Stub {
      * {@code false} otherwise.
      */
     public void setNtn(int subId, boolean isNtn) {
-        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            return;
-        }
-
         // This can throw IllegalArgumentException if the subscription does not exist.
         try {
             mSubscriptionDatabaseManager.setNtn(subId, (isNtn ? 1 : 0));
@@ -1233,14 +1244,9 @@ public class SubscriptionManagerService extends ISub.Stub {
                     }
 
                     boolean isSatelliteSpn = false;
-                    if (mFeatureFlags.oemEnabledSatelliteFlag() ) {
-                        if (isSatelliteSpn(embeddedProfile.getServiceProviderName())) {
-                            isSatelliteSpn = true;
-                            builder.setOnlyNonTerrestrialNetwork(1);
-                        }
-                    } else {
-                        log("updateEmupdateEmbeddedSubscriptions: oemEnabledSatelliteFlag is "
-                                + "disabled");
+                    if (isSatelliteSpn(embeddedProfile.getServiceProviderName())) {
+                        isSatelliteSpn = true;
+                        builder.setOnlyNonTerrestrialNetwork(1);
                     }
 
                     if (android.os.Build.isDebuggable() &&
@@ -1267,7 +1273,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                         String mnc = cid.getMnc();
                         builder.setMcc(mcc);
                         builder.setMnc(mnc);
-                        if (mFeatureFlags.oemEnabledSatelliteFlag() && !isSatelliteSpn) {
+                        if (!isSatelliteSpn) {
                             builder.setOnlyNonTerrestrialNetwork(
                                     isSatellitePlmn(mcc + mnc) ? 1 : 0);
                         }
@@ -2308,9 +2314,17 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         enforceTelephonyFeatureWithException(getCurrentPackageName(), "addSubInfo");
 
-        if (!SubscriptionManager.isValidSlotIndex(slotIndex)
-                && slotIndex != SubscriptionManager.INVALID_SIM_SLOT_INDEX) {
-            throw new IllegalArgumentException("Invalid slotIndex " + slotIndex);
+        if (subscriptionType == SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM) {
+            if (!SubscriptionManager.isValidSlotIndex(slotIndex)) {
+                throw new IllegalArgumentException("Invalid slot index " + slotIndex
+                        + " for local SIM");
+            }
+        } else if (subscriptionType == SubscriptionManager.SUBSCRIPTION_TYPE_REMOTE_SIM) {
+            // We only support one remote SIM at this point, so use -1. This needs to be revisited
+            // if we plan to support multiple remote SIMs in the future.
+            slotIndex = SubscriptionManager.INVALID_SIM_SLOT_INDEX;
+        } else {
+            throw new IllegalArgumentException("Invalid subscription type " + subscriptionType);
         }
 
         // Now that all security checks passes, perform the operation as ourselves.
@@ -3835,47 +3849,17 @@ public class SubscriptionManagerService extends ISub.Stub {
                 Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
         enforceTelephonyFeatureWithException(callingPackage, "getPhoneNumber");
 
-        if (mFeatureFlags.saferGetPhoneNumber()) {
-            checkPhoneNumberSource(source);
-            subId = checkAndGetSubId(subId);
-            if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) return "";
+        checkPhoneNumberSource(source);
+        subId = checkAndGetSubId(subId);
+        if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) return "";
 
-            final long identity = Binder.clearCallingIdentity();
-            try {
-                return getPhoneNumberFromSourceInternal(subId, source);
-            } finally {
-                Binder.restoreCallingIdentity(identity);
-            }
-        } else {
-            final long identity = Binder.clearCallingIdentity();
-            try {
-                SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
-                        .getSubscriptionInfoInternal(subId);
-
-                if (subInfo == null) {
-                    loge("Invalid sub id " + subId + ", callingPackage=" + callingPackage);
-                    return "";
-                }
-
-                switch(source) {
-                    case SubscriptionManager.PHONE_NUMBER_SOURCE_UICC:
-                        Phone phone = PhoneFactory.getPhone(getSlotIndex(subId));
-                        if (phone != null) {
-                        return TextUtils.emptyIfNull(phone.getLine1Number());
-                        } else {
-                        return subInfo.getNumber();
-                        }
-                    case SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER:
-                        return subInfo.getNumberFromCarrier();
-                    case SubscriptionManager.PHONE_NUMBER_SOURCE_IMS:
-                        return subInfo.getNumberFromIms();
-                    default:
-                        throw new IllegalArgumentException("Invalid number source " + source);
-                }
-            } finally {
-                Binder.restoreCallingIdentity(identity);
-            }
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            return getPhoneNumberFromSourceInternal(subId, source);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
         }
+
     }
 
     /**
@@ -3981,50 +3965,28 @@ public class SubscriptionManagerService extends ISub.Stub {
         enforceTelephonyFeatureWithException(callingPackage,
                 "getPhoneNumberFromFirstAvailableSource");
 
-        if (mFeatureFlags.saferGetPhoneNumber()) {
-            subId = checkAndGetSubId(subId);
-            if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) return "";
+        subId = checkAndGetSubId(subId);
+        if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) return "";
 
-            final long identity = Binder.clearCallingIdentity();
-            try {
-                String number;
-                number = getPhoneNumberFromSourceInternal(
-                        subId,
-                        SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER);
-                if (!TextUtils.isEmpty(number)) return number;
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            String number;
+            number = getPhoneNumberFromSourceInternal(
+                    subId,
+                    SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER);
+            if (!TextUtils.isEmpty(number)) return number;
 
-                number = getPhoneNumberFromSourceInternal(
-                        subId,
-                        SubscriptionManager.PHONE_NUMBER_SOURCE_UICC);
-                if (!TextUtils.isEmpty(number)) return number;
+            number = getPhoneNumberFromSourceInternal(
+                    subId,
+                    SubscriptionManager.PHONE_NUMBER_SOURCE_UICC);
+            if (!TextUtils.isEmpty(number)) return number;
 
-                number = getPhoneNumberFromSourceInternal(
-                        subId,
-                        SubscriptionManager.PHONE_NUMBER_SOURCE_IMS);
-                return TextUtils.emptyIfNull(number);
-            } finally {
-                Binder.restoreCallingIdentity(identity);
-            }
-        } else {
-            String numberFromCarrier = getPhoneNumber(subId,
-                    SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER, callingPackage,
-                    callingFeatureId);
-            if (!TextUtils.isEmpty(numberFromCarrier)) {
-                return numberFromCarrier;
-            }
-            String numberFromUicc = getPhoneNumber(
-                    subId, SubscriptionManager.PHONE_NUMBER_SOURCE_UICC, callingPackage,
-                    callingFeatureId);
-            if (!TextUtils.isEmpty(numberFromUicc)) {
-                return numberFromUicc;
-            }
-            String numberFromIms = getPhoneNumber(
-                    subId, SubscriptionManager.PHONE_NUMBER_SOURCE_IMS, callingPackage,
-                    callingFeatureId);
-            if (!TextUtils.isEmpty(numberFromIms)) {
-                return numberFromIms;
-            }
-            return "";
+            number = getPhoneNumberFromSourceInternal(
+                    subId,
+                    SubscriptionManager.PHONE_NUMBER_SOURCE_IMS);
+            return TextUtils.emptyIfNull(number);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
         }
     }
 
@@ -4826,11 +4788,6 @@ public class SubscriptionManagerService extends ISub.Stub {
      * "config_satellite_sim_plmn_identifier", {@code false} otherwise.
      */
     private boolean isSatellitePlmn(@NonNull String mccMnc) {
-        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            log("isSatellitePlmn: oemEnabledSatelliteFlag is disabled");
-            return false;
-        }
-
         final int id = R.string.config_satellite_sim_plmn_identifier;
         String overlayMccMnc = null;
         try {
@@ -4855,11 +4812,6 @@ public class SubscriptionManagerService extends ISub.Stub {
      * "config_satellite_sim_spn_identifier", {@code false} otherwise.
      */
     private boolean isSatelliteSpn(@NonNull String spn) {
-        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            log("isSatelliteSpn: oemEnabledSatelliteFlag is disabled");
-            return false;
-        }
-
         final int id = R.string.config_satellite_sim_spn_identifier;
         String overlaySpn = null;
         try {

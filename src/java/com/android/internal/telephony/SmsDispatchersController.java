@@ -85,6 +85,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class SmsDispatchersController extends Handler {
     private static final String TAG = "SmsDispatchersController";
     private static final boolean VDBG = false; // STOPSHIP if true
+    private static final boolean ENABLE_CDMA_DISPATCHER = true; // see b/388540508
 
     /** Radio is ON */
     private static final int EVENT_RADIO_ON = 11;
@@ -411,7 +412,7 @@ public class SmsDispatchersController extends Handler {
         mImsSmsDispatcher = new ImsSmsDispatcher(phone, this, ImsManager::getConnector);
         mGsmInboundSmsHandler = GsmInboundSmsHandler.makeInboundSmsHandler(phone.getContext(),
                 storageMonitor, phone, looper, mFeatureFlags);
-        if (!mFeatureFlags.cleanupCdma()) {
+        if (ENABLE_CDMA_DISPATCHER) {
             mCdmaDispatcher = new CdmaSMSDispatcher(phone, this);
             mCdmaInboundSmsHandler = CdmaInboundSmsHandler.makeInboundSmsHandler(phone.getContext(),
                     storageMonitor, phone, (CdmaSMSDispatcher) mCdmaDispatcher, looper,
@@ -1002,7 +1003,7 @@ public class SmsDispatchersController extends Handler {
      * @return true if Cdma format should be used for MO SMS, false otherwise.
      */
     protected boolean isCdmaMo() {
-        if (mFeatureFlags.cleanupCdma()) return false;
+        if (!ENABLE_CDMA_DISPATCHER) return false;
         if (!isIms()) {
             // IMS is not registered, use Voice technology to determine SMS format.
             return (PhoneConstants.PHONE_TYPE_CDMA == mPhone.getPhoneType());
@@ -1018,7 +1019,7 @@ public class SmsDispatchersController extends Handler {
      * @return true if format given is CDMA format, false otherwise.
      */
     public boolean isCdmaFormat(String format) {
-        if (mFeatureFlags.cleanupCdma()) return false;
+        if (!ENABLE_CDMA_DISPATCHER) return false;
         return (mCdmaDispatcher.getFormat().equals(format));
     }
 
@@ -1878,6 +1879,11 @@ public class SmsDispatchersController extends Handler {
             // Send P2P SMS using carrier roaming NB IOT NTN
             DatagramDispatcher.getInstance().sendSms(pendingRequest);
             return;
+        } else if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn()) {
+            Rlog.d(TAG, "Block SMS in carrier roaming NB IOT NTN mode.");
+            // Block SMS in satellite mode if P2P SMS is not supported.
+            triggerSentIntentForFailure(pendingRequest.sentIntents);
+            return;
         }
 
         sendTextInternal(pendingRequest);
@@ -2041,6 +2047,11 @@ public class SmsDispatchersController extends Handler {
         if (SatelliteController.getInstance().shouldSendSmsToDatagramDispatcher(mPhone)) {
             // Send multipart P2P SMS using carrier roaming NB IOT NTN
             DatagramDispatcher.getInstance().sendSms(pendingRequest);
+            return;
+        } else if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn()) {
+            Rlog.d(TAG, "Block SMS in carrier roaming NB IOT NTN mode.");
+            // Block SMS in satellite mode if P2P SMS is not supported.
+            triggerSentIntentForFailure(pendingRequest.sentIntents);
             return;
         }
 

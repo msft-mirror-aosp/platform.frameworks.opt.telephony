@@ -143,6 +143,7 @@ import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccProfile;
 import com.android.internal.telephony.uicc.UiccSlot;
+import com.android.internal.telephony.util.WorkerThread;
 import com.android.server.pm.permission.LegacyPermissionManagerService;
 
 import org.mockito.Mockito;
@@ -582,7 +583,9 @@ public abstract class TelephonyTest {
         doReturn(true).when(mFeatureFlags).minimalTelephonyCdmCheck();
         doReturn(true).when(mFeatureFlags).hsumBroadcast();
         doReturn(true).when(mFeatureFlags).hsumPackageManager();
+        doReturn(true).when(mFeatureFlags).dataServiceCheck();
 
+        WorkerThread.reset();
         TelephonyManager.disableServiceHandleCaching();
         PropertyInvalidatedCache.disableForTestMode();
         // For testing do not allow Log.WTF as it can cause test process to crash
@@ -701,10 +704,11 @@ public abstract class TelephonyTest {
                 .makeCellularNetworkSecuritySafetySource(any(Context.class));
         doReturn(mIdentifierDisclosureNotifier)
                 .when(mTelephonyComponentFactory)
-                .makeIdentifierDisclosureNotifier(any(CellularNetworkSecuritySafetySource.class));
+                .makeIdentifierDisclosureNotifier(
+                        nullable(CellularNetworkSecuritySafetySource.class));
         doReturn(mNullCipherNotifier)
                 .when(mTelephonyComponentFactory)
-                .makeNullCipherNotifier(any(CellularNetworkSecuritySafetySource.class));
+                .makeNullCipherNotifier(nullable(CellularNetworkSecuritySafetySource.class));
 
         //mPhone
         doReturn(mContext).when(mPhone).getContext();

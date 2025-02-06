@@ -1271,6 +1271,20 @@ public class DataConfigManager extends Handler {
         }
     }
 
+    /**
+     * @return The unsupported network capabilities. The unsupported capabilities will be removed
+     * from the default network capabilities that {@link TelephonyNetworkProvider} use to inform
+     * connectivity service what network capabilities are supported by telephony.
+     */
+    @NonNull
+    @NetCapability
+    public Set<Integer> getUnsupportedNetworkCapabilities() {
+        return Arrays.stream(mResources.getStringArray(com.android.internal.R.array
+                        .config_unsupported_network_capabilities))
+                .map(DataUtils::getNetworkCapabilityFromString)
+                .collect(Collectors.toSet());
+    }
+
     /** Update handover rules from carrier config. */
     private void updateHandoverRules() {
         synchronized (this) {

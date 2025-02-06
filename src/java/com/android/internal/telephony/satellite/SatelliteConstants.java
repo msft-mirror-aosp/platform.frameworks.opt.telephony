@@ -66,6 +66,7 @@ public class SatelliteConstants {
     public static final int CONFIG_UPDATE_RESULT_DEVICE_DATA_INVALID_COUNTRY_CODE = 9;
     public static final int CONFIG_UPDATE_RESULT_DEVICE_DATA_INVALID_S2_CELL_FILE = 10;
     public static final int CONFIG_UPDATE_RESULT_IO_ERROR = 11;
+    public static final int CONFIG_UPDATE_RESULT_INVALID_SATELLITE_ACCESS_CONFIG_FILE = 12;
 
     @IntDef(prefix = {"CONFIG_UPDATE_RESULT_"}, value = {
             CONFIG_UPDATE_RESULT_UNKNOWN,
@@ -79,7 +80,8 @@ public class SatelliteConstants {
             CONFIG_UPDATE_RESULT_CARRIER_DATA_INVALID_SUPPORTED_SERVICES,
             CONFIG_UPDATE_RESULT_DEVICE_DATA_INVALID_COUNTRY_CODE,
             CONFIG_UPDATE_RESULT_DEVICE_DATA_INVALID_S2_CELL_FILE,
-            CONFIG_UPDATE_RESULT_IO_ERROR
+            CONFIG_UPDATE_RESULT_IO_ERROR,
+            CONFIG_UPDATE_RESULT_INVALID_SATELLITE_ACCESS_CONFIG_FILE
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ConfigUpdateResult {}
