@@ -481,6 +481,9 @@ public class CarrierPrivilegesTracker extends Handler {
     private void handleSimStateChanged(int slotId, int simState) {
         if (slotId != mPhone.getPhoneId()) return;
 
+        // TODO(b/398737967): remove or silence down when diagnosed
+        Rlog.d(TAG, "handleSimStateChanged: slotId=" + slotId + " simState=" + simState);
+
         List<UiccAccessRule> updatedUiccRules = Collections.EMPTY_LIST;
 
         mPrivilegedPackageInfoLock.writeLock().lock();
@@ -492,7 +495,7 @@ public class CarrierPrivilegesTracker extends Handler {
 
         // Only include the UICC rules if the SIM is fully loaded
         if (simState == SIM_STATE_LOADED) {
-            mLocalLog.log("SIM fully loaded, handleUiccAccessRulesLoaded.");
+            Rlog.d(TAG, "handleSimStateChanged: SIM fully loaded.");
             handleUiccAccessRulesLoaded();
         } else {
             if (!mUiccRules.isEmpty()
@@ -501,12 +504,13 @@ public class CarrierPrivilegesTracker extends Handler {
                         SystemClock.uptimeMillis() + CLEAR_UICC_RULES_DELAY_MILLIS;
                 sendMessageAtTime(obtainMessage(ACTION_CLEAR_UICC_RULES),
                         mClearUiccRulesUptimeMillis);
-                mLocalLog.log("SIM is gone, simState=" + TelephonyManager.simStateToString(simState)
+                Rlog.d(TAG, "handleSimStateChanged: SIM is gone, simState="
+                        + TelephonyManager.simStateToString(simState)
                         + ". Delay " + TimeUnit.MILLISECONDS.toSeconds(
                         CLEAR_UICC_RULES_DELAY_MILLIS) + " seconds to clear UICC rules.");
             } else {
-                mLocalLog.log(
-                        "Ignore SIM gone event while UiccRules is empty or waiting to be emptied.");
+                Rlog.d(TAG, "handleSimStateChanged: Ignore SIM gone event while"
+                        + " UiccRules is empty or waiting to be emptied.");
             }
         }
     }
