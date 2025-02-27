@@ -709,6 +709,7 @@ public abstract class TelephonyTest {
 
         //mPhone
         doReturn(mContext).when(mPhone).getContext();
+        doReturn(mContext).when(mPhone2).getContext();
         doReturn(mContext).when(mImsPhone).getContext();
         doReturn(true).when(mPhone).getUnitTestMode();
         doReturn(mUiccProfile).when(mPhone).getIccCard();
@@ -747,6 +748,7 @@ public abstract class TelephonyTest {
         doReturn(mDataRetryManager).when(mDataNetworkController).getDataRetryManager();
         doReturn(mCarrierPrivilegesTracker).when(mPhone).getCarrierPrivilegesTracker();
         doReturn(0).when(mPhone).getPhoneId();
+        doReturn(1).when(mPhone2).getPhoneId();
         doReturn(true).when(mPhone).hasCalling();
         doReturn(true).when(mPhone2).hasCalling();
 
