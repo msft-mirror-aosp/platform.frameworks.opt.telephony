@@ -1050,6 +1050,28 @@ public abstract class TelephonyTest {
         Log.d(TAG, s);
     }
 
+    protected void unmockActivityManager() throws Exception {
+        // Normally, these two should suffice. But we're having some flakiness due to restored
+        // instances being mocks...
+        restoreInstance(Singleton.class, "mInstance", mIActivityManagerSingleton);
+        restoreInstance(ActivityManager.class, "IActivityManagerSingleton", null);
+
+        // Copy-paste from android.app.ActivityManager.IActivityManagerSingleton
+        Singleton<IActivityManager> amSingleton = new Singleton<IActivityManager>() {
+                @Override
+                protected IActivityManager create() {
+                    final IBinder b = ServiceManager.getService(Context.ACTIVITY_SERVICE);
+                    final IActivityManager am = IActivityManager.Stub.asInterface(b);
+                    return am;
+                }
+            };
+
+        // ...so we're setting correct values explicitly, to be sure and not let the flake propagate
+        // to other tests.
+        replaceInstance(Singleton.class, "mInstance", mIActivityManagerSingleton, null);
+        replaceInstance(ActivityManager.class, "IActivityManagerSingleton", null, amSingleton);
+    }
+
     public static class FakeBlockedNumberContentProvider extends MockContentProvider {
         public Set<String> mBlockedNumbers = new HashSet<>();
         public int mNumEmergencyContactNotifications = 0;

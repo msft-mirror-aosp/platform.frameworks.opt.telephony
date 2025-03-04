@@ -35,7 +35,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.app.Activity;
-import android.app.ActivityManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -57,7 +56,6 @@ import android.service.carrier.ICarrierMessagingService;
 import android.telephony.SmsManager;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
-import android.util.Singleton;
 
 import androidx.test.filters.FlakyTest;
 import androidx.test.filters.MediumTest;
@@ -134,6 +132,11 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
     @Before
     public void setUp() throws Exception {
         super.setUp(getClass().getSimpleName());
+
+        // unmock ActivityManager to be able to register receiver, create real PendingIntent and
+        // receive TEST_INTENT
+        unmockActivityManager();
+
         mSmsDispatchersController = mock(SmsDispatchersController.class);
         mGsmInboundSmsHandler = mock(GsmInboundSmsHandler.class);
         mCountryDetector = mock(CountryDetector.class);
@@ -228,10 +231,6 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
     }
 
     private void registerTestIntentReceiver() throws Exception {
-        // unmock ActivityManager to be able to register receiver, create real PendingIntent and
-        // receive TEST_INTENT
-        restoreInstance(Singleton.class, "mInstance", mIActivityManagerSingleton);
-        restoreInstance(ActivityManager.class, "IActivityManagerSingleton", null);
         Context realContext = TestApplication.getAppContext();
         realContext.registerReceiver(mTestReceiver, new IntentFilter(TEST_INTENT),
                 Context.RECEIVER_EXPORTED);
