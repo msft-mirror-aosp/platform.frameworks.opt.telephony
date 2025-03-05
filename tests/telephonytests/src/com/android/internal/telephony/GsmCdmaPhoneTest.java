@@ -47,7 +47,6 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -64,7 +63,6 @@ import android.os.Handler;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.Process;
-import android.os.UserHandle;
 import android.os.UserManager;
 import android.os.WorkSource;
 import android.preference.PreferenceManager;
@@ -106,7 +104,6 @@ import com.android.internal.telephony.uicc.IccCardApplicationStatus;
 import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.IccConstants;
 import com.android.internal.telephony.uicc.IccRecords;
-import com.android.internal.telephony.uicc.IccVmNotSupportedException;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.uicc.UiccPort;
 import com.android.internal.telephony.uicc.UiccProfile;
@@ -118,7 +115,6 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 
@@ -156,14 +152,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                 new AsyncResult(null, new int[]{ServiceState.RIL_RADIO_TECHNOLOGY_GSM}, null)));
         processAllMessages();
         assertEquals(PhoneConstants.PHONE_TYPE_GSM, mPhoneUT.getPhoneType());
-    }
-
-    private void switchToCdma() {
-        mSimulatedCommands.setVoiceRadioTech(ServiceState.RIL_RADIO_TECHNOLOGY_IS95A);
-        mPhoneUT.sendMessage(mPhoneUT.obtainMessage(GsmCdmaPhone.EVENT_VOICE_RADIO_TECH_CHANGED,
-                new AsyncResult(null, new int[]{ServiceState.RIL_RADIO_TECHNOLOGY_IS95A}, null)));
-        processAllMessages();
-        assertEquals(PhoneConstants.PHONE_TYPE_CDMA, mPhoneUT.getPhoneType());
     }
 
     @Before
@@ -206,14 +194,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                             + e.getMessage());
         }
         super.tearDown();
-    }
-
-    @Test
-    @SmallTest
-    public void testPhoneTypeSwitch() {
-        assertTrue(mPhoneUT.isPhoneTypeGsm());
-        switchToCdma();
-        assertTrue(mPhoneUT.isPhoneTypeCdmaLte());
     }
 
     @Test
@@ -446,9 +426,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         doReturn(cellLocation).when(mSST).getCellIdentity();
         assertEquals(cellLocation, mPhoneUT.getCurrentCellIdentity());
 
-        // Switch to CDMA
-        switchToCdma();
-
         CellIdentityCdma cdmaCellLocation = new CellIdentityCdma();
         doReturn(cdmaCellLocation).when(mSST).getCellIdentity();
 
@@ -456,50 +433,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                 (CellIdentityCdma) mPhoneUT.getCurrentCellIdentity();
 
         assertEquals(actualCellLocation, cdmaCellLocation);
-    }
-
-    @Test
-    @SmallTest
-    public void testGetPhoneType() {
-        assertEquals(PhoneConstants.PHONE_TYPE_GSM, mPhoneUT.getPhoneType());
-
-        // Switch to CDMA
-        switchToCdma();
-
-        assertEquals(PhoneConstants.PHONE_TYPE_CDMA, mPhoneUT.getPhoneType());
-    }
-
-    @Test
-    @SmallTest
-    public void testHandleInCallMmiCommands() {
-        try {
-            // Switch to CDMA
-            switchToCdma();
-
-            assertFalse(mPhoneUT.handleInCallMmiCommands("0"));
-
-            // Switch to GSM
-            switchToGsm();
-
-            mCT.mForegroundCall = mGsmCdmaCall;
-            mCT.mBackgroundCall = mGsmCdmaCall;
-            mCT.mRingingCall = mGsmCdmaCall;
-            doReturn(GsmCdmaCall.State.IDLE).when(mGsmCdmaCall).getState();
-
-            // !isInCall
-            assertFalse(mPhoneUT.handleInCallMmiCommands("0"));
-
-            // isInCall
-            doReturn(GsmCdmaCall.State.ACTIVE).when(mGsmCdmaCall).getState();
-            assertTrue(mPhoneUT.handleInCallMmiCommands("0"));
-
-            // empty dialString
-            assertFalse(mPhoneUT.handleInCallMmiCommands(""));
-            assertFalse(mPhoneUT.handleInCallMmiCommands(null));
-
-        } catch (Exception e) {
-            fail(e.toString());
-        }
     }
 
     @Test
@@ -721,37 +654,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testSendBurstDtmf() {
-        //Should do nothing for GSM
-        mPhoneUT.sendBurstDtmf("1234567890", 0, 0, null);
-        verify(mSimulatedCommandsVerifier, times(0)).sendBurstDtmf(nullable(String.class), anyInt(),
-                anyInt(), nullable(Message.class));
-
-        switchToCdma();
-        //invalid character
-        mPhoneUT.sendBurstDtmf("12345a67890", 0, 0, null);
-        verify(mSimulatedCommandsVerifier, times(0)).sendBurstDtmf(nullable(String.class), anyInt(),
-                anyInt(), nullable(Message.class));
-
-        //state IDLE
-        mCT.mState = PhoneConstants.State.IDLE;
-        mPhoneUT.sendBurstDtmf("1234567890", 0, 0, null);
-        verify(mSimulatedCommandsVerifier, times(0)).sendBurstDtmf(nullable(String.class), anyInt(),
-                anyInt(), nullable(Message.class));
-
-        //state RINGING
-        mCT.mState = PhoneConstants.State.RINGING;
-        mPhoneUT.sendBurstDtmf("1234567890", 0, 0, null);
-        verify(mSimulatedCommandsVerifier, times(0)).sendBurstDtmf(nullable(String.class), anyInt(),
-                anyInt(), nullable(Message.class));
-
-        mCT.mState = PhoneConstants.State.OFFHOOK;
-        mPhoneUT.sendBurstDtmf("1234567890", 0, 0, null);
-        verify(mSimulatedCommandsVerifier).sendBurstDtmf("1234567890", 0, 0, null);
-    }
-
-    @Test
-    @SmallTest
     public void testVoiceMailNumberGsm() {
         String voiceMailNumber = "1234567890";
         // first test for GSM
@@ -808,90 +710,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                 nullable(Message.class));
 
         doReturn(voiceMailNumber).when(mSimRecords).getVoiceMailNumber();
-        assertEquals(voiceMailNumber, mPhoneUT.getVoiceMailNumber());
-    }
-
-    @Test
-    @SmallTest
-    public void testVoiceMailNumberCdma() {
-        switchToCdma();
-        String voiceMailNumber = "1234567890";
-
-        // config_telephony_use_own_number_for_voicemail
-        mContextFixture.getCarrierConfigBundle()
-                .putBoolean(CarrierConfigManager
-                                .KEY_CONFIG_TELEPHONY_USE_OWN_NUMBER_FOR_VOICEMAIL_BOOL, true);
-        doReturn(voiceMailNumber).when(mSST).getMdnNumber();
-        assertEquals(voiceMailNumber, mPhoneUT.getVoiceMailNumber());
-
-        // voicemail number from config
-        voiceMailNumber = "1234567891";
-        mContextFixture.getCarrierConfigBundle().
-                putString(CarrierConfigManager.KEY_DEFAULT_VM_NUMBER_STRING, voiceMailNumber);
-        assertEquals(voiceMailNumber, mPhoneUT.getVoiceMailNumber());
-
-        // voicemail number from config for roaming network
-        String voiceMailNumberForRoaming = "1234567892";
-        mContextFixture.getCarrierConfigBundle()
-                .putString(CarrierConfigManager.KEY_DEFAULT_VM_NUMBER_ROAMING_STRING,
-                        voiceMailNumberForRoaming);
-
-        // voicemail number from config for roaming network and ims unregistered
-        String voiceMailNumberForImsRoamingAndUnregistered = "1234567893";
-        mContextFixture.getCarrierConfigBundle().putString(
-                CarrierConfigManager.KEY_DEFAULT_VM_NUMBER_ROAMING_AND_IMS_UNREGISTERED_STRING,
-                        voiceMailNumberForImsRoamingAndUnregistered);
-
-        //Verify voicemail number for home
-        doReturn(false).when(mSST.mSS).getRoaming();
-        doReturn(true).when(mSST).isImsRegistered();
-        assertEquals(voiceMailNumber, mPhoneUT.getVoiceMailNumber());
-        //Move to ims condition, verify voicemail number for ims unregistered
-        doReturn(false).when(mSST).isImsRegistered();
-        assertEquals(voiceMailNumber, mPhoneUT.getVoiceMailNumber());
-        //Move to roaming condition, verify voicemail number for roaming
-        doReturn(true).when(mSST.mSS).getRoaming();
-        assertEquals(voiceMailNumberForImsRoamingAndUnregistered, mPhoneUT.getVoiceMailNumber());
-        //Move to ims condition, verify voicemail number for roaming
-        doReturn(true).when(mSST).isImsRegistered();
-        assertEquals(voiceMailNumberForRoaming, mPhoneUT.getVoiceMailNumber());
-        //Move to home condition, verify voicemail number for home
-        doReturn(false).when(mSST.mSS).getRoaming();
-        assertEquals(voiceMailNumber, mPhoneUT.getVoiceMailNumber());
-
-        // voicemail number from sharedPreference
-        voiceMailNumber = "1234567893";
-        mPhoneUT.setVoiceMailNumber("alphaTag", voiceMailNumber, null);
-        ArgumentCaptor<Message> messageArgumentCaptor = ArgumentCaptor.forClass(Message.class);
-        InOrder inOrder = inOrder(mSimRecords);
-        inOrder.verify(mSimRecords).setVoiceMailNumber(eq("alphaTag"), eq(voiceMailNumber),
-                messageArgumentCaptor.capture());
-
-        // SIM does not support voicemail number (IccVmNotSupportedException) so should be saved in
-        // shared pref
-        Message msg = messageArgumentCaptor.getValue();
-        AsyncResult.forMessage(msg).exception =
-                new IccVmNotSupportedException("setVoiceMailNumber not implemented");
-        msg.sendToTarget();
-        processAllMessages();
-
-        assertEquals(voiceMailNumber, mPhoneUT.getVoiceMailNumber());
-
-        // voicemail number from SIM
-        voiceMailNumber = "1234567894";
-        mPhoneUT.setVoiceMailNumber("alphaTag", voiceMailNumber, null);
-        messageArgumentCaptor = ArgumentCaptor.forClass(Message.class);
-        inOrder.verify(mSimRecords).setVoiceMailNumber(eq("alphaTag"), eq(voiceMailNumber),
-                messageArgumentCaptor.capture());
-
-        // successfully saved on SIM
-        msg = messageArgumentCaptor.getValue();
-        AsyncResult.forMessage(msg);
-        msg.sendToTarget();
-        processAllMessages();
-
-        doReturn(voiceMailNumber).when(mSimRecords).getVoiceMailNumber();
-
         assertEquals(voiceMailNumber, mPhoneUT.getVoiceMailNumber());
     }
 
@@ -998,60 +816,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                 nullable(Message.class));
         processAllMessages();
         verify(mSimRecords).setVoiceCallForwardingFlag(anyInt(), anyBoolean(), eq(cfNumber));
-    }
-
-    /**
-     * GsmCdmaPhone handles a lot of messages. This function verifies behavior for messages that are
-     * received when obj is created and that are received on phone type switch
-     */
-    @FlakyTest
-    @Ignore
-    @Test
-    @SmallTest
-    public void testHandleInitialMessages() {
-        // EVENT_RADIO_AVAILABLE
-        verify(mSimulatedCommandsVerifier).getBasebandVersion(nullable(Message.class));
-        verify(mSimulatedCommandsVerifier).getDeviceIdentity(nullable(Message.class));
-        verify(mSimulatedCommandsVerifier).getRadioCapability(nullable(Message.class));
-
-        // EVENT_RADIO_ON
-        verify(mSimulatedCommandsVerifier).getVoiceRadioTechnology(nullable(Message.class));
-        verify(mSimulatedCommandsVerifier).setPreferredNetworkType(
-                eq(RILConstants.NETWORK_MODE_LTE_CDMA_EVDO_GSM_WCDMA), nullable(Message.class));
-
-        // verify responses for above requests:
-        // baseband version
-        verify(mTelephonyManager).setBasebandVersionForPhone(eq(mPhoneUT.getPhoneId()),
-                nullable(String.class));
-        // IMEI
-        assertEquals(FAKE_IMEI, mPhoneUT.getImei());
-        // IMEISV
-        assertEquals(SimulatedCommands.FAKE_IMEISV, mPhoneUT.getDeviceSvn());
-        // radio capability
-        verify(mSimulatedCommandsVerifier).getNetworkSelectionMode(nullable(Message.class));
-
-        switchToCdma(); // this leads to eventRadioAvailable handling on cdma
-
-        // EVENT_RADIO_AVAILABLE
-        verify(mSimulatedCommandsVerifier, times(2)).getBasebandVersion(nullable(Message.class));
-        verify(mSimulatedCommandsVerifier, times(2)).getDeviceIdentity(nullable(Message.class));
-
-        // EVENT_RADIO_ON
-        verify(mSimulatedCommandsVerifier, times(2)).getVoiceRadioTechnology(
-                nullable(Message.class));
-        // once on radio on, and once on get baseband version
-        verify(mSimulatedCommandsVerifier, times(3)).setPreferredNetworkType(
-                eq(RILConstants.NETWORK_MODE_LTE_CDMA_EVDO_GSM_WCDMA), nullable(Message.class));
-
-        // verify responses for above requests:
-        // baseband version
-        verify(mTelephonyManager, times(2)).setBasebandVersionForPhone(eq(mPhoneUT.getPhoneId()),
-                nullable(String.class));
-        // device identity
-        assertEquals(FAKE_IMEI, mPhoneUT.getImei());
-        assertEquals(SimulatedCommands.FAKE_IMEISV, mPhoneUT.getDeviceSvn());
-        assertEquals(SimulatedCommands.FAKE_ESN, mPhoneUT.getEsn());
-        assertEquals(SimulatedCommands.FAKE_MEID, mPhoneUT.getMeid());
     }
 
     @Test
@@ -1262,22 +1026,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         doReturn(msisdn).when(mSimRecords).getMsisdnNumber();
 
         switchToGsm();
-        assertEquals(msisdn, mPhoneUT.getLine1Number());
-    }
-
-    @Test
-    @SmallTest
-    public void testGetLine1NumberForCdmaPhone() {
-        final String mdn = "1234567890";
-        final String msisdn = "+1234567890";
-        doReturn(mdn).when(mSST).getMdnNumber();
-        doReturn(msisdn).when(mSimRecords).getMsisdnNumber();
-
-        switchToCdma();
-        assertEquals(mdn, mPhoneUT.getLine1Number());
-
-        mContextFixture.getCarrierConfigBundle().putBoolean(
-                CarrierConfigManager.KEY_USE_USIM_BOOL, true);
         assertEquals(msisdn, mPhoneUT.getLine1Number());
     }
 
@@ -2762,57 +2510,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
         // Verify that the request is routed to EmergencyStateTracker.
         verify(est).exitEmergencyCallbackMode();
-    }
-
-    @Test
-    @SmallTest
-    public void testEcbmOnModemResetForNonGsmPhone() throws Exception {
-        switchToCdma();
-        assertFalse(mPhoneUT.isInEcm());
-
-        mPhoneUT.handleMessage(mPhoneUT.obtainMessage(
-                GsmCdmaPhone.EVENT_EMERGENCY_CALLBACK_MODE_ENTER));
-
-        assertTrue(mPhoneUT.isInEcm());
-
-        Message m = mPhoneUT.obtainMessage(GsmCdmaPhone.EVENT_MODEM_RESET);
-        AsyncResult.forMessage(m);
-        mPhoneUT.handleMessage(m);
-
-        assertFalse(mPhoneUT.isInEcm());
-        verifyEcbmIntentWasSent(2 /*times*/, false /*inEcm*/);
-    }
-
-    @Test
-    @SmallTest
-    public void testEcbmOnModemResetWhenDomainSelectionEnabled() throws Exception {
-        DomainSelectionResolver dsResolver = Mockito.mock(DomainSelectionResolver.class);
-        doReturn(true).when(dsResolver).isDomainSelectionSupported();
-        DomainSelectionResolver.setDomainSelectionResolver(dsResolver);
-
-        EmergencyStateTracker est = Mockito.mock(EmergencyStateTracker.class);
-        doReturn(true).when(est).isInEcm();
-        replaceInstance(EmergencyStateTracker.class, "INSTANCE", null, est);
-
-        GsmCdmaPhone spyPhone = spy(mPhoneUT);
-        doReturn(true).when(spyPhone).isInEcm();
-        mPhoneUT.handleMessage(mPhoneUT.obtainMessage(GsmCdmaPhone.EVENT_MODEM_RESET));
-
-        verify(est).exitEmergencyCallbackMode();
-    }
-
-    @Test
-    public void testGetUserHandle() {
-        UserHandle userHandle = new UserHandle(123);
-        doReturn(userHandle).when(mSubscriptionManager).getSubscriptionUserHandle(anyInt());
-        assertEquals(userHandle, mPhoneUT.getUserHandle());
-
-        doReturn(null).when(mSubscriptionManager).getSubscriptionUserHandle(anyInt());
-        assertNull(mPhoneUT.getUserHandle());
-
-        doThrow(IllegalArgumentException.class).when(mSubscriptionManager)
-                .getSubscriptionUserHandle(anyInt());
-        assertNull(mPhoneUT.getUserHandle());
     }
 
     @Test

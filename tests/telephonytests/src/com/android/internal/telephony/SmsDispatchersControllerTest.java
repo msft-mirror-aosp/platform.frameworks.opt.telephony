@@ -16,8 +16,8 @@
 
 package com.android.internal.telephony;
 
-import static com.android.internal.telephony.SmsResponse.NO_ERROR_CODE;
 import static com.android.internal.telephony.SmsDispatchersController.PendingRequest;
+import static com.android.internal.telephony.SmsResponse.NO_ERROR_CODE;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -31,7 +31,6 @@ import static org.mockito.Matchers.isNull;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -234,11 +233,6 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         switchImsSmsFormat(PhoneConstants.PHONE_TYPE_GSM);
         assertEquals(SmsConstants.FORMAT_3GPP, mSmsDispatchersController.getImsSmsFormat());
         assertTrue(mSmsDispatchersController.isIms());
-
-        //Mock ImsNetWorkStateChange with Cdma Phone type
-        switchImsSmsFormat(PhoneConstants.PHONE_TYPE_CDMA);
-        assertEquals(SmsConstants.FORMAT_3GPP2, mSmsDispatchersController.getImsSmsFormat());
-        assertTrue(mSmsDispatchersController.isIms());
     }
 
     @Test @SmallTest
@@ -282,30 +276,6 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
                 null, null, null, null, mCallingUserId, false, -1, false, -1, false, 0L);
         verify(mSimulatedCommandsVerifier, times(0)).sendImsGsmSms(anyString(), anyString(),
                 anyInt(), anyInt(), any(Message.class));
-    }
-
-    @Test @SmallTest @FlakyTest /* flakes 0.73% of the time on gce, 0.57% on marlin */
-    public void testSendImsCdmaTest() throws Exception {
-        switchImsSmsFormat(PhoneConstants.PHONE_TYPE_CDMA);
-        mSmsDispatchersController.sendText("111"/* desAddr*/, "222" /*scAddr*/, TAG,
-                null, null, null, null, mCallingUserId, false, -1, false, -1, false, 0L);
-        verify(mSimulatedCommandsVerifier).sendImsCdmaSms((byte[])any(), eq(0), eq(0),
-                any(Message.class));
-    }
-
-    @Test @SmallTest @FlakyTest /* flakes 0.71% of the time on marlin, 0.61% on gce */
-    public void testSendRetrySmsCdmaTest() throws Exception {
-        // newFormat will be based on voice technology
-        ArgumentCaptor<byte[]> captor = ArgumentCaptor.forClass(byte[].class);
-        switchImsSmsFormat(PhoneConstants.PHONE_TYPE_CDMA);
-        replaceInstance(SMSDispatcher.SmsTracker.class, "mFormat", mTracker,
-                SmsConstants.FORMAT_3GPP2);
-        doReturn(PhoneConstants.PHONE_TYPE_CDMA).when(mPhone).getPhoneType();
-        mSmsDispatchersController.sendRetrySms(mTracker);
-        verify(mSimulatedCommandsVerifier).sendImsCdmaSms(captor.capture(), eq(0), eq(0),
-                any(Message.class));
-        assertEquals(1, captor.getAllValues().size());
-        assertNull(captor.getAllValues().get(0));
     }
 
     @Test @SmallTest @FlakyTest /* flakes 0.85% of the time on gce, 0.43% on marlin */
@@ -380,13 +350,6 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testSendDataWhenDomainCsAndCdma() throws Exception {
-        when(mPhone.getPhoneType()).thenReturn(PhoneConstants.PHONE_TYPE_CDMA);
-        sendDataWithDomainSelection(NetworkRegistrationInfo.DOMAIN_PS, true);
-    }
-
-    @Test
-    @SmallTest
     public void testSendDataWhenDomainCsAndGsm() throws Exception {
         when(mPhone.getPhoneType()).thenReturn(PhoneConstants.PHONE_TYPE_GSM);
         sendDataWithDomainSelection(NetworkRegistrationInfo.DOMAIN_PS, false);
@@ -400,13 +363,6 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testSendTextWhenDomainCsAndCdma() throws Exception {
-        when(mPhone.getPhoneType()).thenReturn(PhoneConstants.PHONE_TYPE_CDMA);
-        sendTextWithDomainSelection(NetworkRegistrationInfo.DOMAIN_PS, true);
-    }
-
-    @Test
-    @SmallTest
     public void testSendTextWhenDomainCsAndGsm() throws Exception {
         when(mPhone.getPhoneType()).thenReturn(PhoneConstants.PHONE_TYPE_GSM);
         sendTextWithDomainSelection(NetworkRegistrationInfo.DOMAIN_PS, false);
@@ -416,13 +372,6 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
     @SmallTest
     public void testSendMultipartTextWhenDomainPs() throws Exception {
         sendMultipartTextWithDomainSelection(NetworkRegistrationInfo.DOMAIN_PS, false);
-    }
-
-    @Test
-    @SmallTest
-    public void testSendMultipartTextWhenDomainCsAndCdma() throws Exception {
-        when(mPhone.getPhoneType()).thenReturn(PhoneConstants.PHONE_TYPE_CDMA);
-        sendMultipartTextWithDomainSelection(NetworkRegistrationInfo.DOMAIN_PS, true);
     }
 
     @Test
@@ -441,22 +390,9 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testSendRetrySmsWhenDomainCsAndCdma() throws Exception {
-        sendRetrySmsWithDomainSelection(NetworkRegistrationInfo.DOMAIN_CS,
-                PhoneConstants.PHONE_TYPE_CDMA, SmsConstants.FORMAT_3GPP2);
-    }
-
-    @Test
-    @SmallTest
     public void testSendRetrySmsWhenDomainCsAndGsm() throws Exception {
         sendRetrySmsWithDomainSelection(NetworkRegistrationInfo.DOMAIN_CS,
                 PhoneConstants.PHONE_TYPE_GSM, SmsConstants.FORMAT_3GPP);
-    }
-
-    @Test
-    @SmallTest
-    public void testSendRetrySmsWhenImsAlreadyUsedAndCdma() throws Exception {
-        sendRetrySmsWhenImsAlreadyUsed(PhoneConstants.PHONE_TYPE_CDMA, SmsConstants.FORMAT_3GPP2);
     }
 
     @Test
