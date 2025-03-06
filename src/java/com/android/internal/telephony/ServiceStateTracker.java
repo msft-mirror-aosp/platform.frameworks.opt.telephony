@@ -76,6 +76,8 @@ import android.telephony.SubscriptionManager.OnSubscriptionsChangedListener;
 import android.telephony.TelephonyManager;
 import android.telephony.VoiceSpecificRegistrationInfo;
 import android.telephony.ims.stub.ImsRegistrationImplBase;
+import android.telephony.satellite.ISatelliteModemStateCallback;
+import android.telephony.satellite.SatelliteManager;
 import android.text.TextUtils;
 import android.util.EventLog;
 import android.util.LocalLog;
@@ -618,6 +620,83 @@ public class ServiceStateTracker extends Handler {
      * type changed in AccessNetworksManager.
      */
     private AccessNetworksManagerCallback mAccessNetworksManagerCallback = null;
+
+    /**
+     * Listens status of nb iot satellite modem.
+     */
+    private SatelliteModemStateListener mSatelliteModemStateListener = null;
+
+    /**
+     * SatelliteModemStateListener class
+     */
+    protected class SatelliteModemStateListener extends ISatelliteModemStateCallback.Stub {
+
+        /**
+         * Satellite Modem Connection Status. True when satellite is connected
+         */
+        private boolean mSatelliteNbIotConnected = false;
+
+        /**
+         * Marks the satellite display change as true.
+         */
+        private boolean mUpdateSatelliteCarrierDisplay = false;
+
+        @Override
+        public void onSatelliteModemStateChanged(int state) {
+            boolean isConnected = isInConnectedState();
+            if (isConnected != mSatelliteNbIotConnected) {
+                log("Satellite connection state is changed to " + isConnected);
+                mSatelliteNbIotConnected = isConnected;
+                mUpdateSatelliteCarrierDisplay = true;
+                // trigger pollStats() because the service state is already OOO in demo mode.
+                pollState();
+            }
+        }
+
+        @Override
+        public void onEmergencyModeChanged(boolean isEmergency) {}
+
+        @Override
+        public void onRegistrationFailure(int causeCode) {}
+
+        @Override
+        public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {}
+
+        /**
+         * Returns true when statellite is connected.
+         *
+         * Note that this connection state is only applicable carrier roaming nb iot satellite.
+         */
+        public boolean isInConnectedState() {
+            SatelliteController sc = SatelliteController.getInstance();
+            if (sc == null) {
+                return false;
+            }
+            int subId = sc.getSelectedSatelliteSubId();
+            if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                    || subId != mPhone.getSubId()
+                    || subId == sc.getNtnOnlySubscriptionId()) {
+                return false;
+            }
+            return sc.isInConnectedState();
+        }
+
+        /**
+         * Returns true if the satellite connection has changed and the satellite display needs
+         * to be updated.
+         */
+        public boolean needToUpdateSatelliteCarrierDisplay() {
+            return mUpdateSatelliteCarrierDisplay;
+        }
+
+        /**
+         * The satellite carrier display update is complete and is marked to not be updated any
+         * further.
+         */
+        public void doneForUpdateSatelliteCarrierDisplay() {
+            mUpdateSatelliteCarrierDisplay = false;
+        }
+    }
 
     public ServiceStateTracker(GsmCdmaPhone phone, CommandsInterface ci,
             FeatureFlags featureFlags) {
@@ -2912,6 +2991,14 @@ public class ServiceStateTracker extends Handler {
             crossSimSpnFormat = crossSimSpnFormats[crossSimSpnFormatIdx];
         }
 
+        String satellitePlmn = null;
+        SatelliteModemStateListener satelliteModemStateListener = getSatelliteModemStateListener();
+        if (satelliteModemStateListener != null
+                && satelliteModemStateListener.isInConnectedState()) {
+            satellitePlmn = getSatelliteDisplayName();
+        }
+        log("updateCarrierDisplayName: satellitePlmn=" + satellitePlmn);
+
         if (mPhone.isPhoneTypeGsm()) {
             // The values of plmn/showPlmn change in different scenarios.
             // 1) No service but emergency call allowed -> expected
@@ -2981,7 +3068,12 @@ public class ServiceStateTracker extends Handler {
                     && ((rule & CARRIER_NAME_DISPLAY_BITMASK_SHOW_SPN)
                     == CARRIER_NAME_DISPLAY_BITMASK_SHOW_SPN);
             if (DBG) log("updateCarrierDisplayName: rawSpn = " + spn);
-            if (!TextUtils.isEmpty(crossSimSpnFormat)) {
+            if (!TextUtils.isEmpty(satellitePlmn)) {
+                plmn = satellitePlmn;
+                showPlmn = true;
+                showSpn = false;
+                log("updateCarrierDisplayName: Update satellite network name:" + plmn);
+            } else if (!TextUtils.isEmpty(crossSimSpnFormat)) {
                 if (!TextUtils.isEmpty(spn)) {
                     // Show SPN + Cross-SIM Calling If SIM has SPN and SPN display condition
                     // is satisfied or SPN override is enabled for this carrier.
@@ -3075,6 +3167,52 @@ public class ServiceStateTracker extends Handler {
                 .setPlmn(plmn)
                 .setShowPlmn(showPlmn)
                 .build();
+    }
+
+    private void updateSatelliteDisplayOverride() {
+        String satelliteDisplayName = getSatelliteDisplayName();
+        if (TextUtils.isEmpty(satelliteDisplayName)) {
+            // Return, if there is no value to override.
+            return;
+        }
+
+        SatelliteModemStateListener satelliteModemStateListener = getSatelliteModemStateListener();
+        String operator = mNewSS.getOperatorAlphaLong();
+        SatelliteController sc = SatelliteController.getInstance();
+        // Override satellite display name if device is in carrier roaming nb iot ntn mode
+        // and has a valid operator
+        if (satelliteModemStateListener != null
+                && satelliteModemStateListener.isInConnectedState()
+                || (!TextUtils.isEmpty(operator)
+                        && sc != null && sc.isInCarrierRoamingNbIotNtn())) {
+            // override satellite display name
+            mNewSS.setOperatorName(
+                    satelliteDisplayName, satelliteDisplayName, mNewSS.getOperatorNumeric());
+            log("Override satellite display name to " + satelliteDisplayName);
+        }
+    }
+
+    @Nullable
+    private SatelliteModemStateListener getSatelliteModemStateListener() {
+        if (mSatelliteModemStateListener != null) {
+            return mSatelliteModemStateListener;
+        }
+
+        SatelliteController sc = SatelliteController.getInstance();
+        if (sc != null) {
+            SatelliteModemStateListener listener = new SatelliteModemStateListener();
+            if (sc.registerForSatelliteModemStateChanged(listener)
+                    == SatelliteManager.SATELLITE_RESULT_SUCCESS) {
+                mSatelliteModemStateListener = listener;
+                log("created SatelliteModemStateListener");
+            }
+        }
+        return mSatelliteModemStateListener;
+    }
+
+    private String getSatelliteDisplayName() {
+        return mCarrierConfig.getString(
+                        CarrierConfigManager.KEY_SATELLITE_DISPLAY_NAME_STRING);
     }
 
     /**
@@ -3431,6 +3569,19 @@ public class ServiceStateTracker extends Handler {
                 NetworkRegistrationInfo.DOMAIN_PS, AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
         setPhyCellInfoFromCellIdentity(mNewSS, networkRegState.getCellIdentity());
 
+        boolean hasSatelliteConnectionChanged = false;
+        SatelliteModemStateListener satelliteModemStateListener = getSatelliteModemStateListener();
+        if (satelliteModemStateListener != null) {
+            hasSatelliteConnectionChanged =
+                    satelliteModemStateListener.needToUpdateSatelliteCarrierDisplay();
+            if (hasSatelliteConnectionChanged) {
+                log("Poll ServiceState done : hasSatelliteConnectionChanged="
+                        + hasSatelliteConnectionChanged);
+                satelliteModemStateListener.doneForUpdateSatelliteCarrierDisplay();
+                updateSatelliteDisplayOverride();
+            }
+        }
+
         if (DBG) {
             log("Poll ServiceState done: oldSS=" + mSS);
             log("Poll ServiceState done: newSS=" + mNewSS);
@@ -3700,7 +3851,8 @@ public class ServiceStateTracker extends Handler {
         // Trigger updateCarrierDisplayName when
         // 1. Service state is changed.
         // 2. phone type is Cdma or CdmaLte and ERI text has changed.
-        if (hasChanged || (!mPhone.isPhoneTypeGsm() && hasEriChanged)) {
+        if (hasChanged || (!mPhone.isPhoneTypeGsm() && hasEriChanged)
+                || hasSatelliteConnectionChanged) {
             updateCarrierDisplayName();
         }
 
