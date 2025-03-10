@@ -24,6 +24,7 @@ import static com.android.internal.telephony.TelephonyTestUtils.waitForMs;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeFalse;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Matchers.anyString;
@@ -41,6 +42,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.location.Country;
 import android.location.CountryDetector;
@@ -57,6 +59,7 @@ import android.telephony.SmsManager;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
+import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.FlakyTest;
 import androidx.test.filters.MediumTest;
 import androidx.test.filters.SmallTest;
@@ -485,9 +488,15 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
         }
     }
 
+    private void skipOnAutomotive() {
+        assumeFalse(InstrumentationRegistry.getTargetContext().getPackageManager().hasSystemFeature(
+                PackageManager.FEATURE_AUTOMOTIVE));
+    }
+
     @Test
     @SmallTest
     public void testSendMultipartSmsByCarrierAppNoResponse() throws Exception {
+        skipOnAutomotive(); // TODO(b/401440427): don't skip
         mockCarrierApp();
         // do not mock result, instead reduce the timeout for test
         mGsmSmsDispatcher.mCarrierMessagingTimeout = 100;
