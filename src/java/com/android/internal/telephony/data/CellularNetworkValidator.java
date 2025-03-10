@@ -46,10 +46,9 @@ import com.android.internal.telephony.nano.TelephonyProto.TelephonyEvent;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 
-import java.util.Comparator;
+import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.PriorityQueue;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -91,9 +90,8 @@ public class CellularNetworkValidator {
     private class ValidatedNetworkCache {
         // A cache with fixed size. It remembers 10 most recently successfully validated networks.
         private static final int VALIDATED_NETWORK_CACHE_SIZE = 10;
-        private final PriorityQueue<ValidatedNetwork> mValidatedNetworkPQ =
-                new PriorityQueue<>((Comparator<ValidatedNetwork>) Comparator.comparingLong(
-                        (ValidatedNetwork n) -> n.mValidationTimeStamp));
+
+        private final ArrayDeque<ValidatedNetwork> mValidatedNetworkAQ = new ArrayDeque<>();
         private final Map<String, ValidatedNetwork> mValidatedNetworkMap = new HashMap<>();
 
         private static final class ValidatedNetwork {
@@ -128,7 +126,7 @@ public class CellularNetworkValidator {
 
             if (!validated) {
                 // If validation failed, clear it from the cache.
-                mValidatedNetworkPQ.remove(mValidatedNetworkMap.get(networkIdentity));
+                mValidatedNetworkAQ.remove(mValidatedNetworkMap.get(networkIdentity));
                 mValidatedNetworkMap.remove(networkIdentity);
                 return;
             }
@@ -138,16 +136,16 @@ public class CellularNetworkValidator {
                 // Already existed in cache, update.
                 network.update(time);
                 // Re-add to re-sort.
-                mValidatedNetworkPQ.remove(network);
-                mValidatedNetworkPQ.add(network);
+                mValidatedNetworkAQ.remove(network);
+                mValidatedNetworkAQ.add(network);
             } else {
                 network = new ValidatedNetwork(networkIdentity, time);
                 mValidatedNetworkMap.put(networkIdentity, network);
-                mValidatedNetworkPQ.add(network);
+                mValidatedNetworkAQ.add(network);
             }
             // If exceeded max size, remove the one with smallest validation timestamp.
-            if (mValidatedNetworkPQ.size() > VALIDATED_NETWORK_CACHE_SIZE) {
-                ValidatedNetwork networkToRemove = mValidatedNetworkPQ.poll();
+            if (mValidatedNetworkAQ.size() > VALIDATED_NETWORK_CACHE_SIZE) {
+                ValidatedNetwork networkToRemove = mValidatedNetworkAQ.poll();
                 mValidatedNetworkMap.remove(networkToRemove.mValidationIdentity);
             }
         }
