@@ -2014,7 +2014,11 @@ public class SubscriptionManagerService extends ISub.Stub {
         enforcePermissions("getActiveSubscriptionInfoForIccId",
                 Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
 
-        enforceTelephonyFeatureWithException(callingPackage, "getActiveSubscriptionInfoForIccId");
+        if (!mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(callingPackage,
+                    "getActiveSubscriptionInfoForIccId");
+        }
 
         final long identity = Binder.clearCallingIdentity();
         try {
@@ -2326,7 +2330,10 @@ public class SubscriptionManagerService extends ISub.Stub {
                 + SubscriptionManager.subscriptionTypeToString(subscriptionType) + ", "
                 + getCallingPackage());
 
-        enforceTelephonyFeatureWithException(getCurrentPackageName(), "addSubInfo");
+        if (!mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(getCurrentPackageName(), "addSubInfo");
+        }
 
         if (subscriptionType == SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM) {
             if (!SubscriptionManager.isValidSlotIndex(slotIndex)) {
@@ -2397,7 +2404,10 @@ public class SubscriptionManagerService extends ISub.Stub {
                 + SubscriptionManager.subscriptionTypeToString(subscriptionType) + ", "
                 + getCallingPackage());
 
-        enforceTelephonyFeatureWithException(getCurrentPackageName(), "removeSubInfo");
+        if (!mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_force_phone_globals_creation)) {
+            enforceTelephonyFeatureWithException(getCurrentPackageName(), "removeSubInfo");
+        }
 
         final long identity = Binder.clearCallingIdentity();
         try {
@@ -3129,7 +3139,7 @@ public class SubscriptionManagerService extends ISub.Stub {
     @Override
     public int getDefaultSubIdAsUser(@UserIdInt int userId) {
         enforceTelephonyFeatureWithException(getCurrentPackageName(),
-                "getDefaultVoiceSubIdAsUser");
+                "getDefaultSubIdAsUser");
 
         return getDefaultAsUser(userId, mDefaultSubId.get());
     }
