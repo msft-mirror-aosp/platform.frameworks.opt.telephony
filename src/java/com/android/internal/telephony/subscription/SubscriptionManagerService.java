@@ -132,6 +132,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -147,9 +149,6 @@ public class SubscriptionManagerService extends ISub.Stub {
 
     private static final int CHECK_BOOTSTRAP_TIMER_IN_MS = 20 * 60 * 1000; // 20 minutes
     private static CountDownTimer bootstrapProvisioningTimer;
-
-    /** Whether enabling verbose debugging message or not. */
-    private static final boolean VDBG = false;
 
     /**
      * The columns in {@link SimInfo} table that can be directly accessed through
@@ -220,6 +219,11 @@ public class SubscriptionManagerService extends ISub.Stub {
     /** Wrap Binder methods for testing. */
     @NonNull
     private static final BinderWrapper BINDER_WRAPPER = new BinderWrapper();
+
+    /** Regular expression to determine if a string is in MAC address format. */
+    private static final Pattern MAC_ADDRESS_PATTERN = Pattern.compile(
+            // Matches formats like 00:1B:44:11:3A:B7 or 00-1B-44-11-3A-B7
+            "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$");
 
     /** Instance of subscription manager service. */
     @NonNull
@@ -842,6 +846,22 @@ public class SubscriptionManagerService extends ISub.Stub {
     }
 
     /**
+     * Get the stripped ICCID, which sometimes ended with 'F'. Also not doing this if the ICCID
+     * is MAC address (used by texting through bluetooth).
+     *
+     * @param iccId The original ICCID.
+     * @return The fixed ICCID.
+     */
+    @VisibleForTesting
+    @NonNull
+    public static String getStrippedIccid(@NonNull String iccId) {
+        Matcher matcher = MAC_ADDRESS_PATTERN.matcher(iccId);
+        if (matcher.matches()) return iccId;
+
+        return TextUtils.emptyIfNull(IccUtils.stripTrailingFs(iccId));
+    }
+
+    /**
      * @return The list of ICCIDs from the inserted physical SIMs.
      */
     @NonNull
@@ -856,7 +876,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                 // Non euicc slots will have single port, so use default port index.
                 String iccId = uiccSlot.getIccId(TelephonyManager.DEFAULT_PORT_INDEX);
                 if (!TextUtils.isEmpty(iccId)) {
-                    iccidList.add(IccUtils.stripTrailingFs(iccId));
+                    iccidList.add(getStrippedIccid(iccId));
                 }
             }
         }
@@ -1374,7 +1394,7 @@ public class SubscriptionManagerService extends ISub.Stub {
         }
 
         SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
-                .getSubscriptionInfoInternalByIccId(IccUtils.stripTrailingFs(iccId));
+                .getSubscriptionInfoInternalByIccId(getStrippedIccid(iccId));
         return subInfo != null && subInfo.areUiccApplicationsEnabled();
     }
 
@@ -1388,8 +1408,7 @@ public class SubscriptionManagerService extends ISub.Stub {
     @NonNull
     private String getIccId(int phoneId) {
         UiccPort port = mUiccController.getUiccPort(phoneId);
-        return (port == null) ? "" : TextUtils.emptyIfNull(
-                IccUtils.stripTrailingFs(port.getIccId()));
+        return (port == null) ? "" : getStrippedIccid(port.getIccId());
     }
 
     /**
@@ -1999,7 +2018,7 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         final long identity = Binder.clearCallingIdentity();
         try {
-            iccId = IccUtils.stripTrailingFs(iccId);
+            iccId = getStrippedIccid(iccId);
             SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
                     .getSubscriptionInfoInternalByIccId(iccId);
 
@@ -2309,9 +2328,17 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         enforceTelephonyFeatureWithException(getCurrentPackageName(), "addSubInfo");
 
-        if (!SubscriptionManager.isValidSlotIndex(slotIndex)
-                && slotIndex != SubscriptionManager.INVALID_SIM_SLOT_INDEX) {
-            throw new IllegalArgumentException("Invalid slotIndex " + slotIndex);
+        if (subscriptionType == SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM) {
+            if (!SubscriptionManager.isValidSlotIndex(slotIndex)) {
+                throw new IllegalArgumentException("Invalid slot index " + slotIndex
+                        + " for local SIM");
+            }
+        } else if (subscriptionType == SubscriptionManager.SUBSCRIPTION_TYPE_REMOTE_SIM) {
+            // We only support one remote SIM at this point, so use -1. This needs to be revisited
+            // if we plan to support multiple remote SIMs in the future.
+            slotIndex = SubscriptionManager.INVALID_SIM_SLOT_INDEX;
+        } else {
+            throw new IllegalArgumentException("Invalid subscription type " + subscriptionType);
         }
 
         // Now that all security checks passes, perform the operation as ourselves.
@@ -2322,7 +2349,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                 return -1;
             }
 
-            iccId = IccUtils.stripTrailingFs(iccId);
+            iccId = getStrippedIccid(iccId);
             SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
                     .getSubscriptionInfoInternalByIccId(iccId);
 
@@ -4482,7 +4509,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                 // When port is inactive, sometimes valid iccid is present in the slot status,
                 // hence update the portIndex. (Pre-U behavior)
                 SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
-                        .getSubscriptionInfoInternalByIccId(IccUtils.stripTrailingFs(iccId));
+                        .getSubscriptionInfoInternalByIccId(getStrippedIccid(iccId));
                 int subId;
                 if (subInfo != null) {
                     subId = subInfo.getSubscriptionId();
@@ -4491,7 +4518,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                 } else {
                     // If iccId is new, add a subscription record in the database so it can be
                     // activated later. (Pre-U behavior)
-                    subId = insertSubscriptionInfo(IccUtils.stripTrailingFs(iccId),
+                    subId = insertSubscriptionInfo(getStrippedIccid(iccId),
                             SubscriptionManager.INVALID_SIM_SLOT_INDEX, "",
                             SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
                     mSubscriptionDatabaseManager.setDisplayName(subId,
