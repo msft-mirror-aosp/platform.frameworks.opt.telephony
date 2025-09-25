@@ -64,7 +64,6 @@ import androidx.test.filters.SmallTest;
 
 import com.android.ims.ImsFeatureBinderRepository;
 import com.android.internal.telephony.PhoneConfigurationManager;
-import com.android.internal.telephony.flags.FeatureFlags;
 
 import org.junit.After;
 import org.junit.Before;
@@ -120,7 +119,6 @@ public class ImsResolverTest extends ImsTestBase {
     private BroadcastReceiver mTestUserChangedReceiver;
     private ImsServiceFeatureQueryManager.Listener mDynamicQueryListener;
     private PersistableBundle[] mCarrierConfigs;
-    private FeatureFlags mFeatureFlags;
 
     @Before
     @Override
@@ -136,8 +134,6 @@ public class ImsResolverTest extends ImsTestBase {
         mMockQueryManagerFactory = mock(ImsResolver.ImsDynamicQueryManagerFactory.class);
         mMockQueryManager = mock(ImsServiceFeatureQueryManager.class);
         mMockRepo = mock(ImsFeatureBinderRepository.class);
-        mFeatureFlags = mock(FeatureFlags.class);
-        when(mFeatureFlags.imsResolverUserAware()).thenReturn(true);
     }
 
     @After
@@ -1538,13 +1534,8 @@ public class ImsResolverTest extends ImsTestBase {
                 convertToHashSet(deviceFeatures, 1);
         deviceFeatureSet.addAll(convertToHashSet(deviceFeatures, 0));
         deviceFeatureSet.removeAll(carrierFeatures);
-        if (mFeatureFlags.imsResolverUserAware()) {
-            verify(deviceController).changeImsServiceFeatures(eq(deviceFeatureSet),
-                    any(SparseIntArray.class));
-        } else {
-            verify(deviceController).bind(eq(mContext.getUser()), eq(deviceFeatureSet),
-                    any(SparseIntArray.class));
-        }
+        verify(deviceController).changeImsServiceFeatures(eq(deviceFeatureSet),
+                any(SparseIntArray.class));
     }
 
     /**
@@ -2004,9 +1995,6 @@ public class ImsResolverTest extends ImsTestBase {
     @Test
     @SmallTest
     public void testChangeCurrentUserServicesInSystem() throws RemoteException {
-        if (!mFeatureFlags.imsResolverUserAware()) {
-            return;
-        }
         setupResolver(1 /*numSlots*/, TEST_DEVICE_DEFAULT_NAME.getPackageName(),
                 TEST_DEVICE_DEFAULT_NAME.getPackageName());
         List<ResolveInfo> info = new ArrayList<>();
@@ -2059,9 +2047,6 @@ public class ImsResolverTest extends ImsTestBase {
     @Test
     @SmallTest
     public void testChangeCurrentUserCarrierInSecondUser() throws RemoteException {
-        if (!mFeatureFlags.imsResolverUserAware()) {
-            return;
-        }
         setupResolver(1 /*numSlots*/, TEST_DEVICE_DEFAULT_NAME.getPackageName(),
                 TEST_DEVICE_DEFAULT_NAME.getPackageName());
         Set<String> deviceFeatures = new HashSet<>();
@@ -2143,7 +2128,7 @@ public class ImsResolverTest extends ImsTestBase {
         when(mTestActivityManagerProxy.getCurrentUser()).thenReturn(mContext.getUser());
 
         mTestImsResolver = new ImsResolver(mMockContext, deviceMmTelPkgName, deviceRcsPkgName,
-                numSlots, mMockRepo, Looper.myLooper(), mFeatureFlags);
+                numSlots, mMockRepo, Looper.myLooper());
 
         mTestImsResolver.setSubscriptionManagerProxy(mTestSubscriptionManagerProxy);
         mTestImsResolver.setTelephonyManagerProxy(mTestTelephonyManagerProxy);
@@ -2214,7 +2199,7 @@ public class ImsResolverTest extends ImsTestBase {
                     @Override
                     public ImsServiceController create(Context context, ComponentName componentName,
                             ImsServiceController.ImsServiceControllerCallbacks callbacks,
-                            ImsFeatureBinderRepository r, FeatureFlags featureFlags) {
+                            ImsFeatureBinderRepository r) {
                         when(controller.getComponentName()).thenReturn(componentName);
                         return controller;
                     }
@@ -2231,19 +2216,12 @@ public class ImsResolverTest extends ImsTestBase {
         processAllMessages();
         ArgumentCaptor<BroadcastReceiver> receiversCaptor =
                 ArgumentCaptor.forClass(BroadcastReceiver.class);
-        if (!mFeatureFlags.imsResolverUserAware()) {
-            verify(mMockContext, times(3)).registerReceiver(receiversCaptor.capture(), any());
-            mTestPackageBroadcastReceiver = receiversCaptor.getAllValues().get(0);
-            mTestCarrierConfigReceiver = receiversCaptor.getAllValues().get(1);
-            mTestBootCompleteReceiver = receiversCaptor.getAllValues().get(2);
-        } else {
-            verify(mMockContext, times(4)).registerReceiver(receiversCaptor.capture(), any());
-            mTestPackageBroadcastReceiver = receiversCaptor.getAllValues().get(0);
-            mTestUserChangedReceiver = receiversCaptor.getAllValues().get(1);
-            mTestCarrierConfigReceiver = receiversCaptor.getAllValues().get(2);
-            mTestBootCompleteReceiver = receiversCaptor.getAllValues().get(3);
+        verify(mMockContext, times(4)).registerReceiver(receiversCaptor.capture(), any());
+        mTestPackageBroadcastReceiver = receiversCaptor.getAllValues().get(0);
+        mTestUserChangedReceiver = receiversCaptor.getAllValues().get(1);
+        mTestCarrierConfigReceiver = receiversCaptor.getAllValues().get(2);
+        mTestBootCompleteReceiver = receiversCaptor.getAllValues().get(3);
 
-        }
         ArgumentCaptor<ImsServiceFeatureQueryManager.Listener> queryManagerCaptor =
                 ArgumentCaptor.forClass(ImsServiceFeatureQueryManager.Listener.class);
         verify(mMockQueryManagerFactory).create(any(Context.class), queryManagerCaptor.capture());
@@ -2263,18 +2241,12 @@ public class ImsResolverTest extends ImsTestBase {
         processAllMessages();
         ArgumentCaptor<BroadcastReceiver> receiversCaptor =
                 ArgumentCaptor.forClass(BroadcastReceiver.class);
-        if (!mFeatureFlags.imsResolverUserAware()) {
-            verify(mMockContext, times(3)).registerReceiver(receiversCaptor.capture(), any());
-            mTestPackageBroadcastReceiver = receiversCaptor.getAllValues().get(0);
-            mTestCarrierConfigReceiver = receiversCaptor.getAllValues().get(1);
-            mTestBootCompleteReceiver = receiversCaptor.getAllValues().get(2);
-        } else {
-            verify(mMockContext, times(4)).registerReceiver(receiversCaptor.capture(), any());
-            mTestPackageBroadcastReceiver = receiversCaptor.getAllValues().get(0);
-            mTestUserChangedReceiver = receiversCaptor.getAllValues().get(1);
-            mTestCarrierConfigReceiver = receiversCaptor.getAllValues().get(2);
-            mTestBootCompleteReceiver = receiversCaptor.getAllValues().get(3);
-        }
+        verify(mMockContext, times(4)).registerReceiver(receiversCaptor.capture(), any());
+        mTestPackageBroadcastReceiver = receiversCaptor.getAllValues().get(0);
+        mTestUserChangedReceiver = receiversCaptor.getAllValues().get(1);
+        mTestCarrierConfigReceiver = receiversCaptor.getAllValues().get(2);
+        mTestBootCompleteReceiver = receiversCaptor.getAllValues().get(3);
+
         ArgumentCaptor<ImsServiceFeatureQueryManager.Listener> queryManagerCaptor =
                 ArgumentCaptor.forClass(ImsServiceFeatureQueryManager.Listener.class);
         verify(mMockQueryManagerFactory).create(any(Context.class), queryManagerCaptor.capture());
@@ -2362,7 +2334,7 @@ public class ImsResolverTest extends ImsTestBase {
                     @Override
                     public ImsServiceController create(Context context, ComponentName componentName,
                             ImsServiceController.ImsServiceControllerCallbacks callbacks,
-                            ImsFeatureBinderRepository r, FeatureFlags featureFlags) {
+                            ImsFeatureBinderRepository r) {
                         return controllerMap.get(componentName.getPackageName());
                     }
                 });
@@ -2382,7 +2354,7 @@ public class ImsResolverTest extends ImsTestBase {
                     @Override
                     public ImsServiceController create(Context context, ComponentName componentName,
                             ImsServiceController.ImsServiceControllerCallbacks callbacks,
-                            ImsFeatureBinderRepository r, FeatureFlags featureFlags) {
+                            ImsFeatureBinderRepository r) {
                         if (TEST_DEVICE_DEFAULT_NAME.getPackageName().equals(
                                 componentName.getPackageName())) {
                             when(deviceController.getComponentName()).thenReturn(componentName);
@@ -2412,7 +2384,7 @@ public class ImsResolverTest extends ImsTestBase {
                     @Override
                     public ImsServiceController create(Context context, ComponentName componentName,
                             ImsServiceController.ImsServiceControllerCallbacks callbacks,
-                            ImsFeatureBinderRepository r, FeatureFlags featureFlags) {
+                            ImsFeatureBinderRepository r) {
                         if (TEST_DEVICE_DEFAULT_NAME.getPackageName().equals(
                                 componentName.getPackageName())) {
                             when(deviceController.getComponentName()).thenReturn(componentName);
@@ -2448,7 +2420,7 @@ public class ImsResolverTest extends ImsTestBase {
                     @Override
                     public ImsServiceController create(Context context, ComponentName componentName,
                             ImsServiceController.ImsServiceControllerCallbacks callbacks,
-                            ImsFeatureBinderRepository r, FeatureFlags featureFlags) {
+                            ImsFeatureBinderRepository r) {
                         if (TEST_DEVICE_DEFAULT_NAME.getPackageName().equals(
                                 componentName.getPackageName())) {
                             when(deviceController1.getComponentName()).thenReturn(componentName);

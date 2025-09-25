@@ -38,7 +38,6 @@ import com.android.ims.internal.IImsFeatureStatusCallback;
 import com.android.ims.internal.IImsMMTelFeature;
 import com.android.ims.internal.IImsServiceController;
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.telephony.flags.FeatureFlagsImpl;
 
 /**
  * Manages the Binding lifecycle of one ImsService as well as the relevant ImsFeatures that the
@@ -77,7 +76,7 @@ public class ImsServiceControllerCompat extends ImsServiceController {
     public ImsServiceControllerCompat(Context context, ComponentName componentName,
             ImsServiceController.ImsServiceControllerCallbacks callbacks,
             ImsFeatureBinderRepository repo) {
-        super(context, componentName, callbacks, repo, new FeatureFlagsImpl());
+        super(context, componentName, callbacks, repo);
         mMmTelFeatureFactory = MmTelFeatureCompatAdapter::new;
     }
 
@@ -85,8 +84,7 @@ public class ImsServiceControllerCompat extends ImsServiceController {
     public ImsServiceControllerCompat(Context context, ComponentName componentName,
             ImsServiceControllerCallbacks callbacks, Handler handler, RebindRetry rebindRetry,
             ImsFeatureBinderRepository repo, MmTelFeatureCompatFactory factory) {
-        super(context, componentName, callbacks, handler, rebindRetry, repo,
-                new FeatureFlagsImpl());
+        super(context, componentName, callbacks, handler, rebindRetry, repo);
         mMmTelFeatureFactory = factory;
     }
 

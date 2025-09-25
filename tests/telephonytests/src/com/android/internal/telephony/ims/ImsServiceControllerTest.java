@@ -58,7 +58,6 @@ import com.android.ims.ImsFeatureBinderRepository;
 import com.android.ims.ImsFeatureContainer;
 import com.android.ims.internal.IImsFeatureStatusCallback;
 import com.android.ims.internal.IImsServiceFeatureCallback;
-import com.android.internal.telephony.flags.FeatureFlags;
 
 import org.junit.After;
 import org.junit.Before;
@@ -128,7 +127,6 @@ public class ImsServiceControllerTest extends ImsTestBase {
     IImsRegistration mMockRcsRegistration;
     IImsServiceController mMockServiceControllerBinder;
     ImsServiceController.ImsServiceControllerCallbacks mMockCallbacks;
-    FeatureFlags mFeatureFlags;
     Context mMockContext;
 
     private final ComponentName mTestComponentName = new ComponentName("TestPkg",
@@ -150,13 +148,12 @@ public class ImsServiceControllerTest extends ImsTestBase {
         mMockRcsRegistration = mock(IImsRegistration.class);
         mMockServiceControllerBinder = mock(IImsServiceController.class);
         mMockCallbacks = mock(ImsServiceController.ImsServiceControllerCallbacks.class);
-        mFeatureFlags = mock(FeatureFlags.class);
         mMockContext = mock(Context.class);
         mUser = UserHandle.of(UserHandle.myUserId());
 
         mRepo = new ImsFeatureBinderRepository();
         mTestImsServiceController = new ImsServiceController(mMockContext, mTestComponentName,
-                mMockCallbacks, mHandler, REBIND_RETRY, mRepo, mFeatureFlags);
+                mMockCallbacks, mHandler, REBIND_RETRY, mRepo);
         when(mMockContext.bindServiceAsUser(any(), any(), anyInt(), any())).thenReturn(true);
         when(mMockServiceControllerBinder.createMmTelFeature(anyInt(), anyInt()))
                 .thenReturn(mMockMmTelFeature);

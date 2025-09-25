@@ -49,7 +49,6 @@ import com.android.ims.ImsFeatureContainer;
 import com.android.ims.internal.IImsFeatureStatusCallback;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.ExponentialBackoff;
-import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.util.TelephonyUtils;
 
 import java.io.PrintWriter;
@@ -267,7 +266,6 @@ public class ImsServiceController {
     private final HandlerThread mHandlerThread = new HandlerThread("ImsServiceControllerHandler");
     private final Handler mHandler;
     private final LegacyPermissionManager mPermissionManager;
-    private final FeatureFlags mFeatureFlags;
     private ImsFeatureBinderRepository mRepo;
     private ImsServiceControllerCallbacks mCallbacks;
     private ExponentialBackoff mBackoff;
@@ -357,8 +355,7 @@ public class ImsServiceController {
     };
 
     public ImsServiceController(Context context, ComponentName componentName,
-            ImsServiceControllerCallbacks callbacks, ImsFeatureBinderRepository repo,
-            FeatureFlags featureFlags) {
+            ImsServiceControllerCallbacks callbacks, ImsFeatureBinderRepository repo) {
         mContext = context;
         mComponentName = componentName;
         mCallbacks = callbacks;
@@ -374,7 +371,6 @@ public class ImsServiceController {
                 Context.LEGACY_PERMISSION_SERVICE);
         mRepo = repo;
         mImsEnablementTracker = new ImsEnablementTracker(mHandlerThread.getLooper(), componentName);
-        mFeatureFlags = featureFlags;
         mPackageManager = mContext.getPackageManager();
         if (mPackageManager != null) {
             mChangedPackages = mPackageManager.getChangedPackages(mLastSequenceNumber);
@@ -389,7 +385,7 @@ public class ImsServiceController {
     // testing, use a handler supplied by the testing system.
     public ImsServiceController(Context context, ComponentName componentName,
             ImsServiceControllerCallbacks callbacks, Handler handler, RebindRetry rebindRetry,
-            ImsFeatureBinderRepository repo, FeatureFlags featureFlags) {
+            ImsFeatureBinderRepository repo) {
         mContext = context;
         mComponentName = componentName;
         mCallbacks = callbacks;
@@ -402,7 +398,6 @@ public class ImsServiceController {
                 mRestartImsServiceRunnable);
         mPermissionManager = null;
         mRepo = repo;
-        mFeatureFlags = featureFlags;
         mImsEnablementTracker = new ImsEnablementTracker(handler.getLooper(), componentName);
     }
 
@@ -504,9 +499,7 @@ public class ImsServiceController {
                     Collectors.toCollection(HashSet::new));
 
             // Set the number of slot for IMS enable for each slot
-            if (mFeatureFlags.setNumberOfSimForImsEnable()) {
-                mImsEnablementTracker.setNumOfSlots(slotIDs.size());
-            }
+            mImsEnablementTracker.setNumOfSlots(slotIDs.size());
 
             // detect which subIds have changed on a per-slot basis
             SparseIntArray changedSubIds = new SparseIntArray(slotIDs.size());

@@ -62,7 +62,6 @@ import com.android.ims.internal.IImsServiceFeatureCallback;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.SomeArgs;
 import com.android.internal.telephony.PhoneConfigurationManager;
-import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.util.IndentingPrintWriter;
 
 import java.io.FileDescriptor;
@@ -138,7 +137,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
 
     // Delay between dynamic ImsService queries.
     private static final int DELAY_DYNAMIC_QUERY_MS = 5000;
-    private static final HandlerThread sHandlerThread = new HandlerThread(TAG);
+    private static HandlerThread sHandlerThread = new HandlerThread(TAG);
 
     private static ImsResolver sInstance;
 
@@ -146,12 +145,12 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
      * Create the ImsResolver Service singleton instance.
      */
     public static void make(Context context, String defaultMmTelPackageName,
-            String defaultRcsPackageName, int numSlots, ImsFeatureBinderRepository repo,
-            FeatureFlags featureFlags) {
+            String defaultRcsPackageName, int numSlots, ImsFeatureBinderRepository repo) {
         if (sInstance == null) {
+            sHandlerThread = new HandlerThread(TAG);
             sHandlerThread.start();
             sInstance = new ImsResolver(context, defaultMmTelPackageName, defaultRcsPackageName,
-                    numSlots, repo, sHandlerThread.getLooper(), featureFlags);
+                    numSlots, repo, sHandlerThread.getLooper());
         }
     }
 
@@ -409,7 +408,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
          */
         ImsServiceController create(Context context, ComponentName componentName,
                 ImsServiceController.ImsServiceControllerCallbacks callbacks,
-                ImsFeatureBinderRepository repo, FeatureFlags featureFlags);
+                ImsFeatureBinderRepository repo);
     }
 
     private ImsServiceControllerFactory mImsServiceControllerFactory =
@@ -423,9 +422,8 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
         @Override
         public ImsServiceController create(Context context, ComponentName componentName,
                 ImsServiceController.ImsServiceControllerCallbacks callbacks,
-                ImsFeatureBinderRepository repo, FeatureFlags featureFlags) {
-                    return new ImsServiceController(context, componentName, callbacks, repo,
-                            featureFlags);
+                ImsFeatureBinderRepository repo) {
+                    return new ImsServiceController(context, componentName, callbacks, repo);
         }
     };
 
@@ -448,7 +446,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
                 @Override
                 public ImsServiceController create(Context context, ComponentName componentName,
                         ImsServiceController.ImsServiceControllerCallbacks callbacks,
-                        ImsFeatureBinderRepository repo, FeatureFlags featureFlags) {
+                        ImsFeatureBinderRepository repo) {
                     return new ImsServiceControllerCompat(context, componentName, callbacks, repo);
                 }
             };
@@ -483,8 +481,6 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     // Synchronize all events on a handler to ensure that the cache includes the most recent
     // version of the installed ImsServices.
     private final Handler mHandler;
-
-    private final FeatureFlags mFeatureFlags;
 
     private class ResolverHandler extends Handler {
 
@@ -613,13 +609,8 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
                 public void onPermanentError(ComponentName name, UserHandle user) {
                     Log.w(TAG, "onPermanentError: component=" + name);
                     mEventLog.log("onPermanentError - error for " + name);
-                    if (!mFeatureFlags.imsResolverUserAware()) {
-                        mHandler.obtainMessage(HANDLER_REMOVE_PACKAGE,
-                                name.getPackageName()).sendToTarget();
-                    } else {
-                        mHandler.obtainMessage(HANDLER_REMOVE_PACKAGE_PERM_ERROR,
-                                new Pair<>(name.getPackageName(), user)).sendToTarget();
-                    }
+                    mHandler.obtainMessage(HANDLER_REMOVE_PACKAGE_PERM_ERROR,
+                            new Pair<>(name.getPackageName(), user)).sendToTarget();
                 }
             };
 
@@ -643,7 +634,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
 
     public ImsResolver(Context context, String defaultMmTelPackageName,
             String defaultRcsPackageName, int numSlots, ImsFeatureBinderRepository repo,
-            Looper looper, FeatureFlags featureFlags) {
+            Looper looper) {
         Log.i(TAG, "device MMTEL package: " + defaultMmTelPackageName + ", device RCS package:"
                 + defaultRcsPackageName);
         mContext = context;
@@ -653,7 +644,6 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
 
         mHandler = new ResolverHandler(looper);
         mRunnableExecutor = new HandlerExecutor(mHandler);
-        mFeatureFlags = featureFlags;
         mCarrierServices = new SparseArray<>(mNumSlots);
         setDeviceConfiguration(defaultMmTelPackageName, ImsFeature.FEATURE_EMERGENCY_MMTEL);
         setDeviceConfiguration(defaultMmTelPackageName, ImsFeature.FEATURE_MMTEL);
@@ -721,10 +711,8 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
         appChangedFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
         appChangedFilter.addDataScheme("package");
         mReceiverContext.registerReceiver(mAppChangedReceiver, appChangedFilter);
-        if (mFeatureFlags.imsResolverUserAware()) {
-            mReceiverContext.registerReceiver(mUserReceiver, new IntentFilter(
-                    Intent.ACTION_USER_SWITCHED));
-        }
+        mReceiverContext.registerReceiver(mUserReceiver, new IntentFilter(
+                Intent.ACTION_USER_SWITCHED));
         mReceiverContext.registerReceiver(mConfigChangedReceiver, new IntentFilter(
                 CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED));
 
@@ -804,8 +792,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
         // we want to make sure that we are either pending to bind to a carrier configured service
         // or bind to the device config if we potentially missed the carrier config changed
         // indication.
-        if (hasConfigChanged || (mFeatureFlags.imsResolverUserAware()
-                && mCarrierConfigReceived && !pendingDynamicQuery)) {
+        if (hasConfigChanged || (mCarrierConfigReceived && !pendingDynamicQuery)) {
             calculateFeatureConfigurationChange();
         }
     }
@@ -1234,10 +1221,8 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
             // features. Will only be one (if it exists), since it is a set.
             ImsServiceInfo match = getInfoByComponentName(mInstalledServicesCache, info.name);
             if (match != null) {
-                if (mFeatureFlags.imsResolverUserAware()) {
-                    match.users.clear();
-                    match.users.addAll(info.users);
-                }
+                match.users.clear();
+                match.users.addAll(info.users);
                 // for dynamic query the new "info" will have no supported features yet. Don't wipe
                 // out the cache for the existing features or update yet. Instead start a query
                 // for features dynamically.
@@ -1273,25 +1258,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
 
     // Remove the ImsService from the cache due to the ImsService package being removed.
     // Called from the handler ONLY
-    private boolean maybeRemovedImsServiceOld(String packageName) {
-        ImsServiceInfo match = getInfoByPackageName(mInstalledServicesCache, packageName);
-        if (match != null) {
-            mInstalledServicesCache.remove(match.name);
-            mEventLog.log("maybeRemovedImsService - removing ImsService: " + match);
-            Log.i(TAG, "Removing ImsService: " + match.name);
-            unbindImsService(match);
-            calculateFeatureConfigurationChange();
-            return true;
-        }
-        return false;
-    }
-
-    // Remove the ImsService from the cache due to the ImsService package being removed.
-    // Called from the handler ONLY
     private boolean maybeRemovedImsService(String packageName) {
-        if (!mFeatureFlags.imsResolverUserAware()) {
-            return maybeRemovedImsServiceOld(packageName);
-        }
         ImsServiceInfo match = getInfoByPackageName(mInstalledServicesCache, packageName);
         if (match != null) {
             List<ImsServiceInfo> imsServices = searchForImsServices(packageName,
@@ -1359,13 +1326,11 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
 
     private List<Integer> getSlotsForActiveCarrierService(ImsServiceInfo info) {
         if (info == null) return Collections.emptyList();
-        if (mFeatureFlags.imsResolverUserAware()) {
-            UserHandle activeUser = getUserForBind(info);
-            if (activeUser == null) {
-                Log.d(TAG, "getSlotsForActiveCarrierService: ImsService " + info.name + "is not "
-                        + "configured to run for any users, skipping...");
-                return Collections.emptyList();
-            }
+        UserHandle activeUser = getUserForBind(info);
+        if (activeUser == null) {
+            Log.d(TAG, "getSlotsForActiveCarrierService: ImsService " + info.name + "is not "
+                    + "configured to run for any users, skipping...");
+            return Collections.emptyList();
         }
         List<Integer> slots = new ArrayList<>(mNumSlots);
         for (int i = 0; i < mNumSlots; i++) {
@@ -1405,8 +1370,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
             SparseIntArray slotIdToSubIdMap = mSlotIdToSubIdMap.clone();
             if (controller != null) {
                 try {
-                    if (!mFeatureFlags.imsResolverUserAware()
-                            || Objects.equals(user, controller.getBoundUser())) {
+                    if (Objects.equals(user, controller.getBoundUser())) {
                         Log.i(TAG, "ImsService connection exists for " + info.name
                                 + ", updating features " + features);
                         controller.changeImsServiceFeatures(features, slotIdToSubIdMap);
@@ -1425,8 +1389,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
                     Log.w(TAG, "bindImsService: error=" + e.getMessage());
                 }
             } else {
-                controller = info.controllerFactory.create(mContext, info.name, this, mRepo,
-                        mFeatureFlags);
+                controller = info.controllerFactory.create(mContext, info.name, this, mRepo);
                 Log.i(TAG, "Binding ImsService: " + controller.getComponentName()
                         + "on user " + user + " with features: " + features + ", subIdMap: "
                         + slotIdToSubIdMap);
@@ -1534,13 +1497,8 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
         }
         Log.w(TAG, "imsServiceBindPermanentError: component=" + name + ", user=" + user);
         mEventLog.log("imsServiceBindPermanentError - for " + name + ", user " + user);
-        if (!mFeatureFlags.imsResolverUserAware()) {
-            mHandler.obtainMessage(HANDLER_REMOVE_PACKAGE,
-                    name.getPackageName()).sendToTarget();
-        } else {
-            mHandler.obtainMessage(HANDLER_REMOVE_PACKAGE_PERM_ERROR,
-                    new Pair<>(name.getPackageName(), user)).sendToTarget();
-        }
+        mHandler.obtainMessage(HANDLER_REMOVE_PACKAGE_PERM_ERROR,
+                new Pair<>(name.getPackageName(), user)).sendToTarget();
     }
 
     /**
@@ -1899,10 +1857,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
 
     // Should ONLY be called from the handler.
     private void calculateFeatureConfigurationChange() {
-        if (!mFeatureFlags.imsResolverUserAware()) {
-            calculateFeatureConfigurationChangeOld();
-            return;
-        }
+
         // There is an implicit assumption here that the ImsServiceController will remove itself
         // from caches BEFORE adding a new one. If this assumption is broken, we will remove a valid
         // ImsServiceController from the cache accidentally. To keep this assumption valid, we will
@@ -1937,9 +1892,6 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
      * active user.
      */
     private UserHandle getUserForBind(ImsServiceInfo info) {
-        if (!mFeatureFlags.imsResolverUserAware()) {
-            return mContext.getUser();
-        }
         UserHandle currentUser = mActivityManagerProxy.getCurrentUser();
         List<UserHandle> activeUsers = getActiveUsers().stream()
                 .filter(info.users::contains).toList();
@@ -1994,9 +1946,6 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
      */
     public ImsServiceInfo getVisibleImsServiceInfoFromCache(String packageName) {
         ImsServiceInfo match = getImsServiceInfoFromCache(packageName);
-        if (!mFeatureFlags.imsResolverUserAware()) {
-            return match;
-        }
         if (match == null) return null;
         UserHandle targetUser = getUserForBind(match);
         Log.d(TAG, "getVisibleImsServiceInfoFromCache: " + packageName + ", match=" + match
@@ -2046,11 +1995,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
         serviceIntent.setPackage(packageName);
 
         Set<UserHandle> profiles;
-        if (mFeatureFlags.imsResolverUserAware()) {
-            profiles = getActiveUsers();
-        } else {
-            profiles = Collections.singleton(mContext.getUser());
-        }
+        profiles = getActiveUsers();
         Log.v(TAG, "searchForImsServices: package=" + packageName + ", users=" + profiles);
 
         PackageManager packageManager = mContext.getPackageManager();
