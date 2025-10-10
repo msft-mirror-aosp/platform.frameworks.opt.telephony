@@ -3462,6 +3462,7 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         doReturn(new String[]{CALLING_PACKAGE}).when(mPackageManager).getPackagesForUid(anyInt());
         mContextFixture.putBooleanResource(
                 com.android.internal.R.bool.config_force_phone_globals_creation, enableOverlay);
+        doReturn(true).when(mFeatureFlags).enforceTelephonyFeatureMappingForPublicApis();
     }
 
     @Test
