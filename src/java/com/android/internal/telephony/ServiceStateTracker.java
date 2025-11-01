@@ -3663,7 +3663,11 @@ public class ServiceStateTracker extends Handler {
         mNewSS.setOutOfService(false);
 
         mCellIdentity = primaryCellIdentity;
-        if (mSS.getState() == ServiceState.STATE_IN_SERVICE && primaryCellIdentity != null) {
+        boolean isCsRegistered = mSS.getNetworkRegistrationInfo(NetworkRegistrationInfo.DOMAIN_CS,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN).isNetworkRegistered();
+        boolean isPsRegistered = mSS.getNetworkRegistrationInfo(NetworkRegistrationInfo.DOMAIN_PS,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN).isNetworkRegistered();
+        if (isCsRegistered || isPsRegistered) {
             mLastKnownCellIdentity = mCellIdentity;
             removeMessages(EVENT_RESET_LAST_KNOWN_CELL_IDENTITY);
         }

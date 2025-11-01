@@ -21,6 +21,7 @@ import android.telephony.CarrierRestrictionRules;
 import android.telephony.ImsiEncryptionInfo;
 import android.telephony.Rlog;
 
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.PersoSubState;
 import com.android.internal.telephony.uicc.SimPhonebookRecord;
 
@@ -168,12 +169,6 @@ public class RadioSimProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void getCdmaSubscription(int serial) throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            mSimProxy.getCdmaSubscription(serial);
-        } else {
-            mRadioProxy.getCDMASubscription(serial);
-        }
     }
 
     /**
@@ -182,12 +177,6 @@ public class RadioSimProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void getCdmaSubscriptionSource(int serial) throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            mSimProxy.getCdmaSubscriptionSource(serial);
-        } else {
-            mRadioProxy.getCdmaSubscriptionSource(serial);
-        }
     }
 
     /**
@@ -631,12 +620,6 @@ public class RadioSimProxy extends RadioServiceProxy {
      * @throws RemoteException
      */
     public void setCdmaSubscriptionSource(int serial, int cdmaSub) throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            mSimProxy.setCdmaSubscriptionSource(serial, cdmaSub);
-        } else {
-            mRadioProxy.setCdmaSubscriptionSource(serial, cdmaSub);
-        }
     }
 
     /**
@@ -689,24 +672,6 @@ public class RadioSimProxy extends RadioServiceProxy {
      */
     public void setUiccSubscription(int serial, int slotId, int appIndex, int subId, int subStatus)
             throws RemoteException {
-        if (isEmpty()) return;
-        if (isAidl()) {
-            android.hardware.radio.sim.SelectUiccSub info =
-                    new android.hardware.radio.sim.SelectUiccSub();
-            info.slot = slotId;
-            info.appIndex = appIndex;
-            info.subType = subId;
-            info.actStatus = subStatus;
-            mSimProxy.setUiccSubscription(serial, info);
-        } else {
-            android.hardware.radio.V1_0.SelectUiccSub info =
-                    new android.hardware.radio.V1_0.SelectUiccSub();
-            info.slot = slotId;
-            info.appIndex = appIndex;
-            info.subType = subId;
-            info.actStatus = subStatus;
-            mRadioProxy.setUiccSubscription(serial, info);
-        }
     }
 
     /**

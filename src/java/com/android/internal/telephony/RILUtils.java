@@ -384,6 +384,7 @@ import com.android.internal.telephony.cdma.sms.CdmaSmsSubaddress;
 import com.android.internal.telephony.cdma.sms.SmsEnvelope;
 import com.android.internal.telephony.data.KeepaliveStatus;
 import com.android.internal.telephony.data.KeepaliveStatus.KeepaliveStatusCode;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.imsphone.ImsCallInfo;
 import com.android.internal.telephony.uicc.AdnCapacity;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus;
@@ -1163,17 +1164,9 @@ public class RILUtils {
      * @return The converted reset type in integer or -1 if param is invalid
      */
     public static int convertToHalResetNvType(int resetType) {
-        /**
-         * resetType values
-         * 1 - reload all NV items
-         * 2 - erase NV reset (SCRTN)
-         * 3 - factory reset (RTN)
-         */
-        switch (resetType) {
-            case 1: return android.hardware.radio.V1_0.ResetNvType.RELOAD;
-            case 2: return android.hardware.radio.V1_0.ResetNvType.ERASE;
-            case 3: return android.hardware.radio.V1_0.ResetNvType.FACTORY_RESET;
-        }
+        // resetType values
+        // 1 - reload all NV items
+        if (resetType == 1) return android.hardware.radio.V1_0.ResetNvType.RELOAD;
         return -1;
     }
 
@@ -1183,17 +1176,9 @@ public class RILUtils {
      * @return The converted reset type in integer or -1 if param is invalid
      */
     public static int convertToHalResetNvTypeAidl(int resetType) {
-        /**
-         * resetType values
-         * 1 - reload all NV items
-         * 2 - erase NV reset (SCRTN)
-         * 3 - factory reset (RTN)
-         */
-        switch (resetType) {
-            case 1: return android.hardware.radio.modem.ResetNvType.RELOAD;
-            case 2: return android.hardware.radio.modem.ResetNvType.ERASE;
-            case 3: return android.hardware.radio.modem.ResetNvType.FACTORY_RESET;
-        }
+        // resetType values
+        // 1 - reload all NV items
+        if (resetType == 1) return android.hardware.radio.modem.ResetNvType.RELOAD;
         return -1;
     }
 
@@ -2913,6 +2898,7 @@ public class RILUtils {
      */
     public static CellSignalStrengthGsm convertHalGsmSignalStrength(
             android.hardware.radio.V1_0.GsmSignalStrength ss) {
+        if (ss == null) return new CellSignalStrengthGsm();
         CellSignalStrengthGsm ret = new CellSignalStrengthGsm(
                 CellSignalStrength.getRssiDbmFromAsu(ss.signalStrength), ss.bitErrorRate,
                 ss.timingAdvance);
@@ -2930,6 +2916,7 @@ public class RILUtils {
      */
     public static CellSignalStrengthGsm convertHalGsmSignalStrength(
             android.hardware.radio.network.GsmSignalStrength ss) {
+        if (ss == null) return new CellSignalStrengthGsm();
         CellSignalStrengthGsm ret = new CellSignalStrengthGsm(
                 CellSignalStrength.getRssiDbmFromAsu(ss.signalStrength), ss.bitErrorRate,
                 ss.timingAdvance);
@@ -2950,6 +2937,7 @@ public class RILUtils {
     public static CellSignalStrengthCdma convertHalCdmaSignalStrength(
             android.hardware.radio.V1_0.CdmaSignalStrength cdma,
             android.hardware.radio.V1_0.EvdoSignalStrength evdo) {
+        if (cdma == null || evdo == null) return new CellSignalStrengthCdma();
         return new CellSignalStrengthCdma(-cdma.dbm, -cdma.ecio, -evdo.dbm, -evdo.ecio,
                 evdo.signalNoiseRatio);
     }
@@ -2964,6 +2952,7 @@ public class RILUtils {
     public static CellSignalStrengthCdma convertHalCdmaSignalStrength(
             android.hardware.radio.network.CdmaSignalStrength cdma,
             android.hardware.radio.network.EvdoSignalStrength evdo) {
+        if (cdma == null || evdo == null) return new CellSignalStrengthCdma();
         return new CellSignalStrengthCdma(-cdma.dbm, -cdma.ecio, -evdo.dbm, -evdo.ecio,
                 evdo.signalNoiseRatio);
     }
@@ -3427,9 +3416,11 @@ public class RILUtils {
             android.hardware.radio.data.SetupDataCallResult result) {
         if (result == null) return null;
         List<LinkAddress> laList = new ArrayList<>();
-        for (android.hardware.radio.data.LinkAddress la : result.addresses) {
-            laList.add(convertToLinkAddress(la.address, la.addressProperties,
-                    la.deprecationTime, la.expirationTime));
+        if (result.addresses != null) {
+            for (android.hardware.radio.data.LinkAddress la : result.addresses) {
+                laList.add(convertToLinkAddress(la.address, la.addressProperties,
+                        la.deprecationTime, la.expirationTime));
+            }
         }
         List<InetAddress> dnsList = new ArrayList<>();
         if (result.dnses != null) {
@@ -3471,15 +3462,19 @@ public class RILUtils {
             }
         }
         List<QosBearerSession> qosSessions = new ArrayList<>();
-        for (android.hardware.radio.data.QosSession session : result.qosSessions) {
-            qosSessions.add(convertHalQosBearerSession(session));
+        if (result.qosSessions != null) {
+            for (android.hardware.radio.data.QosSession session : result.qosSessions) {
+                qosSessions.add(convertHalQosBearerSession(session));
+            }
         }
         List<TrafficDescriptor> trafficDescriptors = new ArrayList<>();
-        for (android.hardware.radio.data.TrafficDescriptor td : result.trafficDescriptors) {
-            try {
-                trafficDescriptors.add(convertHalTrafficDescriptor(td));
-            } catch (IllegalArgumentException e) {
-                loge("convertHalDataCallResult: Failed to convert traffic descriptor. e=" + e);
+        if (result.trafficDescriptors != null) {
+            for (android.hardware.radio.data.TrafficDescriptor td : result.trafficDescriptors) {
+                try {
+                    trafficDescriptors.add(convertHalTrafficDescriptor(td));
+                } catch (IllegalArgumentException e) {
+                    loge("convertHalDataCallResult: Failed to convert traffic descriptor. e=" + e);
+                }
             }
         }
 
@@ -3659,6 +3654,7 @@ public class RILUtils {
     }
 
     private static Qos convertHalQos(android.hardware.radio.V1_6.Qos qos) {
+        if (qos == null) return null;
         switch (qos.getDiscriminator()) {
             case android.hardware.radio.V1_6.Qos.hidl_discriminator.eps:
                 android.hardware.radio.V1_6.EpsQos eps = qos.eps();
@@ -3674,6 +3670,7 @@ public class RILUtils {
     }
 
     private static Qos convertHalQos(android.hardware.radio.data.Qos qos) {
+        if (qos == null) return null;
         switch (qos.getTag()) {
             case android.hardware.radio.data.Qos.eps:
                 android.hardware.radio.data.EpsQos eps = qos.getEps();
@@ -4191,7 +4188,7 @@ public class RILUtils {
             iccCardStatus.setCardState(cardStatus10.cardState);
             iccCardStatus.setUniversalPinState(cardStatus10.universalPinState);
             iccCardStatus.mGsmUmtsSubscriptionAppIndex = cardStatus10.gsmUmtsSubscriptionAppIndex;
-            iccCardStatus.mCdmaSubscriptionAppIndex = cardStatus10.cdmaSubscriptionAppIndex;
+            iccCardStatus.mCdmaSubscriptionAppIndex = -1;
             iccCardStatus.mImsSubscriptionAppIndex = cardStatus10.imsSubscriptionAppIndex;
             int numApplications = cardStatus10.applications.size();
 
@@ -4261,7 +4258,7 @@ public class RILUtils {
         iccCardStatus.setMultipleEnabledProfilesMode(cardStatus.supportedMepMode);
         iccCardStatus.setUniversalPinState(cardStatus.universalPinState);
         iccCardStatus.mGsmUmtsSubscriptionAppIndex = cardStatus.gsmUmtsSubscriptionAppIndex;
-        iccCardStatus.mCdmaSubscriptionAppIndex = cardStatus.cdmaSubscriptionAppIndex;
+        iccCardStatus.mCdmaSubscriptionAppIndex = -1;
         iccCardStatus.mImsSubscriptionAppIndex = cardStatus.imsSubscriptionAppIndex;
         iccCardStatus.atr = cardStatus.atr;
         iccCardStatus.iccid = cardStatus.iccid;

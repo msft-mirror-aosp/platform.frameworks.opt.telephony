@@ -16,6 +16,8 @@ tgunn@google.com
 tjstuart@google.com
 tnd@google.com
 xiaotonj@google.com
+# TODO(b/449213597): Remove jmattis@ after Minimal Telephony changes are merged.
+jmattis@google.com
 
 # Domain Selection code is co-owned, adding additional owners for this code
 per-file EmergencyStateTracker*=hwangoo@google.com,forestchoi@google.com,avinashmp@google.com,mkoon@google.com,seheele@google.com,jdyou@google.com

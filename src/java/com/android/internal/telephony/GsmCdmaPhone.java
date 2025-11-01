@@ -42,7 +42,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.database.SQLException;
 import android.hardware.radio.modem.ImeiInfo;
 import android.net.Uri;
@@ -470,12 +469,6 @@ public class GsmCdmaPhone extends Phone {
         }
     };
 
-    private boolean hasCalling() {
-        if (!TelephonyCapabilities.minimalTelephonyCdmCheck(mFeatureFlags)) return true;
-        return mContext.getPackageManager().hasSystemFeature(
-            PackageManager.FEATURE_TELEPHONY_CALLING);
-    }
-
     private void initOnce(CommandsInterface ci) {
         if (ci instanceof SimulatedRadioControl) {
             mSimulatedRadioControl = (SimulatedRadioControl) ci;
@@ -782,11 +775,7 @@ public class GsmCdmaPhone extends Phone {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @Override
     public int getPhoneType() {
-        if (mPrecisePhoneType == PhoneConstants.PHONE_TYPE_GSM) {
-            return PhoneConstants.PHONE_TYPE_GSM;
-        } else {
-            return PhoneConstants.PHONE_TYPE_CDMA;
-        }
+        return PhoneConstants.PHONE_TYPE_GSM;
     }
 
     @Override

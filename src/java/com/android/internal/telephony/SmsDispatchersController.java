@@ -82,6 +82,7 @@ import java.util.concurrent.CompletableFuture;
 public class SmsDispatchersController extends Handler {
     private static final String TAG = "SmsDispatchersController";
     private static final boolean VDBG = false; // STOPSHIP if true
+    private static final boolean ENABLE_CDMA_DISPATCHER = true; // see b/388540508
 
     /** Radio is ON */
     private static final int EVENT_RADIO_ON = 11;
@@ -394,8 +395,12 @@ public class SmsDispatchersController extends Handler {
         mCdmaDispatcher = new CdmaSMSDispatcher(phone, this);
         mGsmInboundSmsHandler = GsmInboundSmsHandler.makeInboundSmsHandler(phone.getContext(),
                 storageMonitor, phone, looper, mFeatureFlags);
-        mCdmaInboundSmsHandler = CdmaInboundSmsHandler.makeInboundSmsHandler(phone.getContext(),
-                storageMonitor, phone, (CdmaSMSDispatcher) mCdmaDispatcher, looper, mFeatureFlags);
+        if (ENABLE_CDMA_DISPATCHER) {
+            mCdmaDispatcher = new CdmaSMSDispatcher(phone, this);
+            mCdmaInboundSmsHandler = CdmaInboundSmsHandler.makeInboundSmsHandler(phone.getContext(),
+                    storageMonitor, phone, (CdmaSMSDispatcher) mCdmaDispatcher, looper,
+                    mFeatureFlags);
+        }
         mGsmDispatcher = new GsmSMSDispatcher(phone, this, mGsmInboundSmsHandler);
         SmsBroadcastUndelivered.initialize(phone.getContext(),
                 mGsmInboundSmsHandler, mCdmaInboundSmsHandler, mFeatureFlags);
@@ -811,8 +816,7 @@ public class SmsDispatchersController extends Handler {
 
         if (!tracker.mUsesImsServiceForIms) {
             if (isSmsDomainSelectionEnabled()) {
-                TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-                boolean isEmergency = tm.isEmergencyNumber(tracker.mDestAddress);
+                boolean isEmergency = isEmergencyNumber(tracker.mDestAddress);
                 // This may be invoked by another thread, so this operation is posted and
                 // handled through the execution flow of SmsDispatchersController.
                 SomeArgs args = SomeArgs.obtain();
@@ -981,6 +985,7 @@ public class SmsDispatchersController extends Handler {
      * @return true if Cdma format should be used for MO SMS, false otherwise.
      */
     protected boolean isCdmaMo() {
+        if (!ENABLE_CDMA_DISPATCHER) return false;
         if (!isIms()) {
             // IMS is not registered, use Voice technology to determine SMS format.
             return (PhoneConstants.PHONE_TYPE_CDMA == mPhone.getPhoneType());
@@ -996,6 +1001,7 @@ public class SmsDispatchersController extends Handler {
      * @return true if format given is CDMA format, false otherwise.
      */
     public boolean isCdmaFormat(String format) {
+        if (!ENABLE_CDMA_DISPATCHER) return false;
         return (mCdmaDispatcher.getFormat().equals(format));
     }
 
@@ -1201,8 +1207,7 @@ public class SmsDispatchersController extends Handler {
     private void handleSmsSentCompletedUsingDomainSelection(@NonNull String destAddr,
             long messageId, boolean success, boolean isOverIms, boolean isLastSmsPart) {
         if (mEmergencyStateTracker != null) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            if (tm.isEmergencyNumber(destAddr)) {
+            if (isEmergencyNumber(destAddr)) {
                 mEmergencyStateTracker.endSms(String.valueOf(messageId), success,
                         isOverIms ? NetworkRegistrationInfo.DOMAIN_PS
                                   : NetworkRegistrationInfo.DOMAIN_CS,
@@ -1251,8 +1256,7 @@ public class SmsDispatchersController extends Handler {
      */
     private void handleSmsReceivedViaIms(@Nullable String origAddr) {
         if (mEmergencyStateTracker != null) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            if (origAddr != null && tm.isEmergencyNumber(origAddr)) {
+            if (origAddr != null && isEmergencyNumber(origAddr)) {
                 mEmergencyStateTracker.onEmergencySmsReceived();
             }
         }
@@ -1270,7 +1274,9 @@ public class SmsDispatchersController extends Handler {
 
     private boolean isTestEmergencyNumber(String number) {
         try {
+            if (!mPhone.hasCalling()) return false;
             TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
+            if (tm == null) return false;
             Map<Integer, List<EmergencyNumber>> eMap = tm.getEmergencyNumberList();
             return eMap.values().stream().flatMap(Collection::stream).anyMatch(eNumber ->
                     eNumber.isFromSources(EmergencyNumber.EMERGENCY_NUMBER_SOURCE_TEST)
@@ -1845,8 +1851,7 @@ public class SmsDispatchersController extends Handler {
     private void sendTextInternal(PendingRequest request) {
         logd("sendTextInternal: messageId=" + request.messageId);
         if (isSmsDomainSelectionEnabled()) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            boolean isEmergency = tm.isEmergencyNumber(request.destAddr);
+            boolean isEmergency = isEmergencyNumber(request.destAddr);
             sendSmsUsingDomainSelection(getDomainSelectionConnectionHolder(isEmergency),
                     request, "sendText");
             return;
@@ -2006,11 +2011,17 @@ public class SmsDispatchersController extends Handler {
         sendMultipartTextInternal(pendingRequest);
     }
 
+    private boolean isEmergencyNumber(String number) {
+        if (!mPhone.hasCalling()) return false;
+        TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
+        if (tm == null) return false;
+        return tm.isEmergencyNumber(number);
+    }
+
     private void sendMultipartTextInternal(PendingRequest request) {
         logd("sendMultipartTextInternal: messageId=" + request.messageId);
         if (isSmsDomainSelectionEnabled()) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            boolean isEmergency = tm.isEmergencyNumber(request.destAddr);
+            boolean isEmergency = isEmergencyNumber(request.destAddr);
             sendSmsUsingDomainSelection(getDomainSelectionConnectionHolder(isEmergency),
                     request, "sendMultipartText");
             return;
