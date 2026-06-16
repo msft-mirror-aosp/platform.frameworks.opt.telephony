@@ -22,6 +22,7 @@ import static org.mockito.Matchers.nullable;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.isNull;
 import static org.mockito.Mockito.mock;
@@ -149,5 +150,27 @@ public class WapPushOverSmsTest extends TelephonyTest {
                 any(InboundSmsHandler.SmsBroadcastReceiver.class),
                 any(UserHandle.class),
                 anyInt());
+    }
+
+    @Test @SmallTest
+    public void testDispatchWapPdu_RuntimeExceptionInDecoder_failsGracefully() {
+        doReturn(true).when(mWspTypeDecoder).decodeUintvarInteger(anyInt());
+        doThrow(new RuntimeException("Test exception"))
+                .when(mWspTypeDecoder).decodeContentType(anyInt());
+        doReturn((long) 2).when(mWspTypeDecoder).getValue32();
+        doReturn(2).when(mWspTypeDecoder).getDecodedDataLength();
+
+        byte[] pdu = {
+                (byte) 0xFF,
+                (byte) 0x06,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF,
+                (byte) 0xFF
+        };
+
+        assertEquals(Telephony.Sms.Intents.RESULT_SMS_GENERIC_ERROR,
+                mWapPushOverSmsUT.dispatchWapPdu(pdu, null, mInboundSmsHandler, null, 0, 0L));
     }
 }
