@@ -1705,12 +1705,13 @@ public class GsmCdmaPhone extends Phone {
         if (isPhoneTypeGsm()) {
             if (mFeatureFlags.skipMmiCodeCheckForEmergencyCall()) {
                 // If not emergency number, handle in-call MMI first if applicable
-                if (!dialArgs.isEmergency && handleInCallMmiCommands(newDialString)) {
+                if (!dialArgs.isEmergency && wrappedCallback == null
+                        && handleInCallMmiCommands(newDialString)) {
                     return null;
                 }
             } else {
                 // handle in-call MMI first if applicable
-                if (handleInCallMmiCommands(newDialString)) {
+                if (wrappedCallback == null && handleInCallMmiCommands(newDialString)) {
                     return null;
                 }
             }
